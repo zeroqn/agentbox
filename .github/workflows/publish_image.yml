@@ -1,46 +1,36 @@
-name: Publish agentbox-shell Image
-
+name: Publish agentbox Image
 on:
   push:
     branches:
       - main
     tags:
       - "*"
-
 permissions:
   contents: read
   packages: write
-
 jobs:
   publish:
     runs-on: ubuntu-latest
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-
       - name: Build agentbox-musl
         run: nix build .#agentbox-musl --print-out-paths > agentbox-musl-path.txt
-
-      - name: Build agentbox-shell container archive
+      - name: Build agentbox container archive
         run: nix build .#container --print-out-paths > container-path.txt
-
       - name: Load container archive
         run: docker load --input "$(cat container-path.txt)"
-
       - name: Verify agentbox binary in image
         run: docker run --rm localhost/agentbox:latest agentbox --help > /dev/null
-
       - name: Compute image tags
         id: image_meta
         run: |
           set -euo pipefail
 
           owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          image="ghcr.io/${owner}/agentbox-shell"
+          image="ghcr.io/${owner}/agentbox"
           short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
 
           {
@@ -59,14 +49,12 @@ jobs:
               echo "tag2=sha-${short_sha}"
             } >> "${GITHUB_OUTPUT}"
           fi
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Tag image for GHCR
         run: |
           set -euo pipefail
@@ -76,7 +64,6 @@ jobs:
 
           docker tag "${source_image}" "${target_image}:${{ steps.image_meta.outputs.tag1 }}"
           docker tag "${source_image}" "${target_image}:${{ steps.image_meta.outputs.tag2 }}"
-
       - name: Push image to GHCR
         run: |
           set -euo pipefail
