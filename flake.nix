@@ -182,7 +182,7 @@
               Env = [
                 "HOME=/home/dev"
                 "USER=dev"
-                "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${imagePath}"
+                "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${imagePath}:${rustMuslPackage}/bin"
                 "NIX_CONFIG=experimental-features = nix-command flakes"
               ];
             };
