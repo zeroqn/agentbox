@@ -165,6 +165,7 @@
           agentboxImage = pkgs.dockerTools.buildLayeredImage {
             name = "localhost/agentbox";
             tag = "latest";
+            maxLayers = 2;
             fromImage = baseImage;
             contents = imagePackages ++ [
               entrypoint
