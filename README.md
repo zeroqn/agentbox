@@ -48,6 +48,11 @@ The published image also contains the static `agentbox` binary from
 usable as a distribution source for the host CLI binary in addition to the
 interactive shell environment.
 
+The repo-built container image is emitted with a reduced layer count
+(`maxLayers = 2`) to keep local loads and distribution simpler. This reduces
+layers added by this repo's image build, but it does not flatten the upstream
+`ghcr.io/nixos/nix` base image itself.
+
 Default branch pushes publish:
 
 - `ghcr.io/<repo-owner>/agentbox:latest`
