@@ -99,6 +99,7 @@
 
           imagePackages = [
             pkgs.bashInteractive
+            pkgs.cacert
             pkgs.codex
             pkgs.coreutils
             pkgs.fish
@@ -111,6 +112,7 @@
             pkgs.gitMinimal
             pkgs.gnugrep
             pkgs.gnused
+            pkgs.nix
             pkgs.python3
             pkgs.diffutils
             pkgs.bun
@@ -123,6 +125,15 @@
           ];
 
           imagePath = pkgs.lib.makeBinPath imagePackages;
+          imageRoot = pkgs.buildEnv {
+            name = "agentbox-image-root";
+            paths = imagePackages ++ [
+              entrypoint
+              fishConfig
+              rustMuslPackage
+            ];
+            pathsToLink = [ "/" ];
+          };
 
           rustPackage = pkgs.rustPlatform.buildRustPackage {
             pname = "agentbox";
@@ -154,26 +165,21 @@
             CARGO_BUILD_TARGET = muslTarget;
           };
 
-          baseImage = pkgs.dockerTools.pullImage {
-            imageName = "ghcr.io/nixos/nix";
-            imageDigest = "sha256:0b1530edf840d9af519c7f3970cafbbed68d9d9554a83cc9adc04099753117e1";
-            hash = "sha256-EurCvs8HYBWXcsJFD28EFLwl2DifZmAtXyPFXv+ZK6w=";
-            finalImageName = "ghcr.io/nixos/nix";
-            finalImageTag = "latest";
-          };
-
           agentboxImage = pkgs.dockerTools.buildLayeredImage {
             name = "localhost/agentbox";
             tag = "latest";
             maxLayers = 2;
-            fromImage = baseImage;
-            contents = imagePackages ++ [
-              entrypoint
-              fishConfig
-              rustMuslPackage
-            ];
+            contents = imageRoot;
+            includeNixDB = true;
             fakeRootCommands = ''
-              mkdir -p ./workspace ./home/dev/.codex
+              mkdir -p ./etc ./root ./tmp ./workspace ./home/dev/.codex
+              chmod 1777 ./tmp
+              if [ ! -e ./etc/passwd ]; then
+                printf 'root:x:0:0:root:/root:/bin/sh\n' > ./etc/passwd
+              fi
+              if [ ! -e ./etc/group ]; then
+                printf 'root:x:0:\n' > ./etc/group
+              fi
               chown -R 1000:1000 ./home/dev ./workspace
             '';
 
@@ -185,6 +191,8 @@
                 "USER=dev"
                 "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${imagePath}:${rustMuslPackage}/bin"
                 "NIX_CONFIG=experimental-features = nix-command flakes"
+                "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
               ];
             };
           };

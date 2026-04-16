@@ -49,9 +49,10 @@ usable as a distribution source for the host CLI binary in addition to the
 interactive shell environment.
 
 The repo-built container image is emitted with a reduced layer count
-(`maxLayers = 2`) to keep local loads and distribution simpler. This reduces
-layers added by this repo's image build, but it does not flatten the upstream
-`ghcr.io/nixos/nix` base image itself.
+(`maxLayers = 2`) to keep local loads and distribution simpler. The image is
+now built directly from Nix-provided contents instead of layering on top of an
+upstream container base image, so the published archive no longer inherits the
+many pre-existing layers from `ghcr.io/nixos/nix`.
 
 Default branch pushes publish:
 
