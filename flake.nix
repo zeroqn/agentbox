@@ -31,7 +31,7 @@
       packages = forAllSystems (
         pkgs:
         let
-          ohMyCodexVersion = "0.12.6";
+          ohMyCodexVersion = "0.13.1";
 
           ohMyCodex = pkgs.buildNpmPackage {
             pname = "oh-my-codex";
@@ -41,10 +41,10 @@
               owner = "Yeachan-Heo";
               repo = "oh-my-codex";
               rev = "v${ohMyCodexVersion}";
-              hash = "sha256-Q2Z8aITmEg+yNoRxCMMAie9nuZmLUXVhqc7Tea7zV9w=";
+              hash = "sha256-pXaaPWLr8V/PvKzl4a98Ws9CzF3VdJqMko0PLOxhPX4=";
             };
 
-            npmDepsHash = "sha256-HgrC4uLtZ38x6myCu8AbrghrZi4aXod0A6/b19GZ4ro=";
+            npmDepsHash = "sha256-U2riv9DdA1nhaq8d6fBij/kEyl6L47tvh1Vg7i31v6U=";
             npmBuildScript = "build";
 
             meta = {
