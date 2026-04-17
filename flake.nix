@@ -227,6 +227,7 @@
             pkgs.gnugrep
             pkgs.gnused
             pkgs.gnutar
+            pkgs.gzip
             pkgs."hostname-debian"
             pkgs.jq
             pkgs.less
