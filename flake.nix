@@ -97,6 +97,13 @@
             end
           '';
 
+          starshipConfig = pkgs.writeTextDir "share/agentbox/starship.toml" ''
+            [hostname]
+            ssh_only = false
+            format = "[$hostname]($style) "
+            style = "bold green"
+          '';
+
           entrypoint = pkgs.writeShellScriptBin "agentbox-entrypoint" ''
             set -euo pipefail
 
@@ -147,8 +154,12 @@
             home_config_dir="$HOME/.config"
             fish_config_dir="$home_config_dir/fish"
             bundled_fish_conf="${fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
+            bundled_starship_config="${starshipConfig}/share/agentbox/starship.toml"
 
             materialize_writable_dir "$home_config_dir" "$tmpdir/home-config"
+            if [ ! -e "$home_config_dir/starship.toml" ]; then
+              cp "$bundled_starship_config" "$home_config_dir/starship.toml"
+            fi
             materialize_writable_dir "$fish_config_dir" "$tmpdir/fish-config"
             mkdir -p "$fish_config_dir/conf.d"
             chmod u+w "$fish_config_dir" "$fish_config_dir/conf.d" 2>/dev/null || true
