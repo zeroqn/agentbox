@@ -169,7 +169,7 @@ published GHCR image can be used to extract the CLI artifact without rebuilding
 it locally.
 
 The container image starts an interactive `fish` shell with `starship`
-initialized from `/etc/fish/conf.d/agentbox-starship.fish`, includes the
+initialized from `/home/dev/.config/fish/conf.d/agentbox-starship.fish`, includes the
 `codex` CLI and `tmux` on `PATH`, includes Node.js plus the pinned
 `oh-my-codex` package on `PATH` as `omx`, and runs as uid/gid `1000` with home
 directory `/home/dev`.

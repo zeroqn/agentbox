@@ -71,7 +71,7 @@
             };
           };
 
-          fishConfig = pkgs.writeTextDir "etc/fish/conf.d/agentbox-starship.fish" ''
+          fishConfig = pkgs.writeTextDir "home/dev/.config/fish/conf.d/agentbox-starship.fish" ''
             if status is-interactive
                 starship init fish | source
             end
