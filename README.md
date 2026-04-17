@@ -172,7 +172,7 @@ it locally.
 
 The container image starts an interactive `fish` shell with `starship`
 initialized from `/home/dev/.config/fish/conf.d/agentbox-starship.fish`, includes the
-`codex` CLI and `tmux` on `PATH`, includes Node.js plus the pinned
+`codex` CLI, `curl`, `jq`, and `tmux` on `PATH`, includes Node.js plus the pinned
 `oh-my-codex` package on `PATH` as `omx`, and runs as uid/gid `1000` with home
 directory `/home/dev`.
 
