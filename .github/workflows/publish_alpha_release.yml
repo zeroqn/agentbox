@@ -1,0 +1,79 @@
+name: Publish rolling alpha release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rolling-alpha-release
+  cancel-in-progress: true
+
+jobs:
+  publish-alpha:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build agentbox musl binary
+        run: nix build .#agentbox-musl
+
+      - name: Prepare release artifacts
+        id: prep
+        run: |
+          set -euo pipefail
+
+          asset_name="agentbox-$(uname -m)-unknown-linux-musl"
+          mkdir -p dist
+          install -m 0755 result/bin/agentbox "dist/${asset_name}"
+          sha256sum "dist/${asset_name}" > "dist/${asset_name}.sha256"
+
+          {
+            echo "asset_name=${asset_name}"
+            echo "asset_path=dist/${asset_name}"
+            echo "checksum_path=dist/${asset_name}.sha256"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create or update rolling alpha release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_PATH: ${{ steps.prep.outputs.asset_path }}
+          CHECKSUM_PATH: ${{ steps.prep.outputs.checksum_path }}
+        run: |
+          set -euo pipefail
+
+          cat > release-notes.md <<EOF_NOTES
+          Rolling alpha build from main.
+
+          - Commit: ${GITHUB_SHA}
+          - Commit URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}
+          - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          This single release page is reused on every push to main.
+          The uploaded musl binary asset is replaced in place with the newest build.
+          EOF_NOTES
+
+          if gh release view alpha >/dev/null 2>&1; then
+            gh release edit alpha \
+              --title "alpha" \
+              --notes-file release-notes.md \
+              --prerelease
+          else
+            gh release create alpha \
+              --title "alpha" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --target "${GITHUB_SHA}"
+          fi
+
+          gh release upload alpha \
+            "${ASSET_PATH}" \
+            "${CHECKSUM_PATH}" \
+            --clobber
