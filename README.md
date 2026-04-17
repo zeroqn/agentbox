@@ -64,6 +64,12 @@ Tag pushes publish:
 - `ghcr.io/<repo-owner>/agentbox:<git-tag>`
 - `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
 
+A separate GitHub Actions workflow also keeps a single rolling prerelease named
+`alpha` on the GitHub Releases page for pushes to `main`. That workflow builds
+`.#agentbox-musl`, uploads `agentbox-<runner-arch>-unknown-linux-musl` plus a
+matching `.sha256` file, and replaces those assets in place on each new push so
+there is only one reusable `alpha` release page.
+
 ## Run
 
 Show the CLI help:
