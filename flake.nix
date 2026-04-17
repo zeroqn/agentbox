@@ -250,6 +250,10 @@
           agentboxImageMaxLayers = 7;
           agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
           imageContents = imagePackages ++ [
+            # The generated Codex hook and MCP config reference the raw
+            # oh-my-codex store path directly, so keep that payload in the
+            # image in addition to the /bin symlink tree from codexImageLayer.
+            ohMyCodex
             entrypoint
             fishConfig
             rustMuslPackage
