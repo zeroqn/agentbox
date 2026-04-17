@@ -48,6 +48,23 @@
         let
           ohMyCodexVersion = "0.13.1";
           prebuiltSystem = pkgs.stdenv.hostPlatform.system;
+          nixBuilderGroupId = 30000;
+          nixBuilderCount = 32;
+          nixBuilderUsers = builtins.genList (
+            index:
+            let
+              builderNumber = index + 1;
+            in
+            {
+              name = "nixbld${toString builderNumber}";
+              inherit builderNumber;
+              uid = nixBuilderGroupId + builderNumber;
+            }
+          ) nixBuilderCount;
+          nixBuilderPasswdEntries = pkgs.lib.concatMapStringsSep "\n" (
+            builder:
+            "${builder.name}:x:${toString builder.uid}:${toString nixBuilderGroupId}:Nix build user ${toString builder.builderNumber}:/var/empty:${pkgs.runtimeShell}"
+          ) nixBuilderUsers;
 
           ohMyCodex = pkgs.buildNpmPackage {
             pname = "oh-my-codex";
@@ -230,7 +247,7 @@
             contents = imageRoot;
             includeNixDB = true;
             fakeRootCommands = ''
-              mkdir -p ./etc ./root ./tmp ./workspace ./home/dev/.codex
+              mkdir -p ./etc ./root ./tmp ./var/empty ./workspace ./home/dev/.codex
               chmod 1777 ./tmp
               if [ ! -e ./etc/passwd ]; then
                 printf 'root:x:0:0:root:/root:/bin/sh\n' > ./etc/passwd
@@ -238,6 +255,12 @@
               if [ ! -e ./etc/group ]; then
                 printf 'root:x:0:\n' > ./etc/group
               fi
+              if ! grep -q '^nixbld:' ./etc/group; then
+                printf 'nixbld:x:${toString nixBuilderGroupId}:\n' >> ./etc/group
+              fi
+              cat >> ./etc/passwd <<'EOF'
+              ${nixBuilderPasswdEntries}
+              EOF
               chown -R 1000:1000 ./home/dev ./workspace
             '';
 
