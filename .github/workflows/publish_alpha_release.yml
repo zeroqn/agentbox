@@ -1,4 +1,4 @@
-name: Publish rolling alpha release
+name: Publish rolling and sha release binaries
 
 on:
   push:
@@ -31,6 +31,8 @@ jobs:
           set -euo pipefail
 
           asset_name="agentbox-$(uname -m)-unknown-linux-musl"
+          release_tag="sha-$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
+
           mkdir -p dist
           install -m 0755 result/bin/agentbox "dist/${asset_name}"
           sha256sum "dist/${asset_name}" > "dist/${asset_name}.sha256"
@@ -39,13 +41,10 @@ jobs:
             echo "asset_name=${asset_name}"
             echo "asset_path=dist/${asset_name}"
             echo "checksum_path=dist/${asset_name}.sha256"
+            echo "release_tag=${release_tag}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Create or update rolling alpha release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ASSET_PATH: ${{ steps.prep.outputs.asset_path }}
-          CHECKSUM_PATH: ${{ steps.prep.outputs.checksum_path }}
+      - name: Write release notes
         run: |
           set -euo pipefail
 
@@ -56,9 +55,15 @@ jobs:
           - Commit URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
-          This single release page is reused on every push to main.
-          The uploaded musl binary asset is replaced in place with the newest build.
+          The \`alpha\` prerelease is reused on every push to main.
+          The matching \`${{ steps.prep.outputs.release_tag }}\` prerelease is the commit-addressed binary for this exact commit.
           EOF_NOTES
+
+      - name: Create or update rolling alpha release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
 
           if gh release view alpha >/dev/null 2>&1; then
             gh release edit alpha \
@@ -73,7 +78,66 @@ jobs:
               --target "${GITHUB_SHA}"
           fi
 
+      - name: Create or update immutable sha release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.prep.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file release-notes.md \
+              --prerelease
+          else
+            gh release create "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --target "${GITHUB_SHA}"
+          fi
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_PATH: ${{ steps.prep.outputs.asset_path }}
+          CHECKSUM_PATH: ${{ steps.prep.outputs.checksum_path }}
+          RELEASE_TAG: ${{ steps.prep.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
           gh release upload alpha \
             "${ASSET_PATH}" \
             "${CHECKSUM_PATH}" \
             --clobber
+
+          gh release upload "${RELEASE_TAG}" \
+            "${ASSET_PATH}" \
+            "${CHECKSUM_PATH}" \
+            --clobber
+
+      - name: Prune old sha releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.prep.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t stale_tags < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" |
+              jq -sr '
+                add
+                | map(select(.tag_name | startswith("sha-")))
+                | sort_by(.published_at // .created_at)
+                | reverse
+                | .[20:]
+                | .[].tag_name
+              '
+          )
+
+          for tag in "${stale_tags[@]}"; do
+            if [ -n "${tag}" ] && [ "${tag}" != "${RELEASE_TAG}" ]; then
+              gh release delete "${tag}" --cleanup-tag -y
+            fi
+          done

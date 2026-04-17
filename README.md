@@ -33,9 +33,41 @@ AGENTBOX_DISABLE_AUTO_FISH=1 nix develop
 
 ```bash
 nix build .#agentbox
+nix build .#agentbox-prebuilt
 nix build .#agentbox-musl
 nix build .#container
 ```
+
+`agentbox-prebuilt` installs a published release binary instead of compiling the
+Rust source locally. It is currently pinned only for `x86_64-linux`; use
+`.#agentbox` as the source-build fallback on other systems or after an older
+retained prebuilt release has been pruned.
+
+## Use from another flake
+
+For a downstream NixOS or Home Manager flake that wants the prebuilt binary:
+
+```nix
+{
+  inputs.agentbox.url = "github:zeroqn/agentbox";
+
+  outputs = { self, nixpkgs, agentbox, ... }: {
+    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ({ pkgs, ... }: {
+          environment.systemPackages = [
+            agentbox.packages.${pkgs.system}.agentbox-prebuilt
+          ];
+        })
+      ];
+    };
+  };
+}
+```
+
+If you need a permanent fallback that does not depend on retained release
+artifacts, use `agentbox.packages.${pkgs.system}.agentbox` instead.
 
 ## Publish
 
@@ -64,11 +96,28 @@ Tag pushes publish:
 - `ghcr.io/<repo-owner>/agentbox:<git-tag>`
 - `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
 
-A separate GitHub Actions workflow also keeps a single rolling prerelease named
-`alpha` on the GitHub Releases page for pushes to `main`. That workflow builds
-`.#agentbox-musl`, uploads `agentbox-<runner-arch>-unknown-linux-musl` plus a
-matching `.sha256` file, and replaces those assets in place on each new push so
-there is only one reusable `alpha` release page.
+A separate GitHub Actions workflow also publishes prebuilt `musl` binaries to
+GitHub Releases for pushes to `main`:
+
+- `alpha`: rolling prerelease kept as the latest convenience download
+- `sha-<12-char-commit>`: commit-addressed prerelease for that exact commit
+
+Each release uploads `agentbox-<runner-arch>-unknown-linux-musl` plus a matching
+`.sha256` file. To keep the release list manageable, the workflow retains only
+the most recent 20 `sha-*` prereleases and deletes older ones.
+
+`flake.nix` keeps one pinned prebuilt release tag plus its download hash. Update
+that pin after a new release is published with:
+
+```bash
+nix develop --command ./scripts/update-agentbox-prebuilt.sh
+```
+
+By default the script picks the newest retained `sha-*` release, recomputes the
+binary SRI hash, and rewrites the pinned prebuilt metadata in `flake.nix`. On a
+fresh checkout of this branch, the pin may still point at the rolling `alpha`
+bootstrap release until the first `sha-*` release has been published and the
+update script has been run once.
 
 ## Run
 
@@ -100,6 +149,13 @@ Build a static `musl` binary:
 
 ```bash
 nix build .#agentbox-musl
+./result/bin/agentbox
+```
+
+Build the currently pinned published prebuilt binary:
+
+```bash
+nix build .#agentbox-prebuilt
 ./result/bin/agentbox
 ```
 
