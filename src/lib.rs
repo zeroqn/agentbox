@@ -34,6 +34,8 @@ const SEED_MOUNT_POINT: &str = "/agentbox-nix";
 const INTERACTIVE_SHELL: &str = "fish";
 const NIX_REMOTE_SOCKET: &str = "unix:///nix/var/nix/daemon-socket/socket";
 const SIDECAR_NAME_PREFIX: &str = "agentbox-nix-sidecar";
+const SIDECAR_NAME_SLUG_FALLBACK: &str = "workspace";
+const SIDECAR_NAME_SLUG_MAX_LEN: usize = 32;
 const SIDECAR_SOCKET_PATH: &str = "/nix/var/nix/daemon-socket/socket";
 const SIDECAR_HEALTH_ATTEMPTS: u32 = 30;
 const SIDECAR_HEALTH_DELAY_MS: u64 = 200;
@@ -846,11 +848,46 @@ fn build_sidecar_socket_timeout_error(
 }
 
 fn derive_sidecar_name(cwd: &Path, image_id: &str) -> String {
+    let workspace_slug = derive_sidecar_workspace_slug(cwd);
     let mut hasher = DefaultHasher::new();
     cwd.hash(&mut hasher);
     image_id.hash(&mut hasher);
     let digest = hasher.finish();
-    format!("{SIDECAR_NAME_PREFIX}-{digest:016x}")
+    format!("{SIDECAR_NAME_PREFIX}-{workspace_slug}-{digest:016x}")
+}
+
+fn derive_sidecar_workspace_slug(cwd: &Path) -> String {
+    let workspace_name = cwd
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(SIDECAR_NAME_SLUG_FALLBACK);
+
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+
+    for ch in workspace_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_separator = false;
+        } else if !slug.is_empty() && !last_was_separator {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+
+    let truncated = slug
+        .trim_matches('-')
+        .chars()
+        .take(SIDECAR_NAME_SLUG_MAX_LEN)
+        .collect::<String>();
+    let trimmed = truncated.trim_matches('-');
+
+    if trimmed.is_empty() {
+        SIDECAR_NAME_SLUG_FALLBACK.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
 }
 
 fn inspect_image_id(image: &str) -> Result<String> {

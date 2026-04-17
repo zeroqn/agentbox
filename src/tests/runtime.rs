@@ -101,7 +101,23 @@ fn sidecar_name_is_deterministic_for_same_workspace_and_image_id() {
 
     assert_eq!(first, second);
     assert_ne!(first, third);
-    assert!(first.starts_with("agentbox-nix-sidecar-"));
+    assert!(first.starts_with("agentbox-nix-sidecar-project-"));
+}
+
+#[test]
+fn sidecar_name_sanitizes_workspace_name_into_slug() {
+    let cwd = Path::new("/tmp/My repo.name!");
+    let sidecar_name = derive_sidecar_name(cwd, "sha256:abc123");
+
+    assert!(sidecar_name.starts_with("agentbox-nix-sidecar-my-repo-name-"));
+}
+
+#[test]
+fn sidecar_name_falls_back_when_workspace_name_has_no_slug_chars() {
+    let cwd = Path::new("/tmp/!!!");
+    let sidecar_name = derive_sidecar_name(cwd, "sha256:abc123");
+
+    assert!(sidecar_name.starts_with("agentbox-nix-sidecar-workspace-"));
 }
 
 #[test]

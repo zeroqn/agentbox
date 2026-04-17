@@ -269,7 +269,7 @@ In this mode agentbox:
 3. mounts a project-local merged tree at `.agentbox/nix-merged` with:
    - upperdir: `.agentbox/nix-upper`
    - workdir: `.agentbox/nix-work`
-4. starts/reuses a deterministic sidecar container running `nix-daemon`
+4. starts/reuses a deterministic sidecar container named like `agentbox-nix-sidecar-<repo>-<hash>` running `nix-daemon`
 5. launches the interactive task container with `.agentbox/nix-merged:/nix:ro`
    and `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`
 
