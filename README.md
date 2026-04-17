@@ -86,7 +86,8 @@ now built directly from Nix-provided contents instead of layering on top of an
 upstream container base image, so the published archive no longer inherits the
 many pre-existing layers from `ghcr.io/nixos/nix`. Because it no longer
 inherits the upstream image's multi-user Nix setup, the image build now
-recreates the `nixbld` group and builder users required by `nix-daemon`.
+recreates the `nixbld` group with its builder-user membership and the
+`nixbld<N>` builder users required by `nix-daemon`.
 
 Default branch pushes publish:
 

@@ -61,6 +61,9 @@
               uid = nixBuilderGroupId + builderNumber;
             }
           ) nixBuilderCount;
+          nixBuilderGroupMembers = pkgs.lib.concatMapStringsSep "," (
+            builder: builder.name
+          ) nixBuilderUsers;
           nixBuilderPasswdEntries = pkgs.lib.concatMapStringsSep "\n" (
             builder:
             "${builder.name}:x:${toString builder.uid}:${toString nixBuilderGroupId}:Nix build user ${toString builder.builderNumber}:/var/empty:${pkgs.runtimeShell}"
@@ -274,7 +277,7 @@
                 printf 'root:x:0:\n' > ./etc/group
               fi
               if ! grep -q '^nixbld:' ./etc/group; then
-                printf 'nixbld:x:${toString nixBuilderGroupId}:\n' >> ./etc/group
+                printf 'nixbld:x:${toString nixBuilderGroupId}:${nixBuilderGroupMembers}\n' >> ./etc/group
               fi
               cat >> ./etc/passwd <<'EOF'
               ${nixBuilderPasswdEntries}
