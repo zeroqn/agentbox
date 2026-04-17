@@ -134,6 +134,15 @@
             exec "$@"
           '';
 
+          stableRustToolchainPackages = [
+            pkgs.cargo
+            pkgs.clippy
+            pkgs.rust-analyzer
+            pkgs.rustc
+            pkgs.rustfmt
+            pkgs.rustPlatform.rustLibSrc
+          ];
+
           imagePackages = [
             pkgs.bashInteractive
             pkgs.cacert
@@ -163,7 +172,7 @@
             pkgs.starship
             pkgs.tmux
             pkgs.util-linux
-          ];
+          ] ++ stableRustToolchainPackages;
 
           imagePath = pkgs.lib.makeBinPath imagePackages;
           imageRoot = pkgs.buildEnv {
@@ -283,6 +292,7 @@
                 "NIX_CONFIG=experimental-features = nix-command flakes"
                 "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                "RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}/lib/rustlib/src/rust/library"
               ];
             };
           };
