@@ -212,6 +212,8 @@ caches persist per project without seeding Cargo home contents from the image.
 The interactive `podman run` uses `--userns=keep-id` so the `/workspace`
 bind mount preserves the host ownership mapping instead of appearing as
 `root:root` in the container.
+It also sets the container hostname to `<sanitized-current-directory>-agentbox`
+so the shell prompt reflects the workspace name more clearly.
 
 The image leaves the interactive process uid/gid to Podman `--userns=keep-id`
 instead of hardcoding `1000:1000` in the image config. Its entrypoint then uses

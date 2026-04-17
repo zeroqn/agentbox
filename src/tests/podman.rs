@@ -7,6 +7,7 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     let runtime = NixRuntime::Seeded(root);
     let args = build_podman_args(
         DEFAULT_IMAGE,
+        "project-agentbox",
         "/tmp/project:/workspace",
         "/home/alice/.codex:/home/dev/.codex",
         "/tmp/project/.agentbox/cargo:/home/dev/.cargo",
@@ -15,6 +16,8 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     .expect("podman args should build");
     assert_eq!(args[3], "--userns");
     assert_eq!(args[4], "keep-id");
+    assert!(args.contains(&"--hostname".to_owned()));
+    assert!(args.contains(&"project-agentbox".to_owned()));
     assert!(args.contains(&"/tmp/project/.agentbox/nix/store:/nix/store".to_owned()));
     assert!(args.contains(&"/tmp/project/.agentbox/nix/var/nix:/nix/var/nix".to_owned()));
     assert!(args.contains(&"/tmp/project/.agentbox/nix/var/log/nix:/nix/var/log/nix".to_owned()));
@@ -36,6 +39,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     });
     let args = build_podman_args(
         DEFAULT_IMAGE,
+        "project-agentbox",
         "/tmp/project:/workspace",
         "/home/alice/.codex:/home/dev/.codex",
         "/tmp/project/.agentbox/cargo:/home/dev/.cargo",
@@ -44,6 +48,8 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     .expect("podman args should build");
 
     assert!(args.contains(&"/tmp/project/.agentbox/nix-merged:/nix:ro".to_owned()));
+    assert!(args.contains(&"--hostname".to_owned()));
+    assert!(args.contains(&"project-agentbox".to_owned()));
     assert!(args.contains(&"--env".to_owned()));
     assert!(args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
     assert!(args.contains(&"--label".to_owned()));
@@ -55,4 +61,28 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     )));
     assert!(!args.contains(&"/tmp/project/.agentbox/nix/store:/nix/store".to_owned()));
     assert!(!args.contains(&"/tmp/project/.agentbox/nix/var/nix:/nix/var/nix".to_owned()));
+}
+
+#[test]
+fn task_hostname_uses_current_directory_name() {
+    assert_eq!(
+        derive_task_hostname(std::path::Path::new("/tmp/project")),
+        "project-agentbox"
+    );
+}
+
+#[test]
+fn task_hostname_sanitizes_current_directory_name() {
+    assert_eq!(
+        derive_task_hostname(std::path::Path::new("/tmp/My repo.name!")),
+        "my-repo-name-agentbox"
+    );
+}
+
+#[test]
+fn task_hostname_falls_back_when_directory_name_has_no_slug_chars() {
+    assert_eq!(
+        derive_task_hostname(std::path::Path::new("/tmp/!!!")),
+        "workspace-agentbox"
+    );
 }

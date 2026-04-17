@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::env;
+use std::path::Path;
 use std::process::{ExitCode, Stdio};
 
 mod cli;
@@ -67,6 +68,7 @@ const NIX_REMOTE_SOCKET: &str = "unix:///nix/var/nix/daemon-socket/socket";
 const SIDECAR_NAME_PREFIX: &str = "agentbox-nix-sidecar";
 const SIDECAR_NAME_SLUG_FALLBACK: &str = "workspace";
 const SIDECAR_NAME_SLUG_MAX_LEN: usize = 32;
+const TASK_HOSTNAME_SUFFIX: &str = "agentbox";
 const SIDECAR_SOCKET_PATH: &str = "/nix/var/nix/daemon-socket/socket";
 const SIDECAR_HEALTH_ATTEMPTS: u32 = 30;
 const SIDECAR_HEALTH_DELAY_MS: u64 = 200;
@@ -100,6 +102,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .canonicalize()
         .context("failed to canonicalize current directory")?;
     let image = resolve_image(cli.image.as_deref(), cli.pull_latest)?;
+    let task_hostname = derive_task_hostname(&cwd);
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
     let codex_mount = prepare_host_codex_mount()?;
     let cargo_mount = prepare_project_cargo_mount(&cwd)?;
@@ -117,6 +120,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let status = run_podman(
         build_podman_args(
             &image,
+            &task_hostname,
             &workspace_mount,
             &codex_mount,
             &cargo_mount,
@@ -139,6 +143,44 @@ fn run(cli: Cli) -> Result<ExitCode> {
 
     let code = status.code().unwrap_or(1);
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+}
+
+fn derive_task_hostname(cwd: &Path) -> String {
+    format!("{}-{TASK_HOSTNAME_SUFFIX}", derive_workspace_slug(cwd))
+}
+
+fn derive_workspace_slug(cwd: &Path) -> String {
+    let workspace_name = cwd
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(SIDECAR_NAME_SLUG_FALLBACK);
+
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+
+    for ch in workspace_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_separator = false;
+        } else if !slug.is_empty() && !last_was_separator {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+
+    let truncated = slug
+        .trim_matches('-')
+        .chars()
+        .take(SIDECAR_NAME_SLUG_MAX_LEN)
+        .collect::<String>();
+    let trimmed = truncated.trim_matches('-');
+
+    if trimmed.is_empty() {
+        SIDECAR_NAME_SLUG_FALLBACK.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
 }
 
 #[cfg(test)]

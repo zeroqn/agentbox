@@ -31,6 +31,7 @@ pub(crate) fn pull_image(image: &str) -> Result<()> {
 
 pub(crate) fn build_podman_args(
     image: &str,
+    hostname: &str,
     workspace_mount: &str,
     codex_mount: &str,
     cargo_mount: &str,
@@ -44,6 +45,8 @@ pub(crate) fn build_podman_args(
         "keep-id".to_owned(),
         "--workdir".to_owned(),
         CONTAINER_WORKDIR.to_owned(),
+        "--hostname".to_owned(),
+        hostname.to_owned(),
         "--volume".to_owned(),
         workspace_mount.to_owned(),
         "--volume".to_owned(),

@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::{
-    build_podman_unshare_args, run_podman, run_podman_output, NIX_STORE_DIR, SIDECAR_NAME_PREFIX,
-    SIDECAR_NAME_SLUG_FALLBACK, SIDECAR_NAME_SLUG_MAX_LEN,
+    build_podman_unshare_args, derive_workspace_slug, run_podman, run_podman_output, NIX_STORE_DIR,
+    SIDECAR_NAME_PREFIX,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,46 +41,12 @@ impl PodmanImageMountMode {
 }
 
 pub(crate) fn derive_sidecar_name(cwd: &Path, image_id: &str) -> String {
-    let workspace_slug = derive_sidecar_workspace_slug(cwd);
+    let workspace_slug = derive_workspace_slug(cwd);
     let mut hasher = DefaultHasher::new();
     cwd.hash(&mut hasher);
     image_id.hash(&mut hasher);
     let digest = hasher.finish();
     format!("{SIDECAR_NAME_PREFIX}-{workspace_slug}-{digest:016x}")
-}
-
-fn derive_sidecar_workspace_slug(cwd: &Path) -> String {
-    let workspace_name = cwd
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(SIDECAR_NAME_SLUG_FALLBACK);
-
-    let mut slug = String::new();
-    let mut last_was_separator = false;
-
-    for ch in workspace_name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch.to_ascii_lowercase());
-            last_was_separator = false;
-        } else if !slug.is_empty() && !last_was_separator {
-            slug.push('-');
-            last_was_separator = true;
-        }
-    }
-
-    let truncated = slug
-        .trim_matches('-')
-        .chars()
-        .take(SIDECAR_NAME_SLUG_MAX_LEN)
-        .collect::<String>();
-    let trimmed = truncated.trim_matches('-');
-
-    if trimmed.is_empty() {
-        SIDECAR_NAME_SLUG_FALLBACK.to_owned()
-    } else {
-        trimmed.to_owned()
-    }
 }
 
 pub(crate) fn inspect_image_id(image: &str) -> Result<String> {
