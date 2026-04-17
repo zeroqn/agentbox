@@ -182,6 +182,7 @@
             pkgs.codex
             pkgs.coreutils
             pkgs.curl
+            pkgs.file
             pkgs.fish
             pkgs.neovim
             pkgs.ripgrep
@@ -192,6 +193,7 @@
             pkgs.gitMinimal
             pkgs.gnugrep
             pkgs.gnused
+            pkgs.gnutar
             pkgs.jq
             pkgs.less
             pkgs.nix
