@@ -212,6 +212,7 @@
             pkgs.procps
             pkgs.findutils
             pkgs.gitMinimal
+            pkgs.gawk
             pkgs.gnugrep
             pkgs.gnused
             pkgs.gnutar
