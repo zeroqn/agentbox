@@ -139,6 +139,7 @@
             pkgs.cacert
             pkgs.codex
             pkgs.coreutils
+            pkgs.curl
             pkgs.fish
             pkgs.neovim
             pkgs.ripgrep
@@ -149,6 +150,7 @@
             pkgs.gitMinimal
             pkgs.gnugrep
             pkgs.gnused
+            pkgs.jq
             pkgs.nix
             pkgs.python3
             pkgs.diffutils
