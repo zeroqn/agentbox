@@ -91,10 +91,6 @@
             };
           };
 
-          homeSkeleton = pkgs.runCommand "agentbox-home-skeleton" { } ''
-            mkdir -p "$out/home/dev/.codex"
-          '';
-
           fishConfig = pkgs.writeTextDir "share/agentbox/fish/conf.d/agentbox-starship.fish" ''
             if status is-interactive
                 starship init fish | source
@@ -214,7 +210,6 @@
             name = "agentbox-image-root";
             paths = imagePackages ++ [
               entrypoint
-              homeSkeleton
               fishConfig
               rustMuslPackage
             ];
@@ -300,7 +295,7 @@
             contents = imageRoot;
             includeNixDB = true;
             fakeRootCommands = ''
-              mkdir -p ./etc ./root ./tmp ./var/empty ./workspace
+              mkdir -p ./etc ./home/dev/.codex ./root ./tmp ./var/empty ./workspace
               chmod 1777 ./tmp
               if [ ! -e ./etc/passwd ]; then
                 printf 'root:x:0:0:root:/root:/bin/sh\n' > ./etc/passwd
