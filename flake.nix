@@ -151,8 +151,10 @@
             pkgs.gnugrep
             pkgs.gnused
             pkgs.jq
+            pkgs.less
             pkgs.nix
             pkgs.python3
+            pkgs.python3Packages.pyyaml
             pkgs.diffutils
             pkgs.bun
             pkgs.nodejs
