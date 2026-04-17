@@ -95,7 +95,7 @@
             mkdir -p "$out/home/dev/.codex"
           '';
 
-          fishConfig = pkgs.writeTextDir "home/dev/.config/fish/conf.d/agentbox-starship.fish" ''
+          fishConfig = pkgs.writeTextDir "share/agentbox/fish/conf.d/agentbox-starship.fish" ''
             if status is-interactive
                 starship init fish | source
             end
@@ -116,6 +116,24 @@
             }
             trap cleanup EXIT
 
+            materialize_writable_dir() {
+              path="$1"
+              shadow="$2"
+
+              if [ ! -e "$path" ]; then
+                mkdir -p "$path"
+                return 0
+              fi
+
+              if [ -L "$path" ] || [ ! -w "$path" ]; then
+                mkdir -p "$shadow"
+                cp -RL "$path/." "$shadow/" 2>/dev/null || true
+                rm -rf "$path"
+                mkdir -p "$path"
+                cp -RL "$shadow/." "$path/" 2>/dev/null || true
+              fi
+            }
+
             cat /etc/passwd > "$tmpdir/passwd"
             cat /etc/group > "$tmpdir/group"
             chmod u+w "$tmpdir/passwd" "$tmpdir/group"
@@ -128,6 +146,18 @@
               export LD_PRELOAD="${pkgs.nss_wrapper}/lib/libnss_wrapper.so:$LD_PRELOAD"
             else
               export LD_PRELOAD="${pkgs.nss_wrapper}/lib/libnss_wrapper.so"
+            fi
+
+            home_config_dir="$HOME/.config"
+            fish_config_dir="$home_config_dir/fish"
+            bundled_fish_conf="${fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
+
+            materialize_writable_dir "$home_config_dir" "$tmpdir/home-config"
+            materialize_writable_dir "$fish_config_dir" "$tmpdir/fish-config"
+            mkdir -p "$fish_config_dir/conf.d"
+            chmod u+w "$fish_config_dir" "$fish_config_dir/conf.d" 2>/dev/null || true
+            if [ ! -e "$fish_config_dir/conf.d/agentbox-starship.fish" ]; then
+              cp "$bundled_fish_conf" "$fish_config_dir/conf.d/agentbox-starship.fish"
             fi
 
             if [ "$#" -eq 0 ]; then
