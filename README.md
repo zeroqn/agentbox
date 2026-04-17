@@ -180,7 +180,7 @@ it locally.
 The container image starts an interactive `fish` shell with `starship`
 initialized from a bundled snippet that the entrypoint copies into the
 runtime-writable `/home/dev/.config/fish/conf.d/agentbox-starship.fish` path at startup, includes the
-`codex` CLI, `curl`, `file`, `jq`, `less`, `tar`, and `tmux` on `PATH`, includes Python 3 with
+`codex` CLI, `curl`, `file`, `hostname`, `jq`, `less`, `tar`, and `tmux` on `PATH`, includes Python 3 with
 PyYAML available for imports, includes Node.js plus the pinned `oh-my-codex`
 package on `PATH` as `omx`, and now also includes the stable nixpkgs Rust
 toolchain directly in the image (`cargo`, `rustc`, `clippy`, `rustfmt`,
