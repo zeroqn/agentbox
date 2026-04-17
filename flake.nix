@@ -11,6 +11,21 @@
       nixpkgs,
     }:
     let
+      agentboxVersion = "0.1.0";
+      agentboxPrebuiltRelease = {
+        owner = "zeroqn";
+        repo = "agentbox";
+        # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
+        # first immutable sha-* release is published to pin this to that tag.
+        tag = "alpha";
+        systems = {
+          x86_64-linux = {
+            asset = "agentbox-x86_64-unknown-linux-musl";
+            hash = "sha256-OIxKOjAuceSfHYn8H/yfdp/NQoPXgEYIGwUef1Ii8YI=";
+          };
+        };
+      };
+
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -32,6 +47,7 @@
         pkgs:
         let
           ohMyCodexVersion = "0.13.1";
+          prebuiltSystem = pkgs.stdenv.hostPlatform.system;
 
           ohMyCodex = pkgs.buildNpmPackage {
             pname = "oh-my-codex";
@@ -137,7 +153,7 @@
 
           rustPackage = pkgs.rustPlatform.buildRustPackage {
             pname = "agentbox";
-            version = "0.1.0";
+            version = agentboxVersion;
             src = self;
 
             cargoLock = {
@@ -155,7 +171,7 @@
 
           rustMuslPackage = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
             pname = "agentbox";
-            version = "0.1.0";
+            version = agentboxVersion;
             src = self;
 
             cargoLock = {
@@ -164,6 +180,48 @@
 
             CARGO_BUILD_TARGET = muslTarget;
           };
+
+          prebuiltAgentbox =
+            if builtins.hasAttr prebuiltSystem agentboxPrebuiltRelease.systems then
+              let
+                assetInfo = builtins.getAttr prebuiltSystem agentboxPrebuiltRelease.systems;
+                releaseUrl =
+                  "https://github.com/${agentboxPrebuiltRelease.owner}/${agentboxPrebuiltRelease.repo}/releases/download/${agentboxPrebuiltRelease.tag}/${assetInfo.asset}";
+              in
+              pkgs.stdenvNoCC.mkDerivation {
+                pname = "agentbox";
+                version = "${agentboxVersion}-prebuilt-${agentboxPrebuiltRelease.tag}";
+                src = pkgs.fetchurl {
+                  url = releaseUrl;
+                  hash = assetInfo.hash;
+                };
+                dontUnpack = true;
+
+                installPhase = ''
+                  runHook preInstall
+                  install -Dm755 "$src" "$out/bin/agentbox"
+                  runHook postInstall
+                '';
+
+                passthru = {
+                  inherit releaseUrl;
+                  releaseTag = agentboxPrebuiltRelease.tag;
+                };
+
+                meta = {
+                  description = "Prebuilt agentbox binary fetched from a published GitHub release asset";
+                  homepage = "https://github.com/${agentboxPrebuiltRelease.owner}/${agentboxPrebuiltRelease.repo}";
+                  license = pkgs.lib.licenses.mit;
+                  mainProgram = "agentbox";
+                  platforms = builtins.attrNames agentboxPrebuiltRelease.systems;
+                  sourceProvenance = [ pkgs.lib.sourceTypes.binaryNativeCode ];
+                };
+              }
+            else
+              throw ''
+                agentbox-prebuilt is not pinned for ${prebuiltSystem}.
+                Supported systems: ${pkgs.lib.concatStringsSep ", " (builtins.attrNames agentboxPrebuiltRelease.systems)}
+              '';
 
           agentboxImage = pkgs.dockerTools.buildLayeredImage {
             name = "localhost/agentbox";
@@ -201,6 +259,7 @@
           default = rustPackage;
           oh-my-codex = ohMyCodex;
           agentbox = rustPackage;
+          agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustMuslPackage;
           container = agentboxImage;
         }
