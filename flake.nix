@@ -172,18 +172,43 @@
             pkgs.rustPlatform.rustLibSrc
           ];
 
-          imagePackages = [
+          rustToolchainImageLayer = pkgs.buildEnv {
+            name = "agentbox-rust-toolchain-layer";
+            paths = stableRustToolchainPackages;
+            pathsToLink = [ "/" ];
+          };
+
+          toolingImagePackages = [
+            pkgs.bun
+            pkgs.fzf
+            pkgs.gh
+            pkgs.neovim
+            pkgs.starship
+          ];
+          toolingImageLayer = pkgs.buildEnv {
+            name = "agentbox-tooling-layer";
+            paths = toolingImagePackages;
+            pathsToLink = [ "/" ];
+          };
+
+          codexImagePackages = [
+            pkgs.codex
+            ohMyCodex
+          ];
+          codexImageLayer = pkgs.buildEnv {
+            name = "agentbox-codex-layer";
+            paths = codexImagePackages;
+            pathsToLink = [ "/" ];
+          };
+
+          baseImagePackages = [
             pkgs.bashInteractive
             pkgs.cacert
-            pkgs.codex
             pkgs.coreutils
             pkgs.curl
             pkgs.file
             pkgs.fish
-            pkgs.neovim
             pkgs.ripgrep
-            pkgs.fzf
-            pkgs.gh
             pkgs.procps
             pkgs.findutils
             pkgs.gitMinimal
@@ -196,25 +221,76 @@
             pkgs.python3
             pkgs.python3Packages.pyyaml
             pkgs.diffutils
-            pkgs.bun
             pkgs.nodejs
             pkgs.nss_wrapper
-            ohMyCodex
-            pkgs.starship
             pkgs.tmux
             pkgs.util-linux
-          ] ++ stableRustToolchainPackages;
+          ];
 
+          imagePackages = baseImagePackages ++ [
+            rustToolchainImageLayer
+            toolingImageLayer
+            codexImageLayer
+          ];
           imagePath = pkgs.lib.makeBinPath imagePackages;
-          imageRoot = pkgs.buildEnv {
-            name = "agentbox-image-root";
-            paths = imagePackages ++ [
-              entrypoint
-              fishConfig
-              rustMuslPackage
-            ];
-            pathsToLink = [ "/" ];
-          };
+          agentboxImageMaxLayers = 7;
+          agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
+          imageContents = imagePackages ++ [
+            entrypoint
+            fishConfig
+            rustMuslPackage
+          ];
+          codexLayerPaths = [ (toString codexImageLayer) ];
+          toolingLayerPaths = [ (toString toolingImageLayer) ];
+          rustLayerPaths = [ (toString rustToolchainImageLayer) ];
+          agentboxImageLayeringPipeline = [
+            [
+              "split_paths"
+              codexLayerPaths
+            ]
+            [
+              "over"
+              "rest"
+              [
+                "pipe"
+                [
+                  [
+                    "split_paths"
+                    toolingLayerPaths
+                  ]
+                  [
+                    "over"
+                    "rest"
+                    [
+                      "pipe"
+                      [
+                        [
+                          "split_paths"
+                          rustLayerPaths
+                        ]
+                        [
+                          "flatten"
+                        ]
+                      ]
+                    ]
+                  ]
+                  [
+                    "flatten"
+                  ]
+                ]
+              ]
+            ]
+            [
+              "flatten"
+            ]
+            [
+              "limit_layers"
+              agentboxImageStoreLayers
+            ]
+            [
+              "reverse"
+            ]
+          ];
 
           rustPackage = pkgs.rustPlatform.buildRustPackage {
             pname = "agentbox";
@@ -291,9 +367,10 @@
           agentboxImage = pkgs.dockerTools.buildLayeredImage {
             name = "localhost/agentbox";
             tag = "latest";
-            maxLayers = 2;
-            contents = imageRoot;
+            maxLayers = agentboxImageMaxLayers;
+            contents = imageContents;
             includeNixDB = true;
+            layeringPipeline = agentboxImageLayeringPipeline;
             fakeRootCommands = ''
               mkdir -p ./etc ./home/dev/.codex ./root ./tmp ./var/empty ./workspace
               chmod 1777 ./tmp
