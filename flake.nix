@@ -239,6 +239,7 @@
             pkgs.nss_wrapper
             pkgs.tmux
             pkgs.util-linux
+            pkgs.which
           ];
 
           imagePackages = baseImagePackages ++ [
