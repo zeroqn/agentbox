@@ -174,8 +174,11 @@ The container image starts an interactive `fish` shell with `starship`
 initialized from `/home/dev/.config/fish/conf.d/agentbox-starship.fish`, includes the
 `codex` CLI, `curl`, `jq`, `less`, and `tmux` on `PATH`, includes Python 3 with
 PyYAML available for imports, includes Node.js plus the pinned `oh-my-codex`
-package on `PATH` as `omx`, and runs as uid/gid `1000` with home directory
-`/home/dev`.
+package on `PATH` as `omx`, and now also includes the stable nixpkgs Rust
+toolchain directly in the image (`cargo`, `rustc`, `clippy`, `rustfmt`,
+`rust-analyzer`, and Rust standard-library sources via `RUST_SRC_PATH`) without
+requiring the optional host `/nix` overlay. The image runs as uid/gid `1000`
+with home directory `/home/dev`.
 
 `oh-my-codex` is packaged into the image through Nix rather than installed at
 runtime with `npm install -g`, so the image stays reproducible. Its pinned
