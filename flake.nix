@@ -188,11 +188,6 @@
             pkgs.gcc
             pkgs.musl
           ];
-          cToolchainImageLayer = pkgs.buildEnv {
-            name = "agentbox-c-toolchain-layer";
-            paths = cToolchainImagePackages;
-            pathsToLink = [ "/" ];
-          };
 
           rustToolchainImageLayer = pkgs.buildEnv {
             name = "agentbox-rust-toolchain-layer";
@@ -254,12 +249,14 @@
             pkgs.which
           ];
 
-          imagePackages = baseImagePackages ++ [
-            cToolchainImageLayer
-            rustToolchainImageLayer
-            toolingImageLayer
-            codexImageLayer
-          ];
+          imagePackages =
+            baseImagePackages
+            ++ cToolchainImagePackages
+            ++ [
+              rustToolchainImageLayer
+              toolingImageLayer
+              codexImageLayer
+            ];
           imagePath = pkgs.lib.makeBinPath imagePackages;
           agentboxImageMaxLayers = 7;
           agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
@@ -274,7 +271,7 @@
           ];
           codexLayerPaths = [ (toString codexImageLayer) ];
           toolingLayerPaths = [ (toString toolingImageLayer) ];
-          cToolchainLayerPaths = [ (toString cToolchainImageLayer) ];
+          cToolchainLayerPaths = builtins.map toString cToolchainImagePackages;
           rustLayerPaths = [ (toString rustToolchainImageLayer) ];
           agentboxImageLayeringPipeline = [
             [
