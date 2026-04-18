@@ -183,6 +183,17 @@
             pkgs.rustPlatform.rustLibSrc
           ];
 
+          cToolchainImagePackages = [
+            pkgs.clang
+            pkgs.gcc
+            pkgs.musl
+          ];
+          cToolchainImageLayer = pkgs.buildEnv {
+            name = "agentbox-c-toolchain-layer";
+            paths = cToolchainImagePackages;
+            pathsToLink = [ "/" ];
+          };
+
           rustToolchainImageLayer = pkgs.buildEnv {
             name = "agentbox-rust-toolchain-layer";
             paths = stableRustToolchainPackages;
@@ -244,6 +255,7 @@
           ];
 
           imagePackages = baseImagePackages ++ [
+            cToolchainImageLayer
             rustToolchainImageLayer
             toolingImageLayer
             codexImageLayer
@@ -262,6 +274,7 @@
           ];
           codexLayerPaths = [ (toString codexImageLayer) ];
           toolingLayerPaths = [ (toString toolingImageLayer) ];
+          cToolchainLayerPaths = [ (toString cToolchainImageLayer) ];
           rustLayerPaths = [ (toString rustToolchainImageLayer) ];
           agentboxImageLayeringPipeline = [
             [
@@ -287,6 +300,22 @@
                         [
                           "split_paths"
                           rustLayerPaths
+                        ]
+                        [
+                          "over"
+                          "rest"
+                          [
+                            "pipe"
+                            [
+                              [
+                                "split_paths"
+                                cToolchainLayerPaths
+                              ]
+                              [
+                                "flatten"
+                              ]
+                            ]
+                          ]
                         ]
                         [
                           "flatten"

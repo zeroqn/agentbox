@@ -83,7 +83,8 @@ interactive shell environment.
 The repo-built container image is emitted with a small, explicit layer budget
 (`maxLayers = 7`) to keep local loads reasonable while still improving layer
 reuse. The image now uses a custom layer pipeline that keeps the stable Rust
-toolchain in an earlier reusable store layer, moves `bun`, `fzf`, `gh`,
+toolchain in an earlier reusable store layer, keeps `gcc`, `musl`, and
+`clang` in an even lower reusable C toolchain layer, moves `bun`, `fzf`, `gh`,
 `neovim`, and `starship` into a dedicated higher tooling layer, and pushes
 `codex` plus `oh-my-codex` into the last store layer, so Codex and
 shell-tooling updates do not force the earlier toolchain-heavy layers to
@@ -185,9 +186,9 @@ user config, includes the `codex` CLI, `curl`, `file`, `gzip`, `hostname`, `jq`,
 PyYAML available for imports, includes Node.js plus the pinned `oh-my-codex`
 package on `PATH` as `omx`, and now also includes the stable nixpkgs Rust
 toolchain directly in the image (`cargo`, `rustc`, `clippy`, `rustfmt`,
-`rust-analyzer`, and Rust standard-library sources via `RUST_SRC_PATH`) without
-requiring the optional host `/nix` overlay. The image runs as uid/gid `1000`
-with home directory `/home/dev`.
+`rust-analyzer`, and Rust standard-library sources via `RUST_SRC_PATH`) plus
+`gcc`, `musl`, and `clang` without requiring the optional host `/nix` overlay.
+The image runs as uid/gid `1000` with home directory `/home/dev`.
 
 `oh-my-codex` is packaged into the image through Nix rather than installed at
 runtime with `npm install -g`, so the image stays reproducible. Its pinned
