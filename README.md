@@ -81,14 +81,15 @@ usable as a distribution source for the host CLI binary in addition to the
 interactive shell environment.
 
 The repo-built container image is emitted with a small, explicit layer budget
-(`maxLayers = 7`) to keep local loads reasonable while still improving layer
+(`maxLayers = 9`) to keep local loads reasonable while still improving layer
 reuse. The image now uses a custom layer pipeline that keeps the stable Rust
 toolchain in an earlier reusable store layer, keeps `gcc`, `musl`, and
-`clang` in an even lower reusable C toolchain layer, moves `bun`, `fzf`, `gh`,
-`neovim`, and `starship` into a dedicated higher tooling layer, and pushes
-`codex` plus `oh-my-codex` into the last store layer, so Codex and
-shell-tooling updates do not force the earlier toolchain-heavy layers to
-churn. The image is built
+`clang` in an even lower reusable C toolchain layer, groups `nodejs`,
+`python3`, `pip`, `PyYAML`, and `uv` into a dynamic-language toolchain layer
+above Rust, moves `bun`, `fzf`, `gh`, `neovim`, and `starship` into a
+dedicated higher tooling layer, and pushes `codex` plus `oh-my-codex` into the
+last store layer, so Codex and shell-tooling updates do not force the earlier
+toolchain-heavy layers to churn. The image is built
 directly from Nix-provided contents instead of layering on top of an upstream
 container base image, so the published archive no longer inherits the many
 pre-existing layers from `ghcr.io/nixos/nix`. Because it no longer inherits the
