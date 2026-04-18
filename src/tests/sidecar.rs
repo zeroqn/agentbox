@@ -3,20 +3,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[test]
-fn sidecar_paths_are_project_local() {
-    let paths = SidecarPaths::new(Path::new("/tmp/project"));
+fn sidecar_paths_use_resolved_state_root() {
+    let paths = SidecarPaths::new(Path::new("/tmp/state/agentbox/project"));
     assert_eq!(
         paths.upper_dir,
-        Path::new("/tmp/project/.agentbox/nix-upper")
+        Path::new("/tmp/state/agentbox/project/nix-upper")
     );
-    assert_eq!(paths.work_dir, Path::new("/tmp/project/.agentbox/nix-work"));
+    assert_eq!(
+        paths.work_dir,
+        Path::new("/tmp/state/agentbox/project/nix-work")
+    );
     assert_eq!(
         paths.merged_dir,
-        Path::new("/tmp/project/.agentbox/nix-merged")
+        Path::new("/tmp/state/agentbox/project/nix-merged")
     );
     assert_eq!(
         paths.state_file,
-        Path::new("/tmp/project/.agentbox/nix-sidecar.state")
+        Path::new("/tmp/state/agentbox/project/nix-sidecar.state")
     );
 }
 
@@ -106,7 +109,7 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
     let args = build_sidecar_podman_args(
         DEFAULT_IMAGE,
         "agentbox-nix-sidecar-abc",
-        "/tmp/project/.agentbox/nix-merged:/nix",
+        "/tmp/state/agentbox/project/nix-merged:/nix",
     );
 
     assert_eq!(args[0], "run");
@@ -117,7 +120,7 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
     assert!(args.contains(&"--user".to_owned()));
     assert!(args.contains(&"0:0".to_owned()));
     assert!(args.contains(&"--volume".to_owned()));
-    assert!(args.contains(&"/tmp/project/.agentbox/nix-merged:/nix".to_owned()));
+    assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix".to_owned()));
     assert_eq!(args[args.len() - 3], "bash");
     assert_eq!(args[args.len() - 2], "-lc");
     assert!(args[args.len() - 1].contains("nix-daemon --daemon"));
@@ -125,12 +128,14 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
 
 #[test]
 fn build_socket_ping_podman_args_targets_nix_remote_socket() {
-    let args =
-        build_socket_ping_podman_args(DEFAULT_IMAGE, "/tmp/project/.agentbox/nix-merged:/nix:ro");
+    let args = build_socket_ping_podman_args(
+        DEFAULT_IMAGE,
+        "/tmp/state/agentbox/project/nix-merged:/nix:ro",
+    );
 
     assert!(args.contains(&"--userns".to_owned()));
     assert!(args.contains(&"keep-id".to_owned()));
-    assert!(args.contains(&"/tmp/project/.agentbox/nix-merged:/nix:ro".to_owned()));
+    assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix:ro".to_owned()));
     assert_eq!(
         args[args.len() - 1],
         format!("nix store ping --store {NIX_REMOTE_SOCKET}")
@@ -139,9 +144,9 @@ fn build_socket_ping_podman_args_targets_nix_remote_socket() {
 
 #[test]
 fn sidecar_socket_timeout_error_includes_auto_cleanup_and_log_tail() {
-    let merged_dir = Path::new("/tmp/project/.agentbox/nix-merged");
+    let merged_dir = Path::new("/tmp/state/agentbox/project/nix-merged");
     let cleanup_outcome = SidecarStartupCleanupOutcome {
-        summary: "removed sidecar 'agentbox-nix-sidecar-abc' (or it was already absent); cleaned merged mount '/tmp/project/.agentbox/nix-merged'".to_owned(),
+        summary: "removed sidecar 'agentbox-nix-sidecar-abc' (or it was already absent); cleaned merged mount '/tmp/state/agentbox/project/nix-merged'".to_owned(),
         manual_merged_cleanup_required: false,
     };
     let diagnostics = SidecarStartupDiagnostics {
@@ -160,6 +165,7 @@ fn sidecar_socket_timeout_error_includes_auto_cleanup_and_log_tail() {
     );
 
     assert!(message.contains("Automatic cleanup completed"));
+    assert!(message.contains("/tmp/state/agentbox/project/nix-merged"));
     assert!(message.contains("recent sidecar logs:\ndaemon booting\nready"));
     assert!(message.contains("sidecar state: running=false status=exited exit_code=1"));
     assert!(message.contains("socket probe failure: probe exited with status 1"));
@@ -168,7 +174,7 @@ fn sidecar_socket_timeout_error_includes_auto_cleanup_and_log_tail() {
 
 #[test]
 fn sidecar_socket_timeout_error_requests_manual_cleanup_when_auto_cleanup_fails() {
-    let merged_dir = Path::new("/tmp/project/.agentbox/nix-merged");
+    let merged_dir = Path::new("/tmp/state/agentbox/project/nix-merged");
     let cleanup_outcome = SidecarStartupCleanupOutcome {
         summary: "failed to remove sidecar 'agentbox-nix-sidecar-abc': boom".to_owned(),
         manual_merged_cleanup_required: true,
@@ -253,7 +259,7 @@ fn build_podman_image_unmount_args_supports_unshare_fallback_mode() {
 #[test]
 fn sidecar_state_round_trip_via_state_file() {
     let dir = tempfile::tempdir().expect("tempdir should be created");
-    let paths = SidecarPaths::new(dir.path());
+    let paths = SidecarPaths::new(&dir.path().join("state").join("agentbox").join("project"));
     let state = SidecarState {
         image: DEFAULT_IMAGE.to_owned(),
         image_id: "sha256:abc123".to_owned(),
@@ -277,7 +283,7 @@ fn sidecar_state_round_trip_via_state_file() {
 #[test]
 fn sidecar_state_without_mount_mode_defaults_to_direct() {
     let dir = tempfile::tempdir().expect("tempdir should be created");
-    let paths = SidecarPaths::new(dir.path());
+    let paths = SidecarPaths::new(&dir.path().join("state").join("agentbox").join("project"));
     fs::create_dir_all(
         paths
             .state_file
@@ -300,7 +306,7 @@ fn sidecar_state_without_mount_mode_defaults_to_direct() {
 #[test]
 fn stale_incomplete_sidecar_state_is_auto_cleared() {
     let dir = tempfile::tempdir().expect("tempdir should be created");
-    let paths = SidecarPaths::new(dir.path());
+    let paths = SidecarPaths::new(&dir.path().join("state").join("agentbox").join("project"));
     fs::create_dir_all(
         paths
             .state_file

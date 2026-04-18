@@ -9,6 +9,7 @@ mod mounts;
 mod nix_root;
 mod podman;
 mod sidecar;
+mod state;
 
 pub(crate) use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
 pub(crate) use mounts::{
@@ -21,6 +22,7 @@ pub(crate) use podman::{
     run_podman_capture, run_podman_output,
 };
 pub(crate) use sidecar::{cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarNixRuntime};
+pub(crate) use state::resolve_state_layout;
 
 #[cfg(test)]
 pub(crate) use cli::{
@@ -41,11 +43,15 @@ pub(crate) use sidecar::{
     resolve_sidecar_lowerdir, write_sidecar_state, PodmanImageMountMode, SidecarPaths,
     SidecarStartupCleanupOutcome, SidecarStartupDiagnostics, SidecarState,
 };
+#[cfg(test)]
+pub(crate) use state::{
+    default_config_path, default_state_location_root, parse_state_location_override,
+    resolve_state_layout_from_env,
+};
 
 const DEFAULT_IMAGE: &str = "localhost/agentbox:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/agentbox:latest";
 const CONTAINER_WORKDIR: &str = "/workspace";
-const HOST_OVERLAY_DIR: &str = ".agentbox";
 const HOST_NIX_ROOT_DIR: &str = "nix";
 const HOST_NIX_STORE: &str = "/nix/store";
 const HOST_NIX_VAR: &str = "/nix/var/nix";
@@ -102,19 +108,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .canonicalize()
         .context("failed to canonicalize current directory")?;
     let image = resolve_image(cli.image.as_deref(), cli.pull_latest)?;
+    let state_layout = resolve_state_layout(&cwd)?;
     let task_hostname = derive_task_hostname(&cwd);
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
     let codex_mount = prepare_host_codex_mount()?;
-    let cargo_mount = prepare_project_cargo_mount(&cwd)?;
+    let cargo_mount = prepare_project_cargo_mount(&state_layout.root_dir)?;
 
     let env_sidecar_enabled =
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
     let nix_sidecar_enabled = resolve_nix_sidecar_enabled(&cli, env_sidecar_enabled);
 
     let nix_runtime = if nix_sidecar_enabled {
-        NixRuntime::Sidecar(prepare_sidecar_nix_runtime(&cwd, &image)?)
+        NixRuntime::Sidecar(prepare_sidecar_nix_runtime(
+            &cwd,
+            &state_layout.root_dir,
+            &image,
+        )?)
     } else {
-        NixRuntime::Seeded(prepare_persistent_nix_root(&cwd, &image)?)
+        NixRuntime::Seeded(prepare_persistent_nix_root(&state_layout.root_dir, &image)?)
     };
 
     let status = run_podman(
@@ -149,7 +160,7 @@ fn derive_task_hostname(cwd: &Path) -> String {
     format!("{}-{TASK_HOSTNAME_SUFFIX}", derive_workspace_slug(cwd))
 }
 
-fn derive_workspace_slug(cwd: &Path) -> String {
+pub(crate) fn derive_workspace_slug(cwd: &Path) -> String {
     let workspace_name = cwd
         .file_name()
         .and_then(|name| name.to_str())

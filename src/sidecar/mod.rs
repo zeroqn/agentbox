@@ -9,8 +9,8 @@ use std::process::Stdio;
 
 use crate::{
     format_mount_arg, run_podman, CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR,
-    HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR, HOST_NIX_WORK_DIR, HOST_OVERLAY_DIR,
-    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR, HOST_NIX_WORK_DIR, TASK_CONTAINER_ROLE_LABEL,
+    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
 };
 
 #[cfg(test)]
@@ -46,13 +46,12 @@ pub(crate) struct SidecarPaths {
 }
 
 impl SidecarPaths {
-    pub(crate) fn new(cwd: &Path) -> Self {
-        let root = cwd.join(HOST_OVERLAY_DIR);
+    pub(crate) fn new(state_root: &Path) -> Self {
         Self {
-            upper_dir: root.join(HOST_NIX_UPPER_DIR),
-            work_dir: root.join(HOST_NIX_WORK_DIR),
-            merged_dir: root.join(HOST_NIX_MERGED_DIR),
-            state_file: root.join(HOST_NIX_SIDECAR_STATE_FILE),
+            upper_dir: state_root.join(HOST_NIX_UPPER_DIR),
+            work_dir: state_root.join(HOST_NIX_WORK_DIR),
+            merged_dir: state_root.join(HOST_NIX_MERGED_DIR),
+            state_file: state_root.join(HOST_NIX_SIDECAR_STATE_FILE),
         }
     }
 }
@@ -72,17 +71,16 @@ impl SidecarState {
     }
 }
 
-pub(crate) fn prepare_sidecar_nix_runtime(cwd: &Path, image: &str) -> Result<SidecarNixRuntime> {
+pub(crate) fn prepare_sidecar_nix_runtime(
+    cwd: &Path,
+    state_root: &Path,
+    image: &str,
+) -> Result<SidecarNixRuntime> {
     ensure_command_available("fuse-overlayfs", "required for sidecar mode")?;
 
-    let paths = SidecarPaths::new(cwd);
-    fs::create_dir_all(
-        paths
-            .upper_dir
-            .parent()
-            .unwrap_or_else(|| Path::new(HOST_OVERLAY_DIR)),
-    )
-    .with_context(|| format!("failed to create '{}'", HOST_OVERLAY_DIR))?;
+    let paths = SidecarPaths::new(state_root);
+    fs::create_dir_all(state_root)
+        .with_context(|| format!("failed to create '{}'", state_root.display()))?;
     fs::create_dir_all(&paths.upper_dir)
         .with_context(|| format!("failed to create '{}'", paths.upper_dir.display()))?;
     fs::create_dir_all(&paths.work_dir)

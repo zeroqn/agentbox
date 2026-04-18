@@ -253,9 +253,10 @@ pub(crate) fn build_sidecar_socket_timeout_error(
             merged_dir.display()
         ));
     } else {
-        message.push_str(
-            " Automatic cleanup completed; retrying should not require manual '.agentbox/nix-merged' removal.",
-        );
+        message.push_str(&format!(
+            " Automatic cleanup completed; retrying should not require manual '{}' removal.",
+            merged_dir.display()
+        ));
     }
 
     if let Some(logs) = diagnostics

@@ -207,9 +207,47 @@ hash, derives the required `npmDepsHash`, and rewrites the pinned values in
 Each run also ensures the host `~/.codex` directory exists and bind-mounts it
 into the container at `/home/dev/.codex` so Codex state persists across
 sessions.
-It also creates `.agentbox/cargo` inside the project and bind-mounts that
-directory into the container at `/home/dev/.cargo`, so Cargo registries and
-caches persist per project without seeding Cargo home contents from the image.
+It also resolves a per-project external state root and bind-mounts
+`<state-root>/cargo` into the container at `/home/dev/.cargo`, so Cargo
+registries and caches persist per project without living inside the repo.
+
+By default the state root is:
+
+```text
+$XDG_STATE_HOME/agentbox/<repo-slug>
+```
+
+or, when `XDG_STATE_HOME` is unset:
+
+```text
+$HOME/.local/state/agentbox/<repo-slug>
+```
+
+You can override the base location with:
+
+```text
+$XDG_CONFIG_HOME/agentbox/agentbox.toml
+```
+
+or, when `XDG_CONFIG_HOME` is unset:
+
+```text
+$HOME/.config/agentbox/agentbox.toml
+```
+
+Example:
+
+```toml
+[state]
+location = "/home/dev/xxx/"
+```
+
+This changes the base from `$XDG_STATE_HOME/agentbox` to
+`/home/dev/xxx/agentbox`, so a workspace named `project` stores state under:
+
+```text
+/home/dev/xxx/agentbox/project
+```
 
 The interactive `podman run` uses `--userns=keep-id` so the `/workspace`
 bind mount preserves the host ownership mapping instead of appearing as
@@ -233,8 +271,8 @@ If you want seeded mode instead of sidecar, run:
 ```
 
 On the first run, `agentbox` copies `/nix/store` and `/nix/var/nix` from the
-container image into `.agentbox/nix/` and creates a project-local
-`.agentbox/nix/var/log/nix` directory for writable derivation logs. Later runs
+container image into `<state-root>/nix/` and creates
+`<state-root>/nix/var/log/nix` for writable derivation logs. Later runs
 bind-mount those seeded directories back into the container so `nix build` and
 `nix develop` reuse the same Nix state for that project without falling back to
 an image-owned `/nix/var/log/nix` path.
@@ -243,10 +281,10 @@ The dedicated seeding container runs as `root` so it can copy the image's
 `/nix` contents into the bind-mounted project cache. The normal interactive
 agentbox shell still runs as uid/gid `1000:1000`.
 
-This mode creates and reuses:
+This mode creates and reuses a per-project state tree:
 
 ```text
-.agentbox/
+<state-root>/
   cargo/
   nix/
     .seeded
@@ -260,12 +298,13 @@ This mode creates and reuses:
 Requirements:
 
 - Podman must be able to run the image and copy its `/nix` contents into the
-  mounted `.agentbox/nix` directory on first use
-- `.agentbox/nix` must have enough space for the seeded Nix store, derivation
+  mounted `<state-root>/nix` directory on first use
+- `<state-root>/nix` must have enough space for the seeded Nix store, derivation
   logs, and later build outputs
 
-If `.agentbox/nix/store` or `.agentbox/nix/var/nix` contains partial state
-without `.agentbox/nix/.seeded`, `agentbox` treats that as inconsistent and
+If `<state-root>/nix/store` or `<state-root>/nix/var/nix` contains partial
+state without `<state-root>/nix/.seeded`, `agentbox` treats that as
+inconsistent and
 refuses to seed automatically.
 
 ## Rootless sidecar mode (default; no `/nix/store` seed copy)
@@ -284,14 +323,14 @@ In this mode agentbox:
    `fuse-overlayfs` lowerdir when present; if the mount itself already looks
    like a Nix root (for example it directly contains `store/`), agentbox uses
    `<mount>` as the lowerdir fallback
-3. mounts a project-local merged tree at `.agentbox/nix-merged` with:
-   - upperdir: `.agentbox/nix-upper`
-   - workdir: `.agentbox/nix-work`
+3. mounts an external merged tree at `<state-root>/nix-merged` with:
+   - upperdir: `<state-root>/nix-upper`
+   - workdir: `<state-root>/nix-work`
 4. starts/reuses a deterministic sidecar container named like `agentbox-nix-sidecar-<repo>-<hash>` running `nix-daemon`
-5. launches the interactive task container with `.agentbox/nix-merged:/nix:ro`
+5. launches the interactive task container with `<state-root>/nix-merged:/nix:ro`
    and `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`
 
-Sidecar state metadata is stored in `.agentbox/nix-sidecar.state`.
+Sidecar state metadata is stored in `<state-root>/nix-sidecar.state`.
 
 Requirements:
 
@@ -308,16 +347,13 @@ Notes:
   container automatically.
 - When `podman image mount` is unavailable in rootless mode, agentbox resolves
   lowerdir and mounts `fuse-overlayfs` through `podman unshare`.
-- If `.agentbox/nix-sidecar.state` is stale or malformed, agentbox auto-clears it
-  and recreates the sidecar stack (no manual state-file deletion required).
+- If `<state-root>/nix-sidecar.state` is stale or malformed, agentbox
+  auto-clears it and recreates the sidecar stack (no manual state-file deletion
+  required).
 - If sidecar startup times out, agentbox now captures recent sidecar logs and
   attempts automatic sidecar + merged-mount cleanup before returning an error;
-  manual `.agentbox/nix-merged` deletion is only needed if cleanup explicitly
+  manual `<state-root>/nix-merged` deletion is only needed if cleanup explicitly
   reports failure. Timeout errors also include sidecar state and socket-probe
   diagnostics when available.
 - Task containers mount `/nix` read-only in this mode; writes are intended to
   flow through `nix-daemon`.
-
-If you have host state from an older buggy build under `.agentbox/store` or
-`.agentbox/var/nix` instead of `.agentbox/nix/`, move or remove that stale state
-before retrying `./result/bin/agentbox`.
