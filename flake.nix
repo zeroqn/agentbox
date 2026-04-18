@@ -195,6 +195,19 @@
             pathsToLink = [ "/" ];
           };
 
+          dynamicToolchainImagePackages = [
+            pkgs.nodejs
+            pkgs.python3
+            pkgs.python3Packages.pip
+            pkgs.python3Packages.pyyaml
+            pkgs.uv
+          ];
+          dynamicToolchainImageLayer = pkgs.buildEnv {
+            name = "agentbox-dynamic-toolchain-layer";
+            paths = dynamicToolchainImagePackages;
+            pathsToLink = [ "/" ];
+          };
+
           toolingImagePackages = [
             pkgs.bun
             pkgs.fzf
@@ -239,10 +252,7 @@
             pkgs.jq
             pkgs.less
             pkgs.nix
-            pkgs.python3
-            pkgs.python3Packages.pyyaml
             pkgs.diffutils
-            pkgs.nodejs
             pkgs.nss_wrapper
             pkgs.tmux
             pkgs.util-linux
@@ -254,11 +264,12 @@
             ++ cToolchainImagePackages
             ++ [
               rustToolchainImageLayer
+              dynamicToolchainImageLayer
               toolingImageLayer
               codexImageLayer
             ];
           imagePath = pkgs.lib.makeBinPath imagePackages;
-          agentboxImageMaxLayers = 7;
+          agentboxImageMaxLayers = 9;
           agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
           imageContents = imagePackages ++ [
             # The generated Codex hook and MCP config reference the raw
@@ -273,6 +284,7 @@
           toolingLayerPaths = [ (toString toolingImageLayer) ];
           cToolchainLayerPaths = builtins.map toString cToolchainImagePackages;
           rustLayerPaths = [ (toString rustToolchainImageLayer) ];
+          dynamicToolchainLayerPaths = [ (toString dynamicToolchainImageLayer) ];
           agentboxImageLayeringPipeline = [
             [
               "split_paths"
@@ -296,7 +308,7 @@
                       [
                         [
                           "split_paths"
-                          rustLayerPaths
+                          dynamicToolchainLayerPaths
                         ]
                         [
                           "over"
@@ -306,7 +318,23 @@
                             [
                               [
                                 "split_paths"
-                                cToolchainLayerPaths
+                                rustLayerPaths
+                              ]
+                              [
+                                "over"
+                                "rest"
+                                [
+                                  "pipe"
+                                  [
+                                    [
+                                      "split_paths"
+                                      cToolchainLayerPaths
+                                    ]
+                                    [
+                                      "flatten"
+                                    ]
+                                  ]
+                                ]
                               ]
                               [
                                 "flatten"
