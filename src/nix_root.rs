@@ -5,7 +5,7 @@ use std::process::Stdio;
 
 use crate::{
     format_mount_arg, run_podman, HOST_NIX_LOG, HOST_NIX_ROOT_DIR, HOST_NIX_STORE, HOST_NIX_VAR,
-    HOST_OVERLAY_DIR, NIX_LOG_DIR, NIX_MARKER_FILE, NIX_STORE_DIR, NIX_VAR_DIR, SEED_MOUNT_POINT,
+    NIX_LOG_DIR, NIX_MARKER_FILE, NIX_STORE_DIR, NIX_VAR_DIR, SEED_MOUNT_POINT,
 };
 
 #[derive(Debug, Clone)]
@@ -17,8 +17,8 @@ pub(crate) struct PersistentNixRoot {
 }
 
 impl PersistentNixRoot {
-    pub(crate) fn new(cwd: &Path) -> Self {
-        let root = cwd.join(HOST_OVERLAY_DIR).join(HOST_NIX_ROOT_DIR);
+    pub(crate) fn new(state_root: &Path) -> Self {
+        let root = state_root.join(HOST_NIX_ROOT_DIR);
         Self {
             store_dir: root.join(NIX_STORE_DIR),
             var_nix_dir: root.join(NIX_VAR_DIR).join("nix"),
@@ -47,8 +47,11 @@ pub(crate) enum NixRootState {
     Inconsistent,
 }
 
-pub(crate) fn prepare_persistent_nix_root(cwd: &Path, image: &str) -> Result<PersistentNixRoot> {
-    let nix_root = PersistentNixRoot::new(cwd);
+pub(crate) fn prepare_persistent_nix_root(
+    state_root: &Path,
+    image: &str,
+) -> Result<PersistentNixRoot> {
+    let nix_root = PersistentNixRoot::new(state_root);
     match inspect_persistent_nix_root(&nix_root)? {
         NixRootState::Ready => {
             ensure_persistent_nix_log_dir(&nix_root)?;
@@ -56,8 +59,8 @@ pub(crate) fn prepare_persistent_nix_root(cwd: &Path, image: &str) -> Result<Per
         }
         NixRootState::Inconsistent => {
             return Err(anyhow!(
-                "'{}' contains partial Nix state without '{}'; remove or repair '.agentbox/nix' before retrying",
-                nix_root.store_dir.parent().unwrap_or(cwd).display(),
+                "'{}' contains partial Nix state without '{}'; remove or repair that state root before retrying",
+                nix_root.store_dir.parent().unwrap_or(state_root).display(),
                 nix_root
                     .marker_file
                     .file_name()
@@ -130,11 +133,12 @@ fn seed_persistent_nix_root(
         Stdio::null(),
         Stdio::inherit(),
         Stdio::inherit(),
-        "failed to seed the project-local Nix root from the container image",
+        "failed to seed the external Nix root from the container image",
     )?;
     if !status.success() {
         return Err(anyhow!(
-            "seeding '.agentbox/nix' from image '{}' failed",
+            "seeding '{}' from image '{}' failed",
+            root_dir.display(),
             image
         ));
     }

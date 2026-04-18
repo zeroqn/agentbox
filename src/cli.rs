@@ -29,8 +29,8 @@ pub(crate) struct Cli {
 
     #[arg(
         long,
-        help = "Disable sidecar mode and run with seeded .agentbox/nix mounts",
-        long_help = "Disable rootless sidecar mode for this run and use seeded .agentbox/nix bind mounts instead."
+        help = "Disable sidecar mode and run with seeded external nix-state mounts",
+        long_help = "Disable rootless sidecar mode for this run and use seeded bind mounts from the resolved external agentbox state root instead."
     )]
     pub(crate) disable_nix_sidecar: bool,
 }

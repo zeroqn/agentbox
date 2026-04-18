@@ -32,17 +32,18 @@ fn prepare_host_codex_mount_creates_dot_codex_under_home() {
 }
 
 #[test]
-fn prepare_project_cargo_mount_creates_agentbox_cargo_under_workspace() {
+fn prepare_project_cargo_mount_creates_cargo_under_state_root() {
     let dir = tempfile::tempdir().expect("tempdir should be created");
+    let state_root = dir.path().join("state").join("agentbox").join("project");
 
-    let mount = prepare_project_cargo_mount(dir.path()).expect("cargo mount should be prepared");
+    let mount = prepare_project_cargo_mount(&state_root).expect("cargo mount should be prepared");
 
     assert_eq!(
         mount,
         format!(
             "{}:{CONTAINER_CARGO_DIR}",
-            dir.path().join(".agentbox").join("cargo").display()
+            state_root.join("cargo").display()
         )
     );
-    assert!(dir.path().join(".agentbox").join("cargo").is_dir());
+    assert!(state_root.join("cargo").is_dir());
 }
