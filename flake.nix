@@ -221,6 +221,7 @@
             pkgs.fish
             pkgs.ripgrep
             pkgs.procps
+            pkgs.pkg-config
             pkgs.findutils
             pkgs.gitMinimal
             pkgs.gawk
