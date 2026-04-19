@@ -1,5 +1,8 @@
 mod health;
-mod mount;
+mod image_mount;
+mod name;
+mod overlay;
+mod runtime;
 mod state;
 
 use anyhow::{anyhow, Context, Result};
@@ -7,37 +10,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::mounts::format_mount_arg;
-use crate::podman::{run_podman, run_podman_output};
+use crate::mounts::format::format_mount_arg;
+use crate::podman::command::{run_podman, run_podman_output};
 use crate::{
     CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR, HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR,
-    HOST_NIX_WORK_DIR, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    HOST_NIX_WORK_DIR, NIX_STORE_DIR, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
     TASK_CONTAINER_SIDECAR_LABEL,
 };
 
-#[cfg(test)]
-use health::{
-    build_sidecar_socket_timeout_error, build_socket_ping_podman_args,
-    SidecarStartupCleanupOutcome, SidecarStartupDiagnostics,
-};
-#[cfg(test)]
-use mount::{
-    build_podman_image_mount_args, build_podman_image_unmount_args, derive_sidecar_name,
-    resolve_sidecar_lowerdir, PodmanImageMountMode,
-};
-use mount::{
-    cleanup_merged_mount, cleanup_sidecar_container, inspect_image_id, mount_fuse_overlayfs,
-    mount_image_with_lowerdir, unmount_image,
-};
-
-#[cfg(test)]
-use state::{read_sidecar_state, write_sidecar_state};
-
-#[derive(Debug, Clone)]
-pub struct SidecarNixRuntime {
-    merged_dir: PathBuf,
-    sidecar_name: String,
-}
+use image_mount::{inspect_image_id, mount_image_with_lowerdir, unmount_image};
+use overlay::{cleanup_merged_mount, mount_fuse_overlayfs};
+pub use runtime::SidecarNixRuntime;
 
 #[derive(Debug, Clone)]
 struct SidecarPaths {
@@ -45,6 +28,21 @@ struct SidecarPaths {
     work_dir: PathBuf,
     merged_dir: PathBuf,
     state_file: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct SidecarState {
+    image: String,
+    image_id: String,
+    image_mount_path: PathBuf,
+    sidecar_name: String,
+    mount_mode: PodmanImageMountMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PodmanImageMountMode {
+    Direct,
+    Unshare,
 }
 
 impl SidecarPaths {
@@ -58,36 +56,18 @@ impl SidecarPaths {
     }
 }
 
-#[derive(Debug, Clone)]
-struct SidecarState {
-    image: String,
-    image_id: String,
-    image_mount_path: PathBuf,
-    sidecar_name: String,
-    mount_mode: mount::PodmanImageMountMode,
-}
-
 impl SidecarState {
     fn matches(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
         self.image == image && self.image_id == image_id && self.sidecar_name == sidecar_name
     }
 }
 
-impl SidecarNixRuntime {
-    #[cfg(test)]
-    pub fn new(merged_dir: PathBuf, sidecar_name: String) -> Self {
-        Self {
-            merged_dir,
-            sidecar_name,
+impl PodmanImageMountMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Direct => "podman image mount",
+            Self::Unshare => "podman unshare podman image mount",
         }
-    }
-
-    pub fn merged_dir(&self) -> &Path {
-        &self.merged_dir
-    }
-
-    pub fn sidecar_name(&self) -> &str {
-        &self.sidecar_name
     }
 }
 
@@ -109,7 +89,7 @@ pub fn prepare_sidecar_nix_runtime(
         .with_context(|| format!("failed to create '{}'", paths.merged_dir.display()))?;
 
     let image_id = inspect_image_id(image)?;
-    let sidecar_name = mount::derive_sidecar_name(cwd, &image_id);
+    let sidecar_name = name::derive_sidecar_name(cwd, &image_id);
     let previous_state = state::read_sidecar_state(&paths)?;
 
     if let Some(state) = previous_state.as_ref() {
@@ -130,6 +110,14 @@ pub fn prepare_sidecar_nix_runtime(
         &sidecar_name,
         previous_state.as_ref(),
     )
+}
+
+pub fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
+    if sidecar_has_running_task_containers(&sidecar.sidecar_name)? {
+        return Ok(());
+    }
+
+    cleanup_sidecar_container(&sidecar.sidecar_name)
 }
 
 fn recreate_sidecar_stack(
@@ -191,12 +179,69 @@ fn recreate_sidecar_stack(
     })
 }
 
-pub fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
-    if sidecar_has_running_task_containers(&sidecar.sidecar_name)? {
-        return Ok(());
+fn resolve_sidecar_lowerdir(image_mount_path: &Path) -> Result<PathBuf> {
+    let nested_nix = image_mount_path.join("nix");
+    if nested_nix.is_dir() {
+        return Ok(nested_nix);
     }
 
-    cleanup_sidecar_container(&sidecar.sidecar_name)
+    let root_store = image_mount_path.join(NIX_STORE_DIR);
+    if root_store.is_dir() {
+        return Ok(image_mount_path.to_path_buf());
+    }
+
+    Err(anyhow!(
+        "expected either '{}' or '{}' to exist as directories",
+        nested_nix.display(),
+        root_store.display()
+    ))
+}
+
+fn resolve_sidecar_lowerdir_for_mode(
+    image_mount_path: &Path,
+    mode: PodmanImageMountMode,
+) -> Result<PathBuf> {
+    if mode == PodmanImageMountMode::Direct {
+        return resolve_sidecar_lowerdir(image_mount_path);
+    }
+
+    let mount_path = image_mount_path.to_str().with_context(|| {
+        format!(
+            "image mount path '{}' is not valid UTF-8",
+            image_mount_path.display()
+        )
+    })?;
+    let script = "mount_path=\"$1\"\nif [ -d \"$mount_path/nix\" ]; then\n  printf '%s\\n' \"$mount_path/nix\"\nelif [ -d \"$mount_path/store\" ]; then\n  printf '%s\\n' \"$mount_path\"\nelse\n  exit 3\nfi";
+    let args = vec![
+        "unshare".to_owned(),
+        "bash".to_owned(),
+        "-lc".to_owned(),
+        script.to_owned(),
+        "agentbox".to_owned(),
+        mount_path.to_owned(),
+    ];
+    let output = run_podman_output(args, "failed to resolve sidecar lowerdir in podman unshare")?;
+    let lowerdir = output.trim();
+    if lowerdir.is_empty() {
+        return Err(anyhow!(
+            "podman unshare lowerdir probe returned empty output for '{}'",
+            image_mount_path.display()
+        ));
+    }
+
+    Ok(PathBuf::from(lowerdir))
+}
+
+fn cleanup_sidecar_container(sidecar_name: &str) -> Result<()> {
+    let args = vec!["rm".to_owned(), "-f".to_owned(), sidecar_name.to_owned()];
+    let _ = run_podman(
+        args,
+        Stdio::null(),
+        Stdio::null(),
+        Stdio::null(),
+        "failed to remove stale sidecar container",
+    );
+    Ok(())
 }
 
 fn sidecar_has_running_task_containers(sidecar_name: &str) -> Result<bool> {

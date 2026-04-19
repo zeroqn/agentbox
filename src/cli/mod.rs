@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::env;
 
-use crate::podman::{podman_image_exists, pull_image};
+use crate::podman::image::{podman_image_exists, pull_image};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
 #[derive(Debug, Parser)]
@@ -57,26 +57,6 @@ pub fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Result<Strin
     }
 }
 
-fn resolve_image_strategy(cli_image: Option<&str>, pull_latest: bool) -> ImageResolutionStrategy {
-    if let Some(image) = cli_image {
-        return ImageResolutionStrategy::Explicit(image.to_owned());
-    }
-
-    if pull_latest {
-        return ImageResolutionStrategy::PullLatestGhcr;
-    }
-
-    ImageResolutionStrategy::PreferLocalhostFallback
-}
-
-fn select_default_image(localhost_available: bool) -> &'static str {
-    if localhost_available {
-        DEFAULT_IMAGE
-    } else {
-        DEFAULT_FALLBACK_IMAGE
-    }
-}
-
 pub fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool {
     if cli.disable_nix_sidecar {
         return false;
@@ -108,6 +88,26 @@ fn parse_env_flag_value(name: &str, value: &str) -> Result<bool> {
             "environment variable '{}' must be one of: 1,0,true,false,yes,no,on,off",
             name
         )),
+    }
+}
+
+fn resolve_image_strategy(cli_image: Option<&str>, pull_latest: bool) -> ImageResolutionStrategy {
+    if let Some(image) = cli_image {
+        return ImageResolutionStrategy::Explicit(image.to_owned());
+    }
+
+    if pull_latest {
+        return ImageResolutionStrategy::PullLatestGhcr;
+    }
+
+    ImageResolutionStrategy::PreferLocalhostFallback
+}
+
+fn select_default_image(localhost_available: bool) -> &'static str {
+    if localhost_available {
+        DEFAULT_IMAGE
+    } else {
+        DEFAULT_FALLBACK_IMAGE
     }
 }
 

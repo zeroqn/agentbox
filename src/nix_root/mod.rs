@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::mounts::format_mount_arg;
-use crate::podman::run_podman;
+use crate::mounts::format::format_mount_arg;
+use crate::podman::command::run_podman;
 use crate::{
     HOST_NIX_LOG, HOST_NIX_ROOT_DIR, HOST_NIX_STORE, HOST_NIX_VAR, NIX_LOG_DIR, NIX_MARKER_FILE,
     NIX_STORE_DIR, NIX_VAR_DIR, SEED_MOUNT_POINT,
@@ -29,16 +29,16 @@ impl PersistentNixRoot {
         }
     }
 
-    fn root_dir(&self) -> &Path {
-        self.marker_file.parent().unwrap_or_else(|| Path::new("."))
-    }
-
     pub fn mounts(&self) -> [(&Path, &str); 3] {
         [
             (self.store_dir.as_path(), HOST_NIX_STORE),
             (self.var_nix_dir.as_path(), HOST_NIX_VAR),
             (self.log_nix_dir.as_path(), HOST_NIX_LOG),
         ]
+    }
+
+    fn root_dir(&self) -> &Path {
+        self.marker_file.parent().unwrap_or_else(|| Path::new("."))
     }
 }
 

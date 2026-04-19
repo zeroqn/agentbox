@@ -1,4 +1,4 @@
-use super::*;
+use super::task::build_podman_args;
 use crate::*;
 use std::path::PathBuf;
 
@@ -36,10 +36,10 @@ fn build_podman_args_includes_persistent_nix_mounts() {
 
 #[test]
 fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
-    let runtime = NixRuntime::Sidecar(SidecarNixRuntime::new(
-        PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
-        "agentbox-nix-sidecar-abc".to_owned(),
-    ));
+    let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
+        merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
+        sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
+    });
     let args = build_podman_args(
         DEFAULT_IMAGE,
         "project-agentbox",
