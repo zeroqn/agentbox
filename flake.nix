@@ -3,12 +3,14 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgsMaster.url = "github:NixOS/nixpkgs/master";
   };
 
   outputs =
     {
       self,
       nixpkgs,
+      nixpkgsMaster,
     }:
     let
       agentboxVersion = "0.1.0";
@@ -35,16 +37,19 @@
         f:
         nixpkgs.lib.genAttrs systems (
           system:
-          f (
-            import nixpkgs {
+          f {
+            pkgs = import nixpkgs {
               inherit system;
-            }
-          )
+            };
+            pkgsMaster = import nixpkgsMaster {
+              inherit system;
+            };
+          }
         );
     in
     {
       packages = forAllSystems (
-        pkgs:
+        { pkgs, pkgsMaster }:
         let
           ohMyCodexVersion = "0.13.1";
           prebuiltSystem = pkgs.stdenv.hostPlatform.system;
@@ -222,7 +227,7 @@
           };
 
           codexImagePackages = [
-            pkgs.codex
+            pkgsMaster.codex
             ohMyCodex
           ];
           codexImageLayer = pkgs.buildEnv {
@@ -488,7 +493,7 @@
         }
       );
 
-      devShells = forAllSystems (pkgs: {
+      devShells = forAllSystems ({ pkgs, ... }: {
         default = pkgs.mkShell {
           packages = [
             pkgs.cargo
@@ -515,7 +520,7 @@
         };
       });
 
-      apps = forAllSystems (pkgs: {
+      apps = forAllSystems ({ pkgs, ... }: {
         default = {
           type = "app";
           program = "${self.packages.${pkgs.system}.agentbox}/bin/agentbox";
