@@ -221,6 +221,7 @@ The container provides:
 - Python 3 (`PyYAML`), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`)
 - `gcc`, `musl`, `clang`
+- `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
 - common tools (`curl`, `jq`, `tmux`, etc.)
 
 It runs with `--userns=keep-id` so `/workspace` ownership matches host mapping.
