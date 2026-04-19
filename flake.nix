@@ -82,10 +82,10 @@
               owner = "Yeachan-Heo";
               repo = "oh-my-codex";
               rev = "v${ohMyCodexVersion}";
-              hash = "sha256-pXaaPWLr8V/PvKzl4a98Ws9CzF3VdJqMko0PLOxhPX4=";
+              hash = "sha256-TdLFlGj+sCwoBXgPLQ8xCc+mBHdSdz5T3kPajEUIK7I=";
             };
 
-            npmDepsHash = "sha256-TdLFlGj+sCwoBXgPLQ8xCc+mBHdSdz5T3kPajEUIK7I=";
+            npmDepsHash = "sha256-zBcay5NgEnpnCZd7+KUQFnuPBUo2QZxvPLEMIsgb+F4=";
             npmBuildScript = "build";
 
             meta = {
