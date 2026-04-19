@@ -1,33 +1,41 @@
 # agentbox
 
-Minimal Rust CLI for launching a Podman container `fish` shell with a
-`starship` prompt, Codex installed in the image, and the current directory
-mounted at `/workspace`.
+`agentbox` is a small Rust CLI that starts an interactive Podman container shell
+for your current project.
 
-By default, `agentbox` runs in rootless sidecar mode. This avoids bulk
-`/nix/store` copy by using host `fuse-overlayfs` (`lowerdir` from the selected
-image's `/nix`) and a reusable sidecar `nix-daemon` socket.
+It mounts the current directory at `/workspace`, persists Codex state from the
+host, and supports two Nix runtime modes:
 
-The older seeded mode is still available by setting
-`AGENTBOX_NIX_SIDECAR=0`.
-Use `--disable-nix-sidecar` to run seeded mode for a single invocation.
+- **Rootless sidecar mode (default):** uses host `fuse-overlayfs` + a reusable
+  `nix-daemon` sidecar (no `/nix/store` seed copy).
+- **Seeded mode (fallback):** copies `/nix` into project state on first run.
+
+---
+
+## Prerequisites
+
+- Linux
+- `podman`
+- `nix` (for building via flake)
+- `fuse-overlayfs` (required for default sidecar mode)
+
+---
 
 ## Development
 
 ```bash
 nix develop
 cargo build
+cargo test
 ```
 
-The development shell includes Rust toolchain support for linting and formatting
-via `cargo clippy` and `cargo fmt`/`rustfmt`.
-
-`nix develop` now defaults to an interactive `fish` shell with `starship`
-initialized. To stay in the parent shell (for example `bash`) instead, use:
+`nix develop` opens `fish` + `starship` by default. Keep your current shell:
 
 ```bash
 AGENTBOX_DISABLE_AUTO_FISH=1 nix develop
 ```
+
+---
 
 ## Build
 
@@ -38,14 +46,225 @@ nix build .#agentbox-musl
 nix build .#container
 ```
 
-`agentbox-prebuilt` installs a published release binary instead of compiling the
-Rust source locally. It is currently pinned only for `x86_64-linux`; use
-`.#agentbox` as the source-build fallback on other systems or after an older
-retained prebuilt release has been pruned.
+### Build outputs
 
-## Use from another flake
+- `.#agentbox`: compile from source.
+- `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
+  `x86_64-linux`; use `.#agentbox` elsewhere).
+- `.#agentbox-musl`: static host binary.
+- `.#container`: Podman image archive.
 
-For a downstream NixOS or Home Manager flake that wants the prebuilt binary:
+---
+
+## Quick start
+
+Show CLI help:
+
+```bash
+nix develop --command cargo run -- --help
+```
+
+Build image + binary, then run:
+
+```bash
+nix build .#container
+podman load < result
+nix build .#agentbox
+./result/bin/agentbox
+```
+
+Image selection behavior:
+
+- default: `localhost/agentbox:latest`
+- fallback: `ghcr.io/zeroqn/agentbox:latest`
+
+Force GHCR latest:
+
+```bash
+./result/bin/agentbox --pull-latest
+```
+
+Override image explicitly:
+
+```bash
+AGENTBOX_IMAGE=<image-ref> ./result/bin/agentbox
+# or
+./result/bin/agentbox --image <image-ref>
+```
+
+---
+
+## Runtime modes
+
+### 1) Rootless sidecar mode (default)
+
+Run:
+
+```bash
+./result/bin/agentbox
+```
+
+What it does (high level):
+
+1. Resolves the selected image and mounts its filesystem.
+2. Uses image `/nix` as `lowerdir` for host `fuse-overlayfs`.
+3. Builds external merged nix tree under project state.
+4. Starts/reuses a deterministic `nix-daemon` sidecar.
+5. Starts the interactive container with read-only `/nix` + daemon socket.
+
+Sidecar metadata is saved at:
+
+```text
+<state-root>/nix-sidecar.state
+```
+
+Disable sidecar mode for one run:
+
+```bash
+./result/bin/agentbox --disable-nix-sidecar
+```
+
+Or globally via env:
+
+```bash
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
+```
+
+---
+
+### 2) Seeded mode (legacy fallback)
+
+First run copies image `/nix/store` and `/nix/var/nix` into project state,
+then reuses that data across runs.
+
+Use seeded mode:
+
+```bash
+./result/bin/agentbox --disable-nix-sidecar
+# or
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
+```
+
+State layout:
+
+```text
+<state-root>/
+  cargo/
+  nix/
+    .seeded
+    store/
+    var/
+      log/
+        nix/
+      nix/
+```
+
+If partial seed data exists without `.seeded`, `agentbox` treats it as
+inconsistent and refuses to auto-seed.
+
+---
+
+## Persistent host mounts
+
+Each run ensures and mounts:
+
+- `~/.codex` -> `/home/dev/.codex`
+- `<state-root>/cargo` -> `/home/dev/.cargo`
+
+This keeps Codex + Cargo state outside the repo.
+
+---
+
+## State root and config
+
+Default state root:
+
+```text
+$XDG_STATE_HOME/agentbox/<repo-slug>
+```
+
+Fallback when `XDG_STATE_HOME` is unset:
+
+```text
+$HOME/.local/state/agentbox/<repo-slug>
+```
+
+Override base location in:
+
+```text
+$XDG_CONFIG_HOME/agentbox/agentbox.toml
+```
+
+or:
+
+```text
+$HOME/.config/agentbox/agentbox.toml
+```
+
+Example:
+
+```toml
+[state]
+location = "/home/dev/xxx/"
+```
+
+This makes the base `/home/dev/xxx/agentbox`.
+
+---
+
+## Container environment summary
+
+The container provides:
+
+- interactive `fish` + `starship`
+- Codex CLI + `oh-my-codex` (`omx`)
+- Python 3 (`PyYAML`), Node.js
+- Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`)
+- `gcc`, `musl`, `clang`
+- common tools (`curl`, `jq`, `tmux`, etc.)
+
+It runs with `--userns=keep-id` so `/workspace` ownership matches host mapping.
+
+---
+
+## Publishing
+
+### Container image (GitHub Actions)
+
+On push to `main` and tag pushes, CI publishes to:
+
+- `ghcr.io/<repo-owner>/agentbox:latest` (main only)
+- `ghcr.io/<repo-owner>/agentbox:<git-tag>` (tag only)
+- `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
+
+### Prebuilt binaries (GitHub Releases)
+
+Main-branch CI also publishes musl binaries as prereleases:
+
+- rolling `alpha`
+- commit-specific `sha-<12-char-commit>`
+
+Older `sha-*` prereleases are pruned (retains newest 20).
+
+---
+
+## Maintenance helpers
+
+Refresh pinned prebuilt release in `flake.nix`:
+
+```bash
+nix develop --command ./scripts/update-agentbox-prebuilt.sh
+```
+
+Refresh pinned `oh-my-codex` version/hashes in `flake.nix`:
+
+```bash
+nix develop --command ./scripts/update-oh-my-codex.sh
+```
+
+---
+
+## Use from another flake (prebuilt binary)
 
 ```nix
 {
@@ -66,295 +285,8 @@ For a downstream NixOS or Home Manager flake that wants the prebuilt binary:
 }
 ```
 
-If you need a permanent fallback that does not depend on retained release
-artifacts, use `agentbox.packages.${pkgs.system}.agentbox` instead.
+For a source-build fallback, use:
 
-## Publish
-
-GitHub Actions publishes the container image to `ghcr.io/<repo-owner>/agentbox`
-on pushes to `main` and on pushed git tags. Pull requests do not trigger the
-publish workflow.
-
-The published image also contains the static `agentbox` binary from
-`.#agentbox-musl`, exposed on `PATH` inside the image. That makes the GHCR image
-usable as a distribution source for the host CLI binary in addition to the
-interactive shell environment.
-
-The repo-built container image is emitted with a small, explicit layer budget
-(`maxLayers = 9`) to keep local loads reasonable while still improving layer
-reuse. The image now uses a custom layer pipeline that keeps the stable Rust
-toolchain in an earlier reusable store layer, keeps `gcc`, `musl`, and
-`clang` in an even lower reusable C toolchain layer, groups `nodejs`,
-`python3`, `pip`, `PyYAML`, and `uv` into a dynamic-language toolchain layer
-above Rust, moves `bun`, `fzf`, `gh`, `neovim`, and `starship` into a
-dedicated higher tooling layer, and pushes `codex` plus `oh-my-codex` into the
-last store layer, so Codex and shell-tooling updates do not force the earlier
-toolchain-heavy layers to churn. The image is built
-directly from Nix-provided contents instead of layering on top of an upstream
-container base image, so the published archive no longer inherits the many
-pre-existing layers from `ghcr.io/nixos/nix`. Because it no longer inherits the
-upstream image's multi-user Nix setup, the image build now recreates the
-`nixbld` group with its builder-user membership and the `nixbld<N>` builder
-users required by `nix-daemon`.
-
-Default branch pushes publish:
-
-- `ghcr.io/<repo-owner>/agentbox:latest`
-- `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
-
-Tag pushes publish:
-
-- `ghcr.io/<repo-owner>/agentbox:<git-tag>`
-- `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
-
-A separate GitHub Actions workflow also publishes prebuilt `musl` binaries to
-GitHub Releases for pushes to `main`:
-
-- `alpha`: rolling prerelease kept as the latest convenience download
-- `sha-<12-char-commit>`: commit-addressed prerelease for that exact commit
-
-Each release uploads `agentbox-<runner-arch>-unknown-linux-musl` plus a matching
-`.sha256` file. To keep the release list manageable, the workflow retains only
-the most recent 20 `sha-*` prereleases and deletes older ones.
-
-`flake.nix` keeps one pinned prebuilt release tag plus its download hash. Update
-that pin after a new release is published with:
-
-```bash
-nix develop --command ./scripts/update-agentbox-prebuilt.sh
+```nix
+agentbox.packages.${pkgs.system}.agentbox
 ```
-
-By default the script picks the newest retained `sha-*` release, recomputes the
-binary SRI hash, and rewrites the pinned prebuilt metadata in `flake.nix`. On a
-fresh checkout of this branch, the pin may still point at the rolling `alpha`
-bootstrap release until the first `sha-*` release has been published and the
-update script has been run once.
-
-## Run
-
-Show the CLI help:
-
-```bash
-nix develop --command cargo run -- --help
-```
-
-Load the image into Podman, then run the CLI:
-
-```bash
-nix build .#container
-podman load < result
-nix build .#agentbox
-./result/bin/agentbox
-```
-
-When no image is explicitly set, `agentbox` prefers `localhost/agentbox:latest`
-and automatically falls back to `ghcr.io/zeroqn/agentbox:latest`.
-Use `--pull-latest` to pull and run `ghcr.io/zeroqn/agentbox:latest` explicitly,
-or use `--image` / `AGENTBOX_IMAGE=...` to force any specific image.
-
-```bash
-./result/bin/agentbox --pull-latest
-```
-
-Build a static `musl` binary:
-
-```bash
-nix build .#agentbox-musl
-./result/bin/agentbox
-```
-
-Build the currently pinned published prebuilt binary:
-
-```bash
-nix build .#agentbox-prebuilt
-./result/bin/agentbox
-```
-
-The `agentbox-musl` output is intended to produce a statically linked Linux
-binary for the host architecture. This only affects the host-side CLI binary;
-`agentbox` still requires a working `podman` installation and the configured
-container image at runtime.
-
-The container image also includes this static `agentbox` binary on `PATH`, so a
-published GHCR image can be used to extract the CLI artifact without rebuilding
-it locally.
-
-The container image starts an interactive `fish` shell with `starship`
-initialized from a bundled snippet that the entrypoint copies into the
-runtime-writable `/home/dev/.config/fish/conf.d/agentbox-starship.fish` path at startup, seeds a default
-`/home/dev/.config/starship.toml` that shows the container hostname in the prompt without overwriting an existing
-user config, includes the `codex` CLI, `curl`, `file`, `gzip`, `hostname`, `jq`, `less`, `pkg-config`, `tar`, `tmux`, and `which` on `PATH`, includes Python 3 with
-PyYAML available for imports, includes Node.js plus the pinned `oh-my-codex`
-package on `PATH` as `omx`, and now also includes the stable nixpkgs Rust
-toolchain directly in the image (`cargo`, `rustc`, `clippy`, `rustfmt`,
-`rust-analyzer`, and Rust standard-library sources via `RUST_SRC_PATH`) plus
-`gcc`, `musl`, and `clang` without requiring the optional host `/nix` overlay.
-The image runs as uid/gid `1000` with home directory `/home/dev`.
-
-`oh-my-codex` is packaged into the image through Nix rather than installed at
-runtime with `npm install -g`, so the image stays reproducible. Its pinned
-version, source hash, and npm dependency hash live in `flake.nix`.
-
-To refresh that pin set when upstream publishes a new release:
-
-```bash
-nix develop --command ./scripts/update-oh-my-codex.sh
-```
-
-The update script queries the latest GitHub release, computes the new source
-hash, derives the required `npmDepsHash`, and rewrites the pinned values in
-`flake.nix`. Review the diff, then rebuild the image.
-
-Each run also ensures the host `~/.codex` directory exists and bind-mounts it
-into the container at `/home/dev/.codex` so Codex state persists across
-sessions.
-It also resolves a per-project external state root and bind-mounts
-`<state-root>/cargo` into the container at `/home/dev/.cargo`, so Cargo
-registries and caches persist per project without living inside the repo.
-
-By default the state root is:
-
-```text
-$XDG_STATE_HOME/agentbox/<repo-slug>
-```
-
-or, when `XDG_STATE_HOME` is unset:
-
-```text
-$HOME/.local/state/agentbox/<repo-slug>
-```
-
-You can override the base location with:
-
-```text
-$XDG_CONFIG_HOME/agentbox/agentbox.toml
-```
-
-or, when `XDG_CONFIG_HOME` is unset:
-
-```text
-$HOME/.config/agentbox/agentbox.toml
-```
-
-Example:
-
-```toml
-[state]
-location = "/home/dev/xxx/"
-```
-
-This changes the base from `$XDG_STATE_HOME/agentbox` to
-`/home/dev/xxx/agentbox`, so a workspace named `project` stores state under:
-
-```text
-/home/dev/xxx/agentbox/project
-```
-
-The interactive `podman run` uses `--userns=keep-id` so the `/workspace`
-bind mount preserves the host ownership mapping instead of appearing as
-`root:root` in the container.
-It also sets the container hostname to `<sanitized-current-directory>-agentbox`
-so the shell prompt reflects the workspace name more clearly.
-
-The image leaves the interactive process uid/gid to Podman `--userns=keep-id`
-instead of hardcoding `1000:1000` in the image config. Its entrypoint then uses
-`nss_wrapper` to extend temporary passwd and group files at runtime so tools
-inside the shell can resolve the mapped numeric user and group as `dev`, even
-when the host gid is not `1000`.
-
-The interactive container also mounts `/tmp` as `tmpfs` (`rw,exec,mode=1777`)
-so temporary files are not backed by the container's overlay root filesystem.
-
-If you want seeded mode instead of sidecar, run:
-
-```bash
-./result/bin/agentbox --disable-nix-sidecar
-```
-
-On the first run, `agentbox` copies `/nix/store` and `/nix/var/nix` from the
-container image into `<state-root>/nix/` and creates
-`<state-root>/nix/var/log/nix` for writable derivation logs. Later runs
-bind-mount those seeded directories back into the container so `nix build` and
-`nix develop` reuse the same Nix state for that project without falling back to
-an image-owned `/nix/var/log/nix` path.
-
-The dedicated seeding container runs as `root` so it can copy the image's
-`/nix` contents into the bind-mounted project cache. The normal interactive
-agentbox shell still runs as uid/gid `1000:1000`.
-
-This mode creates and reuses a per-project state tree:
-
-```text
-<state-root>/
-  cargo/
-  nix/
-    .seeded
-    store/
-    var/
-      log/
-        nix/
-      nix/
-```
-
-Requirements:
-
-- Podman must be able to run the image and copy its `/nix` contents into the
-  mounted `<state-root>/nix` directory on first use
-- `<state-root>/nix` must have enough space for the seeded Nix store, derivation
-  logs, and later build outputs
-
-If `<state-root>/nix/store` or `<state-root>/nix/var/nix` contains partial
-state without `<state-root>/nix/.seeded`, `agentbox` treats that as
-inconsistent and
-refuses to seed automatically.
-
-## Rootless sidecar mode (default; no `/nix/store` seed copy)
-
-Sidecar mode is enabled by default:
-
-```bash
-./result/bin/agentbox
-```
-
-In this mode agentbox:
-
-1. resolves image identity with `podman image inspect`
-2. mounts the image root with `podman image mount` (falling back to
-   `podman unshare podman image mount` when needed) and uses `<mount>/nix` as
-   `fuse-overlayfs` lowerdir when present; if the mount itself already looks
-   like a Nix root (for example it directly contains `store/`), agentbox uses
-   `<mount>` as the lowerdir fallback
-3. mounts an external merged tree at `<state-root>/nix-merged` with:
-   - upperdir: `<state-root>/nix-upper`
-   - workdir: `<state-root>/nix-work`
-4. starts/reuses a deterministic sidecar container named like `agentbox-nix-sidecar-<repo>-<hash>` running `nix-daemon`
-5. launches the interactive task container with `<state-root>/nix-merged:/nix:ro`
-   and `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`
-
-Sidecar state metadata is stored in `<state-root>/nix-sidecar.state`.
-
-Requirements:
-
-- `podman` available on host `PATH`
-- `fuse-overlayfs` available on host `PATH`
-
-Notes:
-
-- `--disable-nix-sidecar` or `AGENTBOX_NIX_SIDECAR=0` switch to seeded mode.
-- Sidecar reuse is gated by image ID + lowerdir + merged mount + socket
-  connectability checks; mismatches recreate the sidecar stack.
-- Task containers in sidecar mode are labeled with sidecar identity; when the
-  last labeled task container exits, agentbox now removes the idle sidecar
-  container automatically.
-- When `podman image mount` is unavailable in rootless mode, agentbox resolves
-  lowerdir and mounts `fuse-overlayfs` through `podman unshare`.
-- If `<state-root>/nix-sidecar.state` is stale or malformed, agentbox
-  auto-clears it and recreates the sidecar stack (no manual state-file deletion
-  required).
-- If sidecar startup times out, agentbox now captures recent sidecar logs and
-  attempts automatic sidecar + merged-mount cleanup before returning an error;
-  manual `<state-root>/nix-merged` deletion is only needed if cleanup explicitly
-  reports failure. Timeout errors also include sidecar state and socket-probe
-  diagnostics when available.
-- Task containers mount `/nix` read-only in this mode; writes are intended to
-  flow through `nix-daemon`.
