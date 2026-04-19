@@ -250,13 +250,13 @@ Older `sha-*` prereleases are pruned (retains newest 20).
 
 ## Maintenance helpers
 
-Refresh pinned prebuilt release in `flake.nix`:
+Refresh pinned prebuilt release in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-agentbox-prebuilt.sh
 ```
 
-Refresh pinned `oh-my-codex` version/hashes in `flake.nix`:
+Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-oh-my-codex.sh

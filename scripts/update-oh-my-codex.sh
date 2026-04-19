@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-flake_file="$repo_root/flake.nix"
+pins_file="$repo_root/nix/pins.nix"
 owner="Yeachan-Heo"
 repo="oh-my-codex"
 api_url="https://api.github.com/repos/$owner/$repo/releases/latest"
@@ -51,16 +51,16 @@ fi
 
 npm_deps_hash="$(prefetch_npm_deps_hash "$lockfile" | tail -n 1)"
 
-python3 - "$flake_file" "$version" "$src_hash_sri" "$npm_deps_hash" <<'PY'
+python3 - "$pins_file" "$version" "$src_hash_sri" "$npm_deps_hash" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-flake_path = Path(sys.argv[1])
+pins_path = Path(sys.argv[1])
 version = sys.argv[2]
 src_hash = sys.argv[3]
 npm_hash = sys.argv[4]
-text = flake_path.read_text()
+text = pins_path.read_text()
 
 def replace_exact(pattern: str, replacement: str, label: str) -> None:
     global text
@@ -70,24 +70,24 @@ def replace_exact(pattern: str, replacement: str, label: str) -> None:
 
 
 replace_exact(
-    r'ohMyCodexVersion = "[^"]+";',
-    f'ohMyCodexVersion = "{version}";',
-    "ohMyCodexVersion",
+    r'(ohMyCodex = \{\s*version = )"[^"]+"(;)',
+    rf'\1"{version}"\2',
+    "ohMyCodex version",
 )
 replace_exact(
-    r'(src = pkgs\.fetchFromGitHub \{\s*owner = "Yeachan-Heo";\s*repo = "oh-my-codex";\s*rev = "v\$\{ohMyCodexVersion\}";\s*hash = )"sha256-[^"]+"(;)',
+    r'(ohMyCodex = \{.*?srcHash = )"sha256-[^"]+"(;)',
     rf'\1"{src_hash}"\2',
     "ohMyCodex src hash",
 )
 replace_exact(
-    r'(npmDepsHash = )"sha256-[^"]+"(;)',
+    r'(ohMyCodex = \{.*?npmDepsHash = )"sha256-[^"]+"(;)',
     rf'\1"{npm_hash}"\2',
     "ohMyCodex npmDepsHash",
 )
-flake_path.write_text(text)
+pins_path.write_text(text)
 PY
 
-echo "updated flake.nix:"
+echo "updated nix/pins.nix:"
 echo "  ohMyCodexVersion = \"$version\";"
 echo "  hash = \"$src_hash_sri\";"
 echo "  npmDepsHash = \"$npm_deps_hash\";"
