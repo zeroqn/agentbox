@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-flake_file="$repo_root/flake.nix"
+pins_file="$repo_root/nix/pins.nix"
 owner="zeroqn"
 repo="agentbox"
 system="x86_64-linux"
@@ -12,7 +12,7 @@ usage() {
   cat <<'EOF'
 Usage: update-agentbox-prebuilt.sh [--tag <release-tag>] [--system <system>]
 
-Refresh the pinned agentbox prebuilt release metadata in flake.nix by querying
+Refresh the pinned agentbox prebuilt release metadata in nix/pins.nix by querying
 GitHub Releases and recomputing the binary SRI hash.
 
 Defaults:
@@ -113,30 +113,30 @@ print("sha256-" + base64.b64encode(digest).decode())
 PY
 )"
 
-python3 - "$flake_file" "$release_tag" "$system" "$asset_name" "$asset_hash" <<'PY'
+python3 - "$pins_file" "$release_tag" "$system" "$asset_name" "$asset_hash" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-flake_path = Path(sys.argv[1])
+pins_path = Path(sys.argv[1])
 release_tag = sys.argv[2]
 system = sys.argv[3]
 asset_name = sys.argv[4]
 asset_hash = sys.argv[5]
-text = flake_path.read_text()
+text = pins_path.read_text()
 
 block_match = re.search(
-    r'agentboxPrebuiltRelease = \{\n(?P<body>.*?)\n      \};',
+    r'agentboxPrebuiltRelease = \{\n(?P<body>.*?)\n  \};',
     text,
     re.S,
 )
 if block_match is None:
-    raise SystemExit("failed to locate agentboxPrebuiltRelease block in flake.nix")
+    raise SystemExit("failed to locate agentboxPrebuiltRelease block in nix/pins.nix")
 
 body = block_match.group("body")
 body, tag_count = re.subn(r'tag = "[^"]+";', f'tag = "{release_tag}";', body, count=1)
 if tag_count != 1:
-    raise SystemExit("failed to update prebuilt release tag in flake.nix")
+    raise SystemExit("failed to update prebuilt release tag in nix/pins.nix")
 
 system_pattern = re.compile(
     rf'({re.escape(system)} = \{{\n\s+asset = ")[^"]+(";\n\s+hash = ")[^"]+(";)',
@@ -144,14 +144,14 @@ system_pattern = re.compile(
 )
 body, system_count = system_pattern.subn(rf'\1{asset_name}\2{asset_hash}\3', body, count=1)
 if system_count != 1:
-    raise SystemExit(f"failed to update prebuilt asset metadata for {system} in flake.nix")
+    raise SystemExit(f"failed to update prebuilt asset metadata for {system} in nix/pins.nix")
 
 updated = text[: block_match.start("body")] + body + text[block_match.end("body") :]
-flake_path.write_text(updated)
+pins_path.write_text(updated)
 PY
 
 cat <<EOF
-updated flake.nix:
+updated nix/pins.nix:
   tag = "$release_tag";
   $system.asset = "$asset_name";
   $system.hash = "$asset_hash";
