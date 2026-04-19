@@ -8,13 +8,13 @@ use crate::{
     TASK_CONTAINER_SIDECAR_LABEL,
 };
 
-pub(super) fn podman_image_exists(image: &str) -> Result<bool> {
+pub fn podman_image_exists(image: &str) -> Result<bool> {
     let args = vec!["image".to_owned(), "exists".to_owned(), image.to_owned()];
     let output = run_podman_capture(args, "failed to check whether default image exists")?;
     Ok(output.status.success())
 }
 
-pub(super) fn pull_image(image: &str) -> Result<()> {
+pub fn pull_image(image: &str) -> Result<()> {
     let args = vec!["pull".to_owned(), image.to_owned()];
     let status = run_podman(
         args,
@@ -30,7 +30,7 @@ pub(super) fn pull_image(image: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn build_podman_args(
+pub fn build_podman_args(
     image: &str,
     hostname: &str,
     workspace_mount: &str,
@@ -68,7 +68,7 @@ pub(super) fn build_podman_args(
         NixRuntime::Sidecar(sidecar) => {
             args.push("--volume".to_owned());
             args.push(format_mount_arg_with_options(
-                &sidecar.merged_dir,
+                sidecar.merged_dir(),
                 CONTAINER_NIX_DIR,
                 Some("ro"),
             )?);
@@ -81,7 +81,7 @@ pub(super) fn build_podman_args(
             args.push("--label".to_owned());
             args.push(format!(
                 "{TASK_CONTAINER_SIDECAR_LABEL}={}",
-                sidecar.sidecar_name
+                sidecar.sidecar_name()
             ));
         }
     }
@@ -92,7 +92,7 @@ pub(super) fn build_podman_args(
     Ok(args)
 }
 
-pub(super) fn run_podman(
+pub fn run_podman(
     args: Vec<String>,
     stdin: Stdio,
     stdout: Stdio,
@@ -114,7 +114,7 @@ pub(super) fn run_podman(
         .with_context(|| context.to_owned())
 }
 
-pub(super) fn run_podman_output(args: Vec<String>, context: &str) -> Result<String> {
+pub fn run_podman_output(args: Vec<String>, context: &str) -> Result<String> {
     let output = Command::new("podman")
         .args(args)
         .stdin(Stdio::null())
@@ -138,7 +138,7 @@ pub(super) fn run_podman_output(args: Vec<String>, context: &str) -> Result<Stri
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-pub(super) fn run_podman_capture(args: Vec<String>, context: &str) -> Result<std::process::Output> {
+pub fn run_podman_capture(args: Vec<String>, context: &str) -> Result<std::process::Output> {
     Command::new("podman")
         .args(args)
         .stdin(Stdio::null())
@@ -152,7 +152,7 @@ pub(super) fn run_podman_capture(args: Vec<String>, context: &str) -> Result<std
         .with_context(|| context.to_owned())
 }
 
-pub(super) fn build_podman_unshare_args(mut args: Vec<String>) -> Vec<String> {
+pub fn build_podman_unshare_args(mut args: Vec<String>) -> Vec<String> {
     let mut wrapped = Vec::with_capacity(args.len() + 2);
     wrapped.push("unshare".to_owned());
     wrapped.push("podman".to_owned());
