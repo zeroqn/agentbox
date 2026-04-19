@@ -1,19 +1,20 @@
 use anyhow::{anyhow, Context, Result};
 use std::process::{Command, Stdio};
 
+use crate::mounts::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
-    format_mount_arg, format_mount_arg_with_options, NixRuntime, CONTAINER_NIX_DIR,
-    CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL, NIX_REMOTE_SOCKET,
-    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    NixRuntime, CONTAINER_NIX_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL,
+    NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    TASK_CONTAINER_SIDECAR_LABEL,
 };
 
-pub(crate) fn podman_image_exists(image: &str) -> Result<bool> {
+pub(super) fn podman_image_exists(image: &str) -> Result<bool> {
     let args = vec!["image".to_owned(), "exists".to_owned(), image.to_owned()];
     let output = run_podman_capture(args, "failed to check whether default image exists")?;
     Ok(output.status.success())
 }
 
-pub(crate) fn pull_image(image: &str) -> Result<()> {
+pub(super) fn pull_image(image: &str) -> Result<()> {
     let args = vec!["pull".to_owned(), image.to_owned()];
     let status = run_podman(
         args,
@@ -29,7 +30,7 @@ pub(crate) fn pull_image(image: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn build_podman_args(
+pub(super) fn build_podman_args(
     image: &str,
     hostname: &str,
     workspace_mount: &str,
@@ -91,7 +92,7 @@ pub(crate) fn build_podman_args(
     Ok(args)
 }
 
-pub(crate) fn run_podman(
+pub(super) fn run_podman(
     args: Vec<String>,
     stdin: Stdio,
     stdout: Stdio,
@@ -113,7 +114,7 @@ pub(crate) fn run_podman(
         .with_context(|| context.to_owned())
 }
 
-pub(crate) fn run_podman_output(args: Vec<String>, context: &str) -> Result<String> {
+pub(super) fn run_podman_output(args: Vec<String>, context: &str) -> Result<String> {
     let output = Command::new("podman")
         .args(args)
         .stdin(Stdio::null())
@@ -137,7 +138,7 @@ pub(crate) fn run_podman_output(args: Vec<String>, context: &str) -> Result<Stri
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-pub(crate) fn run_podman_capture(args: Vec<String>, context: &str) -> Result<std::process::Output> {
+pub(super) fn run_podman_capture(args: Vec<String>, context: &str) -> Result<std::process::Output> {
     Command::new("podman")
         .args(args)
         .stdin(Stdio::null())
@@ -151,10 +152,13 @@ pub(crate) fn run_podman_capture(args: Vec<String>, context: &str) -> Result<std
         .with_context(|| context.to_owned())
 }
 
-pub(crate) fn build_podman_unshare_args(mut args: Vec<String>) -> Vec<String> {
+pub(super) fn build_podman_unshare_args(mut args: Vec<String>) -> Vec<String> {
     let mut wrapped = Vec::with_capacity(args.len() + 2);
     wrapped.push("unshare".to_owned());
     wrapped.push("podman".to_owned());
     wrapped.append(&mut args);
     wrapped
 }
+
+#[cfg(test)]
+mod tests;

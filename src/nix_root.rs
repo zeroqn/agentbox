@@ -3,21 +3,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use crate::mounts::format_mount_arg;
+use crate::podman::run_podman;
 use crate::{
-    format_mount_arg, run_podman, HOST_NIX_LOG, HOST_NIX_ROOT_DIR, HOST_NIX_STORE, HOST_NIX_VAR,
-    NIX_LOG_DIR, NIX_MARKER_FILE, NIX_STORE_DIR, NIX_VAR_DIR, SEED_MOUNT_POINT,
+    HOST_NIX_LOG, HOST_NIX_ROOT_DIR, HOST_NIX_STORE, HOST_NIX_VAR, NIX_LOG_DIR, NIX_MARKER_FILE,
+    NIX_STORE_DIR, NIX_VAR_DIR, SEED_MOUNT_POINT,
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct PersistentNixRoot {
-    pub(crate) store_dir: PathBuf,
-    pub(crate) var_nix_dir: PathBuf,
-    pub(crate) log_nix_dir: PathBuf,
-    pub(crate) marker_file: PathBuf,
+pub(super) struct PersistentNixRoot {
+    pub(super) store_dir: PathBuf,
+    pub(super) var_nix_dir: PathBuf,
+    pub(super) log_nix_dir: PathBuf,
+    pub(super) marker_file: PathBuf,
 }
 
 impl PersistentNixRoot {
-    pub(crate) fn new(state_root: &Path) -> Self {
+    pub(super) fn new(state_root: &Path) -> Self {
         let root = state_root.join(HOST_NIX_ROOT_DIR);
         Self {
             store_dir: root.join(NIX_STORE_DIR),
@@ -27,11 +29,11 @@ impl PersistentNixRoot {
         }
     }
 
-    pub(crate) fn root_dir(&self) -> &Path {
+    pub(super) fn root_dir(&self) -> &Path {
         self.marker_file.parent().unwrap_or_else(|| Path::new("."))
     }
 
-    pub(crate) fn mounts(&self) -> [(&Path, &str); 3] {
+    pub(super) fn mounts(&self) -> [(&Path, &str); 3] {
         [
             (self.store_dir.as_path(), HOST_NIX_STORE),
             (self.var_nix_dir.as_path(), HOST_NIX_VAR),
@@ -41,13 +43,13 @@ impl PersistentNixRoot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NixRootState {
+pub(super) enum NixRootState {
     Missing,
     Ready,
     Inconsistent,
 }
 
-pub(crate) fn prepare_persistent_nix_root(
+pub(super) fn prepare_persistent_nix_root(
     state_root: &Path,
     image: &str,
 ) -> Result<PersistentNixRoot> {
@@ -82,7 +84,7 @@ pub(crate) fn prepare_persistent_nix_root(
     Ok(nix_root)
 }
 
-pub(crate) fn inspect_persistent_nix_root(nix_root: &PersistentNixRoot) -> Result<NixRootState> {
+pub(super) fn inspect_persistent_nix_root(nix_root: &PersistentNixRoot) -> Result<NixRootState> {
     let marker_exists = nix_root.marker_file.is_file();
     let store_exists = nix_root.store_dir.is_dir();
     let var_exists = nix_root.var_nix_dir.is_dir();
@@ -146,7 +148,7 @@ fn seed_persistent_nix_root(
     Ok(())
 }
 
-pub(crate) fn build_seed_podman_args(
+pub(super) fn build_seed_podman_args(
     image: &str,
     host_seed_mount: &str,
     seed_script: &str,
@@ -165,7 +167,7 @@ pub(crate) fn build_seed_podman_args(
     ]
 }
 
-pub(crate) fn build_seed_script(replace_existing: bool) -> String {
+pub(super) fn build_seed_script(replace_existing: bool) -> String {
     let mut script = String::from("set -euo pipefail\n");
     if replace_existing {
         script.push_str(&format!(
@@ -185,7 +187,10 @@ pub(crate) fn build_seed_script(replace_existing: bool) -> String {
     script
 }
 
-pub(crate) fn ensure_persistent_nix_log_dir(nix_root: &PersistentNixRoot) -> Result<()> {
+pub(super) fn ensure_persistent_nix_log_dir(nix_root: &PersistentNixRoot) -> Result<()> {
     fs::create_dir_all(&nix_root.log_nix_dir)
         .with_context(|| format!("failed to create '{}'", nix_root.log_nix_dir.display()))
 }
+
+#[cfg(test)]
+mod tests;

@@ -11,43 +11,12 @@ mod podman;
 mod sidecar;
 mod state;
 
-pub(crate) use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
-pub(crate) use mounts::{
-    format_mount_arg, format_mount_arg_with_options, prepare_host_codex_mount,
-    prepare_project_cargo_mount,
-};
-pub(crate) use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
-pub(crate) use podman::{
-    build_podman_args, build_podman_unshare_args, podman_image_exists, pull_image, run_podman,
-    run_podman_capture, run_podman_output,
-};
-pub(crate) use sidecar::{cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarNixRuntime};
-pub(crate) use state::resolve_state_layout;
-
-#[cfg(test)]
-pub(crate) use cli::{
-    parse_env_flag_value, resolve_image_strategy, select_default_image, ImageResolutionStrategy,
-};
-#[cfg(test)]
-pub(crate) use mounts::prepare_host_codex_mount_at;
-#[cfg(test)]
-pub(crate) use nix_root::{
-    build_seed_podman_args, build_seed_script, ensure_persistent_nix_log_dir,
-    inspect_persistent_nix_root, NixRootState,
-};
-#[cfg(test)]
-pub(crate) use sidecar::{
-    build_podman_image_mount_args, build_podman_image_unmount_args, build_sidecar_podman_args,
-    build_sidecar_socket_timeout_error, build_sidecar_task_probe_args,
-    build_socket_ping_podman_args, derive_sidecar_name, read_sidecar_state,
-    resolve_sidecar_lowerdir, write_sidecar_state, PodmanImageMountMode, SidecarPaths,
-    SidecarStartupCleanupOutcome, SidecarStartupDiagnostics, SidecarState,
-};
-#[cfg(test)]
-pub(crate) use state::{
-    default_config_path, default_state_location_root, parse_state_location_override,
-    resolve_state_layout_from_env,
-};
+use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
+use mounts::{format_mount_arg, prepare_host_codex_mount, prepare_project_cargo_mount};
+use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
+use podman::{build_podman_args, run_podman};
+use sidecar::{cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarNixRuntime};
+use state::resolve_state_layout;
 
 const DEFAULT_IMAGE: &str = "localhost/agentbox:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/agentbox:latest";
@@ -160,7 +129,7 @@ fn derive_task_hostname(cwd: &Path) -> String {
     format!("{}-{TASK_HOSTNAME_SUFFIX}", derive_workspace_slug(cwd))
 }
 
-pub(crate) fn derive_workspace_slug(cwd: &Path) -> String {
+fn derive_workspace_slug(cwd: &Path) -> String {
     let workspace_name = cwd
         .file_name()
         .and_then(|name| name.to_str())

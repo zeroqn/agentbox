@@ -2,7 +2,8 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::env;
 
-use crate::{podman_image_exists, pull_image, DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
+use crate::podman::{podman_image_exists, pull_image};
+use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -11,38 +12,38 @@ use crate::{podman_image_exists, pull_image, DEFAULT_FALLBACK_IMAGE, DEFAULT_IMA
     about = "Launch a Podman shell with the current directory mounted at /workspace",
     after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
-pub(crate) struct Cli {
+pub(super) struct Cli {
     #[arg(
         long,
         env = "AGENTBOX_IMAGE",
         help = "Container image to run",
         long_help = "Container image to run. If omitted, agentbox prefers localhost/agentbox:latest and falls back to ghcr.io/zeroqn/agentbox:latest. Can also be set with AGENTBOX_IMAGE."
     )]
-    pub(crate) image: Option<String>,
+    pub(super) image: Option<String>,
 
     #[arg(
         long,
         help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run",
         long_help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run when --image is not set."
     )]
-    pub(crate) pull_latest: bool,
+    pub(super) pull_latest: bool,
 
     #[arg(
         long,
         help = "Disable sidecar mode and run with seeded external nix-state mounts",
         long_help = "Disable rootless sidecar mode for this run and use seeded bind mounts from the resolved external agentbox state root instead."
     )]
-    pub(crate) disable_nix_sidecar: bool,
+    pub(super) disable_nix_sidecar: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ImageResolutionStrategy {
+pub(super) enum ImageResolutionStrategy {
     Explicit(String),
     PullLatestGhcr,
     PreferLocalhostFallback,
 }
 
-pub(crate) fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Result<String> {
+pub(super) fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Result<String> {
     match resolve_image_strategy(cli_image, pull_latest) {
         ImageResolutionStrategy::Explicit(image) => Ok(image),
         ImageResolutionStrategy::PullLatestGhcr => {
@@ -56,7 +57,7 @@ pub(crate) fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Resul
     }
 }
 
-pub(crate) fn resolve_image_strategy(
+pub(super) fn resolve_image_strategy(
     cli_image: Option<&str>,
     pull_latest: bool,
 ) -> ImageResolutionStrategy {
@@ -71,7 +72,7 @@ pub(crate) fn resolve_image_strategy(
     ImageResolutionStrategy::PreferLocalhostFallback
 }
 
-pub(crate) fn select_default_image(localhost_available: bool) -> &'static str {
+pub(super) fn select_default_image(localhost_available: bool) -> &'static str {
     if localhost_available {
         DEFAULT_IMAGE
     } else {
@@ -79,14 +80,14 @@ pub(crate) fn select_default_image(localhost_available: bool) -> &'static str {
     }
 }
 
-pub(crate) fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool {
+pub(super) fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool {
     if cli.disable_nix_sidecar {
         return false;
     }
     env_sidecar_enabled
 }
 
-pub(crate) fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
+pub(super) fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
     match env::var(name) {
         Ok(value) => parse_env_flag_value(name, &value),
         Err(env::VarError::NotPresent) => Ok(default),
@@ -97,7 +98,7 @@ pub(crate) fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
     }
 }
 
-pub(crate) fn parse_env_flag_value(name: &str, value: &str) -> Result<bool> {
+pub(super) fn parse_env_flag_value(name: &str, value: &str) -> Result<bool> {
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return Ok(true);
@@ -112,3 +113,6 @@ pub(crate) fn parse_env_flag_value(name: &str, value: &str) -> Result<bool> {
         )),
     }
 }
+
+#[cfg(test)]
+mod tests;

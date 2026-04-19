@@ -11,17 +11,17 @@ const STATE_CONFIG_SECTION: &str = "state";
 const STATE_LOCATION_KEY: &str = "location";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct StateLayout {
-    pub(crate) root_dir: PathBuf,
+pub(super) struct StateLayout {
+    pub(super) root_dir: PathBuf,
 }
 
 impl StateLayout {
-    pub(crate) fn new(root_dir: PathBuf) -> Self {
+    pub(super) fn new(root_dir: PathBuf) -> Self {
         Self { root_dir }
     }
 }
 
-pub(crate) fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {
+pub(super) fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {
     let xdg_state_home = env::var_os("XDG_STATE_HOME").map(PathBuf::from);
     let xdg_config_home = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
     let home_dir = env::var_os("HOME").map(PathBuf::from);
@@ -34,7 +34,7 @@ pub(crate) fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {
     )
 }
 
-pub(crate) fn resolve_state_layout_from_env(
+pub(super) fn resolve_state_layout_from_env(
     cwd: &Path,
     xdg_state_home: Option<&Path>,
     xdg_config_home: Option<&Path>,
@@ -52,7 +52,7 @@ pub(crate) fn resolve_state_layout_from_env(
     ))
 }
 
-pub(crate) fn default_state_location_root(
+pub(super) fn default_state_location_root(
     xdg_state_home: Option<&Path>,
     home_dir: Option<&Path>,
 ) -> Result<PathBuf> {
@@ -65,7 +65,7 @@ pub(crate) fn default_state_location_root(
     Ok(home_dir.join(".local").join("state"))
 }
 
-pub(crate) fn default_config_path(
+pub(super) fn default_config_path(
     xdg_config_home: Option<&Path>,
     home_dir: Option<&Path>,
 ) -> Result<PathBuf> {
@@ -96,7 +96,7 @@ fn read_state_location_override(config_path: &Path) -> Result<Option<PathBuf>> {
     })
 }
 
-pub(crate) fn parse_state_location_override(contents: &str) -> Result<Option<PathBuf>> {
+pub(super) fn parse_state_location_override(contents: &str) -> Result<Option<PathBuf>> {
     let mut in_state_section = false;
 
     for line in contents.lines() {
@@ -139,3 +139,6 @@ pub(crate) fn parse_state_location_override(contents: &str) -> Result<Option<Pat
 
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests;
