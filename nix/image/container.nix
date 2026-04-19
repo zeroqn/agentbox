@@ -42,6 +42,7 @@ pkgs.dockerTools.buildLayeredImage {
     Env = [
       "HOME=/home/dev"
       "USER=dev"
+      "LIBCLANG_PATH=${pkgs.libclang.lib}/lib"
       "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${rustMuslPackage}/bin"
       "NIX_CONFIG=experimental-features = nix-command flakes"
       "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
