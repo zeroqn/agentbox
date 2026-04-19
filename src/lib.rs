@@ -12,9 +12,11 @@ mod sidecar;
 mod state;
 
 use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
-use mounts::{format_mount_arg, prepare_host_codex_mount, prepare_project_cargo_mount};
+use mounts::format::format_mount_arg;
+use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount};
 use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
-use podman::{build_podman_args, run_podman};
+use podman::command::run_podman;
+use podman::task::build_podman_args;
 use sidecar::{cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarNixRuntime};
 use state::resolve_state_layout;
 
@@ -119,7 +121,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         if let Err(err) = cleanup_idle_sidecar(sidecar) {
             eprintln!(
                 "agentbox: warning: failed to cleanup idle sidecar '{}': {err:#}",
-                sidecar.sidecar_name()
+                sidecar.sidecar_name
             );
         }
     }

@@ -16,12 +16,12 @@ pub struct StateLayout {
 }
 
 impl StateLayout {
-    fn new(root_dir: PathBuf) -> Self {
-        Self { root_dir }
-    }
-
     pub fn root_dir(&self) -> &Path {
         &self.root_dir
+    }
+
+    fn new(root_dir: PathBuf) -> Self {
+        Self { root_dir }
     }
 }
 

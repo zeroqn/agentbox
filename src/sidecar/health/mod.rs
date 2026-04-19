@@ -5,32 +5,31 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use crate::mounts::format_mount_arg_with_options;
-use crate::podman::{run_podman_capture, run_podman_output};
+use crate::mounts::format::format_mount_arg_with_options;
+use crate::podman::command::{run_podman_capture, run_podman_output};
 use crate::{
     CONTAINER_NIX_DIR, NIX_REMOTE_SOCKET, SIDECAR_HEALTH_ATTEMPTS, SIDECAR_HEALTH_DELAY_MS,
     SIDECAR_LOG_TAIL_LINES, SIDECAR_SOCKET_PATH,
 };
 
-use super::mount::{
-    cleanup_merged_mount, cleanup_sidecar_container, path_is_mounted,
-    resolve_sidecar_lowerdir_for_mode,
+use super::overlay::{cleanup_merged_mount, path_is_mounted};
+use super::{
+    cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, SidecarPaths, SidecarState,
 };
-use super::{SidecarPaths, SidecarState};
 
 #[derive(Debug, Clone)]
-pub struct SidecarStartupCleanupOutcome {
-    pub summary: String,
-    pub manual_merged_cleanup_required: bool,
+struct SidecarStartupCleanupOutcome {
+    summary: String,
+    manual_merged_cleanup_required: bool,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct SidecarStartupDiagnostics {
-    pub sidecar_logs: Option<String>,
-    pub sidecar_logs_error: Option<String>,
-    pub socket_probe_failure: Option<String>,
-    pub sidecar_state: Option<String>,
-    pub host_socket_exists: Option<bool>,
+struct SidecarStartupDiagnostics {
+    sidecar_logs: Option<String>,
+    sidecar_logs_error: Option<String>,
+    socket_probe_failure: Option<String>,
+    sidecar_state: Option<String>,
+    host_socket_exists: Option<bool>,
 }
 
 pub fn sidecar_stack_is_healthy(
@@ -55,6 +54,45 @@ pub fn sidecar_stack_is_healthy(
     }
 
     Ok(true)
+}
+
+pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path) -> Result<()> {
+    let mut last_probe_failure = None;
+    let mut last_host_socket_exists = None;
+    for _attempt in 0..SIDECAR_HEALTH_ATTEMPTS {
+        last_host_socket_exists = Some(daemon_socket_exists(merged_dir)?);
+        match daemon_socket_probe_failure(image, merged_dir)? {
+            None => return Ok(()),
+            Some(probe_failure) => last_probe_failure = Some(probe_failure),
+        }
+        thread::sleep(Duration::from_millis(SIDECAR_HEALTH_DELAY_MS));
+    }
+
+    let (sidecar_logs, sidecar_logs_error) = match read_sidecar_logs(sidecar_name) {
+        Ok(logs) => (Some(logs), None),
+        Err(err) => (None, Some(err.to_string())),
+    };
+    let diagnostics = SidecarStartupDiagnostics {
+        sidecar_logs,
+        sidecar_logs_error,
+        socket_probe_failure: last_probe_failure.or_else(|| {
+            daemon_socket_probe_failure(image, merged_dir)
+                .ok()
+                .flatten()
+        }),
+        sidecar_state: inspect_sidecar_container_state(sidecar_name).ok(),
+        host_socket_exists: last_host_socket_exists,
+    };
+    let cleanup_outcome = cleanup_failed_sidecar_startup(sidecar_name, merged_dir);
+    Err(anyhow!(
+        "{}",
+        build_sidecar_socket_timeout_error(
+            sidecar_name,
+            merged_dir,
+            &cleanup_outcome,
+            &diagnostics
+        )
+    ))
 }
 
 fn is_container_running(container_name: &str) -> bool {
@@ -139,45 +177,6 @@ fn inspect_sidecar_container_state(sidecar_name: &str) -> Result<String> {
     Ok(summary.to_owned())
 }
 
-pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path) -> Result<()> {
-    let mut last_probe_failure = None;
-    let mut last_host_socket_exists = None;
-    for _attempt in 0..SIDECAR_HEALTH_ATTEMPTS {
-        last_host_socket_exists = Some(daemon_socket_exists(merged_dir)?);
-        match daemon_socket_probe_failure(image, merged_dir)? {
-            None => return Ok(()),
-            Some(probe_failure) => last_probe_failure = Some(probe_failure),
-        }
-        thread::sleep(Duration::from_millis(SIDECAR_HEALTH_DELAY_MS));
-    }
-
-    let (sidecar_logs, sidecar_logs_error) = match read_sidecar_logs(sidecar_name) {
-        Ok(logs) => (Some(logs), None),
-        Err(err) => (None, Some(err.to_string())),
-    };
-    let diagnostics = SidecarStartupDiagnostics {
-        sidecar_logs,
-        sidecar_logs_error,
-        socket_probe_failure: last_probe_failure.or_else(|| {
-            daemon_socket_probe_failure(image, merged_dir)
-                .ok()
-                .flatten()
-        }),
-        sidecar_state: inspect_sidecar_container_state(sidecar_name).ok(),
-        host_socket_exists: last_host_socket_exists,
-    };
-    let cleanup_outcome = cleanup_failed_sidecar_startup(sidecar_name, merged_dir);
-    Err(anyhow!(
-        "{}",
-        build_sidecar_socket_timeout_error(
-            sidecar_name,
-            merged_dir,
-            &cleanup_outcome,
-            &diagnostics
-        )
-    ))
-}
-
 fn read_sidecar_logs(sidecar_name: &str) -> Result<String> {
     let args = vec![
         "logs".to_owned(),
@@ -233,7 +232,7 @@ fn cleanup_failed_sidecar_startup(
     }
 }
 
-pub fn build_sidecar_socket_timeout_error(
+fn build_sidecar_socket_timeout_error(
     sidecar_name: &str,
     merged_dir: &Path,
     cleanup_outcome: &SidecarStartupCleanupOutcome,
@@ -307,7 +306,7 @@ pub fn build_sidecar_socket_timeout_error(
     message
 }
 
-pub fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {
+fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {
     vec![
         "run".to_owned(),
         "--rm".to_owned(),
@@ -321,3 +320,6 @@ pub fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<Str
         format!("nix store ping --store {NIX_REMOTE_SOCKET}"),
     ]
 }
+
+#[cfg(test)]
+mod tests;

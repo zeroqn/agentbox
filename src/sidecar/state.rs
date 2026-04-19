@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{mount::PodmanImageMountMode, SidecarPaths, SidecarState};
+use super::{PodmanImageMountMode, SidecarPaths, SidecarState};
 
 pub fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> {
     if !paths.state_file.exists() {
@@ -36,6 +36,28 @@ pub fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> 
     }
 }
 
+pub fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result<()> {
+    let parent = paths.state_file.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create '{}'", parent.display()))?;
+
+    let mount_mode = match state.mount_mode {
+        PodmanImageMountMode::Direct => "direct",
+        PodmanImageMountMode::Unshare => "unshare",
+    };
+    let contents = format!(
+        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\n",
+        state.image,
+        state.image_id,
+        state.image_mount_path.display(),
+        state.sidecar_name,
+        mount_mode
+    );
+
+    fs::write(&paths.state_file, contents)
+        .with_context(|| format!("failed to write '{}'", paths.state_file.display()))
+}
+
 fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState> {
     let mut image = None;
     let mut image_id = None;
@@ -56,15 +78,17 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
                 "image_mount_path" => image_mount_path = Some(PathBuf::from(value)),
                 "sidecar_name" => sidecar_name = Some(value.to_owned()),
                 "mount_mode" => {
-                    mount_mode = Some(PodmanImageMountMode::from_state_value(value).ok_or_else(
-                        || {
-                            anyhow!(
+                    mount_mode = Some(match value {
+                        "direct" => PodmanImageMountMode::Direct,
+                        "unshare" => PodmanImageMountMode::Unshare,
+                        _ => {
+                            return Err(anyhow!(
                                 "unsupported mount_mode '{}' in '{}'",
                                 value,
                                 state_file.display()
-                            )
-                        },
-                    )?)
+                            ))
+                        }
+                    })
                 }
                 _ => {}
             }
@@ -83,22 +107,4 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
         }
         _ => Err(anyhow!("'{}' is incomplete", state_file.display())),
     }
-}
-
-pub fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result<()> {
-    let parent = paths.state_file.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create '{}'", parent.display()))?;
-
-    let contents = format!(
-        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\n",
-        state.image,
-        state.image_id,
-        state.image_mount_path.display(),
-        state.sidecar_name,
-        state.mount_mode.state_value()
-    );
-
-    fs::write(&paths.state_file, contents)
-        .with_context(|| format!("failed to write '{}'", paths.state_file.display()))
 }

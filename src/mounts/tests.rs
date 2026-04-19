@@ -4,15 +4,16 @@ use std::path::Path;
 
 #[test]
 fn mount_arg_uses_workspace_path() {
-    let mount = format_mount_arg(Path::new("/tmp/project"), CONTAINER_WORKDIR)
+    let mount = format::format_mount_arg(Path::new("/tmp/project"), CONTAINER_WORKDIR)
         .expect("mount formatting should succeed");
     assert_eq!(mount, "/tmp/project:/workspace");
 }
 
 #[test]
 fn mount_arg_supports_options_suffix() {
-    let mount = format_mount_arg_with_options(Path::new("/tmp/project"), "/nix", Some("ro"))
-        .expect("mount formatting should succeed");
+    let mount =
+        format::format_mount_arg_with_options(Path::new("/tmp/project"), "/nix", Some("ro"))
+            .expect("mount formatting should succeed");
     assert_eq!(mount, "/tmp/project:/nix:ro");
 }
 
