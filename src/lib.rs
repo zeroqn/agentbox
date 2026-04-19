@@ -81,7 +81,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let task_hostname = derive_task_hostname(&cwd);
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
     let codex_mount = prepare_host_codex_mount()?;
-    let cargo_mount = prepare_project_cargo_mount(&state_layout.root_dir)?;
+    let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
 
     let env_sidecar_enabled =
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
@@ -90,11 +90,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let nix_runtime = if nix_sidecar_enabled {
         NixRuntime::Sidecar(prepare_sidecar_nix_runtime(
             &cwd,
-            &state_layout.root_dir,
+            state_layout.root_dir(),
             &image,
         )?)
     } else {
-        NixRuntime::Seeded(prepare_persistent_nix_root(&state_layout.root_dir, &image)?)
+        NixRuntime::Seeded(prepare_persistent_nix_root(
+            state_layout.root_dir(),
+            &image,
+        )?)
     };
 
     let status = run_podman(
@@ -116,7 +119,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         if let Err(err) = cleanup_idle_sidecar(sidecar) {
             eprintln!(
                 "agentbox: warning: failed to cleanup idle sidecar '{}': {err:#}",
-                sidecar.sidecar_name
+                sidecar.sidecar_name()
             );
         }
     }

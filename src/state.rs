@@ -11,17 +11,21 @@ const STATE_CONFIG_SECTION: &str = "state";
 const STATE_LOCATION_KEY: &str = "location";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct StateLayout {
-    pub(super) root_dir: PathBuf,
+pub struct StateLayout {
+    root_dir: PathBuf,
 }
 
 impl StateLayout {
-    pub(super) fn new(root_dir: PathBuf) -> Self {
+    fn new(root_dir: PathBuf) -> Self {
         Self { root_dir }
+    }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
     }
 }
 
-pub(super) fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {
+pub fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {
     let xdg_state_home = env::var_os("XDG_STATE_HOME").map(PathBuf::from);
     let xdg_config_home = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
     let home_dir = env::var_os("HOME").map(PathBuf::from);
@@ -34,7 +38,7 @@ pub(super) fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {
     )
 }
 
-pub(super) fn resolve_state_layout_from_env(
+fn resolve_state_layout_from_env(
     cwd: &Path,
     xdg_state_home: Option<&Path>,
     xdg_config_home: Option<&Path>,
@@ -52,7 +56,7 @@ pub(super) fn resolve_state_layout_from_env(
     ))
 }
 
-pub(super) fn default_state_location_root(
+fn default_state_location_root(
     xdg_state_home: Option<&Path>,
     home_dir: Option<&Path>,
 ) -> Result<PathBuf> {
@@ -65,10 +69,7 @@ pub(super) fn default_state_location_root(
     Ok(home_dir.join(".local").join("state"))
 }
 
-pub(super) fn default_config_path(
-    xdg_config_home: Option<&Path>,
-    home_dir: Option<&Path>,
-) -> Result<PathBuf> {
+fn default_config_path(xdg_config_home: Option<&Path>, home_dir: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = xdg_config_home {
         return Ok(path.join(APP_DIR_NAME).join(CONFIG_FILE_NAME));
     }
@@ -96,7 +97,7 @@ fn read_state_location_override(config_path: &Path) -> Result<Option<PathBuf>> {
     })
 }
 
-pub(super) fn parse_state_location_override(contents: &str) -> Result<Option<PathBuf>> {
+fn parse_state_location_override(contents: &str) -> Result<Option<PathBuf>> {
     let mut in_state_section = false;
 
     for line in contents.lines() {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use super::{mount::PodmanImageMountMode, SidecarPaths, SidecarState};
 
-pub(super) fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> {
+pub fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> {
     if !paths.state_file.exists() {
         return Ok(None);
     }
@@ -85,7 +85,7 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
     }
 }
 
-pub(super) fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result<()> {
+pub fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result<()> {
     let parent = paths.state_file.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)
         .with_context(|| format!("failed to create '{}'", parent.display()))?;

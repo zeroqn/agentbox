@@ -12,38 +12,38 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     about = "Launch a Podman shell with the current directory mounted at /workspace",
     after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
-pub(super) struct Cli {
+pub struct Cli {
     #[arg(
         long,
         env = "AGENTBOX_IMAGE",
         help = "Container image to run",
         long_help = "Container image to run. If omitted, agentbox prefers localhost/agentbox:latest and falls back to ghcr.io/zeroqn/agentbox:latest. Can also be set with AGENTBOX_IMAGE."
     )]
-    pub(super) image: Option<String>,
+    pub image: Option<String>,
 
     #[arg(
         long,
         help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run",
         long_help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run when --image is not set."
     )]
-    pub(super) pull_latest: bool,
+    pub pull_latest: bool,
 
     #[arg(
         long,
         help = "Disable sidecar mode and run with seeded external nix-state mounts",
         long_help = "Disable rootless sidecar mode for this run and use seeded bind mounts from the resolved external agentbox state root instead."
     )]
-    pub(super) disable_nix_sidecar: bool,
+    pub disable_nix_sidecar: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ImageResolutionStrategy {
+enum ImageResolutionStrategy {
     Explicit(String),
     PullLatestGhcr,
     PreferLocalhostFallback,
 }
 
-pub(super) fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Result<String> {
+pub fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Result<String> {
     match resolve_image_strategy(cli_image, pull_latest) {
         ImageResolutionStrategy::Explicit(image) => Ok(image),
         ImageResolutionStrategy::PullLatestGhcr => {
@@ -57,10 +57,7 @@ pub(super) fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Resul
     }
 }
 
-pub(super) fn resolve_image_strategy(
-    cli_image: Option<&str>,
-    pull_latest: bool,
-) -> ImageResolutionStrategy {
+fn resolve_image_strategy(cli_image: Option<&str>, pull_latest: bool) -> ImageResolutionStrategy {
     if let Some(image) = cli_image {
         return ImageResolutionStrategy::Explicit(image.to_owned());
     }
@@ -72,7 +69,7 @@ pub(super) fn resolve_image_strategy(
     ImageResolutionStrategy::PreferLocalhostFallback
 }
 
-pub(super) fn select_default_image(localhost_available: bool) -> &'static str {
+fn select_default_image(localhost_available: bool) -> &'static str {
     if localhost_available {
         DEFAULT_IMAGE
     } else {
@@ -80,14 +77,14 @@ pub(super) fn select_default_image(localhost_available: bool) -> &'static str {
     }
 }
 
-pub(super) fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool {
+pub fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool {
     if cli.disable_nix_sidecar {
         return false;
     }
     env_sidecar_enabled
 }
 
-pub(super) fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
+pub fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
     match env::var(name) {
         Ok(value) => parse_env_flag_value(name, &value),
         Err(env::VarError::NotPresent) => Ok(default),
@@ -98,7 +95,7 @@ pub(super) fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
     }
 }
 
-pub(super) fn parse_env_flag_value(name: &str, value: &str) -> Result<bool> {
+fn parse_env_flag_value(name: &str, value: &str) -> Result<bool> {
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return Ok(true);

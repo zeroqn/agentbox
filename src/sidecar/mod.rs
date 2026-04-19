@@ -34,21 +34,21 @@ use mount::{
 use state::{read_sidecar_state, write_sidecar_state};
 
 #[derive(Debug, Clone)]
-pub(super) struct SidecarNixRuntime {
-    pub(super) merged_dir: PathBuf,
-    pub(super) sidecar_name: String,
+pub struct SidecarNixRuntime {
+    merged_dir: PathBuf,
+    sidecar_name: String,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct SidecarPaths {
-    pub(super) upper_dir: PathBuf,
-    pub(super) work_dir: PathBuf,
-    pub(super) merged_dir: PathBuf,
-    pub(super) state_file: PathBuf,
+struct SidecarPaths {
+    upper_dir: PathBuf,
+    work_dir: PathBuf,
+    merged_dir: PathBuf,
+    state_file: PathBuf,
 }
 
 impl SidecarPaths {
-    pub(super) fn new(state_root: &Path) -> Self {
+    fn new(state_root: &Path) -> Self {
         Self {
             upper_dir: state_root.join(HOST_NIX_UPPER_DIR),
             work_dir: state_root.join(HOST_NIX_WORK_DIR),
@@ -59,21 +59,39 @@ impl SidecarPaths {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct SidecarState {
-    pub(super) image: String,
-    pub(super) image_id: String,
-    pub(super) image_mount_path: PathBuf,
-    pub(super) sidecar_name: String,
+struct SidecarState {
+    image: String,
+    image_id: String,
+    image_mount_path: PathBuf,
+    sidecar_name: String,
     mount_mode: mount::PodmanImageMountMode,
 }
 
 impl SidecarState {
-    pub(super) fn matches(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
+    fn matches(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
         self.image == image && self.image_id == image_id && self.sidecar_name == sidecar_name
     }
 }
 
-pub(super) fn prepare_sidecar_nix_runtime(
+impl SidecarNixRuntime {
+    #[cfg(test)]
+    pub fn new(merged_dir: PathBuf, sidecar_name: String) -> Self {
+        Self {
+            merged_dir,
+            sidecar_name,
+        }
+    }
+
+    pub fn merged_dir(&self) -> &Path {
+        &self.merged_dir
+    }
+
+    pub fn sidecar_name(&self) -> &str {
+        &self.sidecar_name
+    }
+}
+
+pub fn prepare_sidecar_nix_runtime(
     cwd: &Path,
     state_root: &Path,
     image: &str,
@@ -173,7 +191,7 @@ fn recreate_sidecar_stack(
     })
 }
 
-pub(super) fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
+pub fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
     if sidecar_has_running_task_containers(&sidecar.sidecar_name)? {
         return Ok(());
     }

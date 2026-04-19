@@ -19,21 +19,21 @@ use super::mount::{
 use super::{SidecarPaths, SidecarState};
 
 #[derive(Debug, Clone)]
-pub(super) struct SidecarStartupCleanupOutcome {
-    pub(super) summary: String,
-    pub(super) manual_merged_cleanup_required: bool,
+pub struct SidecarStartupCleanupOutcome {
+    pub summary: String,
+    pub manual_merged_cleanup_required: bool,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct SidecarStartupDiagnostics {
-    pub(super) sidecar_logs: Option<String>,
-    pub(super) sidecar_logs_error: Option<String>,
-    pub(super) socket_probe_failure: Option<String>,
-    pub(super) sidecar_state: Option<String>,
-    pub(super) host_socket_exists: Option<bool>,
+pub struct SidecarStartupDiagnostics {
+    pub sidecar_logs: Option<String>,
+    pub sidecar_logs_error: Option<String>,
+    pub socket_probe_failure: Option<String>,
+    pub sidecar_state: Option<String>,
+    pub host_socket_exists: Option<bool>,
 }
 
-pub(super) fn sidecar_stack_is_healthy(
+pub fn sidecar_stack_is_healthy(
     state: &SidecarState,
     paths: &SidecarPaths,
     image: &str,
@@ -139,11 +139,7 @@ fn inspect_sidecar_container_state(sidecar_name: &str) -> Result<String> {
     Ok(summary.to_owned())
 }
 
-pub(super) fn wait_for_socket_health(
-    image: &str,
-    sidecar_name: &str,
-    merged_dir: &Path,
-) -> Result<()> {
+pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path) -> Result<()> {
     let mut last_probe_failure = None;
     let mut last_host_socket_exists = None;
     for _attempt in 0..SIDECAR_HEALTH_ATTEMPTS {
@@ -237,7 +233,7 @@ fn cleanup_failed_sidecar_startup(
     }
 }
 
-pub(super) fn build_sidecar_socket_timeout_error(
+pub fn build_sidecar_socket_timeout_error(
     sidecar_name: &str,
     merged_dir: &Path,
     cleanup_outcome: &SidecarStartupCleanupOutcome,
@@ -311,7 +307,7 @@ pub(super) fn build_sidecar_socket_timeout_error(
     message
 }
 
-pub(super) fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {
+pub fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {
     vec![
         "run".to_owned(),
         "--rm".to_owned(),
