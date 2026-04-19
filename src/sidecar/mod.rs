@@ -7,19 +7,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use crate::mounts::format_mount_arg;
+use crate::podman::{run_podman, run_podman_output};
 use crate::{
-    format_mount_arg, run_podman, CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR,
-    HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR, HOST_NIX_WORK_DIR, TASK_CONTAINER_ROLE_LABEL,
-    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR, HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR,
+    HOST_NIX_WORK_DIR, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    TASK_CONTAINER_SIDECAR_LABEL,
 };
 
 #[cfg(test)]
-pub(crate) use health::{
+use health::{
     build_sidecar_socket_timeout_error, build_socket_ping_podman_args,
     SidecarStartupCleanupOutcome, SidecarStartupDiagnostics,
 };
 #[cfg(test)]
-pub(crate) use mount::{
+use mount::{
     build_podman_image_mount_args, build_podman_image_unmount_args, derive_sidecar_name,
     resolve_sidecar_lowerdir, PodmanImageMountMode,
 };
@@ -29,24 +31,24 @@ use mount::{
 };
 
 #[cfg(test)]
-pub(crate) use state::{read_sidecar_state, write_sidecar_state};
+use state::{read_sidecar_state, write_sidecar_state};
 
 #[derive(Debug, Clone)]
-pub(crate) struct SidecarNixRuntime {
-    pub(crate) merged_dir: PathBuf,
-    pub(crate) sidecar_name: String,
+pub(super) struct SidecarNixRuntime {
+    pub(super) merged_dir: PathBuf,
+    pub(super) sidecar_name: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct SidecarPaths {
-    pub(crate) upper_dir: PathBuf,
-    pub(crate) work_dir: PathBuf,
-    pub(crate) merged_dir: PathBuf,
-    pub(crate) state_file: PathBuf,
+pub(super) struct SidecarPaths {
+    pub(super) upper_dir: PathBuf,
+    pub(super) work_dir: PathBuf,
+    pub(super) merged_dir: PathBuf,
+    pub(super) state_file: PathBuf,
 }
 
 impl SidecarPaths {
-    pub(crate) fn new(state_root: &Path) -> Self {
+    pub(super) fn new(state_root: &Path) -> Self {
         Self {
             upper_dir: state_root.join(HOST_NIX_UPPER_DIR),
             work_dir: state_root.join(HOST_NIX_WORK_DIR),
@@ -57,21 +59,21 @@ impl SidecarPaths {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct SidecarState {
-    pub(crate) image: String,
-    pub(crate) image_id: String,
-    pub(crate) image_mount_path: PathBuf,
-    pub(crate) sidecar_name: String,
-    pub(crate) mount_mode: mount::PodmanImageMountMode,
+pub(super) struct SidecarState {
+    pub(super) image: String,
+    pub(super) image_id: String,
+    pub(super) image_mount_path: PathBuf,
+    pub(super) sidecar_name: String,
+    mount_mode: mount::PodmanImageMountMode,
 }
 
 impl SidecarState {
-    pub(crate) fn matches(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
+    pub(super) fn matches(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
         self.image == image && self.image_id == image_id && self.sidecar_name == sidecar_name
     }
 }
 
-pub(crate) fn prepare_sidecar_nix_runtime(
+pub(super) fn prepare_sidecar_nix_runtime(
     cwd: &Path,
     state_root: &Path,
     image: &str,
@@ -171,7 +173,7 @@ fn recreate_sidecar_stack(
     })
 }
 
-pub(crate) fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
+pub(super) fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
     if sidecar_has_running_task_containers(&sidecar.sidecar_name)? {
         return Ok(());
     }
@@ -181,7 +183,7 @@ pub(crate) fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
 
 fn sidecar_has_running_task_containers(sidecar_name: &str) -> Result<bool> {
     let args = build_sidecar_task_probe_args(sidecar_name);
-    let output = crate::run_podman_output(
+    let output = run_podman_output(
         args,
         "failed to inspect running task containers for sidecar cleanup",
     )?;
@@ -189,7 +191,7 @@ fn sidecar_has_running_task_containers(sidecar_name: &str) -> Result<bool> {
     Ok(output.lines().any(|line| !line.trim().is_empty()))
 }
 
-pub(crate) fn build_sidecar_task_probe_args(sidecar_name: &str) -> Vec<String> {
+fn build_sidecar_task_probe_args(sidecar_name: &str) -> Vec<String> {
     vec![
         "ps".to_owned(),
         "--filter".to_owned(),
@@ -201,11 +203,7 @@ pub(crate) fn build_sidecar_task_probe_args(sidecar_name: &str) -> Vec<String> {
     ]
 }
 
-pub(crate) fn build_sidecar_podman_args(
-    image: &str,
-    sidecar_name: &str,
-    merged_mount: &str,
-) -> Vec<String> {
+fn build_sidecar_podman_args(image: &str, sidecar_name: &str, merged_mount: &str) -> Vec<String> {
     vec![
         "run".to_owned(),
         "-d".to_owned(),
@@ -267,3 +265,6 @@ fn ensure_command_available(command: &str, guidance: &str) -> Result<()> {
         Err(err) => Err(err).with_context(|| format!("failed to execute '{}'", command)),
     }
 }
+
+#[cfg(test)]
+mod tests;

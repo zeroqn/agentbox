@@ -5,10 +5,11 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+use crate::mounts::format_mount_arg_with_options;
+use crate::podman::{run_podman_capture, run_podman_output};
 use crate::{
-    format_mount_arg_with_options, run_podman_capture, run_podman_output, CONTAINER_NIX_DIR,
-    NIX_REMOTE_SOCKET, SIDECAR_HEALTH_ATTEMPTS, SIDECAR_HEALTH_DELAY_MS, SIDECAR_LOG_TAIL_LINES,
-    SIDECAR_SOCKET_PATH,
+    CONTAINER_NIX_DIR, NIX_REMOTE_SOCKET, SIDECAR_HEALTH_ATTEMPTS, SIDECAR_HEALTH_DELAY_MS,
+    SIDECAR_LOG_TAIL_LINES, SIDECAR_SOCKET_PATH,
 };
 
 use super::mount::{
@@ -18,21 +19,21 @@ use super::mount::{
 use super::{SidecarPaths, SidecarState};
 
 #[derive(Debug, Clone)]
-pub(crate) struct SidecarStartupCleanupOutcome {
-    pub(crate) summary: String,
-    pub(crate) manual_merged_cleanup_required: bool,
+pub(super) struct SidecarStartupCleanupOutcome {
+    pub(super) summary: String,
+    pub(super) manual_merged_cleanup_required: bool,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct SidecarStartupDiagnostics {
-    pub(crate) sidecar_logs: Option<String>,
-    pub(crate) sidecar_logs_error: Option<String>,
-    pub(crate) socket_probe_failure: Option<String>,
-    pub(crate) sidecar_state: Option<String>,
-    pub(crate) host_socket_exists: Option<bool>,
+pub(super) struct SidecarStartupDiagnostics {
+    pub(super) sidecar_logs: Option<String>,
+    pub(super) sidecar_logs_error: Option<String>,
+    pub(super) socket_probe_failure: Option<String>,
+    pub(super) sidecar_state: Option<String>,
+    pub(super) host_socket_exists: Option<bool>,
 }
 
-pub(crate) fn sidecar_stack_is_healthy(
+pub(super) fn sidecar_stack_is_healthy(
     state: &SidecarState,
     paths: &SidecarPaths,
     image: &str,
@@ -138,7 +139,7 @@ fn inspect_sidecar_container_state(sidecar_name: &str) -> Result<String> {
     Ok(summary.to_owned())
 }
 
-pub(crate) fn wait_for_socket_health(
+pub(super) fn wait_for_socket_health(
     image: &str,
     sidecar_name: &str,
     merged_dir: &Path,
@@ -236,7 +237,7 @@ fn cleanup_failed_sidecar_startup(
     }
 }
 
-pub(crate) fn build_sidecar_socket_timeout_error(
+pub(super) fn build_sidecar_socket_timeout_error(
     sidecar_name: &str,
     merged_dir: &Path,
     cleanup_outcome: &SidecarStartupCleanupOutcome,
@@ -310,7 +311,7 @@ pub(crate) fn build_sidecar_socket_timeout_error(
     message
 }
 
-pub(crate) fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {
+pub(super) fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {
     vec![
         "run".to_owned(),
         "--rm".to_owned(),

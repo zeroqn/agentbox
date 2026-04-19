@@ -1,4 +1,5 @@
-use super::super::*;
+use super::*;
+use crate::*;
 use std::path::PathBuf;
 
 #[test]
@@ -63,28 +64,4 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     )));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/store:/nix/store".to_owned()));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/var/nix:/nix/var/nix".to_owned()));
-}
-
-#[test]
-fn task_hostname_uses_current_directory_name() {
-    assert_eq!(
-        derive_task_hostname(std::path::Path::new("/tmp/project")),
-        "project-agentbox"
-    );
-}
-
-#[test]
-fn task_hostname_sanitizes_current_directory_name() {
-    assert_eq!(
-        derive_task_hostname(std::path::Path::new("/tmp/My repo.name!")),
-        "my-repo-name-agentbox"
-    );
-}
-
-#[test]
-fn task_hostname_falls_back_when_directory_name_has_no_slug_chars() {
-    assert_eq!(
-        derive_task_hostname(std::path::Path::new("/tmp/!!!")),
-        "workspace-agentbox"
-    );
 }

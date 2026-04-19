@@ -5,30 +5,30 @@ use std::path::{Path, PathBuf};
 
 use crate::{CONTAINER_CARGO_DIR, CONTAINER_CODEX_DIR};
 
-pub(crate) fn prepare_host_codex_mount() -> Result<String> {
+pub(super) fn prepare_host_codex_mount() -> Result<String> {
     let home_dir = env::var_os("HOME").context("HOME is not set; cannot locate '~/.codex'")?;
     prepare_host_codex_mount_at(&PathBuf::from(home_dir))
 }
 
-pub(crate) fn prepare_host_codex_mount_at(home_dir: &Path) -> Result<String> {
+pub(super) fn prepare_host_codex_mount_at(home_dir: &Path) -> Result<String> {
     let codex_dir = home_dir.join(".codex");
     fs::create_dir_all(&codex_dir)
         .with_context(|| format!("failed to create '{}'", codex_dir.display()))?;
     format_mount_arg(&codex_dir, CONTAINER_CODEX_DIR)
 }
 
-pub(crate) fn prepare_project_cargo_mount(state_root: &Path) -> Result<String> {
+pub(super) fn prepare_project_cargo_mount(state_root: &Path) -> Result<String> {
     let cargo_dir = state_root.join("cargo");
     fs::create_dir_all(&cargo_dir)
         .with_context(|| format!("failed to create '{}'", cargo_dir.display()))?;
     format_mount_arg(&cargo_dir, CONTAINER_CARGO_DIR)
 }
 
-pub(crate) fn format_mount_arg(path: &Path, destination: &str) -> Result<String> {
+pub(super) fn format_mount_arg(path: &Path, destination: &str) -> Result<String> {
     format_mount_arg_with_options(path, destination, None)
 }
 
-pub(crate) fn format_mount_arg_with_options(
+pub(super) fn format_mount_arg_with_options(
     path: &Path,
     destination: &str,
     options: Option<&str>,
@@ -50,3 +50,6 @@ pub(crate) fn format_mount_arg_with_options(
 
     Ok(mount)
 }
+
+#[cfg(test)]
+mod tests;

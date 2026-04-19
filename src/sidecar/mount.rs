@@ -5,26 +5,24 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::{
-    build_podman_unshare_args, derive_workspace_slug, run_podman, run_podman_output, NIX_STORE_DIR,
-    SIDECAR_NAME_PREFIX,
-};
+use crate::podman::{build_podman_unshare_args, run_podman, run_podman_output};
+use crate::{derive_workspace_slug, NIX_STORE_DIR, SIDECAR_NAME_PREFIX};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PodmanImageMountMode {
+pub(super) enum PodmanImageMountMode {
     Direct,
     Unshare,
 }
 
 impl PodmanImageMountMode {
-    pub(crate) fn state_value(self) -> &'static str {
+    pub(super) fn state_value(self) -> &'static str {
         match self {
             Self::Direct => "direct",
             Self::Unshare => "unshare",
         }
     }
 
-    pub(crate) fn from_state_value(value: &str) -> Option<Self> {
+    pub(super) fn from_state_value(value: &str) -> Option<Self> {
         match value {
             "direct" => Some(Self::Direct),
             "unshare" => Some(Self::Unshare),
@@ -40,7 +38,7 @@ impl PodmanImageMountMode {
     }
 }
 
-pub(crate) fn derive_sidecar_name(cwd: &Path, image_id: &str) -> String {
+pub(super) fn derive_sidecar_name(cwd: &Path, image_id: &str) -> String {
     let workspace_slug = derive_workspace_slug(cwd);
     let mut hasher = DefaultHasher::new();
     cwd.hash(&mut hasher);
@@ -49,7 +47,7 @@ pub(crate) fn derive_sidecar_name(cwd: &Path, image_id: &str) -> String {
     format!("{SIDECAR_NAME_PREFIX}-{workspace_slug}-{digest:016x}")
 }
 
-pub(crate) fn inspect_image_id(image: &str) -> Result<String> {
+pub(super) fn inspect_image_id(image: &str) -> Result<String> {
     let args = vec![
         "image".to_owned(),
         "inspect".to_owned(),
@@ -68,7 +66,7 @@ pub(crate) fn inspect_image_id(image: &str) -> Result<String> {
     Ok(image_id.to_owned())
 }
 
-pub(crate) fn build_podman_image_mount_args(
+pub(super) fn build_podman_image_mount_args(
     image: &str,
     mode: PodmanImageMountMode,
 ) -> Vec<String> {
@@ -79,7 +77,7 @@ pub(crate) fn build_podman_image_mount_args(
     }
 }
 
-pub(crate) fn build_podman_image_unmount_args(
+pub(super) fn build_podman_image_unmount_args(
     image: &str,
     mode: PodmanImageMountMode,
 ) -> Vec<String> {
@@ -90,7 +88,7 @@ pub(crate) fn build_podman_image_unmount_args(
     }
 }
 
-pub(crate) fn mount_image_with_lowerdir(
+pub(super) fn mount_image_with_lowerdir(
     image: &str,
 ) -> Result<(PathBuf, PathBuf, PodmanImageMountMode)> {
     let mut attempts = Vec::new();
@@ -144,7 +142,7 @@ fn mount_image_once(image: &str, mode: PodmanImageMountMode) -> Result<PathBuf> 
     Ok(path)
 }
 
-pub(crate) fn unmount_image(image: &str) -> Result<()> {
+pub(super) fn unmount_image(image: &str) -> Result<()> {
     for mode in [PodmanImageMountMode::Direct, PodmanImageMountMode::Unshare] {
         let _ = unmount_image_mode(image, mode);
     }
@@ -163,7 +161,7 @@ fn unmount_image_mode(image: &str, mode: PodmanImageMountMode) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn mount_fuse_overlayfs(
+pub(super) fn mount_fuse_overlayfs(
     lowerdir: &Path,
     upperdir: &Path,
     workdir: &Path,
@@ -222,7 +220,7 @@ pub(crate) fn mount_fuse_overlayfs(
     Ok(())
 }
 
-pub(crate) fn resolve_sidecar_lowerdir(image_mount_path: &Path) -> Result<PathBuf> {
+pub(super) fn resolve_sidecar_lowerdir(image_mount_path: &Path) -> Result<PathBuf> {
     let nested_nix = image_mount_path.join("nix");
     if nested_nix.is_dir() {
         return Ok(nested_nix);
@@ -240,7 +238,7 @@ pub(crate) fn resolve_sidecar_lowerdir(image_mount_path: &Path) -> Result<PathBu
     ))
 }
 
-pub(crate) fn resolve_sidecar_lowerdir_for_mode(
+pub(super) fn resolve_sidecar_lowerdir_for_mode(
     image_mount_path: &Path,
     mode: PodmanImageMountMode,
 ) -> Result<PathBuf> {
@@ -275,7 +273,7 @@ pub(crate) fn resolve_sidecar_lowerdir_for_mode(
     Ok(PathBuf::from(lowerdir))
 }
 
-pub(crate) fn cleanup_sidecar_container(sidecar_name: &str) -> Result<()> {
+pub(super) fn cleanup_sidecar_container(sidecar_name: &str) -> Result<()> {
     let args = vec!["rm".to_owned(), "-f".to_owned(), sidecar_name.to_owned()];
     let _ = run_podman(
         args,
@@ -287,7 +285,7 @@ pub(crate) fn cleanup_sidecar_container(sidecar_name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn cleanup_merged_mount(merged_dir: &Path) -> Result<()> {
+pub(super) fn cleanup_merged_mount(merged_dir: &Path) -> Result<()> {
     if !path_is_mounted(merged_dir)? {
         return Ok(());
     }
@@ -329,7 +327,7 @@ pub(crate) fn cleanup_merged_mount(merged_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn path_is_mounted(path: &Path) -> Result<bool> {
+pub(super) fn path_is_mounted(path: &Path) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
