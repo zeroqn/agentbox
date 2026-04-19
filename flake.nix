@@ -23,7 +23,7 @@
         systems = {
           x86_64-linux = {
             asset = "agentbox-x86_64-unknown-linux-musl";
-            hash = "sha256-dd4L5gzWWT06VWBONQimTCtjo/QR1NwcuW5C5ENVPcE=";
+            hash = "sha256-TdLFlGj+sCwoBXgPLQ8xCc+mBHdSdz5T3kPajEUIK7I=";
           };
         };
       };
@@ -51,7 +51,7 @@
       packages = forAllSystems (
         { pkgs, pkgsMaster }:
         let
-          ohMyCodexVersion = "0.13.1";
+          ohMyCodexVersion = "0.13.2";
           prebuiltSystem = pkgs.stdenv.hostPlatform.system;
           nixBuilderGroupId = 30000;
           nixBuilderCount = 32;
@@ -85,7 +85,7 @@
               hash = "sha256-pXaaPWLr8V/PvKzl4a98Ws9CzF3VdJqMko0PLOxhPX4=";
             };
 
-            npmDepsHash = "sha256-U2riv9DdA1nhaq8d6fBij/kEyl6L47tvh1Vg7i31v6U=";
+            npmDepsHash = "sha256-TdLFlGj+sCwoBXgPLQ8xCc+mBHdSdz5T3kPajEUIK7I=";
             npmBuildScript = "build";
 
             meta = {
