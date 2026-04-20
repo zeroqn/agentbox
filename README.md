@@ -219,9 +219,10 @@ The container provides:
 - interactive `fish` + `starship`
 - Codex CLI + `oh-my-codex` (`omx`)
 - Python 3 (`PyYAML`), Node.js
-- Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`)
+- Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
+- `RUSTC_WRAPPER`, `CMAKE_C_COMPILER_LAUNCHER`, and `CMAKE_CXX_COMPILER_LAUNCHER` preset to the bundled `sccache`
 - common tools (`curl`, `jq`, `tmux`, etc.)
 
 It runs with `--userns=keep-id` so `/workspace` ownership matches host mapping.
