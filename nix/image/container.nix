@@ -48,6 +48,9 @@ pkgs.dockerTools.buildLayeredImage {
       "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       "RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}/lib/rustlib/src/rust/library"
+      "RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache"
+      "CMAKE_C_COMPILER_LAUNCHER=${pkgs.sccache}/bin/sccache"
+      "CMAKE_CXX_COMPILER_LAUNCHER=${pkgs.sccache}/bin/sccache"
     ];
   };
 }

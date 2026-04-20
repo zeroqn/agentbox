@@ -24,9 +24,11 @@ let
   stableRustToolchainPackages = [
     pkgs.cargo
     pkgs.clippy
+    pkgs.mold
     pkgs.rust-analyzer
     pkgs.rustc
     pkgs.rustfmt
+    pkgs.sccache
     pkgs.rustPlatform.rustLibSrc
   ];
 
