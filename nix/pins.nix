@@ -2,9 +2,9 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.13.2";
-    srcHash = "sha256-TdLFlGj+sCwoBXgPLQ8xCc+mBHdSdz5T3kPajEUIK7I=";
-    npmDepsHash = "sha256-zBcay5NgEnpnCZd7+KUQFnuPBUo2QZxvPLEMIsgb+F4=";
+    version = "0.14.0";
+    srcHash = "sha256-5TwD4q+M2V7VBcaEZXq/fPiAgdksgUfZuyQew+4QJPE=";
+    npmDepsHash = "sha256-cL/mooHqQs6BS94PiilNbQGUr4qMLdA3xJyO08jawTA=";
   };
 
   agentboxPrebuiltRelease = {
