@@ -20,9 +20,13 @@ let
     builder:
     "${builder.name}:x:${toString builder.uid}:${toString nixBuilderGroupId}:Nix build user ${toString builder.builderNumber}:/var/empty:${pkgs.runtimeShell}"
   ) nixBuilderUsers;
+  clangMoldWrapper = pkgs.writeShellScriptBin "clang_mold_wrapper" ''
+    exec ${pkgs.clang}/bin/clang -fuse-ld=mold "$@"
+  '';
 
   stableRustToolchainPackages = [
     pkgs.cargo
+    clangMoldWrapper
     pkgs.clippy
     pkgs.mold
     pkgs.rust-analyzer
@@ -235,6 +239,7 @@ in
     agentboxImageMaxLayers
     imageContents
     imagePath
+    clangMoldWrapper
     nixBuilderGroupId
     nixBuilderGroupMembers
     nixBuilderPasswdEntries

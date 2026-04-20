@@ -231,10 +231,18 @@ The container provides:
 - Python 3 (`PyYAML`), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
+- `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled
+  `clang_mold_wrapper` helper for the `x86_64-unknown-linux-gnu` target
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
 - `RUSTC_WRAPPER`, `CMAKE_C_COMPILER_LAUNCHER`, and `CMAKE_CXX_COMPILER_LAUNCHER` preset to the bundled `sccache`
 - `SCCACHE_DIR=/home/dev/.cache/sccache`, backed by the shared host cache under the agentbox state root
 - common tools (`curl`, `jq`, `tmux`, etc.)
+
+`clang_mold_wrapper` keeps the default linker policy in the image and avoids
+setting `RUSTFLAGS`, so existing Cargo config can still layer on top normally.
+If `clang -fuse-ld=mold` ever stops resolving correctly in-image, the fallback
+is to pin `mold` explicitly inside the wrapper and update this document to
+match.
 
 It runs with `--userns=keep-id` so `/workspace` ownership matches host mapping.
 

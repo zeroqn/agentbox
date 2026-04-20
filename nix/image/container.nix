@@ -47,6 +47,7 @@ pkgs.dockerTools.buildLayeredImage {
       "NIX_CONFIG=experimental-features = nix-command flakes"
       "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+      "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${layers.clangMoldWrapper}/bin/clang_mold_wrapper"
       "RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}/lib/rustlib/src/rust/library"
       "RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache"
       "CMAKE_C_COMPILER_LAUNCHER=${pkgs.sccache}/bin/sccache"
