@@ -33,7 +33,7 @@
           };
           agentboxImage = import ./nix/image/container.nix {
             inherit pkgs pkgsMaster ohMyCodex;
-            rustMuslPackage = rustPackages.rustMuslPackage;
+            agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
         in
         {
@@ -41,7 +41,7 @@
           oh-my-codex = ohMyCodex;
           agentbox = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
-          agentbox-musl = rustPackages.rustMuslPackage;
+          agentbox-musl = rustPackages.agentboxMuslPackage;
           container = agentboxImage;
         }
       );

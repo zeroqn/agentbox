@@ -20,7 +20,7 @@ let
     else
       throw "agentbox-musl is only supported on Linux";
 
-  rustMuslPackage = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
+  agentboxMuslPackage = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
     pname = "agentbox";
     version = agentboxVersion;
     src = self;
@@ -33,5 +33,5 @@ let
   };
 in
 {
-  inherit rustPackage rustMuslPackage;
+  inherit rustPackage agentboxMuslPackage;
 }

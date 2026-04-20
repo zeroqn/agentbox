@@ -238,6 +238,9 @@ On push to `main` and tag pushes, CI publishes to:
 - `ghcr.io/<repo-owner>/agentbox:<git-tag>` (tag only)
 - `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
 
+The published image keeps the musl `agentbox` binary in its own top image layer
+so GHCR can reuse lower blobs when only the CLI binary changes.
+
 ### Prebuilt binaries (GitHub Releases)
 
 Main-branch CI also publishes musl binaries as prereleases:
