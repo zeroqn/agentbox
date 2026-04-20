@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, rustMuslPackage, entrypoint, fishConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, agentboxMuslPackage, entrypoint, fishConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -116,7 +116,7 @@ let
       codexImageLayer
     ];
   imagePath = pkgs.lib.makeBinPath imagePackages;
-  agentboxImageMaxLayers = 9;
+  agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
   imageContents = imagePackages ++ [
     # The generated Codex hook and MCP config reference the raw
@@ -125,8 +125,9 @@ let
     ohMyCodex
     entrypoint
     fishConfig
-    rustMuslPackage
+    agentboxMuslPackage
   ];
+  agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   codexLayerPaths = [ (toString codexImageLayer) ];
   toolingLayerPaths = [ (toString toolingImageLayer) ];
   cToolchainLayerPaths = builtins.map toString cToolchainImagePackages;
@@ -135,7 +136,7 @@ let
   agentboxImageLayeringPipeline = [
     [
       "split_paths"
-      codexLayerPaths
+      agentboxLayerPaths
     ]
     [
       "over"
@@ -145,7 +146,7 @@ let
         [
           [
             "split_paths"
-            toolingLayerPaths
+            codexLayerPaths
           ]
           [
             "over"
@@ -155,7 +156,7 @@ let
               [
                 [
                   "split_paths"
-                  dynamicToolchainLayerPaths
+                  toolingLayerPaths
                 ]
                 [
                   "over"
@@ -165,7 +166,7 @@ let
                     [
                       [
                         "split_paths"
-                        rustLayerPaths
+                        dynamicToolchainLayerPaths
                       ]
                       [
                         "over"
@@ -175,16 +176,29 @@ let
                           [
                             [
                               "split_paths"
-                              cToolchainLayerPaths
+                              rustLayerPaths
+                            ]
+                            [
+                              "over"
+                              "rest"
+                              [
+                                "pipe"
+                                [
+                                  [
+                                    "split_paths"
+                                    cToolchainLayerPaths
+                                  ]
+                                  [
+                                    "flatten"
+                                  ]
+                                ]
+                              ]
                             ]
                             [
                               "flatten"
                             ]
                           ]
                         ]
-                      ]
-                      [
-                        "flatten"
                       ]
                     ]
                   ]

@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, rustMuslPackage }:
+{ pkgs, pkgsMaster, ohMyCodex, agentboxMuslPackage }:
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   entrypoint = import ./entrypoint.nix {
@@ -7,7 +7,7 @@ let
     starshipConfig = configPayloads.starshipConfig;
   };
   layers = import ./layers.nix {
-    inherit pkgs pkgsMaster ohMyCodex rustMuslPackage entrypoint;
+    inherit pkgs pkgsMaster ohMyCodex agentboxMuslPackage entrypoint;
     fishConfig = configPayloads.fishConfig;
   };
 in
@@ -43,7 +43,7 @@ pkgs.dockerTools.buildLayeredImage {
       "HOME=/home/dev"
       "USER=dev"
       "LIBCLANG_PATH=${pkgs.libclang.lib}/lib"
-      "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${rustMuslPackage}/bin"
+      "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${agentboxMuslPackage}/bin"
       "NIX_CONFIG=experimental-features = nix-command flakes"
       "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"

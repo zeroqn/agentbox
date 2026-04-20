@@ -16,8 +16,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-      - name: Build agentbox-musl
-        run: nix build .#agentbox-musl --print-out-paths > agentbox-musl-path.txt
+      - name: Build agentbox-musl standalone
+        run: nix build .#agentbox-musl
       - name: Build agentbox container archive
         run: nix build .#container --print-out-paths > container-path.txt
       - name: Load container archive
