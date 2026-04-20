@@ -12,6 +12,7 @@ const STATE_LOCATION_KEY: &str = "location";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateLayout {
+    app_dir: PathBuf,
     root_dir: PathBuf,
 }
 
@@ -20,8 +21,12 @@ impl StateLayout {
         &self.root_dir
     }
 
-    fn new(root_dir: PathBuf) -> Self {
-        Self { root_dir }
+    pub fn sccache_dir(&self) -> PathBuf {
+        self.app_dir.join("sccache")
+    }
+
+    fn new(app_dir: PathBuf, root_dir: PathBuf) -> Self {
+        Self { app_dir, root_dir }
     }
 }
 
@@ -49,10 +54,10 @@ fn resolve_state_layout_from_env(
     let location_root =
         read_state_location_override(&config_path)?.unwrap_or(default_location_root);
 
+    let app_dir = location_root.join(APP_DIR_NAME);
     Ok(StateLayout::new(
-        location_root
-            .join(APP_DIR_NAME)
-            .join(derive_workspace_slug(cwd)),
+        app_dir.clone(),
+        app_dir.join(derive_workspace_slug(cwd)),
     ))
 }
 

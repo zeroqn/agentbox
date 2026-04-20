@@ -13,7 +13,7 @@ mod state;
 
 use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
 use mounts::format::format_mount_arg;
-use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount};
+use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount};
 use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
 use podman::command::run_podman;
 use podman::task::build_podman_args;
@@ -33,6 +33,7 @@ const HOST_NIX_MERGED_DIR: &str = "nix-merged";
 const HOST_NIX_SIDECAR_STATE_FILE: &str = "nix-sidecar.state";
 const CONTAINER_CODEX_DIR: &str = "/home/dev/.codex";
 const CONTAINER_CARGO_DIR: &str = "/home/dev/.cargo";
+const CONTAINER_SCCACHE_DIR: &str = "/home/dev/.cache/sccache";
 const CONTAINER_NIX_DIR: &str = "/nix";
 const CONTAINER_TMP_TMPFS: &str = "/tmp:rw,exec,mode=1777";
 const NIX_STORE_DIR: &str = "store";
@@ -84,6 +85,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
     let codex_mount = prepare_host_codex_mount()?;
     let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
+    let sccache_mount = prepare_shared_sccache_mount(&state_layout.sccache_dir())?;
 
     let env_sidecar_enabled =
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
@@ -109,6 +111,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             &workspace_mount,
             &codex_mount,
             &cargo_mount,
+            &sccache_mount,
             &nix_runtime,
         )?,
         Stdio::inherit(),

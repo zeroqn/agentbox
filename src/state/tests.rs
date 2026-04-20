@@ -72,6 +72,10 @@ fn resolve_state_layout_uses_default_xdg_state_root() {
         Path::new("/tmp/xdg-state/agentbox/project")
     );
     assert_eq!(
+        layout.sccache_dir(),
+        Path::new("/tmp/xdg-state/agentbox/sccache")
+    );
+    assert_eq!(
         layout.root_dir.join("cargo"),
         Path::new("/tmp/xdg-state/agentbox/project/cargo")
     );
@@ -102,6 +106,10 @@ fn resolve_state_layout_honors_config_override_and_appends_agentbox() {
     assert_eq!(
         layout.root_dir,
         Path::new("/tmp/custom-root/agentbox/project")
+    );
+    assert_eq!(
+        layout.sccache_dir(),
+        Path::new("/tmp/custom-root/agentbox/sccache")
     );
 }
 

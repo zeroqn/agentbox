@@ -49,3 +49,18 @@ fn prepare_project_cargo_mount_creates_cargo_under_state_root() {
     );
     assert!(state_root.join("cargo").is_dir());
 }
+
+#[test]
+fn prepare_shared_sccache_mount_creates_shared_sccache_under_app_root() {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let sccache_dir = dir.path().join("state").join("agentbox").join("sccache");
+
+    let mount =
+        prepare_shared_sccache_mount(&sccache_dir).expect("sccache mount should be prepared");
+
+    assert_eq!(
+        mount,
+        format!("{}:{CONTAINER_SCCACHE_DIR}", sccache_dir.display())
+    );
+    assert!(sccache_dir.is_dir());
+}

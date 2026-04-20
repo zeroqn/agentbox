@@ -2,8 +2,8 @@ use anyhow::Result;
 
 use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
-    NixRuntime, CONTAINER_NIX_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL,
-    NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    NixRuntime, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR,
+    INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
     TASK_CONTAINER_SIDECAR_LABEL,
 };
 
@@ -13,6 +13,7 @@ pub fn build_podman_args(
     workspace_mount: &str,
     codex_mount: &str,
     cargo_mount: &str,
+    sccache_mount: &str,
     nix_runtime: &NixRuntime,
 ) -> Result<Vec<String>> {
     let mut args = vec![
@@ -31,6 +32,10 @@ pub fn build_podman_args(
         codex_mount.to_owned(),
         "--volume".to_owned(),
         cargo_mount.to_owned(),
+        "--volume".to_owned(),
+        sccache_mount.to_owned(),
+        "--env".to_owned(),
+        format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}"),
         "--tmpfs".to_owned(),
         CONTAINER_TMP_TMPFS.to_owned(),
     ];

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use self::format::format_mount_arg;
-use crate::{CONTAINER_CARGO_DIR, CONTAINER_CODEX_DIR};
+use crate::{CONTAINER_CARGO_DIR, CONTAINER_CODEX_DIR, CONTAINER_SCCACHE_DIR};
 
 pub mod format;
 
@@ -18,6 +18,12 @@ pub fn prepare_project_cargo_mount(state_root: &Path) -> Result<String> {
     fs::create_dir_all(&cargo_dir)
         .with_context(|| format!("failed to create '{}'", cargo_dir.display()))?;
     format_mount_arg(&cargo_dir, CONTAINER_CARGO_DIR)
+}
+
+pub fn prepare_shared_sccache_mount(sccache_dir: &Path) -> Result<String> {
+    fs::create_dir_all(sccache_dir)
+        .with_context(|| format!("failed to create '{}'", sccache_dir.display()))?;
+    format_mount_arg(sccache_dir, CONTAINER_SCCACHE_DIR)
 }
 
 fn prepare_host_codex_mount_at(home_dir: &Path) -> Result<String> {
