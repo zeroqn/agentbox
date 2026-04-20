@@ -12,6 +12,7 @@ fn build_podman_args_includes_persistent_nix_mounts() {
         "/tmp/project:/workspace",
         "/home/alice/.codex:/home/dev/.codex",
         "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
+        "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         &runtime,
     )
     .expect("podman args should build");
@@ -26,12 +27,15 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     );
     assert!(args.contains(&"/home/alice/.codex:/home/dev/.codex".to_owned()));
     assert!(args.contains(&"/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned()));
+    assert!(args.contains(&"/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned()));
     assert!(args.contains(&"--tmpfs".to_owned()));
     assert!(args.contains(&CONTAINER_TMP_TMPFS.to_owned()));
+    assert!(args.contains(&"--env".to_owned()));
+    assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
     assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
     assert_eq!(args[args.len() - 1], "-l");
     assert!(!args.contains(&"--user".to_owned()));
-    assert!(!args.contains(&"--env".to_owned()));
+    assert!(!args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
 }
 
 #[test]
@@ -46,14 +50,17 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
         "/tmp/project:/workspace",
         "/home/alice/.codex:/home/dev/.codex",
         "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
+        "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         &runtime,
     )
     .expect("podman args should build");
 
     assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix:ro".to_owned()));
+    assert!(args.contains(&"/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned()));
     assert!(args.contains(&"--hostname".to_owned()));
     assert!(args.contains(&"project-agentbox".to_owned()));
     assert!(args.contains(&"--env".to_owned()));
+    assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
     assert!(args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
     assert!(args.contains(&"--label".to_owned()));
     assert!(args.contains(&format!(

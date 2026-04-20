@@ -210,6 +210,16 @@ location = "/home/dev/xxx/"
 
 This makes the base `/home/dev/xxx/agentbox`.
 
+Agentbox also keeps a shared sccache at:
+
+```text
+<state.location>/agentbox/sccache
+```
+
+That directory is bind-mounted into each task container at
+`/home/dev/.cache/sccache`, so compiler cache entries are reused across
+agentbox repos and containers.
+
 ---
 
 ## Container environment summary
@@ -223,6 +233,7 @@ The container provides:
 - `gcc`, `musl`, `clang`
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
 - `RUSTC_WRAPPER`, `CMAKE_C_COMPILER_LAUNCHER`, and `CMAKE_CXX_COMPILER_LAUNCHER` preset to the bundled `sccache`
+- `SCCACHE_DIR=/home/dev/.cache/sccache`, backed by the shared host cache under the agentbox state root
 - common tools (`curl`, `jq`, `tmux`, etc.)
 
 It runs with `--userns=keep-id` so `/workspace` ownership matches host mapping.
