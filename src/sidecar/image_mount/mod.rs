@@ -57,11 +57,17 @@ pub fn mount_image_with_lowerdir(image: &str) -> Result<(PathBuf, PathBuf, Podma
     ))
 }
 
+#[allow(dead_code)]
 pub fn unmount_image(image: &str) -> Result<()> {
+    let mut last_error = None;
     for mode in [PodmanImageMountMode::Direct, PodmanImageMountMode::Unshare] {
-        let _ = unmount_image_mode(image, mode);
+        match unmount_image_mode(image, mode) {
+            Ok(()) => return Ok(()),
+            Err(err) => last_error = Some(err),
+        }
     }
-    Ok(())
+
+    Err(last_error.unwrap_or_else(|| anyhow!("failed to unmount image '{}'", image)))
 }
 
 fn build_podman_image_mount_args(image: &str, mode: PodmanImageMountMode) -> Vec<String> {
@@ -103,13 +109,20 @@ fn mount_image_once(image: &str, mode: PodmanImageMountMode) -> Result<PathBuf> 
 
 fn unmount_image_mode(image: &str, mode: PodmanImageMountMode) -> Result<()> {
     let args = build_podman_image_unmount_args(image, mode);
-    let _ = run_podman(
+    let status = run_podman(
         args,
         Stdio::null(),
         Stdio::null(),
         Stdio::null(),
         "failed to unmount image",
-    );
+    )?;
+    if !status.success() {
+        return Err(anyhow!(
+            "{} returned a non-zero exit status for '{}'",
+            mode.label(),
+            image
+        ));
+    }
     Ok(())
 }
 

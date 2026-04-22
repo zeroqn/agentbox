@@ -27,9 +27,6 @@ const HOST_NIX_ROOT_DIR: &str = "nix";
 const HOST_NIX_STORE: &str = "/nix/store";
 const HOST_NIX_VAR: &str = "/nix/var/nix";
 const HOST_NIX_LOG: &str = "/nix/var/log/nix";
-const HOST_NIX_UPPER_DIR: &str = "nix-upper";
-const HOST_NIX_WORK_DIR: &str = "nix-work";
-const HOST_NIX_MERGED_DIR: &str = "nix-merged";
 const HOST_NIX_SIDECAR_STATE_FILE: &str = "nix-sidecar.state";
 const CONTAINER_CODEX_DIR: &str = "/home/dev/.codex";
 const CONTAINER_CARGO_DIR: &str = "/home/dev/.cargo";
@@ -54,6 +51,7 @@ const SIDECAR_LOG_TAIL_LINES: u32 = 120;
 const TASK_CONTAINER_ROLE_LABEL: &str = "io.agentbox.role";
 const TASK_CONTAINER_ROLE_VALUE: &str = "task";
 const TASK_CONTAINER_SIDECAR_LABEL: &str = "io.agentbox.sidecar";
+const TASK_CONTAINER_GENERATION_LABEL: &str = "io.agentbox.generation";
 const DEFAULT_NIX_SIDECAR_ENABLED: bool = true;
 
 #[derive(Debug, Clone)]

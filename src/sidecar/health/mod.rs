@@ -13,9 +13,7 @@ use crate::{
 };
 
 use super::overlay::{cleanup_merged_mount, path_is_mounted};
-use super::{
-    cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, SidecarPaths, SidecarState,
-};
+use super::{cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, SidecarState};
 
 #[derive(Debug, Clone)]
 struct SidecarStartupCleanupOutcome {
@@ -32,16 +30,12 @@ struct SidecarStartupDiagnostics {
     host_socket_exists: Option<bool>,
 }
 
-pub fn sidecar_stack_is_healthy(
-    state: &SidecarState,
-    paths: &SidecarPaths,
-    image: &str,
-) -> Result<bool> {
+pub fn sidecar_stack_is_healthy(state: &SidecarState, image: &str) -> Result<bool> {
     if resolve_sidecar_lowerdir_for_mode(&state.image_mount_path, state.mount_mode).is_err() {
         return Ok(false);
     }
 
-    if !path_is_mounted(&paths.merged_dir)? {
+    if !path_is_mounted(&state.merged_dir)? {
         return Ok(false);
     }
 
@@ -49,7 +43,7 @@ pub fn sidecar_stack_is_healthy(
         return Ok(false);
     }
 
-    if daemon_socket_probe_failure(image, &paths.merged_dir)?.is_some() {
+    if daemon_socket_probe_failure(image, &state.merged_dir)?.is_some() {
         return Ok(false);
     }
 

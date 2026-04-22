@@ -111,15 +111,27 @@ What it does (high level):
 
 1. Resolves the selected image and mounts its filesystem.
 2. Uses image `/nix` as `lowerdir` for host `fuse-overlayfs`.
-3. Builds external merged nix tree under project state.
-4. Starts/reuses a deterministic `nix-daemon` sidecar.
-5. Starts the interactive container with read-only `/nix` + daemon socket.
+3. Allocates or reuses a generation-scoped sidecar runtime under project state.
+4. Starts/reuses a generation-specific `nix-daemon` sidecar and only publishes it after a daemon-connectivity health check passes.
+5. Starts the interactive container with that generation's read-only `/nix` mount + daemon socket.
+6. Prunes retired generations only after no running task containers still reference them.
 
-Sidecar metadata is saved at:
+Sidecar metadata is saved under:
 
 ```text
-<state-root>/nix-sidecar.state
+<state-root>/nix-sidecar/
+  current
+  lock
+  generations/
+    <generation-id>/
+      record
+      upper/
+      work/
+      merged/
 ```
+
+Legacy `<state-root>/nix-sidecar.state` metadata is migrated forward on first
+sidecar-mode launch and then ignored.
 
 Disable sidecar mode for one run:
 
