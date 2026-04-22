@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, agentboxMuslPackage, entrypoint, fishConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, rtkPrebuilt, agentboxMuslPackage, entrypoint, fishConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -66,6 +66,9 @@ let
     pkgs.fzf
     pkgs.gh
     pkgs.neovim
+  ]
+  ++ pkgs.lib.optional (rtkPrebuilt != null) rtkPrebuilt
+  ++ [
     pkgs.starship
   ];
   toolingImageLayer = pkgs.buildEnv {

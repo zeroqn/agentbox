@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, agentboxMuslPackage }:
+{ pkgs, pkgsMaster, ohMyCodex, rtkPrebuilt, agentboxMuslPackage }:
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   entrypoint = import ./entrypoint.nix {
@@ -7,7 +7,7 @@ let
     starshipConfig = configPayloads.starshipConfig;
   };
   layers = import ./layers.nix {
-    inherit pkgs pkgsMaster ohMyCodex agentboxMuslPackage entrypoint;
+    inherit pkgs pkgsMaster ohMyCodex rtkPrebuilt agentboxMuslPackage entrypoint;
     fishConfig = configPayloads.fishConfig;
   };
 in

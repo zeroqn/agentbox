@@ -43,6 +43,7 @@ AGENTBOX_DISABLE_AUTO_FISH=1 nix develop
 nix build .#agentbox
 nix build .#agentbox-prebuilt
 nix build .#agentbox-musl
+nix build .#rtk-prebuilt
 nix build .#container
 ```
 
@@ -52,6 +53,8 @@ nix build .#container
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere).
 - `.#agentbox-musl`: static host binary.
+- `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
+  pinned for `x86_64-linux`).
 - `.#container`: Podman image archive.
 
 ---
@@ -231,6 +234,7 @@ The container provides:
 - Python 3 (`PyYAML`), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
+- RTK (`rtk`)
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled
   `clang_mold_wrapper` helper for the `x86_64-unknown-linux-gnu` target
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
@@ -278,6 +282,12 @@ Refresh pinned prebuilt release in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-agentbox-prebuilt.sh
+```
+
+Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:
+
+```bash
+nix develop --command ./scripts/update-rtk-prebuilt.sh
 ```
 
 Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix`:
