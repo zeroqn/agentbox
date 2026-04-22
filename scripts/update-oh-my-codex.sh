@@ -6,6 +6,8 @@ pins_file="$repo_root/nix/pins.nix"
 owner="Yeachan-Heo"
 repo="oh-my-codex"
 api_url="https://api.github.com/repos/$owner/$repo/releases/latest"
+explore_system="x86_64-linux"
+explore_asset_name="omx-explore-harness-x86_64-unknown-linux-musl.tar.xz"
 
 for cmd in curl jq nix-prefetch-url nix python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -51,7 +53,11 @@ fi
 
 npm_deps_hash="$(prefetch_npm_deps_hash "$lockfile" | tail -n 1)"
 
-python3 - "$pins_file" "$version" "$src_hash_sri" "$npm_deps_hash" <<'PY'
+explore_asset_url="https://github.com/$owner/$repo/releases/download/v$version/$explore_asset_name"
+explore_hash_base32="$(nix-prefetch-url "$explore_asset_url")"
+explore_hash_sri="$(nix hash convert --hash-algo sha256 --to sri "$explore_hash_base32")"
+
+python3 - "$pins_file" "$version" "$src_hash_sri" "$npm_deps_hash" "$explore_system" "$explore_asset_name" "$explore_hash_sri" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -60,6 +66,9 @@ pins_path = Path(sys.argv[1])
 version = sys.argv[2]
 src_hash = sys.argv[3]
 npm_hash = sys.argv[4]
+explore_system = sys.argv[5]
+explore_asset = sys.argv[6]
+explore_hash = sys.argv[7]
 text = pins_path.read_text()
 
 def replace_exact(pattern: str, replacement: str, label: str) -> None:
@@ -67,7 +76,6 @@ def replace_exact(pattern: str, replacement: str, label: str) -> None:
     text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
     if count != 1:
         raise SystemExit(f"failed to update {label}; expected exactly one match")
-
 
 replace_exact(
     r'(ohMyCodex = \{\s*version = )"[^"]+"(;)',
@@ -84,6 +92,11 @@ replace_exact(
     rf'\1"{npm_hash}"\2',
     "ohMyCodex npmDepsHash",
 )
+replace_exact(
+    rf'((?:ohMyCodex = \{{.*?exploreHarnessSystems = \{{.*?){re.escape(explore_system)} = \{{\s+asset = ")([^"]+)(";\s+binary = "[^"]+";\s+hash = ")sha256-[^"]+(";))',
+    rf'\1{explore_asset}\3{explore_hash}\4',
+    f"ohMyCodex explore harness metadata for {explore_system}",
+)
 pins_path.write_text(text)
 PY
 
@@ -91,3 +104,5 @@ echo "updated nix/pins.nix:"
 echo "  ohMyCodexVersion = \"$version\";"
 echo "  hash = \"$src_hash_sri\";"
 echo "  npmDepsHash = \"$npm_deps_hash\";"
+echo "  $explore_system.asset = \"$explore_asset_name\";"
+echo "  $explore_system.hash = \"$explore_hash_sri\";"

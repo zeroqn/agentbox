@@ -231,6 +231,7 @@ The container provides:
 
 - interactive `fish` + `starship`
 - Codex CLI + `oh-my-codex` (`omx`)
+- prebuilt `omx-explore-harness` with `OMX_EXPLORE_BIN` preset to the bundled binary
 - Python 3 (`PyYAML`), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
@@ -290,7 +291,7 @@ Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:
 nix develop --command ./scripts/update-rtk-prebuilt.sh
 ```
 
-Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix`:
+Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix` (including the bundled `omx-explore-harness` asset hash):
 
 ```bash
 nix develop --command ./scripts/update-oh-my-codex.sh

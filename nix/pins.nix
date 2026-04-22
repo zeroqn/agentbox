@@ -5,6 +5,13 @@
     version = "0.14.2";
     srcHash = "sha256-UHVJzRMDxZYoDldl3aFkJNOlMr/gsXlbe1cDpfgdV28=";
     npmDepsHash = "sha256-gGlxQLwp0NBsc/SBUEwJJYPMUKre+txgG8SCIBK7NcA=";
+    exploreHarnessSystems = {
+      x86_64-linux = {
+        asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
+        binary = "omx-explore-harness";
+        hash = "sha256-wyqN2ZGO+ynV/hIZaPadxwB3qLPb5VJ5TyzalTpY9bI=";
+      };
+    };
   };
 
   agentboxPrebuiltRelease = {
