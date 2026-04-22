@@ -115,6 +115,7 @@ What it does (high level):
 4. Starts/reuses a generation-specific `nix-daemon` sidecar and only publishes it after a daemon-connectivity health check passes.
 5. Starts the interactive container with that generation's read-only `/nix` mount + daemon socket.
 6. Prunes retired generations only after no running task containers still reference them.
+7. If the current generation is unhealthy but still referenced by live task containers, startup fails with detailed diagnostics instead of silently rolling to a replacement generation.
 
 Sidecar metadata is saved under:
 

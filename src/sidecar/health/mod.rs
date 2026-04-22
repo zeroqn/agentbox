@@ -23,11 +23,14 @@ struct SidecarStartupCleanupOutcome {
 
 #[derive(Debug, Clone, Default)]
 struct SidecarStartupDiagnostics {
+    lowerdir_resolution_error: Option<String>,
     sidecar_logs: Option<String>,
     sidecar_logs_error: Option<String>,
     socket_probe_failure: Option<String>,
     sidecar_state: Option<String>,
     host_socket_exists: Option<bool>,
+    merged_mount_active: Option<bool>,
+    sidecar_running: Option<bool>,
 }
 
 pub fn sidecar_stack_is_healthy(state: &SidecarState, image: &str) -> Result<bool> {
@@ -50,6 +53,33 @@ pub fn sidecar_stack_is_healthy(state: &SidecarState, image: &str) -> Result<boo
     Ok(true)
 }
 
+pub fn build_current_generation_unhealthy_error(
+    state: &SidecarState,
+    image: &str,
+    live_references: bool,
+) -> String {
+    let diagnostics = collect_sidecar_diagnostics(state, image);
+    let reference_summary = if live_references {
+        "live task references still exist"
+    } else {
+        "no live task references remain"
+    };
+    let mut message = format!(
+        "current nix sidecar generation '{}' is unhealthy for sidecar '{}' and {}; refusing to reuse it",
+        state.generation, state.sidecar_name, reference_summary
+    );
+
+    if live_references {
+        message
+            .push_str(" and refusing to create a replacement generation while it is still in use.");
+    } else {
+        message.push('.');
+    }
+
+    append_sidecar_diagnostics(&mut message, &diagnostics);
+    message
+}
+
 pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path) -> Result<()> {
     let mut last_probe_failure = None;
     let mut last_host_socket_exists = None;
@@ -67,6 +97,7 @@ pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path
         Err(err) => (None, Some(err.to_string())),
     };
     let diagnostics = SidecarStartupDiagnostics {
+        lowerdir_resolution_error: None,
         sidecar_logs,
         sidecar_logs_error,
         socket_probe_failure: last_probe_failure.or_else(|| {
@@ -76,6 +107,8 @@ pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path
         }),
         sidecar_state: inspect_sidecar_container_state(sidecar_name).ok(),
         host_socket_exists: last_host_socket_exists,
+        merged_mount_active: Some(path_is_mounted(merged_dir).unwrap_or(false)),
+        sidecar_running: Some(is_container_running(sidecar_name)),
     };
     let cleanup_outcome = cleanup_failed_sidecar_startup(sidecar_name, merged_dir);
     Err(anyhow!(
@@ -249,6 +282,32 @@ fn build_sidecar_socket_timeout_error(
         ));
     }
 
+    append_sidecar_diagnostics(&mut message, diagnostics);
+
+    message
+}
+
+fn append_sidecar_diagnostics(message: &mut String, diagnostics: &SidecarStartupDiagnostics) {
+    if let Some(error) = diagnostics
+        .lowerdir_resolution_error
+        .as_deref()
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+    {
+        message.push_str("\nlowerdir resolution error: ");
+        message.push_str(error);
+    }
+
+    if let Some(active) = diagnostics.merged_mount_active {
+        message.push_str("\nmerged mount active: ");
+        message.push_str(if active { "yes" } else { "no" });
+    }
+
+    if let Some(running) = diagnostics.sidecar_running {
+        message.push_str("\nsidecar running: ");
+        message.push_str(if running { "yes" } else { "no" });
+    }
+
     if let Some(logs) = diagnostics
         .sidecar_logs
         .as_deref()
@@ -296,8 +355,34 @@ fn build_sidecar_socket_timeout_error(
         message.push_str("\nhost socket path exists: ");
         message.push_str(if exists { "yes" } else { "no" });
     }
+}
 
-    message
+fn collect_sidecar_diagnostics(state: &SidecarState, image: &str) -> SidecarStartupDiagnostics {
+    let lowerdir_resolution_error =
+        resolve_sidecar_lowerdir_for_mode(&state.image_mount_path, state.mount_mode)
+            .err()
+            .map(|err| err.to_string());
+    let merged_mount_active = path_is_mounted(&state.merged_dir).ok();
+    let sidecar_running = Some(is_container_running(&state.sidecar_name));
+    let socket_probe_failure = daemon_socket_probe_failure(image, &state.merged_dir)
+        .ok()
+        .flatten();
+    let host_socket_exists = daemon_socket_exists(&state.merged_dir).ok();
+    let (sidecar_logs, sidecar_logs_error) = match read_sidecar_logs(&state.sidecar_name) {
+        Ok(logs) => (Some(logs), None),
+        Err(err) => (None, Some(err.to_string())),
+    };
+
+    SidecarStartupDiagnostics {
+        lowerdir_resolution_error,
+        sidecar_logs,
+        sidecar_logs_error,
+        socket_probe_failure,
+        sidecar_state: inspect_sidecar_container_state(&state.sidecar_name).ok(),
+        host_socket_exists,
+        merged_mount_active,
+        sidecar_running,
+    }
 }
 
 fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {

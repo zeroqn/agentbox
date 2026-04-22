@@ -84,6 +84,12 @@ enum CandidateAdoptionDecision {
     RejectCandidate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CurrentUnhealthyPolicy {
+    FailFast,
+    AllowRecovery,
+}
+
 impl SidecarPaths {
     fn new(state_root: &Path) -> Self {
         let sidecar_root = state_root.join(SIDECAR_ROOT_DIR);
@@ -200,11 +206,28 @@ pub fn prepare_sidecar_nix_runtime(
         state::migrate_legacy_state_if_needed(&paths)?;
 
         if let Some(current_state) = state::read_current_sidecar_state(&paths)? {
-            if current_state.matches(image, &image_id)
-                && health::sidecar_stack_is_healthy(&current_state, image)?
-            {
-                let lease_file = register_generation_lease(&paths, &current_state.generation)?;
-                return Ok(current_state.to_runtime(state_root, lease_file));
+            if current_state.matches(image, &image_id) {
+                if health::sidecar_stack_is_healthy(&current_state, image)? {
+                    let lease_file = register_generation_lease(&paths, &current_state.generation)?;
+                    return Ok(current_state.to_runtime(state_root, lease_file));
+                }
+
+                let live_references = generation_has_live_references(
+                    &paths,
+                    &current_state.generation,
+                    &current_state.sidecar_name,
+                )?;
+                let diagnostics = health::build_current_generation_unhealthy_error(
+                    &current_state,
+                    image,
+                    live_references,
+                );
+                match decide_current_unhealthy_policy(live_references) {
+                    CurrentUnhealthyPolicy::FailFast => return Err(anyhow!(diagnostics)),
+                    CurrentUnhealthyPolicy::AllowRecovery => {
+                        eprintln!("agentbox: warning: {diagnostics}");
+                    }
+                }
             }
         }
     }
@@ -478,6 +501,14 @@ fn decide_candidate_adoption(
         CandidateAdoptionDecision::UseCandidate
     } else {
         CandidateAdoptionDecision::RejectCandidate
+    }
+}
+
+fn decide_current_unhealthy_policy(live_references: bool) -> CurrentUnhealthyPolicy {
+    if live_references {
+        CurrentUnhealthyPolicy::FailFast
+    } else {
+        CurrentUnhealthyPolicy::AllowRecovery
     }
 }
 

@@ -201,3 +201,15 @@ fn candidate_adoption_prefers_competing_current_over_candidate() {
 fn post_publish_prune_failures_are_non_fatal() {
     finish_post_publish_prune(Err(anyhow::anyhow!("boom")));
 }
+
+#[test]
+fn current_unhealthy_policy_fails_fast_when_generation_is_live() {
+    assert_eq!(
+        decide_current_unhealthy_policy(true),
+        CurrentUnhealthyPolicy::FailFast
+    );
+    assert_eq!(
+        decide_current_unhealthy_policy(false),
+        CurrentUnhealthyPolicy::AllowRecovery
+    );
+}

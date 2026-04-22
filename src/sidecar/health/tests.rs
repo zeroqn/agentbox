@@ -24,11 +24,14 @@ fn sidecar_socket_timeout_error_includes_auto_cleanup_and_log_tail() {
         manual_merged_cleanup_required: false,
     };
     let diagnostics = SidecarStartupDiagnostics {
+        lowerdir_resolution_error: None,
         sidecar_logs: Some("daemon booting\nready".to_owned()),
         sidecar_logs_error: None,
         socket_probe_failure: Some("probe exited with status 1".to_owned()),
         sidecar_state: Some("running=false status=exited exit_code=1".to_owned()),
         host_socket_exists: Some(false),
+        merged_mount_active: Some(true),
+        sidecar_running: Some(false),
     };
 
     let message = build_sidecar_socket_timeout_error(
@@ -54,11 +57,14 @@ fn sidecar_socket_timeout_error_requests_manual_cleanup_when_auto_cleanup_fails(
         manual_merged_cleanup_required: true,
     };
     let diagnostics = SidecarStartupDiagnostics {
+        lowerdir_resolution_error: None,
         sidecar_logs: None,
         sidecar_logs_error: Some("logs missing".to_owned()),
         socket_probe_failure: None,
         sidecar_state: None,
         host_socket_exists: Some(true),
+        merged_mount_active: Some(true),
+        sidecar_running: Some(true),
     };
 
     let message = build_sidecar_socket_timeout_error(
@@ -72,4 +78,25 @@ fn sidecar_socket_timeout_error_requests_manual_cleanup_when_auto_cleanup_fails(
     assert!(message.contains("remove it before retrying"));
     assert!(message.contains("sidecar logs unavailable (logs missing)"));
     assert!(message.contains("host socket path exists: yes"));
+}
+
+#[test]
+fn current_generation_unhealthy_error_mentions_live_reference_fast_fail() {
+    let state = crate::sidecar::SidecarState {
+        generation: "gen-abc".to_owned(),
+        image: crate::DEFAULT_IMAGE.to_owned(),
+        image_id: "sha256:abc123".to_owned(),
+        image_mount_path: std::path::PathBuf::from("/tmp/image"),
+        sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
+        mount_mode: crate::sidecar::PodmanImageMountMode::Direct,
+        merged_dir: std::path::PathBuf::from("/tmp/merged"),
+        upper_dir: std::path::PathBuf::from("/tmp/upper"),
+        work_dir: std::path::PathBuf::from("/tmp/work"),
+    };
+
+    let message = build_current_generation_unhealthy_error(&state, crate::DEFAULT_IMAGE, true);
+
+    assert!(message.contains("current nix sidecar generation 'gen-abc' is unhealthy"));
+    assert!(message.contains("live task references still exist"));
+    assert!(message.contains("refusing to create a replacement generation"));
 }
