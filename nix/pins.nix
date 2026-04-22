@@ -20,4 +20,17 @@
       };
     };
   };
+
+  rtkPrebuiltRelease = {
+    owner = "rtk-ai";
+    repo = "rtk";
+    tag = "v0.37.2";
+    systems = {
+      x86_64-linux = {
+        asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
+        binary = "rtk";
+        hash = "sha256-Pft6BWNqaGh7ocWqaW+o1fy0lER97YbZ64uItxAKN8Y=";
+      };
+    };
+  };
 }

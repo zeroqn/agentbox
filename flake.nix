@@ -31,8 +31,11 @@
           prebuiltAgentbox = import ./nix/pkgs/agentbox-prebuilt.nix {
             inherit pkgs pins;
           };
+          rtkPrebuilt = import ./nix/pkgs/rtk-prebuilt.nix {
+            inherit pkgs pins;
+          };
           agentboxImage = import ./nix/image/container.nix {
-            inherit pkgs pkgsMaster ohMyCodex;
+            inherit pkgs pkgsMaster ohMyCodex rtkPrebuilt;
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
         in
@@ -43,6 +46,9 @@
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;
           container = agentboxImage;
+        }
+        // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {
+          rtk-prebuilt = rtkPrebuilt;
         }
       );
 
