@@ -19,11 +19,11 @@
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-d3caa1f54175";
+    tag = "sha-b380a726272f";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
-        hash = "sha256-clZZMr4340mxMwxhHhdAyrAQTcGPbPNgD2wzJsHerNs=";
+        hash = "sha256-OY4dM1tq7CY+C5hhgwZO6mDjKiMDHzqeBWQ9e0OsESE=";
       };
     };
   };
