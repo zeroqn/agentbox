@@ -19,7 +19,7 @@ pkgs.dockerTools.buildLayeredImage {
   includeNixDB = true;
   layeringPipeline = layers.agentboxImageLayeringPipeline;
   fakeRootCommands = ''
-    mkdir -p ./etc ./home/dev/.codex ./root ./tmp ./var/empty ./workspace
+    mkdir -p ./etc ./home/dev/.cache ./home/dev/.codex ./root ./tmp ./var/empty ./workspace
     chmod 1777 ./tmp
     if [ ! -e ./etc/passwd ]; then
       printf 'root:x:0:0:root:/root:/bin/sh\n' > ./etc/passwd
