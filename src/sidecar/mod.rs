@@ -93,9 +93,7 @@ pub fn prepare_sidecar_nix_runtime(
     let previous_state = state::read_sidecar_state(&paths)?;
 
     if let Some(state) = previous_state.as_ref() {
-        if state.matches(image, &image_id, &sidecar_name)
-            && health::sidecar_stack_is_healthy(state, &paths, image)?
-        {
+        if should_reuse_previous_sidecar(state, &paths, image, &image_id, &sidecar_name)? {
             return Ok(SidecarNixRuntime {
                 merged_dir: paths.merged_dir,
                 sidecar_name: sidecar_name.clone(),
@@ -232,16 +230,53 @@ fn resolve_sidecar_lowerdir_for_mode(
     Ok(PathBuf::from(lowerdir))
 }
 
-fn cleanup_sidecar_container(sidecar_name: &str) -> Result<()> {
-    let args = vec!["rm".to_owned(), "-f".to_owned(), sidecar_name.to_owned()];
-    let _ = run_podman(
-        args,
-        Stdio::null(),
-        Stdio::null(),
-        Stdio::null(),
-        "failed to remove stale sidecar container",
+fn should_reuse_previous_sidecar(
+    state: &SidecarState,
+    paths: &SidecarPaths,
+    image: &str,
+    image_id: &str,
+    sidecar_name: &str,
+) -> Result<bool> {
+    let identity_matches = state.matches(image, image_id, sidecar_name);
+    if !identity_matches {
+        return Ok(false);
+    }
+
+    let sidecar_running = health::is_container_running(&state.sidecar_name);
+    let protected_same_repo_reuse = protected_same_repo_reuse_applies(
+        identity_matches,
+        sidecar_running,
+        sidecar_has_running_task_containers(&state.sidecar_name),
     );
-    Ok(())
+    if protected_same_repo_reuse {
+        return Ok(true);
+    }
+
+    Ok(fallback_health_gated_reuse_applies(
+        identity_matches,
+        protected_same_repo_reuse,
+        health::sidecar_stack_is_healthy(state, paths, image)?,
+    ))
+}
+
+fn protected_same_repo_reuse_applies(
+    identity_matches: bool,
+    sidecar_running: bool,
+    running_task_probe: Result<bool>,
+) -> bool {
+    if !identity_matches || !sidecar_running {
+        return false;
+    }
+
+    matches!(running_task_probe, Ok(true))
+}
+
+fn fallback_health_gated_reuse_applies(
+    identity_matches: bool,
+    protected_same_repo_reuse: bool,
+    sidecar_stack_is_healthy: bool,
+) -> bool {
+    !protected_same_repo_reuse && identity_matches && sidecar_stack_is_healthy
 }
 
 fn sidecar_has_running_task_containers(sidecar_name: &str) -> Result<bool> {
@@ -252,6 +287,18 @@ fn sidecar_has_running_task_containers(sidecar_name: &str) -> Result<bool> {
     )?;
 
     Ok(output.lines().any(|line| !line.trim().is_empty()))
+}
+
+fn cleanup_sidecar_container(sidecar_name: &str) -> Result<()> {
+    let args = vec!["rm".to_owned(), "-f".to_owned(), sidecar_name.to_owned()];
+    let _ = run_podman(
+        args,
+        Stdio::null(),
+        Stdio::null(),
+        Stdio::null(),
+        "failed to remove stale sidecar container",
+    );
+    Ok(())
 }
 
 fn build_sidecar_task_probe_args(sidecar_name: &str) -> Vec<String> {
