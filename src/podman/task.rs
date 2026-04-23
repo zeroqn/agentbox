@@ -3,8 +3,8 @@ use anyhow::Result;
 use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
     NixRuntime, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR,
-    INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_GENERATION_LABEL,
-    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    TASK_CONTAINER_SIDECAR_LABEL,
 };
 
 pub fn build_podman_args(
@@ -64,11 +64,6 @@ pub fn build_podman_args(
             args.push(format!(
                 "{TASK_CONTAINER_SIDECAR_LABEL}={}",
                 sidecar.sidecar_name
-            ));
-            args.push("--label".to_owned());
-            args.push(format!(
-                "{TASK_CONTAINER_GENERATION_LABEL}={}",
-                sidecar.generation
             ));
         }
     }

@@ -41,11 +41,6 @@ fn build_podman_args_includes_persistent_nix_mounts() {
 #[test]
 fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
-        lease_file: PathBuf::from(
-            "/tmp/state/agentbox/project/nix-sidecar/leases/gen-abc/123.lease",
-        ),
-        state_root: PathBuf::from("/tmp/state/agentbox/project"),
-        generation: "gen-abc".to_owned(),
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
     });
@@ -74,7 +69,6 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(args.contains(&format!(
         "{TASK_CONTAINER_SIDECAR_LABEL}=agentbox-nix-sidecar-abc"
     )));
-    assert!(args.contains(&format!("{TASK_CONTAINER_GENERATION_LABEL}=gen-abc")));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/store:/nix/store".to_owned()));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/var/nix:/nix/var/nix".to_owned()));
 }
