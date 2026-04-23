@@ -235,7 +235,7 @@ agentbox repos and containers.
 The container provides:
 
 - interactive `fish` + `starship`
-- writable `~/.config` and `~/.cache` bootstrapped on startup for shell and tool cache state
+- writable `~/.config` bootstrapped on startup for shell config state
 - Codex CLI + `oh-my-codex` (`omx`)
 - prebuilt `omx-explore-harness` with `OMX_EXPLORE_BIN` preset to the bundled binary
 - Python 3 (`PyYAML`), Node.js

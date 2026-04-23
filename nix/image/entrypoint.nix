@@ -6,7 +6,6 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   export USER=dev
   export HOME=/home/dev
   export SHELL=${pkgs.fish}/bin/fish
-  export XDG_CACHE_HOME="$HOME/.cache"
   runtime_uid="$(id -u)"
   runtime_gid="$(id -g)"
 
@@ -49,13 +48,10 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   fi
 
   home_config_dir="$HOME/.config"
-  home_cache_dir="$XDG_CACHE_HOME"
   fish_config_dir="$home_config_dir/fish"
   bundled_fish_conf="${fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
   bundled_starship_config="${starshipConfig}/share/agentbox/starship.toml"
 
-  materialize_writable_dir "$home_cache_dir" "$tmpdir/home-cache"
-  chmod u+w "$home_cache_dir" 2>/dev/null || true
   materialize_writable_dir "$home_config_dir" "$tmpdir/home-config"
   if [ ! -e "$home_config_dir/starship.toml" ]; then
     cp "$bundled_starship_config" "$home_config_dir/starship.toml"
