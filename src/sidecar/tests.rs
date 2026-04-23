@@ -70,6 +70,14 @@ fn build_sidecar_task_probe_args_filters_for_task_role_and_sidecar_name() {
 }
 
 #[test]
+fn optimistic_sidecar_reuse_requires_running_sidecar_and_task() {
+    assert!(decide_optimistic_sidecar_reuse(true, true));
+    assert!(!decide_optimistic_sidecar_reuse(true, false));
+    assert!(!decide_optimistic_sidecar_reuse(false, true));
+    assert!(!decide_optimistic_sidecar_reuse(false, false));
+}
+
+#[test]
 fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
     let args = build_sidecar_podman_args(
         crate::DEFAULT_IMAGE,

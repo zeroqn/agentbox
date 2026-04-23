@@ -44,6 +44,7 @@ const SEED_MOUNT_POINT: &str = "/agentbox-nix";
 const INTERACTIVE_SHELL: &str = "fish";
 const NIX_REMOTE_SOCKET: &str = "unix:///nix/var/nix/daemon-socket/socket";
 const SIDECAR_NAME_PREFIX: &str = "agentbox-nix-sidecar";
+const TASK_CONTAINER_NAME_PREFIX: &str = "agentbox-task";
 const SIDECAR_NAME_SLUG_FALLBACK: &str = "workspace";
 const SIDECAR_NAME_SLUG_MAX_LEN: usize = 32;
 const TASK_HOSTNAME_SUFFIX: &str = "agentbox";
@@ -54,6 +55,7 @@ const SIDECAR_LOG_TAIL_LINES: u32 = 120;
 const TASK_CONTAINER_ROLE_LABEL: &str = "io.agentbox.role";
 const TASK_CONTAINER_ROLE_VALUE: &str = "task";
 const TASK_CONTAINER_SIDECAR_LABEL: &str = "io.agentbox.sidecar";
+const TASK_CONTAINER_WORKSPACE_LABEL: &str = "io.agentbox.workspace";
 const DEFAULT_NIX_SIDECAR_ENABLED: bool = true;
 
 #[derive(Debug, Clone)]
@@ -81,7 +83,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .context("failed to canonicalize current directory")?;
     let image = resolve_image(cli.image.as_deref(), cli.pull_latest)?;
     let state_layout = resolve_state_layout(&cwd)?;
+    let workspace_slug = derive_workspace_slug(&cwd);
     let task_hostname = derive_task_hostname(&cwd);
+    let task_container_name = derive_task_container_name(&workspace_slug, std::process::id());
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
     let codex_mount = prepare_host_codex_mount()?;
     let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
@@ -108,6 +112,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         build_podman_args(
             &image,
             &task_hostname,
+            &task_container_name,
+            &workspace_slug,
             &workspace_mount,
             &codex_mount,
             &cargo_mount,
@@ -135,6 +141,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
 
 fn derive_task_hostname(cwd: &Path) -> String {
     format!("{}-{TASK_HOSTNAME_SUFFIX}", derive_workspace_slug(cwd))
+}
+
+fn derive_task_container_name(workspace_slug: &str, pid: u32) -> String {
+    format!("{TASK_CONTAINER_NAME_PREFIX}-{workspace_slug}-{pid}")
 }
 
 fn derive_workspace_slug(cwd: &Path) -> String {

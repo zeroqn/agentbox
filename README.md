@@ -114,6 +114,11 @@ What it does (high level):
 3. Builds external merged nix tree under project state.
 4. Starts/reuses a deterministic `nix-daemon` sidecar.
 5. Starts the interactive container with read-only `/nix` + daemon socket.
+6. Names task containers as `agentbox-task-<workspace>-<pid>` and labels them with
+   `io.agentbox.role=task`, `io.agentbox.workspace=<workspace>`, and
+   `io.agentbox.sidecar=<sidecar-name>` so they are easy to identify in `podman ps`.
+7. When a matching sidecar already has a running task container, later launches
+   optimistically reuse that sidecar without repeating the host-side socket probe.
 
 Sidecar metadata is saved at:
 

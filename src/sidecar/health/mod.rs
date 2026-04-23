@@ -95,7 +95,7 @@ pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path
     ))
 }
 
-fn is_container_running(container_name: &str) -> bool {
+pub(crate) fn is_container_running(container_name: &str) -> bool {
     let args = vec![
         "container".to_owned(),
         "inspect".to_owned(),

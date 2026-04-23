@@ -23,3 +23,11 @@ fn task_hostname_falls_back_when_directory_name_has_no_slug_chars() {
         "workspace-agentbox"
     );
 }
+
+#[test]
+fn task_container_name_uses_workspace_slug_and_pid() {
+    assert_eq!(
+        derive_task_container_name("project", 1234),
+        "agentbox-task-project-1234"
+    );
+}

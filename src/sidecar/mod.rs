@@ -93,13 +93,20 @@ pub fn prepare_sidecar_nix_runtime(
     let previous_state = state::read_sidecar_state(&paths)?;
 
     if let Some(state) = previous_state.as_ref() {
-        if state.matches(image, &image_id, &sidecar_name)
-            && health::sidecar_stack_is_healthy(state, &paths, image)?
-        {
-            return Ok(SidecarNixRuntime {
-                merged_dir: paths.merged_dir,
-                sidecar_name: sidecar_name.clone(),
-            });
+        if state.matches(image, &image_id, &sidecar_name) {
+            if can_reuse_sidecar_without_probe(&state.sidecar_name)? {
+                return Ok(SidecarNixRuntime {
+                    merged_dir: paths.merged_dir,
+                    sidecar_name: sidecar_name.clone(),
+                });
+            }
+
+            if health::sidecar_stack_is_healthy(state, &paths, image)? {
+                return Ok(SidecarNixRuntime {
+                    merged_dir: paths.merged_dir,
+                    sidecar_name: sidecar_name.clone(),
+                });
+            }
         }
     }
 
@@ -252,6 +259,17 @@ fn sidecar_has_running_task_containers(sidecar_name: &str) -> Result<bool> {
     )?;
 
     Ok(output.lines().any(|line| !line.trim().is_empty()))
+}
+
+fn can_reuse_sidecar_without_probe(sidecar_name: &str) -> Result<bool> {
+    Ok(decide_optimistic_sidecar_reuse(
+        health::is_container_running(sidecar_name),
+        sidecar_has_running_task_containers(sidecar_name)?,
+    ))
+}
+
+fn decide_optimistic_sidecar_reuse(sidecar_running: bool, running_task_exists: bool) -> bool {
+    sidecar_running && running_task_exists
 }
 
 fn build_sidecar_task_probe_args(sidecar_name: &str) -> Vec<String> {

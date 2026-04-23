@@ -4,12 +4,14 @@ use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
     NixRuntime, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR,
     INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
-    TASK_CONTAINER_SIDECAR_LABEL,
+    TASK_CONTAINER_SIDECAR_LABEL, TASK_CONTAINER_WORKSPACE_LABEL,
 };
 
 pub fn build_podman_args(
     image: &str,
     hostname: &str,
+    task_container_name: &str,
+    workspace_slug: &str,
     workspace_mount: &str,
     codex_mount: &str,
     cargo_mount: &str,
@@ -26,6 +28,8 @@ pub fn build_podman_args(
         CONTAINER_WORKDIR.to_owned(),
         "--hostname".to_owned(),
         hostname.to_owned(),
+        "--name".to_owned(),
+        task_container_name.to_owned(),
         "--volume".to_owned(),
         workspace_mount.to_owned(),
         "--volume".to_owned(),
@@ -39,6 +43,9 @@ pub fn build_podman_args(
         "--tmpfs".to_owned(),
         CONTAINER_TMP_TMPFS.to_owned(),
     ];
+
+    args.push("--label".to_owned());
+    args.push(format!("{TASK_CONTAINER_WORKSPACE_LABEL}={workspace_slug}"));
 
     match nix_runtime {
         NixRuntime::Seeded(persistent_nix_root) => {

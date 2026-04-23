@@ -9,6 +9,8 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     let args = build_podman_args(
         DEFAULT_IMAGE,
         "project-agentbox",
+        "agentbox-task-project-1234",
+        "project",
         "/tmp/project:/workspace",
         "/home/alice/.codex:/home/dev/.codex",
         "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
@@ -20,6 +22,9 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert_eq!(args[4], "keep-id");
     assert!(args.contains(&"--hostname".to_owned()));
     assert!(args.contains(&"project-agentbox".to_owned()));
+    assert!(args.contains(&"--name".to_owned()));
+    assert!(args.contains(&"agentbox-task-project-1234".to_owned()));
+    assert!(args.contains(&format!("{TASK_CONTAINER_WORKSPACE_LABEL}=project")));
     assert!(args.contains(&"/tmp/state/agentbox/project/nix/store:/nix/store".to_owned()));
     assert!(args.contains(&"/tmp/state/agentbox/project/nix/var/nix:/nix/var/nix".to_owned()));
     assert!(
@@ -47,6 +52,8 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     let args = build_podman_args(
         DEFAULT_IMAGE,
         "project-agentbox",
+        "agentbox-task-project-1234",
+        "project",
         "/tmp/project:/workspace",
         "/home/alice/.codex:/home/dev/.codex",
         "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
@@ -59,6 +66,8 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(args.contains(&"/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned()));
     assert!(args.contains(&"--hostname".to_owned()));
     assert!(args.contains(&"project-agentbox".to_owned()));
+    assert!(args.contains(&"--name".to_owned()));
+    assert!(args.contains(&"agentbox-task-project-1234".to_owned()));
     assert!(args.contains(&"--env".to_owned()));
     assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
     assert!(args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
@@ -69,6 +78,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(args.contains(&format!(
         "{TASK_CONTAINER_SIDECAR_LABEL}=agentbox-nix-sidecar-abc"
     )));
+    assert!(args.contains(&format!("{TASK_CONTAINER_WORKSPACE_LABEL}=project")));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/store:/nix/store".to_owned()));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/var/nix:/nix/var/nix".to_owned()));
 }
