@@ -71,32 +71,61 @@ explore_asset = sys.argv[6]
 explore_hash = sys.argv[7]
 text = pins_path.read_text()
 
-def replace_exact(pattern: str, replacement: str, label: str) -> None:
-    global text
-    text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+def replace_exact(pattern: str, replacement: str, label: str, source: str | None = None) -> str:
+    target = text if source is None else source
+    updated, count = re.subn(pattern, replacement, target, count=1, flags=re.S)
     if count != 1:
         raise SystemExit(f"failed to update {label}; expected exactly one match")
+    return updated
 
-replace_exact(
+text = replace_exact(
     r'(ohMyCodex = \{\s*version = )"[^"]+"(;)',
     rf'\1"{version}"\2',
     "ohMyCodex version",
 )
-replace_exact(
+text = replace_exact(
     r'(ohMyCodex = \{.*?srcHash = )"sha256-[^"]+"(;)',
     rf'\1"{src_hash}"\2',
     "ohMyCodex src hash",
 )
-replace_exact(
+text = replace_exact(
     r'(ohMyCodex = \{.*?npmDepsHash = )"sha256-[^"]+"(;)',
     rf'\1"{npm_hash}"\2',
     "ohMyCodex npmDepsHash",
 )
-replace_exact(
-    rf'((?:ohMyCodex = \{{.*?exploreHarnessSystems = \{{.*?){re.escape(explore_system)} = \{{\s+asset = ")([^"]+)(";\s+binary = "[^"]+";\s+hash = ")sha256-[^"]+(";))',
-    rf'\1{explore_asset}\3{explore_hash}\4',
-    f"ohMyCodex explore harness metadata for {explore_system}",
+
+oh_my_codex_block_pattern = r'(ohMyCodex = \{.*?\n  \};)'
+block_match = re.search(oh_my_codex_block_pattern, text, flags=re.S)
+if block_match is None:
+    raise SystemExit("failed to locate ohMyCodex block in nix/pins.nix")
+
+oh_my_codex_block = block_match.group(1)
+system_pattern = rf'({re.escape(explore_system)} = \{{.*?\n\s+\}};)'
+system_match = re.search(system_pattern, oh_my_codex_block, flags=re.S)
+if system_match is None:
+    raise SystemExit(f"failed to locate explore harness block for {explore_system}")
+
+system_block = system_match.group(1)
+system_block = replace_exact(
+    r'(asset = )"[^"]+"(;)',
+    rf'\1"{explore_asset}"\2',
+    f"ohMyCodex explore harness asset for {explore_system}",
+    source=system_block,
 )
+system_block = replace_exact(
+    r'(hash = )"sha256-[^"]+"(;)',
+    rf'\1"{explore_hash}"\2',
+    f"ohMyCodex explore harness hash for {explore_system}",
+    source=system_block,
+)
+
+oh_my_codex_block = (
+    oh_my_codex_block[:system_match.start(1)]
+    + system_block
+    + oh_my_codex_block[system_match.end(1):]
+)
+text = text[:block_match.start(1)] + oh_my_codex_block + text[block_match.end(1):]
+
 pins_path.write_text(text)
 PY
 
