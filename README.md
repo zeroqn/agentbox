@@ -112,7 +112,8 @@ What it does (high level):
 1. Resolves the selected image and mounts its filesystem.
 2. Uses image `/nix` as `lowerdir` for host `fuse-overlayfs`.
 3. Builds external merged nix tree under project state.
-4. Starts/reuses a deterministic `nix-daemon` sidecar.
+4. Starts/reuses a deterministic `nix-daemon` sidecar and preserves that
+   sidecar while matching task containers are still running.
 5. Starts the interactive container with read-only `/nix` + daemon socket.
 
 Sidecar metadata is saved at:

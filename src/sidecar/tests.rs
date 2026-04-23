@@ -70,6 +70,50 @@ fn build_sidecar_task_probe_args_filters_for_task_role_and_sidecar_name() {
 }
 
 #[test]
+fn protected_same_repo_reuse_requires_match_running_sidecar_and_running_task() {
+    assert!(protected_same_repo_reuse_applies(true, true, Ok(true)));
+}
+
+#[test]
+fn protected_same_repo_reuse_rejects_missing_matching_task_container() {
+    assert!(!protected_same_repo_reuse_applies(true, true, Ok(false)));
+}
+
+#[test]
+fn protected_same_repo_reuse_rejects_missing_running_sidecar() {
+    assert!(!protected_same_repo_reuse_applies(true, false, Ok(true)));
+}
+
+#[test]
+fn protected_same_repo_reuse_rejects_identity_mismatch() {
+    assert!(!protected_same_repo_reuse_applies(false, true, Ok(true)));
+}
+
+#[test]
+fn protected_same_repo_reuse_falls_back_when_task_probe_errors() {
+    assert!(!protected_same_repo_reuse_applies(
+        true,
+        true,
+        Err(anyhow::anyhow!("podman ps failed")),
+    ));
+}
+
+#[test]
+fn fallback_health_gated_reuse_keeps_existing_behavior_when_probe_fails() {
+    assert!(fallback_health_gated_reuse_applies(true, false, true));
+}
+
+#[test]
+fn fallback_health_gated_reuse_rebuilds_when_health_check_fails() {
+    assert!(!fallback_health_gated_reuse_applies(true, false, false));
+}
+
+#[test]
+fn fallback_health_gated_reuse_is_skipped_after_protected_reuse() {
+    assert!(!fallback_health_gated_reuse_applies(true, true, true));
+}
+
+#[test]
 fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
     let args = build_sidecar_podman_args(
         crate::DEFAULT_IMAGE,
