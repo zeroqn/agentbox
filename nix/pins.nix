@@ -2,14 +2,14 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.14.2";
-    srcHash = "sha256-UHVJzRMDxZYoDldl3aFkJNOlMr/gsXlbe1cDpfgdV28=";
-    npmDepsHash = "sha256-gGlxQLwp0NBsc/SBUEwJJYPMUKre+txgG8SCIBK7NcA=";
+    version = "0.14.3";
+    srcHash = "sha256-2X8GLUF68Mdc50wFEcSBVLw101KTFggEKaYDO/jTF+U=";
+    npmDepsHash = "sha256-UHzPLZrOqdIB9BDQ/WJlR1XaxUptkY3Nn7UyJt4wwUc=";
     exploreHarnessSystems = {
       x86_64-linux = {
         asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
         binary = "omx-explore-harness";
-        hash = "sha256-wyqN2ZGO+ynV/hIZaPadxwB3qLPb5VJ5TyzalTpY9bI=";
+        hash = "sha256-Q+aMvO9XLdkdRrd3gx1VrNogxbGKjqbQffbcj53DbEQ=";
       };
     };
   };
