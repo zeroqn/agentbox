@@ -36,6 +36,16 @@ cargo test
 AGENTBOX_DISABLE_AUTO_FISH=1 nix develop
 ```
 
+Inside the agentbox container, `nix` is invoked through a small compatibility
+wrapper that clears the entrypoint's NSS wrapper preload before running the real
+Nix binary. This prevents nested dev shells from mixing the container preload
+with a different glibc from the shell's realized dependencies. If you are using
+an older image without that wrapper, use this temporary workaround:
+
+```bash
+env -u LD_PRELOAD -u NSS_WRAPPER_PASSWD -u NSS_WRAPPER_GROUP nix develop
+```
+
 ---
 
 ## Build
@@ -239,6 +249,8 @@ The container provides:
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
 - RTK (`rtk`)
+- `nix` wrapper that clears the container NSS wrapper preload before invoking
+  the real Nix binary, avoiding glibc-version mismatches in nested dev shells
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled
   `clang_mold_wrapper` helper for the `x86_64-unknown-linux-gnu` target
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
