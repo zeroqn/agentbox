@@ -115,6 +115,11 @@ let
     pkgs.which
   ];
 
+  usrBinEnvCompat = pkgs.runCommand "agentbox-usr-bin-env-compat" { } ''
+    mkdir -p "$out/usr/bin"
+    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+  '';
+
   imagePackages =
     baseImagePackages
     ++ cToolchainImagePackages
@@ -132,6 +137,7 @@ let
     # oh-my-codex store path directly, so keep that payload in the
     # image in addition to the /bin symlink tree from codexImageLayer.
     ohMyCodex
+    usrBinEnvCompat
     entrypoint
     fishConfig
     agentboxMuslPackage
