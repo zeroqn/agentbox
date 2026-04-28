@@ -17,7 +17,8 @@ host, and supports two Nix runtime modes:
 - Linux
 - `podman`
 - `nix` (for building via flake)
-- `fuse-overlayfs` (required for default sidecar mode)
+- `fuse-overlayfs` (required for default sidecar mode; included by the
+  `.#agentbox-prebuilt` package runtime environment)
 
 ---
 
@@ -51,7 +52,8 @@ nix build .#container
 
 - `.#agentbox`: compile from source.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
-  `x86_64-linux`; use `.#agentbox` elsewhere).
+  `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
+  `fuse-overlayfs` into the runtime environment for default sidecar mode.
 - `.#agentbox-musl`: static host binary.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).

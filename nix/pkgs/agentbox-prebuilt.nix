@@ -19,9 +19,15 @@ if builtins.hasAttr prebuiltSystem agentboxPrebuiltRelease.systems then
     };
     dontUnpack = true;
 
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+
+    propagatedUserEnvPkgs = [ pkgs.fuse-overlayfs ];
+
     installPhase = ''
       runHook preInstall
-      install -Dm755 "$src" "$out/bin/agentbox"
+      install -Dm755 "$src" "$out/libexec/agentbox"
+      makeWrapper "$out/libexec/agentbox" "$out/bin/agentbox" \
+        --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.fuse-overlayfs ]}
       runHook postInstall
     '';
 
@@ -31,7 +37,7 @@ if builtins.hasAttr prebuiltSystem agentboxPrebuiltRelease.systems then
     };
 
     meta = {
-      description = "Prebuilt agentbox binary fetched from a published GitHub release asset";
+      description = "Prebuilt agentbox binary with fuse-overlayfs available for sidecar mode";
       homepage = "https://github.com/${agentboxPrebuiltRelease.owner}/${agentboxPrebuiltRelease.repo}";
       license = pkgs.lib.licenses.mit;
       mainProgram = "agentbox";
