@@ -242,6 +242,8 @@ The container provides:
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
 - `RUSTC_WRAPPER`, `CMAKE_C_COMPILER_LAUNCHER`, and `CMAKE_CXX_COMPILER_LAUNCHER` preset to the bundled `sccache`
 - `SCCACHE_DIR=/home/dev/.cache/sccache`, backed by the shared host cache under the agentbox state root
+- `/usr/bin/env` compatibility for common env-based shebangs such as
+  `#!/usr/bin/env bash`
 - common tools (`curl`, `jq`, `tmux`, etc.)
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
