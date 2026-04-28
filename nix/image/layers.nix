@@ -119,6 +119,13 @@ let
     mkdir -p "$out/usr/bin"
     ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
   '';
+  binInterpreterCompat = pkgs.runCommand "agentbox-bin-interpreter-compat" { } ''
+    mkdir -p "$out/bin"
+    ln -s ${pkgs.bashInteractive}/bin/sh "$out/bin/sh"
+    ln -s ${pkgs.bashInteractive}/bin/bash "$out/bin/bash"
+    ln -s ${pkgs.python3}/bin/python "$out/bin/python"
+    ln -s ${pkgs.python3}/bin/python3 "$out/bin/python3"
+  '';
 
   imagePackages =
     baseImagePackages
@@ -138,6 +145,7 @@ let
     # image in addition to the /bin symlink tree from codexImageLayer.
     ohMyCodex
     usrBinEnvCompat
+    binInterpreterCompat
     entrypoint
     fishConfig
     agentboxMuslPackage

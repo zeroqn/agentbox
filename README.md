@@ -244,6 +244,9 @@ The container provides:
 - `SCCACHE_DIR=/home/dev/.cache/sccache`, backed by the shared host cache under the agentbox state root
 - `/usr/bin/env` compatibility for common env-based shebangs such as
   `#!/usr/bin/env bash`
+- narrow hardcoded-interpreter compatibility for `/bin/sh`, `/bin/bash`,
+  `/bin/python`, and `/bin/python3`; `/bin/python` resolves to Python 3
+  (not broad FHS compatibility)
 - common tools (`curl`, `jq`, `tmux`, etc.)
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
