@@ -23,6 +23,12 @@ let
   clangMoldWrapper = pkgs.writeShellScriptBin "clang_mold_wrapper" ''
     exec ${pkgs.clang}/bin/clang -fuse-ld=mold "$@"
   '';
+  nixCommandCompat = pkgs.writeShellScriptBin "nix" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    exec ${pkgs.nix}/bin/nix "$@"
+  '';
 
   stableRustToolchainPackages = [
     pkgs.cargo
@@ -136,7 +142,7 @@ let
       toolingImageLayer
       codexImageLayer
     ];
-  imagePath = pkgs.lib.makeBinPath imagePackages;
+  imagePath = pkgs.lib.makeBinPath ([ nixCommandCompat ] ++ imagePackages);
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
   imageContents = imagePackages ++ [
@@ -149,6 +155,7 @@ let
     entrypoint
     fishConfig
     agentboxMuslPackage
+    nixCommandCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   codexLayerPaths = [ (toString codexImageLayer) ];
@@ -257,6 +264,7 @@ in
     imageContents
     imagePath
     clangMoldWrapper
+    nixCommandCompat
     nixBuilderGroupId
     nixBuilderGroupMembers
     nixBuilderPasswdEntries
