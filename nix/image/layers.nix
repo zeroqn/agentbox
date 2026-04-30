@@ -59,6 +59,8 @@ let
     pkgs.python3
     pkgs.python3Packages.pip
     pkgs.python3Packages.pyyaml
+    pkgs.python3Packages.tree-sitter
+    pkgs.python3Packages.tree-sitter-rust
     pkgs.uv
   ];
   dynamicToolchainImageLayer = pkgs.buildEnv {
