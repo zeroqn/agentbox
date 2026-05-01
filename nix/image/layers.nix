@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, rtkPrebuilt, agentboxMuslPackage, entrypoint, fishConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, agentboxMuslPackage, entrypoint, fishConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -91,6 +91,7 @@ let
   agentImagePackages = [
     pkgsMaster.codex
     opencode
+    piCodingAgent
     ohMyCodex
   ];
   agentImageLayer = pkgs.buildEnv {

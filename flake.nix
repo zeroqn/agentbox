@@ -28,6 +28,9 @@
           opencode = import ./nix/pkgs/opencode.nix {
             inherit pkgs pins;
           };
+          piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
+            inherit pkgs pins;
+          };
           rustPackages = import ./nix/pkgs/agentbox-rust.nix {
             inherit self pkgs pins;
           };
@@ -38,7 +41,7 @@
             inherit pkgs pins;
           };
           agentboxImage = import ./nix/image/container.nix {
-            inherit pkgs pkgsMaster ohMyCodex opencode rtkPrebuilt;
+            inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent rtkPrebuilt;
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
         in
@@ -46,6 +49,7 @@
           default = rustPackages.rustPackage;
           oh-my-codex = ohMyCodex;
           opencode = opencode;
+          pi-coding-agent = piCodingAgent;
           agentbox = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;

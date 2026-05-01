@@ -20,6 +20,13 @@
     nodeModulesHash = "sha256-f/cWCr6Oqnq21u9+UyhwE5PGqE9X5K+NtjEGbZ4ORPg=";
   };
 
+  piCodingAgent = {
+    version = "0.71.0";
+    rev = "8040dd6ded6bd52b2b6271ab3588c4474715a4dd";
+    srcHash = "sha256-brxktr/vTBLGlhEyfFRrBO0JSy9cJhnZXKk+ucge2uM=";
+    npmDepsHash = "sha256-HYzJ0IeE/nltV9DSLJFPBhXvX6x3T3O+WyXh7U4botY=";
+  };
+
   agentboxPrebuiltRelease = {
     owner = "zeroqn";
     repo = "agentbox";
