@@ -2,14 +2,14 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.15.1";
-    srcHash = "sha256-GdCwZjXwrilq35GfiVv4QlVk8P/5oaXy5U3HBop5pSI=";
-    npmDepsHash = "sha256-FCVl+iUPtcfAxAQ7hv8n/xAVjgvIT7wJxjVA7s9uKgQ=";
+    version = "0.15.2";
+    srcHash = "sha256-KYRNVv+0L+7v6VvPVo4Vdi9ALcvAH/7WTgxn5Y8cncE=";
+    npmDepsHash = "sha256-Zf/nYTFclUQqxEFJVmZY5lie9htVWLov7BdyY9EtnV0=";
     exploreHarnessSystems = {
       x86_64-linux = {
         asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
         binary = "omx-explore-harness";
-        hash = "sha256-plqFye6/7IrEzUPhjJjQwyKs7cOaKbSD+VscB6kQs7Q=";
+        hash = "sha256-jrvbvHTx5jz03JQ8Nnm+4jU4wsXhO1YBgDkziDERg8k=";
       };
     };
   };
@@ -25,7 +25,7 @@
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-577873be9c63";
+    tag = "sha-7ccd2d3850f3";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
