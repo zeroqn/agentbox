@@ -14,6 +14,12 @@
     };
   };
 
+  opencode = {
+    version = "1.14.31";
+    srcHash = "sha256-VHznPS2OuJ8urQqGK3K0ysQLCk+O8JV7/UCDdFyqafQ=";
+    nodeModulesHash = "sha256-f/cWCr6Oqnq21u9+UyhwE5PGqE9X5K+NtjEGbZ4ORPg=";
+  };
+
   agentboxPrebuiltRelease = {
     owner = "zeroqn";
     repo = "agentbox";

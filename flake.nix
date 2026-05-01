@@ -25,6 +25,9 @@
           ohMyCodex = import ./nix/pkgs/oh-my-codex.nix {
             inherit pkgs pins;
           };
+          opencode = import ./nix/pkgs/opencode.nix {
+            inherit pkgs pins;
+          };
           rustPackages = import ./nix/pkgs/agentbox-rust.nix {
             inherit self pkgs pins;
           };
@@ -35,13 +38,14 @@
             inherit pkgs pins;
           };
           agentboxImage = import ./nix/image/container.nix {
-            inherit pkgs pkgsMaster ohMyCodex rtkPrebuilt;
+            inherit pkgs pkgsMaster ohMyCodex opencode rtkPrebuilt;
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
         in
         {
           default = rustPackages.rustPackage;
           oh-my-codex = ohMyCodex;
+          opencode = opencode;
           agentbox = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;

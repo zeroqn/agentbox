@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, rtkPrebuilt, agentboxMuslPackage, entrypoint, fishConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, rtkPrebuilt, agentboxMuslPackage, entrypoint, fishConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -88,13 +88,14 @@ let
     pathsToLink = [ "/" ];
   };
 
-  codexImagePackages = [
+  agentImagePackages = [
     pkgsMaster.codex
+    opencode
     ohMyCodex
   ];
-  codexImageLayer = pkgs.buildEnv {
-    name = "agentbox-codex-layer";
-    paths = codexImagePackages;
+  agentImageLayer = pkgs.buildEnv {
+    name = "agentbox-agent-layer";
+    paths = agentImagePackages;
     pathsToLink = [ "/" ];
   };
 
@@ -145,7 +146,7 @@ let
       rustToolchainImageLayer
       dynamicToolchainImageLayer
       toolingImageLayer
-      codexImageLayer
+      agentImageLayer
     ];
   imagePath = pkgs.lib.makeBinPath ([ nixCommandCompat ] ++ imagePackages);
   agentboxImageMaxLayers = 10;
@@ -153,7 +154,7 @@ let
   imageContents = imagePackages ++ [
     # The generated Codex hook and MCP config reference the raw
     # oh-my-codex store path directly, so keep that payload in the
-    # image in addition to the /bin symlink tree from codexImageLayer.
+    # image in addition to the /bin symlink tree from agentImageLayer.
     ohMyCodex
     usrBinEnvCompat
     binInterpreterCompat
@@ -163,7 +164,7 @@ let
     nixCommandCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
-  codexLayerPaths = [ (toString codexImageLayer) ];
+  agentLayerPaths = [ (toString agentImageLayer) ];
   toolingLayerPaths = [ (toString toolingImageLayer) ];
   cToolchainLayerPaths = builtins.map toString cToolchainImagePackages;
   rustLayerPaths = [ (toString rustToolchainImageLayer) ];
@@ -181,7 +182,7 @@ let
         [
           [
             "split_paths"
-            codexLayerPaths
+            agentLayerPaths
           ]
           [
             "over"
