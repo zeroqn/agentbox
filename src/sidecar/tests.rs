@@ -130,6 +130,8 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
     assert!(args.contains(&"0:0".to_owned()));
     assert!(args.contains(&"--volume".to_owned()));
     assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix".to_owned()));
+    assert!(!args.contains(&"--runtime".to_owned()));
+    assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
     assert_eq!(args[args.len() - 3], "bash");
     assert_eq!(args[args.len() - 2], "-lc");
     assert!(args[args.len() - 1].contains("nix-daemon --daemon"));

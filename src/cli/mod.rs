@@ -10,7 +10,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --disable-nix-sidecar\n  agentbox --task-kvm\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -34,6 +34,13 @@ pub struct Cli {
         long_help = "Disable rootless sidecar mode for this run and use seeded bind mounts from the resolved external agentbox state root instead."
     )]
     pub disable_nix_sidecar: bool,
+
+    #[arg(
+        long,
+        help = "Run the interactive task container with crun's experimental libkrun/KVM handler",
+        long_help = "Run only the interactive task container with Podman runtime crun and annotation run.oci.handler=krun. This experimental mode requires the native nix-daemon sidecar path and can also be enabled with AGENTBOX_TASK_KVM=1."
+    )]
+    pub task_kvm: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +69,10 @@ pub fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool
         return false;
     }
     env_sidecar_enabled
+}
+
+pub fn resolve_task_kvm_enabled(cli: &Cli, env_task_kvm_enabled: bool) -> bool {
+    cli.task_kvm || env_task_kvm_enabled
 }
 
 pub fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {

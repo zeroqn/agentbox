@@ -10,6 +10,9 @@ host, and supports two Nix runtime modes:
   `nix-daemon` sidecar (no `/nix/store` seed copy).
 - **Seeded mode (fallback):** copies `/nix` into project state on first run.
 
+It also has an experimental task-only KVM launch mode for testing the
+interactive task container under libkrun while the Nix sidecar stays native.
+
 ---
 
 ## Prerequisites
@@ -19,6 +22,8 @@ host, and supports two Nix runtime modes:
 - `nix` (for building via flake)
 - `fuse-overlayfs` (required for default sidecar mode; included by the
   `.#agentbox-prebuilt` package runtime environment)
+- For `--task-kvm`: host Podman support for `--runtime crun`,
+  `run.oci.handler=krun`, `/dev/kvm`, and libkrun/transport support.
 
 ---
 
@@ -177,6 +182,57 @@ State layout:
 
 If partial seed data exists without `.seeded`, `agentbox` treats it as
 inconsistent and refuses to auto-seed.
+
+---
+
+### Experimental task-only KVM mode
+
+Run the interactive task container with crun's libkrun handler:
+
+```bash
+./result/bin/agentbox --task-kvm
+# or
+AGENTBOX_TASK_KVM=1 ./result/bin/agentbox
+```
+
+This mode adds the following Podman arguments to the task container only:
+
+```text
+--runtime crun --annotation run.oci.handler=krun
+```
+
+The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
+containers, sidecar health probes, image mounts, and cleanup probes remain
+normal native Podman containers; they do not receive the task KVM runtime
+arguments.
+
+`--task-kvm` requires sidecar mode. It is rejected with seeded mode:
+
+```bash
+./result/bin/agentbox --task-kvm --disable-nix-sidecar
+AGENTBOX_TASK_KVM=1 AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
+```
+
+Direct sharing of the native sidecar Unix socket into a libkrun VM is not
+assumed to work. Until a supported direct socket path or a host/guest proxy is
+proven on your host, treat KVM Nix as fail-closed: the task may launch, but Nix
+commands inside the KVM guest must be validated before claiming success.
+
+Suggested manual validation:
+
+```bash
+podman run --runtime crun --annotation run.oci.handler=krun <image> true
+./result/bin/agentbox --task-kvm
+# inside the task shell:
+nix store ping
+nix path-info <deterministic-existing-store-path>
+nix build nixpkgs#hello --no-link
+```
+
+If these Nix commands fail, record the host details and do not treat the mode as
+a working KVM Nix setup. Any future host/guest proxy must document its transport
+and security boundary explicitly because it forwards guest requests to a native
+host-side daemon authority.
 
 ---
 

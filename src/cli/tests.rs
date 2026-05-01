@@ -8,6 +8,7 @@ fn cli_accepts_no_arguments() {
     assert_eq!(cli.image, None);
     assert!(!cli.pull_latest);
     assert!(!cli.disable_nix_sidecar);
+    assert!(!cli.task_kvm);
 }
 
 #[test]
@@ -57,10 +58,34 @@ fn cli_accepts_disable_nix_sidecar_flag() {
 }
 
 #[test]
+fn cli_accepts_task_kvm_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--task-kvm"]).expect("--task-kvm should parse");
+    assert!(cli.task_kvm);
+}
+
+#[test]
 fn disable_sidecar_flag_overrides_true_environment_value() {
     let cli = Cli::try_parse_from(["agentbox", "--disable-nix-sidecar"])
         .expect("--disable-nix-sidecar should parse");
     assert!(!resolve_nix_sidecar_enabled(&cli, true));
+}
+
+#[test]
+fn task_kvm_flag_overrides_false_environment_value() {
+    let cli = Cli::try_parse_from(["agentbox", "--task-kvm"]).expect("--task-kvm should parse");
+    assert!(resolve_task_kvm_enabled(&cli, false));
+}
+
+#[test]
+fn task_kvm_env_value_enables_task_kvm_without_cli_flag() {
+    let cli = Cli::try_parse_from(["agentbox"]).expect("no-arg invocation should parse");
+    assert!(resolve_task_kvm_enabled(&cli, true));
+}
+
+#[test]
+fn falsey_task_kvm_env_value_leaves_task_native_without_cli_flag() {
+    let cli = Cli::try_parse_from(["agentbox"]).expect("no-arg invocation should parse");
+    assert!(!resolve_task_kvm_enabled(&cli, false));
 }
 
 #[test]
@@ -107,6 +132,15 @@ fn env_sidecar_flag_rejects_unknown_value() {
     assert!(err
         .to_string()
         .contains("environment variable 'AGENTBOX_NIX_SIDECAR' must be one of"));
+}
+
+#[test]
+fn env_task_kvm_flag_reuses_standard_error_for_unknown_value() {
+    let err = parse_env_flag_value("AGENTBOX_TASK_KVM", "maybe")
+        .expect_err("unknown env value should fail");
+    assert!(err
+        .to_string()
+        .contains("environment variable 'AGENTBOX_TASK_KVM' must be one of"));
 }
 
 #[test]

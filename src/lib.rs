@@ -11,12 +11,14 @@ mod podman;
 mod sidecar;
 mod state;
 
-use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
+use cli::{
+    env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, resolve_task_kvm_enabled, Cli,
+};
 use mounts::format::format_mount_arg;
 use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount};
 use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
 use podman::command::run_podman;
-use podman::task::build_podman_args;
+use podman::task::{build_podman_args, TaskPodmanSpec};
 use sidecar::{cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarNixRuntime};
 use state::resolve_state_layout;
 
@@ -62,6 +64,12 @@ enum NixRuntime {
     Sidecar(SidecarNixRuntime),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskContainerMode {
+    Native,
+    KvmKrunExperimental,
+}
+
 pub fn entrypoint() -> ExitCode {
     let cli = Cli::parse();
 
@@ -90,6 +98,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let env_sidecar_enabled =
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
     let nix_sidecar_enabled = resolve_nix_sidecar_enabled(&cli, env_sidecar_enabled);
+    let env_task_kvm_enabled = env_flag_enabled("AGENTBOX_TASK_KVM", false)?;
+    let task_mode = resolve_task_mode(resolve_task_kvm_enabled(&cli, env_task_kvm_enabled));
+    validate_task_mode(task_mode, nix_sidecar_enabled)?;
 
     let nix_runtime = if nix_sidecar_enabled {
         NixRuntime::Sidecar(prepare_sidecar_nix_runtime(
@@ -105,15 +116,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
     };
 
     let status = run_podman(
-        build_podman_args(
-            &image,
-            &task_hostname,
-            &workspace_mount,
-            &codex_mount,
-            &cargo_mount,
-            &sccache_mount,
-            &nix_runtime,
-        )?,
+        build_podman_args(TaskPodmanSpec {
+            image: &image,
+            hostname: &task_hostname,
+            workspace_mount: &workspace_mount,
+            codex_mount: &codex_mount,
+            cargo_mount: &cargo_mount,
+            sccache_mount: &sccache_mount,
+            nix_runtime: &nix_runtime,
+            task_mode,
+        })?,
         Stdio::inherit(),
         Stdio::inherit(),
         Stdio::inherit(),
@@ -131,6 +143,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
 
     let code = status.code().unwrap_or(1);
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+}
+
+fn resolve_task_mode(task_kvm_enabled: bool) -> TaskContainerMode {
+    if task_kvm_enabled {
+        TaskContainerMode::KvmKrunExperimental
+    } else {
+        TaskContainerMode::Native
+    }
+}
+
+fn validate_task_mode(task_mode: TaskContainerMode, nix_sidecar_enabled: bool) -> Result<()> {
+    if task_mode == TaskContainerMode::KvmKrunExperimental && !nix_sidecar_enabled {
+        anyhow::bail!(
+            "--task-kvm requires native nix sidecar mode; remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
+        );
+    }
+
+    Ok(())
 }
 
 fn derive_task_hostname(cwd: &Path) -> String {

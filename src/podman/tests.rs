@@ -1,4 +1,4 @@
-use super::task::build_podman_args;
+use super::task::{build_podman_args, TaskPodmanSpec};
 use crate::*;
 use std::path::PathBuf;
 
@@ -6,15 +6,16 @@ use std::path::PathBuf;
 fn build_podman_args_includes_persistent_nix_mounts() {
     let root = PersistentNixRoot::new(std::path::Path::new("/tmp/state/agentbox/project"));
     let runtime = NixRuntime::Seeded(root);
-    let args = build_podman_args(
-        DEFAULT_IMAGE,
-        "project-agentbox",
-        "/tmp/project:/workspace",
-        "/home/alice/.codex:/home/dev/.codex",
-        "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
-        "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
-        &runtime,
-    )
+    let args = build_podman_args(TaskPodmanSpec {
+        image: DEFAULT_IMAGE,
+        hostname: "project-agentbox",
+        workspace_mount: "/tmp/project:/workspace",
+        codex_mount: "/home/alice/.codex:/home/dev/.codex",
+        cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
+        sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+        nix_runtime: &runtime,
+        task_mode: TaskContainerMode::Native,
+    })
     .expect("podman args should build");
     assert_eq!(args[3], "--userns");
     assert_eq!(args[4], "keep-id");
@@ -36,6 +37,8 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert_eq!(args[args.len() - 1], "-l");
     assert!(!args.contains(&"--user".to_owned()));
     assert!(!args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
+    assert!(!args.contains(&"--runtime".to_owned()));
+    assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
 }
 
 #[test]
@@ -44,15 +47,16 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
     });
-    let args = build_podman_args(
-        DEFAULT_IMAGE,
-        "project-agentbox",
-        "/tmp/project:/workspace",
-        "/home/alice/.codex:/home/dev/.codex",
-        "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
-        "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
-        &runtime,
-    )
+    let args = build_podman_args(TaskPodmanSpec {
+        image: DEFAULT_IMAGE,
+        hostname: "project-agentbox",
+        workspace_mount: "/tmp/project:/workspace",
+        codex_mount: "/home/alice/.codex:/home/dev/.codex",
+        cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
+        sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+        nix_runtime: &runtime,
+        task_mode: TaskContainerMode::Native,
+    })
     .expect("podman args should build");
 
     assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix:ro".to_owned()));
@@ -71,4 +75,38 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     )));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/store:/nix/store".to_owned()));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/var/nix:/nix/var/nix".to_owned()));
+    assert!(!args.contains(&"--runtime".to_owned()));
+    assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
+    assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
+    assert_eq!(args[args.len() - 1], "-l");
+}
+
+#[test]
+fn build_podman_args_adds_krun_runtime_only_for_kvm_task_mode() {
+    let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
+        merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
+        sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
+    });
+    let args = build_podman_args(TaskPodmanSpec {
+        image: DEFAULT_IMAGE,
+        hostname: "project-agentbox",
+        workspace_mount: "/tmp/project:/workspace",
+        codex_mount: "/home/alice/.codex:/home/dev/.codex",
+        cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
+        sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+        nix_runtime: &runtime,
+        task_mode: TaskContainerMode::KvmKrunExperimental,
+    })
+    .expect("podman args should build");
+
+    assert!(args.contains(&"--runtime".to_owned()));
+    assert!(args.contains(&"crun".to_owned()));
+    assert!(args.contains(&"--annotation".to_owned()));
+    assert!(args.contains(&"run.oci.handler=krun".to_owned()));
+    assert!(args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
+    assert!(args.contains(&format!(
+        "{TASK_CONTAINER_SIDECAR_LABEL}=agentbox-nix-sidecar-abc"
+    )));
+    assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
+    assert_eq!(args[args.len() - 1], "-l");
 }
