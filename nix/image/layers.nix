@@ -54,13 +54,16 @@ let
     pathsToLink = [ "/" ];
   };
 
+  pythonToolchain = pkgs.python3.withPackages (ps: [
+    ps.pip
+    ps.pyyaml
+    ps.tree-sitter
+    ps.tree-sitter-rust
+  ]);
+
   dynamicToolchainImagePackages = [
     pkgs.nodejs
-    pkgs.python3
-    pkgs.python3Packages.pip
-    pkgs.python3Packages.pyyaml
-    pkgs.python3Packages.tree-sitter
-    pkgs.python3Packages.tree-sitter-rust
+    pythonToolchain
     pkgs.uv
   ];
   dynamicToolchainImageLayer = pkgs.buildEnv {
@@ -131,8 +134,8 @@ let
     mkdir -p "$out/bin"
     ln -s ${pkgs.bashInteractive}/bin/sh "$out/bin/sh"
     ln -s ${pkgs.bashInteractive}/bin/bash "$out/bin/bash"
-    ln -s ${pkgs.python3}/bin/python "$out/bin/python"
-    ln -s ${pkgs.python3}/bin/python3 "$out/bin/python3"
+    ln -s ${pythonToolchain}/bin/python "$out/bin/python"
+    ln -s ${pythonToolchain}/bin/python3 "$out/bin/python3"
   '';
 
   imagePackages =
