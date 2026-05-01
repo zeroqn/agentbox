@@ -7,6 +7,8 @@ use crate::{
     TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
 };
 
+const TASK_KVM_USER: &str = "1000:1000";
+
 pub struct TaskPodmanSpec<'a> {
     pub image: &'a str,
     pub hostname: &'a str,
@@ -48,6 +50,8 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
         args.push("crun".to_owned());
         args.push("--annotation".to_owned());
         args.push("run.oci.handler=krun".to_owned());
+        args.push("--user".to_owned());
+        args.push(TASK_KVM_USER.to_owned());
     }
 
     match spec.nix_runtime {

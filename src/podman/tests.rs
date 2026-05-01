@@ -103,6 +103,8 @@ fn build_podman_args_adds_krun_runtime_only_for_kvm_task_mode() {
     assert!(args.contains(&"crun".to_owned()));
     assert!(args.contains(&"--annotation".to_owned()));
     assert!(args.contains(&"run.oci.handler=krun".to_owned()));
+    assert!(args.contains(&"--user".to_owned()));
+    assert!(args.contains(&"1000:1000".to_owned()));
     assert!(args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
     assert!(args.contains(&format!(
         "{TASK_CONTAINER_SIDECAR_LABEL}=agentbox-nix-sidecar-abc"
