@@ -198,13 +198,8 @@ AGENTBOX_TASK_KVM=1 ./result/bin/agentbox
 This mode adds the following Podman arguments to the task container only:
 
 ```text
---runtime crun --annotation run.oci.handler=krun --user 1000:1000
+--runtime crun --annotation run.oci.handler=krun
 ```
-
-The explicit `--user 1000:1000` keeps the bundled image's interactive shell on
-the `/home/dev` identity even when the krun path starts the default process as
-root. Custom images used with `--task-kvm` should provide a compatible writable
-`/home/dev` for UID/GID `1000:1000`.
 
 The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
 containers, sidecar health probes, image mounts, and cleanup probes remain

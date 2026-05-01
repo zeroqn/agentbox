@@ -82,12 +82,23 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
 }
 
 #[test]
-fn build_podman_args_adds_krun_runtime_only_for_kvm_task_mode() {
+fn build_podman_args_adds_only_krun_runtime_args_for_kvm_task_mode() {
     let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
     });
-    let args = build_podman_args(TaskPodmanSpec {
+    let native_args = build_podman_args(TaskPodmanSpec {
+        image: DEFAULT_IMAGE,
+        hostname: "project-agentbox",
+        workspace_mount: "/tmp/project:/workspace",
+        codex_mount: "/home/alice/.codex:/home/dev/.codex",
+        cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
+        sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+        nix_runtime: &runtime,
+        task_mode: TaskContainerMode::Native,
+    })
+    .expect("native podman args should build");
+    let kvm_args = build_podman_args(TaskPodmanSpec {
         image: DEFAULT_IMAGE,
         hostname: "project-agentbox",
         workspace_mount: "/tmp/project:/workspace",
@@ -97,18 +108,20 @@ fn build_podman_args_adds_krun_runtime_only_for_kvm_task_mode() {
         nix_runtime: &runtime,
         task_mode: TaskContainerMode::KvmKrunExperimental,
     })
-    .expect("podman args should build");
+    .expect("kvm podman args should build");
 
-    assert!(args.contains(&"--runtime".to_owned()));
-    assert!(args.contains(&"crun".to_owned()));
-    assert!(args.contains(&"--annotation".to_owned()));
-    assert!(args.contains(&"run.oci.handler=krun".to_owned()));
-    assert!(args.contains(&"--user".to_owned()));
-    assert!(args.contains(&"1000:1000".to_owned()));
-    assert!(args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
-    assert!(args.contains(&format!(
-        "{TASK_CONTAINER_SIDECAR_LABEL}=agentbox-nix-sidecar-abc"
-    )));
-    assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
-    assert_eq!(args[args.len() - 1], "-l");
+    let krun_args = [
+        "--runtime".to_owned(),
+        "crun".to_owned(),
+        "--annotation".to_owned(),
+        "run.oci.handler=krun".to_owned(),
+    ];
+    let krun_index = kvm_args
+        .windows(krun_args.len())
+        .position(|window| window == krun_args)
+        .expect("kvm args should include contiguous krun runtime args");
+    let mut kvm_without_krun_args = kvm_args;
+    kvm_without_krun_args.drain(krun_index..krun_index + krun_args.len());
+
+    assert_eq!(kvm_without_krun_args, native_args);
 }
