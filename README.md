@@ -351,9 +351,10 @@ It runs with `--userns=keep-id` so `/workspace` ownership matches host mapping.
 
 ### Container image (GitHub Actions)
 
-On push to `main` and tag pushes, CI publishes to:
+On push to `main`, push to `dev`, and tag pushes, CI publishes to:
 
 - `ghcr.io/<repo-owner>/agentbox:latest` (main only)
+- `ghcr.io/<repo-owner>/agentbox:dev` (dev only)
 - `ghcr.io/<repo-owner>/agentbox:<git-tag>` (tag only)
 - `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
 
