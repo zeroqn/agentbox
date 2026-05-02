@@ -30,6 +30,8 @@ pkgs.dockerTools.buildLayeredImage {
     chmod 1777 ./tmp
     if [ ! -e ./etc/passwd ]; then
       printf 'root:x:0:0:root:/root:/bin/sh\n' > ./etc/passwd
+    else
+      sed -i '/^dev:/d' ./etc/passwd
     fi
     if [ ! -e ./etc/group ]; then
       printf 'root:x:0:\n' > ./etc/group

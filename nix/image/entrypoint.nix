@@ -19,15 +19,17 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   runtime_gid="$(id -g)"
   dev_uid="$runtime_uid"
   dev_gid="$runtime_gid"
-  drop_to_dev=0
+  if [ "$runtime_uid" = "0" ]; then
+    dev_uid=1000
+    dev_gid=1000
+  fi
   interactive_fish_task=0
   if [ "$command_basename" = "fish" ] && [ "''${2:-}" = "-l" ]; then
     interactive_fish_task=1
   fi
+  drop_to_dev=0
   if [ "$runtime_uid" = "0" ] \
     && { [ "''${AGENTBOX_KVM_DROP_TO_DEV:-}" = "1" ] || [ "$interactive_fish_task" = "1" ]; }; then
-    dev_uid=1000
-    dev_gid=1000
     drop_to_dev=1
   fi
 
@@ -59,8 +61,16 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     fi
   }
 
-  grep -v '^dev:' /etc/passwd > "$tmpdir/passwd" || true
-  grep -v '^dev:' /etc/group > "$tmpdir/group" || true
+  if [ -e /etc/passwd ]; then
+    sed '/^dev:/d' /etc/passwd > "$tmpdir/passwd"
+  else
+    : > "$tmpdir/passwd"
+  fi
+  if [ -e /etc/group ]; then
+    sed '/^dev:/d' /etc/group > "$tmpdir/group"
+  else
+    : > "$tmpdir/group"
+  fi
   chmod u+w "$tmpdir/passwd" "$tmpdir/group"
   printf 'dev:x:%s:%s:dev user:%s:%s\n' "$dev_uid" "$dev_gid" "$HOME" "$SHELL" >> "$tmpdir/passwd"
   printf 'dev:x:%s:\n' "$dev_gid" >> "$tmpdir/group"
