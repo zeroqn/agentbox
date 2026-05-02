@@ -47,11 +47,15 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     fi
 
     if [ -L "$path" ] || [ ! -w "$path" ]; then
-      mkdir -p "$shadow"
-      cp -RL "$path/." "$shadow/" 2>/dev/null || true
+      if ! mkdir -p "$shadow" || ! cp -RL "$path/." "$shadow/" 2>/dev/null; then
+        echo "agentbox-entrypoint: warning: cannot shadow '$path' to writable layer" >&2
+        return 0
+      fi
       rm -rf "$path"
       mkdir -p "$path"
-      cp -RL "$shadow/." "$path/" 2>/dev/null || true
+      if ! cp -RL "$shadow/." "$path/" 2>/dev/null; then
+        echo "agentbox-entrypoint: warning: failed to materialize writable dir '$path'" >&2
+      fi
     fi
   }
 
@@ -108,8 +112,10 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     cp "$bundled_fish_conf" "$fish_config_dir/conf.d/agentbox-starship.fish"
   fi
   if [ "$drop_to_dev" = "1" ]; then
-    chown -R "$dev_uid:$dev_gid" "$home_config_dir" "$home_data_dir" "$starship_cache_dir" "$user_tmpdir" 2>/dev/null || true
-    chown "$dev_uid:$dev_gid" "$home_cache_dir" 2>/dev/null || true
+    chown -R "$dev_uid:$dev_gid" "$home_config_dir" "$home_data_dir" "$starship_cache_dir" "$user_tmpdir" 2>/dev/null \
+      || echo "agentbox-entrypoint: warning: chown home config dirs failed (may be read-only)" >&2
+    chown "$dev_uid:$dev_gid" "$home_cache_dir" 2>/dev/null \
+      || echo "agentbox-entrypoint: warning: chown home cache dir failed (may be read-only)" >&2
   fi
 
   export TMPDIR="$user_tmpdir"

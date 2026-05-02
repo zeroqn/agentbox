@@ -38,11 +38,6 @@ const CONTAINER_CARGO_DIR: &str = "/home/dev/.cargo";
 const CONTAINER_SCCACHE_DIR: &str = "/home/dev/.cache/sccache";
 const CONTAINER_NIX_DIR: &str = "/nix";
 const CONTAINER_TMP_TMPFS: &str = "/tmp:rw,exec,mode=1777";
-const CONTAINER_HOME_CONFIG_TMPFS: &str = "/home/dev/.config:rw,exec,uid=1000,gid=1000,mode=700";
-const CONTAINER_HOME_LOCAL_TMPFS: &str = "/home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700";
-const CONTAINER_STARSHIP_CACHE_TMPFS: &str =
-    "/home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700";
-const CONTAINER_USER_TMP_TMPFS: &str = "/home/dev/.cache/tmp:rw,exec,uid=1000,gid=1000,mode=700";
 const NIX_STORE_DIR: &str = "store";
 const NIX_VAR_DIR: &str = "var";
 const NIX_LOG_DIR: &str = "log";

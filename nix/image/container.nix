@@ -23,8 +23,6 @@ pkgs.dockerTools.buildLayeredImage {
       ./etc \
       ./home/dev/.cache \
       ./home/dev/.codex \
-      ./home/dev/.config \
-      ./home/dev/.local \
       ./root \
       ./tmp \
       ./var/empty \
