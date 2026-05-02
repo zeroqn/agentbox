@@ -31,6 +31,10 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert!(args.contains(&"/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned()));
     assert!(args.contains(&"--tmpfs".to_owned()));
     assert!(args.contains(&CONTAINER_TMP_TMPFS.to_owned()));
+    assert!(!args.contains(&CONTAINER_HOME_CONFIG_TMPFS.to_owned()));
+    assert!(!args.contains(&CONTAINER_HOME_LOCAL_TMPFS.to_owned()));
+    assert!(!args.contains(&CONTAINER_STARSHIP_CACHE_TMPFS.to_owned()));
+    assert!(!args.contains(&CONTAINER_USER_TMP_TMPFS.to_owned()));
     assert!(args.contains(&"--env".to_owned()));
     assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
     assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
@@ -66,6 +70,10 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(args.contains(&"project-agentbox".to_owned()));
     assert!(args.contains(&"--env".to_owned()));
     assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
+    assert!(!args.contains(&CONTAINER_HOME_CONFIG_TMPFS.to_owned()));
+    assert!(!args.contains(&CONTAINER_HOME_LOCAL_TMPFS.to_owned()));
+    assert!(!args.contains(&CONTAINER_STARSHIP_CACHE_TMPFS.to_owned()));
+    assert!(!args.contains(&CONTAINER_USER_TMP_TMPFS.to_owned()));
     assert!(args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
     assert!(args.contains(&"--label".to_owned()));
     assert!(args.contains(&format!(
@@ -84,7 +92,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
 }
 
 #[test]
-fn build_podman_args_adds_only_krun_runtime_args_and_dev_drop_marker_for_kvm_task_mode() {
+fn build_podman_args_adds_only_kvm_runtime_args_and_writable_home_tmpfs_for_kvm_task_mode() {
     let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
@@ -115,6 +123,14 @@ fn build_podman_args_adds_only_krun_runtime_args_and_dev_drop_marker_for_kvm_tas
     let krun_args = [
         "--env".to_owned(),
         TASK_KVM_DROP_TO_DEV_ENV.to_owned(),
+        "--tmpfs".to_owned(),
+        CONTAINER_HOME_CONFIG_TMPFS.to_owned(),
+        "--tmpfs".to_owned(),
+        CONTAINER_HOME_LOCAL_TMPFS.to_owned(),
+        "--tmpfs".to_owned(),
+        CONTAINER_STARSHIP_CACHE_TMPFS.to_owned(),
+        "--tmpfs".to_owned(),
+        CONTAINER_USER_TMP_TMPFS.to_owned(),
         "--runtime".to_owned(),
         "crun".to_owned(),
         "--annotation".to_owned(),

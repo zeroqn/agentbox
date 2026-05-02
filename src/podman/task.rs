@@ -2,9 +2,11 @@ use anyhow::Result;
 
 use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
-    NixRuntime, TaskContainerMode, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS,
-    CONTAINER_WORKDIR, INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL,
-    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
+    NixRuntime, TaskContainerMode, CONTAINER_HOME_CONFIG_TMPFS, CONTAINER_HOME_LOCAL_TMPFS,
+    CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_STARSHIP_CACHE_TMPFS, CONTAINER_TMP_TMPFS,
+    CONTAINER_USER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL, NIX_REMOTE_SOCKET,
+    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    TASK_KVM_DROP_TO_DEV_ENV,
 };
 
 pub struct TaskPodmanSpec<'a> {
@@ -46,6 +48,15 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
     if spec.task_mode == TaskContainerMode::KvmKrunExperimental {
         args.push("--env".to_owned());
         args.push(TASK_KVM_DROP_TO_DEV_ENV.to_owned());
+        for tmpfs in [
+            CONTAINER_HOME_CONFIG_TMPFS,
+            CONTAINER_HOME_LOCAL_TMPFS,
+            CONTAINER_STARSHIP_CACHE_TMPFS,
+            CONTAINER_USER_TMP_TMPFS,
+        ] {
+            args.push("--tmpfs".to_owned());
+            args.push(tmpfs.to_owned());
+        }
         args.push("--runtime".to_owned());
         args.push("crun".to_owned());
         args.push("--annotation".to_owned());

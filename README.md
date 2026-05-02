@@ -198,7 +198,12 @@ AGENTBOX_TASK_KVM=1 ./result/bin/agentbox
 This mode adds the following Podman arguments to the task container only:
 
 ```text
---env AGENTBOX_KVM_DROP_TO_DEV=1 --runtime crun --annotation run.oci.handler=krun
+--env AGENTBOX_KVM_DROP_TO_DEV=1
+--tmpfs /home/dev/.config:rw,exec,uid=1000,gid=1000,mode=700
+--tmpfs /home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700
+--tmpfs /home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700
+--tmpfs /home/dev/.cache/tmp:rw,exec,uid=1000,gid=1000,mode=700
+--runtime crun --annotation run.oci.handler=krun
 ```
 
 The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
@@ -212,12 +217,15 @@ as root, the image entrypoint uses the task-only marker or an interactive
 `fish -l` task command to drop to the bundled `dev` identity (`1000:1000`)
 before starting the shell. Native task containers keep the existing dynamic
 `--userns=keep-id` behavior, and the root-required sidecar keeps running as
-root. The entrypoint also pins fish/starship state to writable `dev` home paths
-under `/home/dev/.config`, `/home/dev/.local/share`, and `/home/dev/.cache`.
+root. The task command also overlays fish/starship mutable state with tmpfs
+mounts under `/home/dev/.config`, `/home/dev/.local`,
+`/home/dev/.cache/starship`, and `/home/dev/.cache/tmp`, because libkrun can
+expose image-backed home directories as owned by `dev` while still rejecting
+writes from the dropped `dev` shell.
 
-Because the drop happens in the image entrypoint, binary-only rebuilds are not
-enough for this behavior. Rebuild and load the container image after changing
-entrypoint behavior:
+Because this behavior is split between task launch arguments and the image
+entrypoint, rebuild the `agentbox` binary after changing task arguments and
+rebuild/load the container image after changing entrypoint behavior:
 
 ```bash
 nix build .#container
