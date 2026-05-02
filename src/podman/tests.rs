@@ -37,6 +37,7 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert_eq!(args[args.len() - 1], "-l");
     assert!(!args.contains(&"--user".to_owned()));
     assert!(!args.contains(&format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")));
+    assert!(!args.contains(&TASK_KVM_DROP_TO_DEV_ENV.to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
 }
@@ -75,6 +76,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     )));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/store:/nix/store".to_owned()));
     assert!(!args.contains(&"/tmp/state/agentbox/project/nix/var/nix:/nix/var/nix".to_owned()));
+    assert!(!args.contains(&TASK_KVM_DROP_TO_DEV_ENV.to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
     assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
@@ -82,7 +84,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
 }
 
 #[test]
-fn build_podman_args_adds_only_krun_runtime_args_for_kvm_task_mode() {
+fn build_podman_args_adds_only_krun_runtime_args_and_dev_drop_marker_for_kvm_task_mode() {
     let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
@@ -111,6 +113,8 @@ fn build_podman_args_adds_only_krun_runtime_args_for_kvm_task_mode() {
     .expect("kvm podman args should build");
 
     let krun_args = [
+        "--env".to_owned(),
+        TASK_KVM_DROP_TO_DEV_ENV.to_owned(),
         "--runtime".to_owned(),
         "crun".to_owned(),
         "--annotation".to_owned(),

@@ -6,8 +6,20 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   export USER=dev
   export HOME=/home/dev
   export SHELL=${pkgs.fish}/bin/fish
+  if [ "$#" -eq 0 ]; then
+    set -- ${pkgs.fish}/bin/fish -l
+  fi
+
   runtime_uid="$(id -u)"
   runtime_gid="$(id -g)"
+  dev_uid="$runtime_uid"
+  dev_gid="$runtime_gid"
+  drop_to_dev=0
+  if [ "''${AGENTBOX_KVM_DROP_TO_DEV:-}" = "1" ] && [ "$runtime_uid" = "0" ]; then
+    dev_uid=1000
+    dev_gid=1000
+    drop_to_dev=1
+  fi
 
   tmpdir="$(mktemp -d)"
   cleanup() {
@@ -33,11 +45,15 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     fi
   }
 
-  cat /etc/passwd > "$tmpdir/passwd"
-  cat /etc/group > "$tmpdir/group"
+  grep -v '^dev:' /etc/passwd > "$tmpdir/passwd" || true
+  grep -v '^dev:' /etc/group > "$tmpdir/group" || true
   chmod u+w "$tmpdir/passwd" "$tmpdir/group"
-  printf 'dev:x:%s:%s:dev user:%s:%s\n' "$runtime_uid" "$runtime_gid" "$HOME" "$SHELL" >> "$tmpdir/passwd"
-  printf 'dev:x:%s:\n' "$runtime_gid" >> "$tmpdir/group"
+  printf 'dev:x:%s:%s:dev user:%s:%s\n' "$dev_uid" "$dev_gid" "$HOME" "$SHELL" >> "$tmpdir/passwd"
+  printf 'dev:x:%s:\n' "$dev_gid" >> "$tmpdir/group"
+  if [ "$drop_to_dev" = "1" ]; then
+    chmod 0755 "$tmpdir"
+    chmod 0644 "$tmpdir/passwd" "$tmpdir/group"
+  fi
 
   export NSS_WRAPPER_PASSWD="$tmpdir/passwd"
   export NSS_WRAPPER_GROUP="$tmpdir/group"
@@ -62,9 +78,12 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   if [ ! -e "$fish_config_dir/conf.d/agentbox-starship.fish" ]; then
     cp "$bundled_fish_conf" "$fish_config_dir/conf.d/agentbox-starship.fish"
   fi
+  if [ "$drop_to_dev" = "1" ]; then
+    chown -R "$dev_uid:$dev_gid" "$home_config_dir" 2>/dev/null || true
+  fi
 
-  if [ "$#" -eq 0 ]; then
-    set -- ${pkgs.fish}/bin/fish -l
+  if [ "$drop_to_dev" = "1" ]; then
+    exec ${pkgs.util-linux}/bin/setpriv --reuid="$dev_uid" --regid="$dev_gid" --clear-groups "$@"
   fi
 
   exec "$@"

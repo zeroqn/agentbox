@@ -198,13 +198,29 @@ AGENTBOX_TASK_KVM=1 ./result/bin/agentbox
 This mode adds the following Podman arguments to the task container only:
 
 ```text
---runtime crun --annotation run.oci.handler=krun
+--env AGENTBOX_KVM_DROP_TO_DEV=1 --runtime crun --annotation run.oci.handler=krun
 ```
 
 The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
 containers, sidecar health probes, image mounts, and cleanup probes remain
 normal native Podman containers; they do not receive the task KVM runtime
-arguments.
+arguments or the task-only `AGENTBOX_KVM_DROP_TO_DEV` marker.
+
+KVM guests do not share the native Podman user namespace boundary in the same
+way as a normal rootless container. If libkrun starts the interactive task shell
+as root, the image entrypoint uses the task-only marker to drop to the bundled
+`dev` identity (`1000:1000`) before starting the shell. Native task containers
+keep the existing dynamic `--userns=keep-id` behavior, and the root-required
+sidecar keeps running as root.
+
+Because the drop happens in the image entrypoint, binary-only rebuilds are not
+enough for this behavior. Rebuild and load the container image after changing
+entrypoint behavior:
+
+```bash
+nix build .#container
+podman load -i result
+```
 
 `--task-kvm` requires sidecar mode. It is rejected with seeded mode:
 
@@ -224,6 +240,8 @@ Suggested manual validation:
 podman run --runtime crun --annotation run.oci.handler=krun <image> true
 ./result/bin/agentbox --task-kvm
 # inside the task shell:
+id -u
+id -g
 nix store ping
 nix path-info <deterministic-existing-store-path>
 nix build nixpkgs#hello --no-link
