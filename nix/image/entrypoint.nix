@@ -6,16 +6,26 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   export USER=dev
   export HOME=/home/dev
   export SHELL=${pkgs.fish}/bin/fish
+  export XDG_CONFIG_HOME="$HOME/.config"
+  export XDG_DATA_HOME="$HOME/.local/share"
+  export XDG_CACHE_HOME="$HOME/.cache"
+  export TMPDIR="$XDG_CACHE_HOME/tmp"
   if [ "$#" -eq 0 ]; then
     set -- ${pkgs.fish}/bin/fish -l
   fi
 
+  command_basename="''${1##*/}"
   runtime_uid="$(id -u)"
   runtime_gid="$(id -g)"
   dev_uid="$runtime_uid"
   dev_gid="$runtime_gid"
   drop_to_dev=0
-  if [ "''${AGENTBOX_KVM_DROP_TO_DEV:-}" = "1" ] && [ "$runtime_uid" = "0" ]; then
+  interactive_fish_task=0
+  if [ "$command_basename" = "fish" ] && [ "''${2:-}" = "-l" ]; then
+    interactive_fish_task=1
+  fi
+  if [ "$runtime_uid" = "0" ] \
+    && { [ "''${AGENTBOX_KVM_DROP_TO_DEV:-}" = "1" ] || [ "$interactive_fish_task" = "1" ]; }; then
     dev_uid=1000
     dev_gid=1000
     drop_to_dev=1
@@ -63,23 +73,43 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     export LD_PRELOAD="${pkgs.nss_wrapper}/lib/libnss_wrapper.so"
   fi
 
-  home_config_dir="$HOME/.config"
+  home_config_dir="$XDG_CONFIG_HOME"
+  home_data_dir="$XDG_DATA_HOME"
+  home_cache_dir="$XDG_CACHE_HOME"
   fish_config_dir="$home_config_dir/fish"
+  fish_data_dir="$home_data_dir/fish"
+  starship_cache_dir="$home_cache_dir/starship"
   bundled_fish_conf="${fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
   bundled_starship_config="${starshipConfig}/share/agentbox/starship.toml"
 
   materialize_writable_dir "$home_config_dir" "$tmpdir/home-config"
+  materialize_writable_dir "$home_data_dir" "$tmpdir/home-data"
   if [ ! -e "$home_config_dir/starship.toml" ]; then
     cp "$bundled_starship_config" "$home_config_dir/starship.toml"
   fi
   materialize_writable_dir "$fish_config_dir" "$tmpdir/fish-config"
-  mkdir -p "$fish_config_dir/conf.d"
-  chmod u+w "$fish_config_dir" "$fish_config_dir/conf.d" 2>/dev/null || true
+  mkdir -p \
+    "$fish_config_dir/conf.d" \
+    "$fish_config_dir/completions" \
+    "$fish_config_dir/functions" \
+    "$fish_data_dir" \
+    "$starship_cache_dir" \
+    "$TMPDIR"
+  chmod u+w \
+    "$fish_config_dir" \
+    "$fish_config_dir/conf.d" \
+    "$fish_config_dir/completions" \
+    "$fish_config_dir/functions" \
+    "$fish_data_dir" \
+    "$starship_cache_dir" \
+    "$TMPDIR" \
+    2>/dev/null || true
   if [ ! -e "$fish_config_dir/conf.d/agentbox-starship.fish" ]; then
     cp "$bundled_fish_conf" "$fish_config_dir/conf.d/agentbox-starship.fish"
   fi
   if [ "$drop_to_dev" = "1" ]; then
-    chown -R "$dev_uid:$dev_gid" "$home_config_dir" 2>/dev/null || true
+    chown -R "$dev_uid:$dev_gid" "$home_config_dir" "$home_data_dir" "$starship_cache_dir" "$TMPDIR" 2>/dev/null || true
+    chown "$dev_uid:$dev_gid" "$home_cache_dir" 2>/dev/null || true
   fi
 
   if [ "$drop_to_dev" = "1" ]; then

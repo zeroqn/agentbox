@@ -208,10 +208,12 @@ arguments or the task-only `AGENTBOX_KVM_DROP_TO_DEV` marker.
 
 KVM guests do not share the native Podman user namespace boundary in the same
 way as a normal rootless container. If libkrun starts the interactive task shell
-as root, the image entrypoint uses the task-only marker to drop to the bundled
-`dev` identity (`1000:1000`) before starting the shell. Native task containers
-keep the existing dynamic `--userns=keep-id` behavior, and the root-required
-sidecar keeps running as root.
+as root, the image entrypoint uses the task-only marker or an interactive
+`fish -l` task command to drop to the bundled `dev` identity (`1000:1000`)
+before starting the shell. Native task containers keep the existing dynamic
+`--userns=keep-id` behavior, and the root-required sidecar keeps running as
+root. The entrypoint also pins fish/starship state to writable `dev` home paths
+under `/home/dev/.config`, `/home/dev/.local/share`, and `/home/dev/.cache`.
 
 Because the drop happens in the image entrypoint, binary-only rebuilds are not
 enough for this behavior. Rebuild and load the container image after changing
