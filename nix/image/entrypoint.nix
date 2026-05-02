@@ -9,7 +9,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   export XDG_CONFIG_HOME="$HOME/.config"
   export XDG_DATA_HOME="$HOME/.local/share"
   export XDG_CACHE_HOME="$HOME/.cache"
-  export TMPDIR="$XDG_CACHE_HOME/tmp"
+  user_tmpdir="$XDG_CACHE_HOME/tmp"
   if [ "$#" -eq 0 ]; then
     set -- ${pkgs.fish}/bin/fish -l
   fi
@@ -31,7 +31,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     drop_to_dev=1
   fi
 
-  tmpdir="$(mktemp -d)"
+  tmpdir="$(TMPDIR=/tmp mktemp -d)"
   cleanup() {
     rm -rf "$tmpdir"
   }
@@ -94,7 +94,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     "$fish_config_dir/functions" \
     "$fish_data_dir" \
     "$starship_cache_dir" \
-    "$TMPDIR"
+    "$user_tmpdir"
   chmod u+w \
     "$fish_config_dir" \
     "$fish_config_dir/conf.d" \
@@ -102,15 +102,17 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     "$fish_config_dir/functions" \
     "$fish_data_dir" \
     "$starship_cache_dir" \
-    "$TMPDIR" \
+    "$user_tmpdir" \
     2>/dev/null || true
   if [ ! -e "$fish_config_dir/conf.d/agentbox-starship.fish" ]; then
     cp "$bundled_fish_conf" "$fish_config_dir/conf.d/agentbox-starship.fish"
   fi
   if [ "$drop_to_dev" = "1" ]; then
-    chown -R "$dev_uid:$dev_gid" "$home_config_dir" "$home_data_dir" "$starship_cache_dir" "$TMPDIR" 2>/dev/null || true
+    chown -R "$dev_uid:$dev_gid" "$home_config_dir" "$home_data_dir" "$starship_cache_dir" "$user_tmpdir" 2>/dev/null || true
     chown "$dev_uid:$dev_gid" "$home_cache_dir" 2>/dev/null || true
   fi
+
+  export TMPDIR="$user_tmpdir"
 
   if [ "$drop_to_dev" = "1" ]; then
     exec ${pkgs.util-linux}/bin/setpriv --reuid="$dev_uid" --regid="$dev_gid" --clear-groups "$@"
