@@ -146,5 +146,20 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
     let mut kvm_without_kvm_args = kvm_args;
     kvm_without_kvm_args.drain(kvm_block_start..=annotation_end);
 
+    // KVM mode uses a guest-local NIX_REMOTE and passes the proxy port env
+    // var. Replace these with the native equivalents before comparing.
+    if let Some(pos) = kvm_without_kvm_args
+        .windows(2)
+        .position(|w| w[0] == "--env" && w[1] == format!("{KVM_NIX_PROXY_PORT_ENV}={KVM_NIX_PROXY_PORT}"))
+    {
+        kvm_without_kvm_args.drain(pos..pos + 2);
+    }
+    if let Some(pos) = kvm_without_kvm_args
+        .windows(2)
+        .position(|w| w[0] == "--env" && w[1] == format!("NIX_REMOTE={KVM_NIX_PROXY_GUEST_NIX_REMOTE}"))
+    {
+        kvm_without_kvm_args[pos + 1] = format!("NIX_REMOTE={NIX_REMOTE_SOCKET}");
+    }
+
     assert_eq!(kvm_without_kvm_args, native_args);
 }

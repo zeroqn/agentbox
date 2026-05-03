@@ -142,7 +142,24 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   export TMPDIR="$user_tmpdir"
 
   if [ "$drop_to_dev" = "1" ]; then
-    exec ${pkgs.util-linux}/bin/setpriv --reuid="$dev_uid" --regid="$dev_gid" --clear-groups "$@"
+    agentbox_proxy_sock="/tmp/agentbox-nix-daemon.sock"
+    agentbox_proxy_port="''${AGENTBOX_NIX_PROXY_PORT:-19876}"
+
+    exec ${pkgs.util-linux}/bin/setpriv --reuid="$dev_uid" --regid="$dev_gid" --clear-groups \
+      ${pkgs.bashInteractive}/bin/bash -c '
+        agentbox_proxy_sock="$1"; shift
+        agentbox_proxy_port="$1"; shift
+
+        ${pkgs.socat}/bin/socat UNIX-LISTEN:"$agentbox_proxy_sock",fork,unlink-early,umask=000 \
+          TCP:"10.0.2.2:$agentbox_proxy_port" &
+
+        for _ in $(seq 1 50); do
+          if [ -S "$agentbox_proxy_sock" ]; then break; fi
+          sleep 0.1
+        done
+
+        exec "$@"
+      ' bash "$agentbox_proxy_sock" "$agentbox_proxy_port" "$@"
   fi
 
   exec "$@"

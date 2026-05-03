@@ -109,6 +109,7 @@ let
     pkgs.file
     pkgs.fish
     pkgs.ripgrep
+    pkgs.socat
     pkgs.procps
     pkgs.pkg-config
     pkgs.findutils
