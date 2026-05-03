@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, agentboxMuslPackage }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, agentboxMuslPackage }:
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   entrypoint = import ./entrypoint.nix {
@@ -7,7 +7,7 @@ let
     starshipConfig = configPayloads.starshipConfig;
   };
   layers = import ./layers.nix {
-    inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent rtkPrebuilt agentboxMuslPackage entrypoint;
+    inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent rtkPrebuilt libkrun agentboxMuslPackage entrypoint;
     fishConfig = configPayloads.fishConfig;
   };
 in

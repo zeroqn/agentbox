@@ -24,6 +24,9 @@ interactive task container under libkrun while the Nix sidecar stays native.
   `.#agentbox-prebuilt` package runtime environment)
 - For `--task-kvm`: host Podman support for `--runtime crun`,
   `run.oci.handler=krun`, `/dev/kvm`, and libkrun/transport support.
+  libkrun 1.18.0 is available via `nix build .#libkrun` (see below).
+  Host podman needs `libkrun.so` in its library path; install with
+  `nix profile install .#libkrun` or add to `LD_LIBRARY_PATH`.
 
 ---
 
@@ -60,6 +63,7 @@ nix build .#agentbox
 nix build .#agentbox-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
+nix build .#libkrun
 nix build .#container
 ```
 
@@ -72,6 +76,8 @@ nix build .#container
 - `.#agentbox-musl`: static host binary.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
+- `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4).
+  Provides `libkrun.so` and `libkrunfw.so` for KVM-based isolation.
 - `.#container`: Podman image archive.
 
 ---
@@ -333,6 +339,7 @@ The container provides:
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
 - RTK (`rtk`)
+- libkrun 1.18.0 (`libkrun.so`) for nested KVM support inside the container
 - `nix` wrapper that clears the container NSS wrapper preload before invoking
   the real Nix binary, avoiding glibc-version mismatches in nested dev shells
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled

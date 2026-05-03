@@ -40,8 +40,11 @@
           rtkPrebuilt = import ./nix/pkgs/rtk-prebuilt.nix {
             inherit pkgs pins;
           };
+          libkrun = import ./nix/pkgs/libkrun.nix {
+            inherit pkgs;
+          };
           agentboxImage = import ./nix/image/container.nix {
-            inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent rtkPrebuilt;
+            inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent rtkPrebuilt libkrun;
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
         in
@@ -53,6 +56,7 @@
           agentbox = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;
+          libkrun = libkrun;
           container = agentboxImage;
         }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {

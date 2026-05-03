@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, agentboxMuslPackage, entrypoint, fishConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, agentboxMuslPackage, entrypoint, fishConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -80,6 +80,7 @@ let
   ]
   ++ pkgs.lib.optional (rtkPrebuilt != null) rtkPrebuilt
   ++ [
+    libkrun
     pkgs.starship
   ];
   toolingImageLayer = pkgs.buildEnv {
