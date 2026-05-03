@@ -45,8 +45,12 @@ pub fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result
         PodmanImageMountMode::Direct => "direct",
         PodmanImageMountMode::Unshare => "unshare",
     };
+    let proxy_port_line = match state.proxy_port {
+        Some(port) => format!("proxy_port={}\n", port),
+        None => String::new(),
+    };
     let contents = format!(
-        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\n",
+        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\n{proxy_port_line}",
         state.image,
         state.image_id,
         state.image_mount_path.display(),
@@ -64,6 +68,7 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
     let mut image_mount_path = None;
     let mut sidecar_name = None;
     let mut mount_mode = None;
+    let mut proxy_port = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -90,6 +95,15 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
                         }
                     })
                 }
+                "proxy_port" => {
+                    proxy_port = Some(value.parse::<u16>().map_err(|_| {
+                        anyhow!(
+                            "invalid proxy_port '{}' in '{}'",
+                            value,
+                            state_file.display()
+                        )
+                    })?);
+                }
                 _ => {}
             }
         }
@@ -103,6 +117,7 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
                 image_mount_path,
                 sidecar_name,
                 mount_mode: mount_mode.unwrap_or(PodmanImageMountMode::Direct),
+                proxy_port,
             })
         }
         _ => Err(anyhow!("'{}' is incomplete", state_file.display())),

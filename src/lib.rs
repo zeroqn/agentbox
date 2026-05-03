@@ -60,7 +60,6 @@ const TASK_CONTAINER_ROLE_LABEL: &str = "io.agentbox.role";
 const TASK_CONTAINER_ROLE_VALUE: &str = "task";
 const TASK_CONTAINER_SIDECAR_LABEL: &str = "io.agentbox.sidecar";
 const DEFAULT_NIX_SIDECAR_ENABLED: bool = true;
-const KVM_NIX_PROXY_PORT: u16 = 19876;
 const KVM_NIX_PROXY_PORT_ENV: &str = "AGENTBOX_NIX_PROXY_PORT";
 pub(crate) const KVM_NIX_PROXY_GUEST_NIX_REMOTE: &str =
     "unix:///tmp/agentbox-nix-daemon.sock";
@@ -122,30 +121,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         )?)
     };
 
-    let mut host_proxy_child: Option<std::process::Child> = None;
-    if task_mode == TaskContainerMode::KvmKrunExperimental {
-        if let NixRuntime::Sidecar(sidecar) = &nix_runtime {
-            let sidecar_socket = sidecar.merged_dir.join("var/nix/daemon-socket/socket");
-            let listen =
-                format!("TCP-LISTEN:{KVM_NIX_PROXY_PORT},fork,reuseaddr,bind=127.0.0.1");
-            let connect = format!("UNIX-CONNECT:{}", sidecar_socket.display());
-
-            match std::process::Command::new("socat")
-                .args([&listen, &connect])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                Ok(child) => host_proxy_child = Some(child),
-                Err(err) => {
-                    eprintln!(
-                        "agentbox: warning: failed to start host nix proxy (is socat installed on the host?): {err:#}"
-                    );
-                }
-            }
-        }
-    }
+    let proxy_port = match &nix_runtime {
+        NixRuntime::Sidecar(sidecar) => Some(sidecar.proxy_port),
+        _ => None,
+    };
 
     let status = run_podman(
         build_podman_args(TaskPodmanSpec {
@@ -157,17 +136,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
             sccache_mount: &sccache_mount,
             nix_runtime: &nix_runtime,
             task_mode,
+            proxy_port,
         })?,
         Stdio::inherit(),
         Stdio::inherit(),
         Stdio::inherit(),
         "failed to start podman",
     )?;
-
-    if let Some(mut child) = host_proxy_child {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
 
     if let NixRuntime::Sidecar(sidecar) = &nix_runtime {
         if let Err(err) = cleanup_idle_sidecar(sidecar) {

@@ -37,6 +37,7 @@ struct SidecarState {
     image_mount_path: PathBuf,
     sidecar_name: String,
     mount_mode: PodmanImageMountMode,
+    proxy_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,9 +95,17 @@ pub fn prepare_sidecar_nix_runtime(
 
     if let Some(state) = previous_state.as_ref() {
         if should_reuse_previous_sidecar(state, &paths, image, &image_id, &sidecar_name)? {
+            let proxy_port =
+                resolve_sidecar_proxy_port(&sidecar_name).unwrap_or_else(|err| {
+                    eprintln!(
+                        "agentbox: warning: failed to resolve sidecar proxy port: {err:#}"
+                    );
+                    19876
+                });
             return Ok(SidecarNixRuntime {
                 merged_dir: paths.merged_dir,
                 sidecar_name: sidecar_name.clone(),
+                proxy_port,
             });
         }
     }
@@ -162,18 +171,28 @@ fn recreate_sidecar_stack(
 
     health::wait_for_socket_health(image, sidecar_name, &paths.merged_dir)?;
 
+    let proxy_port =
+        resolve_sidecar_proxy_port(sidecar_name).unwrap_or_else(|err| {
+            eprintln!(
+                "agentbox: warning: failed to resolve sidecar proxy port: {err:#}"
+            );
+            19876
+        });
+
     let new_state = SidecarState {
         image: image.to_owned(),
         image_id: image_id.to_owned(),
         image_mount_path,
         sidecar_name: sidecar_name.to_owned(),
         mount_mode,
+        proxy_port: Some(proxy_port),
     };
     state::write_sidecar_state(paths, &new_state)?;
 
     Ok(SidecarNixRuntime {
         merged_dir: paths.merged_dir.clone(),
         sidecar_name: sidecar_name.to_owned(),
+        proxy_port,
     })
 }
 
@@ -323,6 +342,8 @@ fn build_sidecar_podman_args(image: &str, sidecar_name: &str, merged_mount: &str
         "0:0".to_owned(),
         "--volume".to_owned(),
         merged_mount.to_owned(),
+        "--publish".to_owned(),
+        "19876".to_owned(),
         image.to_owned(),
         "bash".to_owned(),
         "-lc".to_owned(),
@@ -352,9 +373,36 @@ fn build_sidecar_start_script() -> String {
         "  sleep 0.1",
         "done",
         "echo \"agentbox-sidecar: daemon socket ready\"",
+        "echo \"agentbox-sidecar: starting nix-proxy socat\"",
+        "socat TCP-LISTEN:19876,fork,reuseaddr UNIX-CONNECT:/nix/var/nix/daemon-socket/socket &",
         "exec tail -f /dev/null",
     ]
     .join("\n")
+}
+
+fn resolve_sidecar_proxy_port(sidecar_name: &str) -> Result<u16> {
+    let output = run_podman_output(
+        vec![
+            "port".to_owned(),
+            sidecar_name.to_owned(),
+            "19876".to_owned(),
+        ],
+        "failed to resolve sidecar proxy port",
+    )?;
+    let port_str = output
+        .trim()
+        .lines()
+        .next()
+        .and_then(|line| line.rsplit(':').next())
+        .with_context(|| {
+            format!(
+                "unexpected 'podman port' output for '{}': {:?}",
+                sidecar_name, output
+            )
+        })?;
+    port_str
+        .parse::<u16>()
+        .with_context(|| format!("invalid proxy port number: {port_str}"))
 }
 
 fn ensure_command_available(command: &str, guidance: &str) -> Result<()> {

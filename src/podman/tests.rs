@@ -15,6 +15,7 @@ fn build_podman_args_includes_persistent_nix_mounts() {
         sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         nix_runtime: &runtime,
         task_mode: TaskContainerMode::Native,
+        proxy_port: None,
     })
     .expect("podman args should build");
     assert_eq!(args[3], "--userns");
@@ -49,6 +50,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
+        proxy_port: 19876,
     });
     let args = build_podman_args(TaskPodmanSpec {
         image: DEFAULT_IMAGE,
@@ -59,6 +61,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
         sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         nix_runtime: &runtime,
         task_mode: TaskContainerMode::Native,
+        proxy_port: None,
     })
     .expect("podman args should build");
 
@@ -92,6 +95,7 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
     let runtime = NixRuntime::Sidecar(SidecarNixRuntime {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
+        proxy_port: 19876,
     });
     let native_args = build_podman_args(TaskPodmanSpec {
         image: DEFAULT_IMAGE,
@@ -102,6 +106,7 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
         sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         nix_runtime: &runtime,
         task_mode: TaskContainerMode::Native,
+        proxy_port: None,
     })
     .expect("native podman args should build");
     let kvm_args = build_podman_args(TaskPodmanSpec {
@@ -113,6 +118,7 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
         sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         nix_runtime: &runtime,
         task_mode: TaskContainerMode::KvmKrunExperimental,
+        proxy_port: Some(12345),
     })
     .expect("kvm podman args should build");
 
@@ -150,7 +156,7 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
     // var. Replace these with the native equivalents before comparing.
     if let Some(pos) = kvm_without_kvm_args
         .windows(2)
-        .position(|w| w[0] == "--env" && w[1] == format!("{KVM_NIX_PROXY_PORT_ENV}={KVM_NIX_PROXY_PORT}"))
+        .position(|w| w[0] == "--env" && w[1] == format!("{KVM_NIX_PROXY_PORT_ENV}=12345"))
     {
         kvm_without_kvm_args.drain(pos..pos + 2);
     }

@@ -130,6 +130,8 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
     assert!(args.contains(&"0:0".to_owned()));
     assert!(args.contains(&"--volume".to_owned()));
     assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix".to_owned()));
+    assert!(args.contains(&"--publish".to_owned()));
+    assert!(args.contains(&"19876".to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
     assert_eq!(args[args.len() - 3], "bash");
@@ -147,6 +149,7 @@ fn sidecar_state_round_trip_via_state_file() {
         image_mount_path: PathBuf::from("/tmp/podman/mounts/abc"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
         mount_mode: PodmanImageMountMode::Unshare,
+        proxy_port: Some(12345),
     };
 
     state::write_sidecar_state(&paths, &state).expect("state should be written");
@@ -159,6 +162,7 @@ fn sidecar_state_round_trip_via_state_file() {
     assert_eq!(parsed.image_mount_path, state.image_mount_path);
     assert_eq!(parsed.sidecar_name, state.sidecar_name);
     assert_eq!(parsed.mount_mode, state.mount_mode);
+    assert_eq!(parsed.proxy_port, state.proxy_port);
 }
 
 #[test]
