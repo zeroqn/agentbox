@@ -22,11 +22,11 @@ interactive task container under libkrun while the Nix sidecar stays native.
 - `nix` (for building via flake)
 - `fuse-overlayfs` (required for default sidecar mode; included by the
   `.#agentbox-prebuilt` package runtime environment)
-- For `--task-kvm`: host Podman support for `--runtime crun`,
-  `run.oci.handler=krun`, `/dev/kvm`, and libkrun/transport support.
-  libkrun 1.18.0 is available via `nix build .#libkrun` (see below).
-  Host podman needs `libkrun.so` in its library path; install with
-  `nix profile install .#libkrun` or add to `LD_LIBRARY_PATH`.
+- For `--task-kvm`: a host Podman/crun stack that supports `--runtime crun`,
+  `run.oci.handler=krun`, `/dev/kvm`, and libkrun/transport support. This
+  flake provides `.#crun` and `.#podman` for that host runtime path; install or
+  otherwise expose `.#podman` as the host `podman` on `PATH` if you want
+  `agentbox` to use it.
 
 ---
 
@@ -64,6 +64,8 @@ nix build .#agentbox-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
 nix build .#libkrun
+nix build .#crun
+nix build .#podman
 nix build .#container
 ```
 
@@ -77,7 +79,11 @@ nix build .#container
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
 - `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4).
-  Provides `libkrun.so` and `libkrunfw.so` for KVM-based isolation.
+  Provides the repo-pinned libkrun used by the custom crun output.
+- `.#crun`: build crun with this repo's libkrun override and krun handler
+  support.
+- `.#podman`: build Podman against the custom crun; nixpkgs' upstream Podman
+  packaging continues to own the helper binaries through Podman's passthru.
 - `.#container`: Podman image archive.
 
 ---
@@ -253,6 +259,7 @@ commands inside the KVM guest must be validated before claiming success.
 Suggested manual validation:
 
 ```bash
+# Use the intended host Podman stack, for example after installing .#podman.
 podman run --runtime crun --annotation run.oci.handler=krun <image> true
 ./result/bin/agentbox --task-kvm
 # inside the task shell:

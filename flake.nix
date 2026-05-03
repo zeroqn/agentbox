@@ -43,8 +43,23 @@
           libkrun = import ./nix/pkgs/libkrun.nix {
             inherit pkgs;
           };
+          crun = pkgs.crun.override {
+            inherit libkrun;
+            withLibkrun = true;
+          };
+          podman = pkgs.podman.override {
+            inherit crun;
+          };
           agentboxImage = import ./nix/image/container.nix {
-            inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent rtkPrebuilt libkrun;
+            inherit
+              pkgs
+              pkgsMaster
+              ohMyCodex
+              opencode
+              piCodingAgent
+              rtkPrebuilt
+              libkrun
+              ;
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
         in
@@ -57,6 +72,8 @@
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;
           libkrun = libkrun;
+          crun = crun;
+          podman = podman;
           container = agentboxImage;
         }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {
@@ -64,13 +81,17 @@
         }
       );
 
-      devShells = systems.forAllSystems ({ pkgs, ... }: {
-        default = import ./nix/shell/devshell.nix {
-          inherit pkgs;
-        };
-      });
+      devShells = systems.forAllSystems (
+        { pkgs, ... }:
+        {
+          default = import ./nix/shell/devshell.nix {
+            inherit pkgs;
+          };
+        }
+      );
 
-      apps = systems.forAllSystems ({ pkgs, ... }:
+      apps = systems.forAllSystems (
+        { pkgs, ... }:
         import ./nix/apps/default.nix {
           inherit self pkgs;
         }
