@@ -38,7 +38,7 @@ pub struct Cli {
     #[arg(
         long,
         help = "Run the interactive task container with crun's experimental libkrun/KVM handler",
-        long_help = "Run only the interactive task container with Podman runtime crun and annotation run.oci.handler=krun. This experimental mode requires the native nix-daemon sidecar path and can also be enabled with AGENTBOX_TASK_KVM=1."
+        long_help = "Run only the interactive task container with Podman runtime crun and annotations run.oci.handler=krun plus krun.use_passt=1. This experimental mode requires the native nix-daemon sidecar path and can also be enabled with AGENTBOX_TASK_KVM=1."
     )]
     pub task_kvm: bool,
 }
