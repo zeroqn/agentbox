@@ -29,6 +29,41 @@ let
     unset NSS_WRAPPER_GROUP
     exec ${pkgs.nix}/bin/nix "$@"
   '';
+  sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''
+    LISTEN_PORT="$1"
+    SOCKET_PATH="$2"
+
+    if ! command -v socat >/dev/null 2>&1; then
+      echo "agentbox-sidecar-proxy: socat not found on PATH" >&2
+      exit 127
+    fi
+
+    echo "agentbox-sidecar-proxy: starting socat on port $LISTEN_PORT -> $SOCKET_PATH" >&2
+
+    while true; do
+      socat "TCP-LISTEN:$LISTEN_PORT,fork,reuseaddr" "UNIX-CONNECT:$SOCKET_PATH" &
+      SOCAT_PID=$!
+
+      # Wait for socat to start listening
+      for _ in $(seq 1 50); do
+        if timeout 1 ${pkgs.bashInteractive}/bin/bash -c "echo >/dev/tcp/127.0.0.1/$LISTEN_PORT" 2>/dev/null; then
+          break
+        fi
+        sleep 0.1
+      done
+
+      if ! kill -0 "$SOCAT_PID" 2>/dev/null; then
+        echo "agentbox-sidecar-proxy: socat failed to start, retrying..." >&2
+        sleep 0.5
+        continue
+      fi
+
+      echo "agentbox-sidecar-proxy: socat listening on port $LISTEN_PORT" >&2
+      wait "$SOCAT_PID"
+      echo "agentbox-sidecar-proxy: socat exited, restarting..." >&2
+      sleep 0.5
+    done
+  '';
 
   stableRustToolchainPackages = [
     pkgs.cargo
@@ -110,6 +145,7 @@ let
     pkgs.fish
     pkgs.ripgrep
     pkgs.socat
+    sidecarProxyWrapper
     pkgs.procps
     pkgs.pkg-config
     pkgs.findutils

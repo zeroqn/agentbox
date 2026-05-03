@@ -374,7 +374,7 @@ fn build_sidecar_start_script() -> String {
         "done",
         "echo \"agentbox-sidecar: daemon socket ready\"",
         "echo \"agentbox-sidecar: starting nix-proxy socat\"",
-        "socat TCP-LISTEN:19876,fork,reuseaddr UNIX-CONNECT:/nix/var/nix/daemon-socket/socket &",
+        "agentbox-sidecar-proxy 19876 /nix/var/nix/daemon-socket/socket &",
         "exec tail -f /dev/null",
     ]
     .join("\n")

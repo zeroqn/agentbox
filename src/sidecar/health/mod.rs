@@ -28,6 +28,7 @@ struct SidecarStartupDiagnostics {
     sidecar_logs: Option<String>,
     sidecar_logs_error: Option<String>,
     socket_probe_failure: Option<String>,
+    proxy_port_listening: Option<bool>,
     sidecar_state: Option<String>,
     host_socket_exists: Option<bool>,
 }
@@ -53,14 +54,20 @@ pub fn sidecar_stack_is_healthy(
         return Ok(false);
     }
 
+    if !proxy_port_is_listening(&state.sidecar_name) {
+        return Ok(false);
+    }
+
     Ok(true)
 }
 
 pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path) -> Result<()> {
     let mut last_probe_failure = None;
     let mut last_host_socket_exists = None;
+    let mut last_proxy_listening = None;
     for _attempt in 0..SIDECAR_HEALTH_ATTEMPTS {
         last_host_socket_exists = Some(daemon_socket_exists(merged_dir)?);
+        last_proxy_listening = Some(proxy_port_is_listening(sidecar_name));
         match daemon_socket_probe_failure(image, merged_dir)? {
             None => return Ok(()),
             Some(probe_failure) => last_probe_failure = Some(probe_failure),
@@ -80,6 +87,7 @@ pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path
                 .ok()
                 .flatten()
         }),
+        proxy_port_listening: last_proxy_listening,
         sidecar_state: inspect_sidecar_container_state(sidecar_name).ok(),
         host_socket_exists: last_host_socket_exists,
     };
@@ -93,6 +101,19 @@ pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path
             &diagnostics
         )
     ))
+}
+
+fn proxy_port_is_listening(sidecar_name: &str) -> bool {
+    let args = vec![
+        "exec".to_owned(),
+        sidecar_name.to_owned(),
+        "bash".to_owned(),
+        "-c".to_owned(),
+        "echo >/dev/tcp/127.0.0.1/19876 2>/dev/null".to_owned(),
+    ];
+    run_podman_output(args, "failed to probe sidecar proxy port")
+        .map(|out| out.trim().is_empty() || out.trim() == "")
+        .unwrap_or(false)
 }
 
 pub(super) fn is_container_running(container_name: &str) -> bool {
@@ -301,6 +322,11 @@ fn build_sidecar_socket_timeout_error(
     if let Some(exists) = diagnostics.host_socket_exists {
         message.push_str("\nhost socket path exists: ");
         message.push_str(if exists { "yes" } else { "no" });
+    }
+
+    if let Some(listening) = diagnostics.proxy_port_listening {
+        message.push_str("\nproxy port 19876 listening: ");
+        message.push_str(if listening { "yes" } else { "no" });
     }
 
     message

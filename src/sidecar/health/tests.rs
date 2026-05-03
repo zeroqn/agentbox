@@ -29,6 +29,7 @@ fn sidecar_socket_timeout_error_includes_auto_cleanup_and_log_tail() {
         sidecar_logs: Some("daemon booting\nready".to_owned()),
         sidecar_logs_error: None,
         socket_probe_failure: Some("probe exited with status 1".to_owned()),
+        proxy_port_listening: Some(false),
         sidecar_state: Some("running=false status=exited exit_code=1".to_owned()),
         host_socket_exists: Some(false),
     };
@@ -46,6 +47,7 @@ fn sidecar_socket_timeout_error_includes_auto_cleanup_and_log_tail() {
     assert!(message.contains("sidecar state: running=false status=exited exit_code=1"));
     assert!(message.contains("socket probe failure: probe exited with status 1"));
     assert!(message.contains("host socket path exists: no"));
+    assert!(message.contains("proxy port 19876 listening: no"));
 }
 
 #[test]
@@ -59,6 +61,7 @@ fn sidecar_socket_timeout_error_requests_manual_cleanup_when_auto_cleanup_fails(
         sidecar_logs: None,
         sidecar_logs_error: Some("logs missing".to_owned()),
         socket_probe_failure: None,
+        proxy_port_listening: None,
         sidecar_state: None,
         host_socket_exists: Some(true),
     };
