@@ -143,15 +143,22 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
 
   if [ "$drop_to_dev" = "1" ]; then
     agentbox_proxy_sock="/tmp/agentbox-nix-daemon.sock"
+    agentbox_proxy_host="''${AGENTBOX_NIX_PROXY_HOST:-}"
     agentbox_proxy_port="''${AGENTBOX_NIX_PROXY_PORT:-19876}"
+
+    if [ -z "$agentbox_proxy_host" ]; then
+      echo "agentbox-entrypoint: ERROR: AGENTBOX_NIX_PROXY_HOST is not set; the agentbox binary may be outdated. Rebuild and try again." >&2
+      exit 1
+    fi
 
     exec ${pkgs.util-linux}/bin/setpriv --reuid="$dev_uid" --regid="$dev_gid" --clear-groups \
       ${pkgs.bashInteractive}/bin/bash -c '
         agentbox_proxy_sock="$1"; shift
+        agentbox_proxy_host="$1"; shift
         agentbox_proxy_port="$1"; shift
 
         ${pkgs.socat}/bin/socat UNIX-LISTEN:"$agentbox_proxy_sock",fork,unlink-early,umask=000 \
-          TCP:"10.0.2.2:$agentbox_proxy_port" &
+          TCP:"$agentbox_proxy_host:$agentbox_proxy_port" &
 
         for _ in $(seq 1 50); do
           if [ -S "$agentbox_proxy_sock" ]; then break; fi
@@ -159,7 +166,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
         done
 
         exec "$@"
-      ' bash "$agentbox_proxy_sock" "$agentbox_proxy_port" "$@"
+      ' bash "$agentbox_proxy_sock" "$agentbox_proxy_host" "$agentbox_proxy_port" "$@"
   fi
 
   exec "$@"

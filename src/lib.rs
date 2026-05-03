@@ -61,6 +61,7 @@ const TASK_CONTAINER_ROLE_VALUE: &str = "task";
 const TASK_CONTAINER_SIDECAR_LABEL: &str = "io.agentbox.sidecar";
 const DEFAULT_NIX_SIDECAR_ENABLED: bool = true;
 const KVM_NIX_PROXY_PORT_ENV: &str = "AGENTBOX_NIX_PROXY_PORT";
+const KVM_NIX_PROXY_HOST_ENV: &str = "AGENTBOX_NIX_PROXY_HOST";
 pub(crate) const KVM_NIX_PROXY_GUEST_NIX_REMOTE: &str =
     "unix:///tmp/agentbox-nix-daemon.sock";
 

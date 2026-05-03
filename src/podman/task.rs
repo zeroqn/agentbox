@@ -4,9 +4,9 @@ use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
     NixRuntime, TaskContainerMode, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS,
     CONTAINER_WORKDIR, HOST_GID_ENV_PREFIX, HOST_UID_ENV_PREFIX, INTERACTIVE_SHELL,
-    KVM_NIX_PROXY_GUEST_NIX_REMOTE, KVM_NIX_PROXY_PORT_ENV, NIX_REMOTE_SOCKET,
-    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
-    TASK_KVM_DROP_TO_DEV_ENV,
+    KVM_NIX_PROXY_GUEST_NIX_REMOTE, KVM_NIX_PROXY_HOST_ENV, KVM_NIX_PROXY_PORT_ENV,
+    NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
 };
 
 pub struct TaskPodmanSpec<'a> {
@@ -90,6 +90,9 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
 
             if spec.task_mode == TaskContainerMode::KvmKrunExperimental {
                 if let Some(port) = spec.proxy_port {
+                    let host_ip = resolve_host_ip()?;
+                    args.push("--env".to_owned());
+                    args.push(format!("{KVM_NIX_PROXY_HOST_ENV}={host_ip}"));
                     args.push("--env".to_owned());
                     args.push(format!("{KVM_NIX_PROXY_PORT_ENV}={port}"));
                 }
@@ -125,4 +128,24 @@ fn run_host_id_command(flag: &str) -> Result<String> {
     String::from_utf8(output.stdout)
         .context("id output not valid UTF-8")
         .map(|s| s.trim().to_owned())
+}
+
+fn resolve_host_ip() -> Result<String> {
+    let output = std::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+        .context("failed to run hostname -I to resolve host IP")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("hostname -I failed: {}", stderr.trim());
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .context("hostname -I output not valid UTF-8")?;
+    let ip = stdout
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!(
+            "hostname -I returned no IP addresses; is the host network configured?"
+        ))?;
+    Ok(ip.to_owned())
 }
