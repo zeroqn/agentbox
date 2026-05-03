@@ -130,28 +130,6 @@ fn run_host_id_command(flag: &str) -> Result<String> {
         .map(|s| s.trim().to_owned())
 }
 
-#[cfg(not(test))]
 fn resolve_host_ip() -> Result<String> {
-    let output = std::process::Command::new("hostname")
-        .arg("-I")
-        .output()
-        .context("failed to run hostname -I to resolve host IP")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("hostname -I failed: {}", stderr.trim());
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .context("hostname -I output not valid UTF-8")?;
-    let ip = stdout
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!(
-            "hostname -I returned no IP addresses; is the host network configured?"
-        ))?;
-    Ok(ip.to_owned())
-}
-
-#[cfg(test)]
-fn resolve_host_ip() -> Result<String> {
-    Ok("127.0.0.1".to_owned())
+    Ok("host.containers.internal".to_owned())
 }
