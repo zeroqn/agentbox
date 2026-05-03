@@ -40,6 +40,8 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert!(!args.contains(&TASK_KVM_DROP_TO_DEV_ENV.to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
+    assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
+    assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
 }
 
 #[test]
@@ -79,6 +81,8 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(!args.contains(&TASK_KVM_DROP_TO_DEV_ENV.to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
+    assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
+    assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
     assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
     assert_eq!(args[args.len() - 1], "-l");
 }
@@ -112,20 +116,35 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
     })
     .expect("kvm podman args should build");
 
-    let krun_args = [
-        "--env".to_owned(),
-        TASK_KVM_DROP_TO_DEV_ENV.to_owned(),
-        "--runtime".to_owned(),
-        "crun".to_owned(),
-        "--annotation".to_owned(),
-        "run.oci.handler=krun".to_owned(),
-    ];
-    let krun_index = kvm_args
-        .windows(krun_args.len())
-        .position(|window| window == krun_args)
-        .expect("kvm args should include contiguous krun runtime args");
-    let mut kvm_without_krun_args = kvm_args;
-    kvm_without_krun_args.drain(krun_index..krun_index + krun_args.len());
+    // Verify host UID/GID env vars are present in KVM mode
+    let has_host_uid = kvm_args
+        .windows(2)
+        .any(|w| w[0] == "--env" && w[1].starts_with(HOST_UID_ENV_PREFIX));
+    assert!(
+        has_host_uid,
+        "kvm args should include AGENTBOX_HOST_UID env var"
+    );
+    let has_host_gid = kvm_args
+        .windows(2)
+        .any(|w| w[0] == "--env" && w[1].starts_with(HOST_GID_ENV_PREFIX));
+    assert!(
+        has_host_gid,
+        "kvm args should include AGENTBOX_HOST_GID env var"
+    );
 
-    assert_eq!(kvm_without_krun_args, native_args);
+    // Find and drain the KVM-specific argument block (host UID/GID env vars
+    // are dynamic so we locate by the fixed start/end markers).
+    let kvm_block_start = kvm_args
+        .windows(2)
+        .position(|w| w[0] == "--env" && w[1] == TASK_KVM_DROP_TO_DEV_ENV)
+        .expect("kvm args should include AGENTBOX_KVM_DROP_TO_DEV env");
+    let annotation_end = kvm_args
+        .iter()
+        .rposition(|a| a == "run.oci.handler=krun")
+        .expect("kvm args should include run.oci.handler=krun annotation");
+
+    let mut kvm_without_kvm_args = kvm_args;
+    kvm_without_kvm_args.drain(kvm_block_start..=annotation_end);
+
+    assert_eq!(kvm_without_kvm_args, native_args);
 }

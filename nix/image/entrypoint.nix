@@ -22,6 +22,10 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   if [ "$runtime_uid" = "0" ]; then
     dev_uid=1000
     dev_gid=1000
+    if [ -n "''${AGENTBOX_HOST_UID:-}" ] && [ -n "''${AGENTBOX_HOST_GID:-}" ]; then
+      dev_uid="$AGENTBOX_HOST_UID"
+      dev_gid="$AGENTBOX_HOST_GID"
+    fi
   fi
   interactive_fish_task=0
   if [ "$command_basename" = "fish" ] && [ "''${2:-}" = "-l" ]; then

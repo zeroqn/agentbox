@@ -1,10 +1,11 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
     NixRuntime, TaskContainerMode, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS,
-    CONTAINER_WORKDIR, INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL,
-    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
+    CONTAINER_WORKDIR, HOST_GID_ENV_PREFIX, HOST_UID_ENV_PREFIX, INTERACTIVE_SHELL,
+    NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
 };
 
 pub struct TaskPodmanSpec<'a> {
@@ -46,6 +47,16 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
     if spec.task_mode == TaskContainerMode::KvmKrunExperimental {
         args.push("--env".to_owned());
         args.push(TASK_KVM_DROP_TO_DEV_ENV.to_owned());
+        args.push("--env".to_owned());
+        args.push(format!(
+            "{HOST_UID_ENV_PREFIX}{}",
+            run_host_id_command("-u")?
+        ));
+        args.push("--env".to_owned());
+        args.push(format!(
+            "{HOST_GID_ENV_PREFIX}{}",
+            run_host_id_command("-g")?
+        ));
         args.push("--runtime".to_owned());
         args.push("crun".to_owned());
         args.push("--annotation".to_owned());
@@ -84,4 +95,18 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
     args.push(INTERACTIVE_SHELL.to_owned());
     args.push("-l".to_owned());
     Ok(args)
+}
+
+fn run_host_id_command(flag: &str) -> Result<String> {
+    let output = std::process::Command::new("id")
+        .arg(flag)
+        .output()
+        .context("failed to run id")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("id {} failed: {}", flag, stderr.trim());
+    }
+    String::from_utf8(output.stdout)
+        .context("id output not valid UTF-8")
+        .map(|s| s.trim().to_owned())
 }
