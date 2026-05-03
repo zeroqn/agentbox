@@ -33,6 +33,8 @@ let
     LISTEN_PORT="$1"
     SOCKET_PATH="$2"
 
+    unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
+
     if ! command -v socat >/dev/null 2>&1; then
       echo "agentbox-sidecar-proxy: socat not found on PATH" >&2
       exit 127
