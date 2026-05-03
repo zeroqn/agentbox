@@ -130,6 +130,7 @@ fn run_host_id_command(flag: &str) -> Result<String> {
         .map(|s| s.trim().to_owned())
 }
 
+#[cfg(not(test))]
 fn resolve_host_ip() -> Result<String> {
     let output = std::process::Command::new("hostname")
         .arg("-I")
@@ -148,4 +149,9 @@ fn resolve_host_ip() -> Result<String> {
             "hostname -I returned no IP addresses; is the host network configured?"
         ))?;
     Ok(ip.to_owned())
+}
+
+#[cfg(test)]
+fn resolve_host_ip() -> Result<String> {
+    Ok("127.0.0.1".to_owned())
 }
