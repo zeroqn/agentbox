@@ -36,6 +36,13 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     && { [ "''${AGENTBOX_KVM_DROP_TO_DEV:-}" = "1" ] || [ "$interactive_fish_task" = "1" ]; }; then
     drop_to_dev=1
   fi
+  if [ "$drop_to_dev" = "1" ]; then
+    if [ -z "''${AGENTBOX_HOST_UID:-}" ] || [ -z "''${AGENTBOX_HOST_GID:-}" ]; then
+      echo "agentbox-entrypoint: ERROR: AGENTBOX_HOST_UID and AGENTBOX_HOST_GID are required for KVM task mode" >&2
+      echo "agentbox-entrypoint: The agentbox binary may be outdated. Rebuild and try again." >&2
+      exit 1
+    fi
+  fi
 
   tmpdir="$(TMPDIR=/tmp mktemp -d)"
   cleanup() {
