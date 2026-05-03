@@ -2,14 +2,14 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.15.2";
-    srcHash = "sha256-KYRNVv+0L+7v6VvPVo4Vdi9ALcvAH/7WTgxn5Y8cncE=";
-    npmDepsHash = "sha256-Zf/nYTFclUQqxEFJVmZY5lie9htVWLov7BdyY9EtnV0=";
+    version = "0.15.3";
+    srcHash = "sha256-4AEk6aS12RNj/duqXV5m7nO2zGdLvzlSypHQfS7apLU=";
+    npmDepsHash = "sha256-LUu71MYbUqewhxmc6CiD/vbYOZZfkJITVYqMzEniwYc=";
     exploreHarnessSystems = {
       x86_64-linux = {
         asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
         binary = "omx-explore-harness";
-        hash = "sha256-jrvbvHTx5jz03JQ8Nnm+4jU4wsXhO1YBgDkziDERg8k=";
+        hash = "sha256-jEBei3Nv/aQuEFQkDZz8BcZr3A/jzFm5N4mvJkYAP/4=";
       };
     };
   };
@@ -44,12 +44,12 @@
   rtkPrebuiltRelease = {
     owner = "rtk-ai";
     repo = "rtk";
-    tag = "v0.37.2";
+    tag = "v0.38.0";
     systems = {
       x86_64-linux = {
         asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
         binary = "rtk";
-        hash = "sha256-Pft6BWNqaGh7ocWqaW+o1fy0lER97YbZ64uItxAKN8Y=";
+        hash = "sha256-m6+zVkUPsPZqfy1o0EaNGx4nAWPxYgV05npMj4FtlhA=";
       };
     };
   };
