@@ -7,7 +7,13 @@ let
     hash = "sha256-R7q52ZwiL9JsGofLPhXVTk/eH6bEob3DoZe21PHSBrU=";
   };
 in
-pkgs.libkrun.overrideAttrs (oldAttrs: {
+(pkgs.libkrun.override {
+  withBlk = true;
+  withNet = true;
+  withGpu = true;
+  withSound = true;
+  withInput = true;
+}).overrideAttrs (oldAttrs: {
   version = "1.18.0";
   src = libkrunSrc;
   cargoDeps = pkgs.rustPlatform.fetchCargoVendor {

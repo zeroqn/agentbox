@@ -79,8 +79,9 @@ nix build .#container
 - `.#agentbox-musl`: static host binary.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
-- `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4).
-  Provides the repo-pinned libkrun used by the custom crun output.
+- `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4)
+  with net, sound, GPU, block, and input support enabled. Provides the
+  repo-pinned libkrun used by the custom crun output.
 - `.#crun`: build `zeroqn/crun` branch `debug` with this repo's libkrun
   override, krun handler support, and `pkgs.passt` on crun's runtime `PATH`
   for `krun.use_passt=1` passt/libkrun debugging.
