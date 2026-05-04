@@ -23,11 +23,9 @@ interactive task container under libkrun while the Nix sidecar stays native.
 - `fuse-overlayfs` (required for default sidecar mode; included by the
   `.#agentbox-prebuilt` package runtime environment)
 - For `--task-kvm`: a host Podman/crun stack that supports `--runtime crun`,
-  `run.oci.handler=krun`, `krun.use_passt=1`, `/dev/kvm`, and passt-based
-  libkrun virtio-net networking. This flake provides `.#crun` with `passt` on
-  crun's runtime `PATH`, and `.#podman` wired to that custom crun; install or
-  otherwise expose `.#podman` as the host `podman` on `PATH` if you want
-  `agentbox` to use it.
+  `run.oci.handler=krun`, and `/dev/kvm`. This flake provides `.#podman` wired
+  to its custom crun; install or otherwise expose `.#podman` as the host
+  `podman` on `PATH` if you want `agentbox` to use it.
 
 ---
 
@@ -82,9 +80,10 @@ nix build .#container
 - `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4).
   Provides the repo-pinned libkrun used by the custom crun output.
 - `.#crun`: build crun with this repo's libkrun override, krun handler
-  support, and `pkgs.passt` on crun's runtime `PATH` for `krun.use_passt=1`.
+  support, and `pkgs.passt` on crun's runtime `PATH` for manual networking
+  experiments.
 - `.#podman`: build Podman against the custom crun so task-KVM runs inherit the
-  flake-provided crun/passt runtime path.
+  flake-provided crun runtime path.
 - `.#container`: Podman image archive.
 
 ---
@@ -216,7 +215,7 @@ This mode adds the following Podman arguments to the task container only:
 --tmpfs /home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/tmp:rw,exec,uid=1000,gid=1000,mode=700
---runtime crun --annotation run.oci.handler=krun --annotation krun.use_passt=1
+--runtime crun --annotation run.oci.handler=krun
 ```
 
 The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
@@ -253,29 +252,26 @@ AGENTBOX_TASK_KVM=1 AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
 ```
 
 Direct sharing of the native sidecar Unix socket into a libkrun VM is not
-assumed to work. KVM mode enables libkrun passt networking with
-`krun.use_passt=1` and points the guest at the native sidecar's TCP proxy, but
-Nix commands inside the KVM guest must still be validated before claiming
-success on a host Podman/crun/libkrun stack.
+assumed to work. KVM mode no longer enables libkrun passt networking because
+starting passt through crun/libkrun was not reliable in local testing. Nix
+commands inside the KVM guest are therefore expected to be unavailable until a
+separate daemon transport is implemented; this is an accepted limitation of the
+experimental mode.
 
 Suggested manual validation:
 
 ```bash
 # Use the intended host Podman stack, for example after installing .#podman.
-podman run --runtime crun --annotation run.oci.handler=krun --annotation krun.use_passt=1 <image> true
+podman run --runtime crun --annotation run.oci.handler=krun <image> true
 ./result/bin/agentbox --task-kvm
 # inside the task shell:
 id -u
 id -g
-nix store ping
-nix path-info <deterministic-existing-store-path>
-nix build nixpkgs#hello --no-link
 ```
 
-If these Nix commands fail, record the host details and do not treat the mode as
-a working KVM Nix setup. The guest-to-host proxy forwards guest requests to a
-native host-side daemon authority, so transport and security-boundary changes
-must be documented explicitly.
+Do not treat this mode as a working KVM Nix setup. If future work restores Nix
+daemon access from the KVM guest, document the transport and security-boundary
+changes explicitly.
 
 ---
 

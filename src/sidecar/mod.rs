@@ -95,13 +95,10 @@ pub fn prepare_sidecar_nix_runtime(
 
     if let Some(state) = previous_state.as_ref() {
         if should_reuse_previous_sidecar(state, &paths, image, &image_id, &sidecar_name)? {
-            let proxy_port =
-                resolve_sidecar_proxy_port(&sidecar_name).unwrap_or_else(|err| {
-                    eprintln!(
-                        "agentbox: warning: failed to resolve sidecar proxy port: {err:#}"
-                    );
-                    19876
-                });
+            let proxy_port = resolve_sidecar_proxy_port(&sidecar_name).unwrap_or_else(|err| {
+                eprintln!("agentbox: warning: failed to resolve sidecar proxy port: {err:#}");
+                19876
+            });
             return Ok(SidecarNixRuntime {
                 merged_dir: paths.merged_dir,
                 sidecar_name: sidecar_name.clone(),
@@ -171,13 +168,10 @@ fn recreate_sidecar_stack(
 
     health::wait_for_socket_health(image, sidecar_name, &paths.merged_dir)?;
 
-    let proxy_port =
-        resolve_sidecar_proxy_port(sidecar_name).unwrap_or_else(|err| {
-            eprintln!(
-                "agentbox: warning: failed to resolve sidecar proxy port: {err:#}"
-            );
-            19876
-        });
+    let proxy_port = resolve_sidecar_proxy_port(sidecar_name).unwrap_or_else(|err| {
+        eprintln!("agentbox: warning: failed to resolve sidecar proxy port: {err:#}");
+        19876
+    });
 
     let new_state = SidecarState {
         image: image.to_owned(),
