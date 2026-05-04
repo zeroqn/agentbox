@@ -23,9 +23,9 @@ interactive task container under libkrun while the Nix sidecar stays native.
 - `fuse-overlayfs` (required for default sidecar mode; included by the
   `.#agentbox-prebuilt` package runtime environment)
 - For `--task-kvm`: a host Podman/crun stack that supports `--runtime crun`,
-  `run.oci.handler=krun`, `krun.use_passt=1`, `/dev/kvm`, and a `passt`
-  executable on `PATH` for libkrun virtio-net networking. This
-  flake provides `.#crun` and `.#podman` for that host runtime path; install or
+  `run.oci.handler=krun`, `krun.use_passt=1`, `/dev/kvm`, and passt-based
+  libkrun virtio-net networking. This flake provides `.#crun` with `passt` on
+  crun's runtime `PATH`, and `.#podman` wired to that custom crun; install or
   otherwise expose `.#podman` as the host `podman` on `PATH` if you want
   `agentbox` to use it.
 
@@ -81,10 +81,10 @@ nix build .#container
   pinned for `x86_64-linux`).
 - `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4).
   Provides the repo-pinned libkrun used by the custom crun output.
-- `.#crun`: build crun with this repo's libkrun override and krun handler
-  support.
-- `.#podman`: build Podman against the custom crun; nixpkgs' upstream Podman
-  packaging continues to own the helper binaries through Podman's passthru.
+- `.#crun`: build crun with this repo's libkrun override, krun handler
+  support, and `pkgs.passt` on crun's runtime `PATH` for `krun.use_passt=1`.
+- `.#podman`: build Podman against the custom crun so task-KVM runs inherit the
+  flake-provided crun/passt runtime path.
 - `.#container`: Podman image archive.
 
 ---

@@ -43,9 +43,8 @@
           libkrun = import ./nix/pkgs/libkrun.nix {
             inherit pkgs;
           };
-          crun = pkgs.crun.override {
-            inherit libkrun;
-            withLibkrun = true;
+          crun = import ./nix/pkgs/crun.nix {
+            inherit pkgs libkrun;
           };
           podman = pkgs.podman.override {
             inherit crun;
