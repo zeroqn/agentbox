@@ -12,6 +12,7 @@ fn build_socket_ping_podman_args_targets_nix_remote_socket() {
     assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix:ro".to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
+    assert!(!args.contains(&crate::KRUN_USE_PASST_ANNOTATION.to_owned()));
     assert_eq!(
         args[args.len() - 1],
         format!("nix store ping --store {}", crate::NIX_REMOTE_SOCKET)

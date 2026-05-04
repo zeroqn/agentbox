@@ -4,9 +4,9 @@ use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
     NixRuntime, TaskContainerMode, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS,
     CONTAINER_WORKDIR, HOST_GID_ENV_PREFIX, HOST_UID_ENV_PREFIX, INTERACTIVE_SHELL,
-    KVM_NIX_PROXY_GUEST_NIX_REMOTE, KVM_NIX_PROXY_HOST_ENV, KVM_NIX_PROXY_PORT_ENV,
-    NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
-    TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
+    KRUN_USE_PASST_ANNOTATION, KVM_NIX_PROXY_GUEST_NIX_REMOTE, KVM_NIX_PROXY_HOST_ENV,
+    KVM_NIX_PROXY_PORT_ENV, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL,
+    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
 };
 
 pub struct TaskPodmanSpec<'a> {
@@ -63,6 +63,8 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
         args.push("crun".to_owned());
         args.push("--annotation".to_owned());
         args.push("run.oci.handler=krun".to_owned());
+        args.push("--annotation".to_owned());
+        args.push(KRUN_USE_PASST_ANNOTATION.to_owned());
     }
 
     match spec.nix_runtime {

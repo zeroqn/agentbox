@@ -46,6 +46,7 @@ const SEED_MOUNT_POINT: &str = "/agentbox-nix";
 const INTERACTIVE_SHELL: &str = "fish";
 const NIX_REMOTE_SOCKET: &str = "unix:///nix/var/nix/daemon-socket/socket";
 const TASK_KVM_DROP_TO_DEV_ENV: &str = "AGENTBOX_KVM_DROP_TO_DEV=1";
+const KRUN_USE_PASST_ANNOTATION: &str = "krun.use_passt=1";
 const HOST_UID_ENV_PREFIX: &str = "AGENTBOX_HOST_UID=";
 const HOST_GID_ENV_PREFIX: &str = "AGENTBOX_HOST_GID=";
 const SIDECAR_NAME_PREFIX: &str = "agentbox-nix-sidecar";

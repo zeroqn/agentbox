@@ -41,6 +41,7 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert!(!args.contains(&TASK_KVM_DROP_TO_DEV_ENV.to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
+    assert!(!args.contains(&KRUN_USE_PASST_ANNOTATION.to_owned()));
     assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
     assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
 }
@@ -84,6 +85,7 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(!args.contains(&TASK_KVM_DROP_TO_DEV_ENV.to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
+    assert!(!args.contains(&KRUN_USE_PASST_ANNOTATION.to_owned()));
     assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
     assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
     assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
@@ -143,6 +145,12 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
             .any(|w| w[0] == "--annotation" && w[1] == "run.oci.handler=krun"),
         "kvm args should include run.oci.handler=krun annotation"
     );
+    assert!(
+        kvm_args
+            .windows(2)
+            .any(|w| w[0] == "--annotation" && w[1] == KRUN_USE_PASST_ANNOTATION),
+        "kvm args should include krun.use_passt=1 annotation"
+    );
 
     // Find and drain the KVM-specific argument block (host UID/GID env vars
     // are dynamic so we locate by the fixed start/end markers).
@@ -152,8 +160,8 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
         .expect("kvm args should include AGENTBOX_KVM_DROP_TO_DEV env");
     let annotation_end = kvm_args
         .iter()
-        .rposition(|a| a == "run.oci.handler=krun")
-        .expect("kvm args should include run.oci.handler=krun annotation");
+        .rposition(|a| a == KRUN_USE_PASST_ANNOTATION)
+        .expect("kvm args should include krun.use_passt=1 annotation");
 
     let mut kvm_without_kvm_args = kvm_args;
     kvm_without_kvm_args.drain(kvm_block_start..=annotation_end);
