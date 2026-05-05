@@ -215,6 +215,16 @@ Enable libkrun passt networking explicitly:
 ./result/bin/agentbox --use-passt
 ```
 
+Set libkrun VM memory explicitly in integer GiB:
+
+```bash
+./result/bin/agentbox --mem 8
+```
+
+When `--mem` is omitted, default libkrun mode uses 80% of detected host memory,
+rounded down to a whole GiB, and passes that value to libkrun as MiB. For
+example, a 10 GiB host produces `krun.ram_mib=8192`.
+
 Run the interactive task container with normal native Podman instead:
 
 ```bash
@@ -222,6 +232,8 @@ Run the interactive task container with normal native Podman instead:
 ```
 
 `--use-passt` is libkrun-only; with `--task-native` it parses but has no effect.
+`--mem` is also libkrun-only; `--task-native --mem <GiB>` fails fast instead of
+configuring native Podman memory.
 
 Default libkrun mode adds the following Podman arguments to the task container
 only:
@@ -233,14 +245,14 @@ only:
 --tmpfs /home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/tmp:rw,exec,uid=1000,gid=1000,mode=700
---runtime crun --annotation run.oci.handler=krun
+--runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB>
 ```
 
 With `--use-passt`, `agentbox` replaces the `all_proxy=1` Nix network detection
 workaround with the passt annotation:
 
 ```text
---runtime crun --annotation run.oci.handler=krun --annotation krun.use_passt=1
+--runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB> --annotation krun.use_passt=1
 ```
 
 The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
@@ -291,6 +303,7 @@ Suggested manual validation:
 podman run --runtime crun --annotation run.oci.handler=krun --annotation krun.use_passt=1 <image> true
 ./result/bin/agentbox
 ./result/bin/agentbox --use-passt
+./result/bin/agentbox --mem 8
 ./result/bin/agentbox --task-native
 # inside the task shell:
 id -u

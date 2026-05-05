@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::env;
 
+use crate::memory::parse_mem_gib_arg;
 use crate::podman::image::{podman_image_exists, pull_image};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
@@ -10,7 +11,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --task-native\n  agentbox --use-passt\n  agentbox --task-native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --task-native\n  agentbox --use-passt\n  agentbox --mem 8\n  agentbox --task-native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -48,6 +49,15 @@ pub struct Cli {
         long_help = "Enable libkrun passt networking for the default task runtime by adding annotation krun.use_passt=1. With --task-native this flag parses but has no effect."
     )]
     pub use_passt: bool,
+
+    #[arg(
+        long = "mem",
+        value_name = "GiB",
+        value_parser = parse_mem_gib_arg,
+        help = "Set libkrun VM memory in GiB",
+        long_help = "Set memory for the default crun/libkrun task runtime in integer GiB. If omitted, agentbox defaults to 80% of detected host memory rounded down to a whole GiB. This flag is not supported with --task-native."
+    )]
+    pub mem_gib: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

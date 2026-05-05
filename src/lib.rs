@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::{ExitCode, Stdio};
 
 mod cli;
+mod memory;
 mod mounts;
 mod nix_root;
 mod podman;
@@ -12,6 +13,7 @@ mod sidecar;
 mod state;
 
 use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
+use memory::{resolve_libkrun_ram_mib, validate_libkrun_memory_mode};
 use mounts::format::format_mount_arg;
 use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount};
 use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
@@ -45,6 +47,7 @@ const INTERACTIVE_SHELL: &str = "fish";
 const NIX_REMOTE_SOCKET: &str = "unix:///nix/var/nix/daemon-socket/socket";
 const TASK_KVM_DROP_TO_DEV_ENV: &str = "AGENTBOX_KVM_DROP_TO_DEV=1";
 const KRUN_USE_PASST_ANNOTATION: &str = "krun.use_passt=1";
+const KRUN_RAM_MIB_ANNOTATION_PREFIX: &str = "krun.ram_mib=";
 const NIX_NETWORK_DETECTION_PROXY_ENV: &str = "all_proxy=1";
 const HOST_UID_ENV_PREFIX: &str = "AGENTBOX_HOST_UID=";
 const HOST_GID_ENV_PREFIX: &str = "AGENTBOX_HOST_GID=";
@@ -105,7 +108,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
     let nix_sidecar_enabled = resolve_nix_sidecar_enabled(&cli, env_sidecar_enabled);
     let task_mode = resolve_task_mode(cli.task_native);
-    validate_task_mode(task_mode, nix_sidecar_enabled)?;
+    validate_task_mode(task_mode, nix_sidecar_enabled, cli.mem_gib.is_some())?;
+    let libkrun_ram_mib = resolve_libkrun_ram_mib(task_mode, cli.mem_gib)?;
 
     let nix_runtime = if nix_sidecar_enabled {
         NixRuntime::Sidecar(prepare_sidecar_nix_runtime(
@@ -136,6 +140,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             nix_runtime: &nix_runtime,
             task_mode,
             use_passt: cli.use_passt,
+            libkrun_ram_mib,
             proxy_port,
         })?,
         Stdio::inherit(),
@@ -165,7 +170,13 @@ fn resolve_task_mode(task_native: bool) -> TaskContainerMode {
     }
 }
 
-fn validate_task_mode(task_mode: TaskContainerMode, nix_sidecar_enabled: bool) -> Result<()> {
+fn validate_task_mode(
+    task_mode: TaskContainerMode,
+    nix_sidecar_enabled: bool,
+    explicit_mem: bool,
+) -> Result<()> {
+    validate_libkrun_memory_mode(task_mode, explicit_mem)?;
+
     if task_mode == TaskContainerMode::Libkrun && !nix_sidecar_enabled {
         anyhow::bail!(
             "default libkrun task runtime requires native nix sidecar mode; use --task-native or remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"

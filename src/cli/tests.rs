@@ -10,6 +10,7 @@ fn cli_accepts_no_arguments() {
     assert!(!cli.disable_nix_sidecar);
     assert!(!cli.task_native);
     assert!(!cli.use_passt);
+    assert_eq!(cli.mem_gib, None);
 }
 
 #[test]
@@ -73,6 +74,26 @@ fn cli_accepts_use_passt_flag() {
         !cli.task_native,
         "--use-passt is parsed independently and does not imply native mode"
     );
+}
+
+#[test]
+fn cli_accepts_mem_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--mem", "8"]).expect("--mem should parse");
+    assert_eq!(cli.mem_gib, Some(8));
+}
+
+#[test]
+fn cli_rejects_zero_mem_flag() {
+    let err =
+        Cli::try_parse_from(["agentbox", "--mem", "0"]).expect_err("zero --mem should be rejected");
+    assert_eq!(err.kind(), ErrorKind::ValueValidation);
+}
+
+#[test]
+fn cli_rejects_non_integer_mem_flag() {
+    let err = Cli::try_parse_from(["agentbox", "--mem", "8g"])
+        .expect_err("suffix --mem should be rejected");
+    assert_eq!(err.kind(), ErrorKind::ValueValidation);
 }
 
 #[test]

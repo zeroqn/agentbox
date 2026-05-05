@@ -31,6 +31,9 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
     assert!(!args.contains(&KRUN_USE_PASST_ANNOTATION.to_owned()));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.starts_with(KRUN_RAM_MIB_ANNOTATION_PREFIX)));
     assert!(!args.contains(&NIX_NETWORK_DETECTION_PROXY_ENV.to_owned()));
     assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
     assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
@@ -61,6 +64,9 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
     assert!(!args.contains(&KRUN_USE_PASST_ANNOTATION.to_owned()));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.starts_with(KRUN_RAM_MIB_ANNOTATION_PREFIX)));
     assert!(!args.contains(&NIX_NETWORK_DETECTION_PROXY_ENV.to_owned()));
     assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
     assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
@@ -96,6 +102,10 @@ fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
         "libkrun args should include run.oci.handler=krun annotation"
     );
     assert!(
+        has_arg_pair(&libkrun_args, "--annotation", "krun.ram_mib=8192"),
+        "libkrun args should include krun.ram_mib annotation"
+    );
+    assert!(
         has_arg_pair(&libkrun_args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
         "libkrun args without passt should include proxy workaround"
     );
@@ -125,6 +135,11 @@ fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
         &mut libkrun_without_libkrun_args,
         "--annotation",
         "run.oci.handler=krun",
+    );
+    remove_arg_pair(
+        &mut libkrun_without_libkrun_args,
+        "--annotation",
+        "krun.ram_mib=8192",
     );
     remove_arg_pair(
         &mut libkrun_without_libkrun_args,
@@ -187,6 +202,15 @@ fn build_podman_args_treats_use_passt_as_noop_for_native_task_mode() {
     );
 }
 
+#[test]
+fn build_podman_args_rejects_libkrun_mode_without_resolved_memory() {
+    let runtime = sidecar_runtime();
+    let err = build_args_result(&runtime, TaskContainerMode::Libkrun, false, None, None)
+        .expect_err("libkrun without resolved memory should fail");
+
+    assert!(err.to_string().contains("requires a resolved krun.ram_mib"));
+}
+
 fn sidecar_runtime() -> NixRuntime {
     NixRuntime::Sidecar(SidecarNixRuntime {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
@@ -201,6 +225,44 @@ fn build_args(
     use_passt: bool,
     proxy_port: Option<u16>,
 ) -> Vec<String> {
+    let libkrun_ram_mib = if task_mode == TaskContainerMode::Libkrun {
+        Some(8192)
+    } else {
+        None
+    };
+    build_args_with_mem(
+        nix_runtime,
+        task_mode,
+        use_passt,
+        proxy_port,
+        libkrun_ram_mib,
+    )
+}
+
+fn build_args_with_mem(
+    nix_runtime: &NixRuntime,
+    task_mode: TaskContainerMode,
+    use_passt: bool,
+    proxy_port: Option<u16>,
+    libkrun_ram_mib: Option<u32>,
+) -> Vec<String> {
+    build_args_result(
+        nix_runtime,
+        task_mode,
+        use_passt,
+        proxy_port,
+        libkrun_ram_mib,
+    )
+    .expect("podman args should build")
+}
+
+fn build_args_result(
+    nix_runtime: &NixRuntime,
+    task_mode: TaskContainerMode,
+    use_passt: bool,
+    proxy_port: Option<u16>,
+    libkrun_ram_mib: Option<u32>,
+) -> anyhow::Result<Vec<String>> {
     build_podman_args(TaskPodmanSpec {
         image: DEFAULT_IMAGE,
         hostname: "project-agentbox",
@@ -211,9 +273,9 @@ fn build_args(
         nix_runtime,
         task_mode,
         use_passt,
+        libkrun_ram_mib,
         proxy_port,
     })
-    .expect("podman args should build")
 }
 
 fn has_arg_pair(args: &[String], flag: &str, value: &str) -> bool {
