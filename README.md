@@ -82,7 +82,7 @@ nix build .#container
 - `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4)
   with net, sound, GPU, block, and input support enabled. Provides the
   repo-pinned libkrun used by the custom crun output.
-- `.#crun`: build `zeroqn/crun` branch `debug` with this repo's libkrun
+- `.#crun`: build `zeroqn/crun` branch `passt-dns` with this repo's libkrun
   override, krun handler support, and `pkgs.passt` on crun's runtime `PATH`
   for `krun.use_passt=1` passt/libkrun debugging.
 - `.#podman`: build Podman against the custom crun so task-KVM runs inherit the

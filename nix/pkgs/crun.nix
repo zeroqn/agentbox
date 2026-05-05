@@ -1,26 +1,26 @@
 { pkgs, libkrun }:
 
 let
-  crunDebugRev = "cacf90ccd68e5ad98d3c6f92efd4fd3922510b0b";
+  crunPasstDnsRev = "ea1685e35c47b723740e0eace7031813297d37b6";
 in
 (pkgs.crun.override {
   inherit libkrun;
   withLibkrun = true;
 }).overrideAttrs (oldAttrs: {
-  version = "${oldAttrs.version}-zeroqn-debug-${builtins.substring 0 7 crunDebugRev}";
+  version = "${oldAttrs.version}-zeroqn-passt-dns-${builtins.substring 0 7 crunPasstDnsRev}";
 
   src = pkgs.fetchFromGitHub {
     owner = "zeroqn";
     repo = "crun";
-    rev = crunDebugRev;
+    rev = crunPasstDnsRev;
     fetchSubmodules = true;
-    hash = "sha256-jzwv3L/5YvkciXaDi8D2Qj08gFezWGbob7HRZudN46I=";
+    hash = "sha256-09f1R8B+8oyL7jlcOmsV8+T7vP8C9hcQmaJ3oQdMK6A=";
   };
 
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ pkgs.makeWrapper ];
 
   postPatch = ''
-    echo ${crunDebugRev} > COMMIT
+    echo ${crunPasstDnsRev} > COMMIT
   ''
   + (oldAttrs.postPatch or "");
 
