@@ -9,6 +9,7 @@ fn cli_accepts_no_arguments() {
     assert!(!cli.pull_latest);
     assert!(!cli.disable_nix_sidecar);
     assert!(!cli.task_kvm);
+    assert!(!cli.use_passt);
 }
 
 #[test]
@@ -61,6 +62,16 @@ fn cli_accepts_disable_nix_sidecar_flag() {
 fn cli_accepts_task_kvm_flag() {
     let cli = Cli::try_parse_from(["agentbox", "--task-kvm"]).expect("--task-kvm should parse");
     assert!(cli.task_kvm);
+}
+
+#[test]
+fn cli_accepts_use_passt_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--use-passt"]).expect("--use-passt should parse");
+    assert!(cli.use_passt);
+    assert!(
+        !cli.task_kvm,
+        "--use-passt is parsed independently and is a no-op without KVM mode"
+    );
 }
 
 #[test]

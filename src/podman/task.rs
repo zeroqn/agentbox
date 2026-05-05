@@ -5,8 +5,9 @@ use crate::{
     NixRuntime, TaskContainerMode, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS,
     CONTAINER_WORKDIR, HOST_GID_ENV_PREFIX, HOST_UID_ENV_PREFIX, INTERACTIVE_SHELL,
     KRUN_USE_PASST_ANNOTATION, KVM_NIX_PROXY_GUEST_NIX_REMOTE, KVM_NIX_PROXY_HOST_ENV,
-    KVM_NIX_PROXY_PORT_ENV, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL,
-    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
+    KVM_NIX_PROXY_PORT_ENV, NIX_NETWORK_DETECTION_PROXY_ENV, NIX_REMOTE_SOCKET,
+    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    TASK_KVM_DROP_TO_DEV_ENV,
 };
 
 pub struct TaskPodmanSpec<'a> {
@@ -18,6 +19,7 @@ pub struct TaskPodmanSpec<'a> {
     pub sccache_mount: &'a str,
     pub nix_runtime: &'a NixRuntime,
     pub task_mode: TaskContainerMode,
+    pub use_passt: bool,
     pub proxy_port: Option<u16>,
 }
 
@@ -63,8 +65,13 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
         args.push("crun".to_owned());
         args.push("--annotation".to_owned());
         args.push("run.oci.handler=krun".to_owned());
-        args.push("--annotation".to_owned());
-        args.push(KRUN_USE_PASST_ANNOTATION.to_owned());
+        if spec.use_passt {
+            args.push("--annotation".to_owned());
+            args.push(KRUN_USE_PASST_ANNOTATION.to_owned());
+        } else {
+            args.push("--env".to_owned());
+            args.push(NIX_NETWORK_DETECTION_PROXY_ENV.to_owned());
+        }
     }
 
     match spec.nix_runtime {
