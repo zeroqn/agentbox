@@ -69,112 +69,106 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
 }
 
 #[test]
-fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
+fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
     let runtime = sidecar_runtime();
     let native_args = build_args(&runtime, TaskContainerMode::Native, false, None);
-    let kvm_args = build_args(
-        &runtime,
-        TaskContainerMode::KvmKrunExperimental,
-        false,
-        Some(12345),
-    );
+    let libkrun_args = build_args(&runtime, TaskContainerMode::Libkrun, false, Some(12345));
 
-    // Verify host UID/GID env vars are present in KVM mode
-    let has_host_uid = kvm_args
+    // Verify host UID/GID env vars are present in libkrun mode.
+    let has_host_uid = libkrun_args
         .windows(2)
         .any(|w| w[0] == "--env" && w[1].starts_with(HOST_UID_ENV_PREFIX));
     assert!(
         has_host_uid,
-        "kvm args should include AGENTBOX_HOST_UID env var"
+        "libkrun args should include AGENTBOX_HOST_UID env var"
     );
-    let has_host_gid = kvm_args
+    let has_host_gid = libkrun_args
         .windows(2)
         .any(|w| w[0] == "--env" && w[1].starts_with(HOST_GID_ENV_PREFIX));
     assert!(
         has_host_gid,
-        "kvm args should include AGENTBOX_HOST_GID env var"
+        "libkrun args should include AGENTBOX_HOST_GID env var"
     );
     assert!(
-        kvm_args
+        libkrun_args
             .windows(2)
             .any(|w| w[0] == "--annotation" && w[1] == "run.oci.handler=krun"),
-        "kvm args should include run.oci.handler=krun annotation"
+        "libkrun args should include run.oci.handler=krun annotation"
     );
     assert!(
-        has_arg_pair(&kvm_args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
-        "kvm args without passt should include proxy workaround"
+        has_arg_pair(&libkrun_args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
+        "libkrun args without passt should include proxy workaround"
     );
     assert!(
-        has_arg_pair(&kvm_args, "--env", "all_proxy=1"),
-        "kvm args without passt should include all_proxy=1"
+        has_arg_pair(&libkrun_args, "--env", "all_proxy=1"),
+        "libkrun args without passt should include all_proxy=1"
     );
     assert!(
-        !has_arg_pair(&kvm_args, "--annotation", KRUN_USE_PASST_ANNOTATION),
-        "kvm args should not include krun.use_passt=1 unless passt is enabled"
+        !has_arg_pair(&libkrun_args, "--annotation", KRUN_USE_PASST_ANNOTATION),
+        "libkrun args should not include krun.use_passt=1 unless passt is enabled"
     );
 
-    let mut kvm_without_kvm_args = kvm_args;
-    remove_arg_pair(&mut kvm_without_kvm_args, "--env", TASK_KVM_DROP_TO_DEV_ENV);
-    remove_arg_pair_with(&mut kvm_without_kvm_args, "--env", |arg| {
+    let mut libkrun_without_libkrun_args = libkrun_args;
+    remove_arg_pair(
+        &mut libkrun_without_libkrun_args,
+        "--env",
+        TASK_KVM_DROP_TO_DEV_ENV,
+    );
+    remove_arg_pair_with(&mut libkrun_without_libkrun_args, "--env", |arg| {
         arg.starts_with(HOST_UID_ENV_PREFIX)
     });
-    remove_arg_pair_with(&mut kvm_without_kvm_args, "--env", |arg| {
+    remove_arg_pair_with(&mut libkrun_without_libkrun_args, "--env", |arg| {
         arg.starts_with(HOST_GID_ENV_PREFIX)
     });
-    remove_arg_pair(&mut kvm_without_kvm_args, "--runtime", "crun");
+    remove_arg_pair(&mut libkrun_without_libkrun_args, "--runtime", "crun");
     remove_arg_pair(
-        &mut kvm_without_kvm_args,
+        &mut libkrun_without_libkrun_args,
         "--annotation",
         "run.oci.handler=krun",
     );
     remove_arg_pair(
-        &mut kvm_without_kvm_args,
+        &mut libkrun_without_libkrun_args,
         "--env",
         NIX_NETWORK_DETECTION_PROXY_ENV,
     );
     remove_arg_pair(
-        &mut kvm_without_kvm_args,
+        &mut libkrun_without_libkrun_args,
         "--annotation",
         KRUN_USE_PASST_ANNOTATION,
     );
 
-    // KVM mode uses a guest-local NIX_REMOTE, passes the proxy port env var,
+    // Libkrun mode uses a guest-local NIX_REMOTE, passes the proxy port env var,
     // and passes the proxy host env var. Replace these with the native
     // equivalents or strip them before comparing.
     remove_arg_pair(
-        &mut kvm_without_kvm_args,
+        &mut libkrun_without_libkrun_args,
         "--env",
         &format!("{KVM_NIX_PROXY_PORT_ENV}=12345"),
     );
-    remove_arg_pair_with(&mut kvm_without_kvm_args, "--env", |arg| {
+    remove_arg_pair_with(&mut libkrun_without_libkrun_args, "--env", |arg| {
         arg.starts_with(KVM_NIX_PROXY_HOST_ENV)
     });
-    if let Some(pos) = kvm_without_kvm_args.windows(2).position(|w| {
+    if let Some(pos) = libkrun_without_libkrun_args.windows(2).position(|w| {
         w[0] == "--env" && w[1] == format!("NIX_REMOTE={KVM_NIX_PROXY_GUEST_NIX_REMOTE}")
     }) {
-        kvm_without_kvm_args[pos + 1] = format!("NIX_REMOTE={NIX_REMOTE_SOCKET}");
+        libkrun_without_libkrun_args[pos + 1] = format!("NIX_REMOTE={NIX_REMOTE_SOCKET}");
     }
 
-    assert_eq!(kvm_without_kvm_args, native_args);
+    assert_eq!(libkrun_without_libkrun_args, native_args);
 }
 
 #[test]
-fn build_podman_args_enables_passt_only_when_requested_for_kvm_task_mode() {
+fn build_podman_args_enables_passt_only_when_requested_for_libkrun_task_mode() {
     let runtime = sidecar_runtime();
-    let args = build_args(
-        &runtime,
-        TaskContainerMode::KvmKrunExperimental,
-        true,
-        Some(12345),
-    );
+    let args = build_args(&runtime, TaskContainerMode::Libkrun, true, Some(12345));
 
     assert!(
         has_arg_pair(&args, "--annotation", KRUN_USE_PASST_ANNOTATION),
-        "kvm args should include krun.use_passt=1 when passt is requested"
+        "libkrun args should include krun.use_passt=1 when passt is requested"
     );
     assert!(
         !has_arg_pair(&args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
-        "kvm args should not include the proxy workaround when passt is requested"
+        "libkrun args should not include the proxy workaround when passt is requested"
     );
 }
 

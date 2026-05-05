@@ -11,9 +11,7 @@ mod podman;
 mod sidecar;
 mod state;
 
-use cli::{
-    env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, resolve_task_kvm_enabled, Cli,
-};
+use cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
 use mounts::format::format_mount_arg;
 use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount};
 use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
@@ -75,7 +73,7 @@ enum NixRuntime {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskContainerMode {
     Native,
-    KvmKrunExperimental,
+    Libkrun,
 }
 
 pub fn entrypoint() -> ExitCode {
@@ -106,8 +104,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let env_sidecar_enabled =
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
     let nix_sidecar_enabled = resolve_nix_sidecar_enabled(&cli, env_sidecar_enabled);
-    let env_task_kvm_enabled = env_flag_enabled("AGENTBOX_TASK_KVM", false)?;
-    let task_mode = resolve_task_mode(resolve_task_kvm_enabled(&cli, env_task_kvm_enabled));
+    let task_mode = resolve_task_mode(cli.task_native);
     validate_task_mode(task_mode, nix_sidecar_enabled)?;
 
     let nix_runtime = if nix_sidecar_enabled {
@@ -160,18 +157,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }
 
-fn resolve_task_mode(task_kvm_enabled: bool) -> TaskContainerMode {
-    if task_kvm_enabled {
-        TaskContainerMode::KvmKrunExperimental
-    } else {
+fn resolve_task_mode(task_native: bool) -> TaskContainerMode {
+    if task_native {
         TaskContainerMode::Native
+    } else {
+        TaskContainerMode::Libkrun
     }
 }
 
 fn validate_task_mode(task_mode: TaskContainerMode, nix_sidecar_enabled: bool) -> Result<()> {
-    if task_mode == TaskContainerMode::KvmKrunExperimental && !nix_sidecar_enabled {
+    if task_mode == TaskContainerMode::Libkrun && !nix_sidecar_enabled {
         anyhow::bail!(
-            "--task-kvm requires native nix sidecar mode; remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
+            "default libkrun task runtime requires native nix sidecar mode; use --task-native or remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
         );
     }
 

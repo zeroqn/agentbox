@@ -25,23 +25,33 @@ fn task_hostname_falls_back_when_directory_name_has_no_slug_chars() {
 }
 
 #[test]
-fn task_kvm_mode_requires_sidecar_nix_runtime() {
-    let err = validate_task_mode(TaskContainerMode::KvmKrunExperimental, false)
-        .expect_err("task KVM without sidecar should fail");
+fn default_libkrun_mode_requires_sidecar_nix_runtime() {
+    let err = validate_task_mode(TaskContainerMode::Libkrun, false)
+        .expect_err("libkrun without sidecar should fail");
 
-    assert!(err
-        .to_string()
-        .contains("--task-kvm requires native nix sidecar mode"));
+    let message = err.to_string();
+    assert!(message.contains("default libkrun task runtime requires native nix sidecar mode"));
+    assert!(message.contains("--task-native"));
 }
 
 #[test]
-fn task_kvm_mode_accepts_sidecar_nix_runtime() {
-    validate_task_mode(TaskContainerMode::KvmKrunExperimental, true)
-        .expect("task KVM with sidecar should be valid");
+fn default_libkrun_mode_accepts_sidecar_nix_runtime() {
+    validate_task_mode(TaskContainerMode::Libkrun, true)
+        .expect("libkrun with sidecar should be valid");
 }
 
 #[test]
 fn native_task_mode_accepts_seeded_nix_runtime() {
     validate_task_mode(TaskContainerMode::Native, false)
         .expect("native task with seeded nix runtime should be valid");
+}
+
+#[test]
+fn resolve_task_mode_defaults_to_libkrun() {
+    assert_eq!(resolve_task_mode(false), TaskContainerMode::Libkrun);
+}
+
+#[test]
+fn resolve_task_mode_accepts_native_opt_out() {
+    assert_eq!(resolve_task_mode(true), TaskContainerMode::Native);
 }

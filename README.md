@@ -10,8 +10,9 @@ host, and supports two Nix runtime modes:
   `nix-daemon` sidecar (no `/nix/store` seed copy).
 - **Seeded mode (fallback):** copies `/nix` into project state on first run.
 
-It also has an experimental task-only KVM launch mode for testing the
-interactive task container under libkrun while the Nix sidecar stays native.
+By default, the interactive task container runs through crun's libkrun handler
+while the Nix sidecar stays native. Use `--task-native` when you need the
+interactive task container to run as a normal native Podman container.
 
 ---
 
@@ -22,12 +23,12 @@ interactive task container under libkrun while the Nix sidecar stays native.
 - `nix` (for building via flake)
 - `fuse-overlayfs` (required for default sidecar mode; included by the
   `.#agentbox-prebuilt` package runtime environment)
-- For `--task-kvm`: a host Podman/crun stack that supports `--runtime crun`,
-  `run.oci.handler=krun`, and `/dev/kvm`. Add `--use-passt` when you also want
-  `krun.use_passt=1` and passt-based libkrun virtio-net networking. This flake
-  provides `.#crun` with `passt` on crun's runtime `PATH`, and `.#podman` wired
-  to that custom crun; install or otherwise expose `.#podman` as the host
-  `podman` on `PATH` if you want `agentbox` to use it.
+- For the default libkrun task runtime: a host Podman/crun stack that supports
+  `--runtime crun`, `run.oci.handler=krun`, and `/dev/kvm`. Add `--use-passt`
+  when you also want `krun.use_passt=1` and passt-based libkrun virtio-net
+  networking. This flake provides `.#crun` with `passt` on crun's runtime
+  `PATH`, and `.#podman` wired to that custom crun; install or otherwise expose
+  `.#podman` as the host `podman` on `PATH` if you want `agentbox` to use it.
 
 ---
 
@@ -85,8 +86,8 @@ nix build .#container
 - `.#crun`: build `zeroqn/crun` branch `fix-passt-net` with this repo's libkrun
   override, krun handler support, and `pkgs.passt` on crun's runtime `PATH`
   for opt-in `krun.use_passt=1` passt/libkrun debugging.
-- `.#podman`: build Podman against the custom crun so task-KVM runs inherit the
-  flake-provided crun/passt runtime path.
+- `.#podman`: build Podman against the custom crun so libkrun task runs inherit
+  the flake-provided crun/passt runtime path.
 - `.#container`: Podman image archive.
 
 ---
@@ -154,16 +155,16 @@ Sidecar metadata is saved at:
 <state-root>/nix-sidecar.state
 ```
 
-Disable sidecar mode for one run:
+Disable sidecar mode for one native task run:
 
 ```bash
-./result/bin/agentbox --disable-nix-sidecar
+./result/bin/agentbox --task-native --disable-nix-sidecar
 ```
 
-Or globally via env:
+Or disable the sidecar globally when also opting into native task runtime:
 
 ```bash
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --task-native
 ```
 
 ---
@@ -176,9 +177,9 @@ then reuses that data across runs.
 Use seeded mode:
 
 ```bash
-./result/bin/agentbox --disable-nix-sidecar
+./result/bin/agentbox --task-native --disable-nix-sidecar
 # or
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --task-native
 ```
 
 State layout:
@@ -200,26 +201,30 @@ inconsistent and refuses to auto-seed.
 
 ---
 
-### Experimental task-only KVM mode
+### Default libkrun task runtime
 
 Run the interactive task container with crun's libkrun handler:
 
 ```bash
-./result/bin/agentbox --task-kvm
-# or
-AGENTBOX_TASK_KVM=1 ./result/bin/agentbox
+./result/bin/agentbox
 ```
 
 Enable libkrun passt networking explicitly:
 
 ```bash
-./result/bin/agentbox --task-kvm --use-passt
+./result/bin/agentbox --use-passt
 ```
 
-`--use-passt` is KVM-only; without `--task-kvm` (or `AGENTBOX_TASK_KVM=1`) it
-parses but has no effect.
+Run the interactive task container with normal native Podman instead:
 
-This mode adds the following Podman arguments to the task container only:
+```bash
+./result/bin/agentbox --task-native
+```
+
+`--use-passt` is libkrun-only; with `--task-native` it parses but has no effect.
+
+Default libkrun mode adds the following Podman arguments to the task container
+only:
 
 ```text
 --env AGENTBOX_KVM_DROP_TO_DEV=1
@@ -231,8 +236,8 @@ This mode adds the following Podman arguments to the task container only:
 --runtime crun --annotation run.oci.handler=krun
 ```
 
-With `--task-kvm --use-passt`, `agentbox` replaces the `all_proxy=1` Nix network
-detection workaround with the passt annotation:
+With `--use-passt`, `agentbox` replaces the `all_proxy=1` Nix network detection
+workaround with the passt annotation:
 
 ```text
 --runtime crun --annotation run.oci.handler=krun --annotation krun.use_passt=1
@@ -240,7 +245,7 @@ detection workaround with the passt annotation:
 
 The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
 containers, sidecar health probes, image mounts, and cleanup probes remain
-normal native Podman containers; they do not receive the task KVM runtime
+normal native Podman containers; they do not receive the libkrun task runtime
 arguments or the task-only `AGENTBOX_KVM_DROP_TO_DEV` marker.
 
 KVM guests do not share the native Podman user namespace boundary in the same
@@ -264,15 +269,16 @@ nix build .#container
 podman load -i result
 ```
 
-`--task-kvm` requires sidecar mode. It is rejected with seeded mode:
+Default libkrun task runtime requires sidecar mode. Use `--task-native` for
+seeded mode:
 
 ```bash
-./result/bin/agentbox --task-kvm --disable-nix-sidecar
-AGENTBOX_TASK_KVM=1 AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
+./result/bin/agentbox --task-native --disable-nix-sidecar
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --task-native
 ```
 
 Direct sharing of the native sidecar Unix socket into a libkrun VM is not
-assumed to work. KVM mode points the guest at the native sidecar's TCP proxy.
+assumed to work. Libkrun mode points the guest at the native sidecar's TCP proxy.
 By default it sets `all_proxy=1` so Nix detects network availability via its
 proxy-environment check; `--use-passt` instead enables libkrun passt networking
 with `krun.use_passt=1`. Nix commands inside the KVM guest must still be
@@ -283,8 +289,9 @@ Suggested manual validation:
 ```bash
 # Use the intended host Podman stack, for example after installing .#podman.
 podman run --runtime crun --annotation run.oci.handler=krun --annotation krun.use_passt=1 <image> true
-./result/bin/agentbox --task-kvm
-./result/bin/agentbox --task-kvm --use-passt
+./result/bin/agentbox
+./result/bin/agentbox --use-passt
+./result/bin/agentbox --task-native
 # inside the task shell:
 id -u
 id -g

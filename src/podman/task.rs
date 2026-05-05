@@ -48,7 +48,7 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
         CONTAINER_TMP_TMPFS.to_owned(),
     ];
 
-    if spec.task_mode == TaskContainerMode::KvmKrunExperimental {
+    if spec.task_mode == TaskContainerMode::Libkrun {
         args.push("--env".to_owned());
         args.push(TASK_KVM_DROP_TO_DEV_ENV.to_owned());
         args.push("--env".to_owned());
@@ -89,7 +89,7 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
                 Some("ro"),
             )?);
 
-            let nix_remote = if spec.task_mode == TaskContainerMode::KvmKrunExperimental {
+            let nix_remote = if spec.task_mode == TaskContainerMode::Libkrun {
                 KVM_NIX_PROXY_GUEST_NIX_REMOTE
             } else {
                 NIX_REMOTE_SOCKET
@@ -97,7 +97,7 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
             args.push("--env".to_owned());
             args.push(format!("NIX_REMOTE={nix_remote}"));
 
-            if spec.task_mode == TaskContainerMode::KvmKrunExperimental {
+            if spec.task_mode == TaskContainerMode::Libkrun {
                 if let Some(port) = spec.proxy_port {
                     let host_ip = resolve_host_ip()?;
                     args.push("--env".to_owned());

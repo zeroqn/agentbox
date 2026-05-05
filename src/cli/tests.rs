@@ -8,7 +8,7 @@ fn cli_accepts_no_arguments() {
     assert_eq!(cli.image, None);
     assert!(!cli.pull_latest);
     assert!(!cli.disable_nix_sidecar);
-    assert!(!cli.task_kvm);
+    assert!(!cli.task_native);
     assert!(!cli.use_passt);
 }
 
@@ -59,9 +59,10 @@ fn cli_accepts_disable_nix_sidecar_flag() {
 }
 
 #[test]
-fn cli_accepts_task_kvm_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--task-kvm"]).expect("--task-kvm should parse");
-    assert!(cli.task_kvm);
+fn cli_accepts_task_native_flag() {
+    let cli =
+        Cli::try_parse_from(["agentbox", "--task-native"]).expect("--task-native should parse");
+    assert!(cli.task_native);
 }
 
 #[test]
@@ -69,8 +70,8 @@ fn cli_accepts_use_passt_flag() {
     let cli = Cli::try_parse_from(["agentbox", "--use-passt"]).expect("--use-passt should parse");
     assert!(cli.use_passt);
     assert!(
-        !cli.task_kvm,
-        "--use-passt is parsed independently and is a no-op without KVM mode"
+        !cli.task_native,
+        "--use-passt is parsed independently and does not imply native mode"
     );
 }
 
@@ -79,24 +80,6 @@ fn disable_sidecar_flag_overrides_true_environment_value() {
     let cli = Cli::try_parse_from(["agentbox", "--disable-nix-sidecar"])
         .expect("--disable-nix-sidecar should parse");
     assert!(!resolve_nix_sidecar_enabled(&cli, true));
-}
-
-#[test]
-fn task_kvm_flag_overrides_false_environment_value() {
-    let cli = Cli::try_parse_from(["agentbox", "--task-kvm"]).expect("--task-kvm should parse");
-    assert!(resolve_task_kvm_enabled(&cli, false));
-}
-
-#[test]
-fn task_kvm_env_value_enables_task_kvm_without_cli_flag() {
-    let cli = Cli::try_parse_from(["agentbox"]).expect("no-arg invocation should parse");
-    assert!(resolve_task_kvm_enabled(&cli, true));
-}
-
-#[test]
-fn falsey_task_kvm_env_value_leaves_task_native_without_cli_flag() {
-    let cli = Cli::try_parse_from(["agentbox"]).expect("no-arg invocation should parse");
-    assert!(!resolve_task_kvm_enabled(&cli, false));
 }
 
 #[test]
@@ -146,15 +129,6 @@ fn env_sidecar_flag_rejects_unknown_value() {
 }
 
 #[test]
-fn env_task_kvm_flag_reuses_standard_error_for_unknown_value() {
-    let err = parse_env_flag_value("AGENTBOX_TASK_KVM", "maybe")
-        .expect_err("unknown env value should fail");
-    assert!(err
-        .to_string()
-        .contains("environment variable 'AGENTBOX_TASK_KVM' must be one of"));
-}
-
-#[test]
 fn cli_rejects_removed_host_nix_overlay_flag() {
     let err = Cli::try_parse_from(["agentbox", "--host-nix-overlay"])
         .expect_err("--host-nix-overlay should be rejected");
@@ -172,6 +146,13 @@ fn cli_rejects_removed_sync_nix_root_flag() {
 fn cli_rejects_removed_nix_sidecar_flag() {
     let err = Cli::try_parse_from(["agentbox", "--nix-sidecar"])
         .expect_err("--nix-sidecar should be rejected");
+    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
+}
+
+#[test]
+fn cli_rejects_removed_task_kvm_flag() {
+    let err =
+        Cli::try_parse_from(["agentbox", "--task-kvm"]).expect_err("--task-kvm should be rejected");
     assert_eq!(err.kind(), ErrorKind::UnknownArgument);
 }
 

@@ -10,7 +10,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --disable-nix-sidecar\n  agentbox --task-kvm\n  agentbox --task-kvm --use-passt\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --task-native\n  agentbox --use-passt\n  agentbox --task-native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -37,15 +37,15 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Run the interactive task container with crun's experimental libkrun/KVM handler",
-        long_help = "Run only the interactive task container with Podman runtime crun and annotation run.oci.handler=krun. This experimental mode requires the native nix-daemon sidecar path and can also be enabled with AGENTBOX_TASK_KVM=1."
+        help = "Run the interactive task container with normal native Podman instead of default libkrun",
+        long_help = "Run only the interactive task container with normal native Podman instead of the default crun/libkrun task runtime. This is the escape hatch for hosts that need native Podman behavior."
     )]
-    pub task_kvm: bool,
+    pub task_native: bool,
 
     #[arg(
         long,
-        help = "Enable libkrun passt networking for experimental task KVM mode",
-        long_help = "Enable libkrun passt networking for experimental task KVM mode by adding annotation krun.use_passt=1. Without --task-kvm this flag parses but has no effect."
+        help = "Enable libkrun passt networking for the default task runtime",
+        long_help = "Enable libkrun passt networking for the default task runtime by adding annotation krun.use_passt=1. With --task-native this flag parses but has no effect."
     )]
     pub use_passt: bool,
 }
@@ -76,10 +76,6 @@ pub fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool
         return false;
     }
     env_sidecar_enabled
-}
-
-pub fn resolve_task_kvm_enabled(cli: &Cli, env_task_kvm_enabled: bool) -> bool {
-    cli.task_kvm || env_task_kvm_enabled
 }
 
 pub fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
