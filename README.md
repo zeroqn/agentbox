@@ -223,7 +223,7 @@ This mode adds the following Podman arguments to the task container only:
 
 ```text
 --env AGENTBOX_KVM_DROP_TO_DEV=1
---env no_proxy=1
+--env all_proxy=1
 --tmpfs /home/dev/.config:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700
@@ -231,7 +231,7 @@ This mode adds the following Podman arguments to the task container only:
 --runtime crun --annotation run.oci.handler=krun
 ```
 
-With `--task-kvm --use-passt`, `agentbox` replaces the `no_proxy=1` Nix network
+With `--task-kvm --use-passt`, `agentbox` replaces the `all_proxy=1` Nix network
 detection workaround with the passt annotation:
 
 ```text
@@ -273,7 +273,7 @@ AGENTBOX_TASK_KVM=1 AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
 
 Direct sharing of the native sidecar Unix socket into a libkrun VM is not
 assumed to work. KVM mode points the guest at the native sidecar's TCP proxy.
-By default it sets `no_proxy=1` so Nix detects network availability via its
+By default it sets `all_proxy=1` so Nix detects network availability via its
 proxy-environment check; `--use-passt` instead enables libkrun passt networking
 with `krun.use_passt=1`. Nix commands inside the KVM guest must still be
 validated before claiming success on a host Podman/crun/libkrun stack.

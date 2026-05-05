@@ -102,7 +102,11 @@ fn build_podman_args_adds_only_kvm_runtime_args_for_kvm_task_mode() {
     );
     assert!(
         has_arg_pair(&kvm_args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
-        "kvm args without passt should include no_proxy workaround"
+        "kvm args without passt should include proxy workaround"
+    );
+    assert!(
+        has_arg_pair(&kvm_args, "--env", "all_proxy=1"),
+        "kvm args without passt should include all_proxy=1"
     );
     assert!(
         !has_arg_pair(&kvm_args, "--annotation", KRUN_USE_PASST_ANNOTATION),
@@ -170,7 +174,7 @@ fn build_podman_args_enables_passt_only_when_requested_for_kvm_task_mode() {
     );
     assert!(
         !has_arg_pair(&args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
-        "kvm args should not include the no_proxy workaround when passt is requested"
+        "kvm args should not include the proxy workaround when passt is requested"
     );
 }
 
@@ -185,7 +189,7 @@ fn build_podman_args_treats_use_passt_as_noop_for_native_task_mode() {
     );
     assert!(
         !has_arg_pair(&args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
-        "native args should not include the no_proxy workaround"
+        "native args should not include the proxy workaround"
     );
 }
 
