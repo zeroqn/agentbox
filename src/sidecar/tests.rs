@@ -99,6 +99,16 @@ fn protected_same_repo_reuse_falls_back_when_task_probe_errors() {
 }
 
 #[test]
+fn idle_sidecar_cleanup_is_preserved_while_task_containers_run() {
+    assert!(preserve_idle_sidecar(true));
+}
+
+#[test]
+fn idle_sidecar_cleanup_is_allowed_when_no_task_containers_run() {
+    assert!(!preserve_idle_sidecar(false));
+}
+
+#[test]
 fn fallback_health_gated_reuse_keeps_existing_behavior_when_probe_fails() {
     assert!(fallback_health_gated_reuse_applies(true, false, true));
 }

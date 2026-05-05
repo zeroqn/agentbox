@@ -117,11 +117,16 @@ pub fn prepare_sidecar_nix_runtime(
 }
 
 pub fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
-    if sidecar_has_running_task_containers(&sidecar.sidecar_name)? {
+    if preserve_idle_sidecar(sidecar_has_running_task_containers(&sidecar.sidecar_name)?) {
         return Ok(());
     }
 
-    cleanup_sidecar_container(&sidecar.sidecar_name)
+    cleanup_sidecar_container(&sidecar.sidecar_name)?;
+    cleanup_merged_mount(&sidecar.merged_dir)
+}
+
+fn preserve_idle_sidecar(has_running_task_containers: bool) -> bool {
+    has_running_task_containers
 }
 
 fn recreate_sidecar_stack(

@@ -148,6 +148,11 @@ What it does (high level):
 4. Starts/reuses a deterministic `nix-daemon` sidecar and preserves that
    sidecar while matching task containers are still running.
 5. Starts the interactive container with read-only `/nix` + daemon socket.
+6. When the last matching task container exits, removes the idle sidecar and
+   unmounts the `nix-merged` FUSE overlay so `fuse-overlayfs` does not linger.
+
+Overlay writes live in `<state-root>/nix-upper`; `nix-merged` is only the
+mounted merged view and may be unmounted/recreated between runs.
 
 Sidecar metadata is saved at:
 
