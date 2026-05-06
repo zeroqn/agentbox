@@ -11,7 +11,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --task-native\n  agentbox --use-passt\n  agentbox --mem 8\n  agentbox --task-native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --task-native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --task-native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -45,10 +45,10 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Enable libkrun passt networking for the default task runtime",
-        long_help = "Enable libkrun passt networking for the default task runtime by adding annotation krun.use_passt=1. With --task-native this flag parses but has no effect."
+        help = "Use libkrun TSI networking instead of default passt networking",
+        long_help = "Use libkrun TSI networking for the default task runtime instead of adding the default krun.use_passt=1 annotation. With --task-native this flag parses but has no effect."
     )]
-    pub use_passt: bool,
+    pub tsi: bool,
 
     #[arg(
         long = "mem",

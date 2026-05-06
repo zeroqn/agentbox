@@ -143,7 +143,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             sccache_mount: &sccache_mount,
             nix_runtime: &nix_runtime,
             task_mode,
-            use_passt: cli.use_passt,
+            use_tsi: cli.tsi,
             libkrun_ram_mib,
             libkrun_cpu_count,
             proxy_port,

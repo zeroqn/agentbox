@@ -9,7 +9,7 @@ fn cli_accepts_no_arguments() {
     assert!(!cli.pull_latest);
     assert!(!cli.disable_nix_sidecar);
     assert!(!cli.task_native);
-    assert!(!cli.use_passt);
+    assert!(!cli.tsi);
     assert_eq!(cli.mem_gib, None);
 }
 
@@ -67,13 +67,20 @@ fn cli_accepts_task_native_flag() {
 }
 
 #[test]
-fn cli_accepts_use_passt_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--use-passt"]).expect("--use-passt should parse");
-    assert!(cli.use_passt);
+fn cli_accepts_tsi_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--tsi"]).expect("--tsi should parse");
+    assert!(cli.tsi);
     assert!(
         !cli.task_native,
-        "--use-passt is parsed independently and does not imply native mode"
+        "--tsi is parsed independently and does not imply native mode"
     );
+}
+
+#[test]
+fn cli_rejects_removed_use_passt_flag() {
+    let err = Cli::try_parse_from(["agentbox", "--use-passt"])
+        .expect_err("--use-passt should no longer parse");
+    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
 }
 
 #[test]

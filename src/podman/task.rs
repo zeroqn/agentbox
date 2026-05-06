@@ -19,7 +19,7 @@ pub struct TaskPodmanSpec<'a> {
     pub sccache_mount: &'a str,
     pub nix_runtime: &'a NixRuntime,
     pub task_mode: TaskContainerMode,
-    pub use_passt: bool,
+    pub use_tsi: bool,
     pub libkrun_ram_mib: Option<u32>,
     pub libkrun_cpu_count: Option<u32>,
     pub proxy_port: Option<u16>,
@@ -76,12 +76,12 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
             args.push("--annotation".to_owned());
             args.push(format!("{KRUN_CPUS_ANNOTATION_PREFIX}{cpu_count}"));
         }
-        if spec.use_passt {
-            args.push("--annotation".to_owned());
-            args.push(KRUN_USE_PASST_ANNOTATION.to_owned());
-        } else {
+        if spec.use_tsi {
             args.push("--env".to_owned());
             args.push(NIX_NETWORK_DETECTION_PROXY_ENV.to_owned());
+        } else {
+            args.push("--annotation".to_owned());
+            args.push(KRUN_USE_PASST_ANNOTATION.to_owned());
         }
     }
 

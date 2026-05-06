@@ -118,16 +118,12 @@ fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
         "libkrun args should omit krun.cpus when no CPU count is resolved"
     );
     assert!(
-        has_arg_pair(&libkrun_args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
-        "libkrun args without passt should include proxy workaround"
+        has_arg_pair(&libkrun_args, "--annotation", KRUN_USE_PASST_ANNOTATION),
+        "libkrun args should include krun.use_passt=1 by default"
     );
     assert!(
-        has_arg_pair(&libkrun_args, "--env", "all_proxy=1"),
-        "libkrun args without passt should include all_proxy=1"
-    );
-    assert!(
-        !has_arg_pair(&libkrun_args, "--annotation", KRUN_USE_PASST_ANNOTATION),
-        "libkrun args should not include krun.use_passt=1 unless passt is enabled"
+        !has_arg_pair(&libkrun_args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
+        "libkrun args with default passt should omit proxy workaround"
     );
 
     let mut libkrun_without_libkrun_args = libkrun_args;
@@ -152,11 +148,6 @@ fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
         &mut libkrun_without_libkrun_args,
         "--annotation",
         "krun.ram_mib=8192",
-    );
-    remove_arg_pair(
-        &mut libkrun_without_libkrun_args,
-        "--env",
-        NIX_NETWORK_DETECTION_PROXY_ENV,
     );
     remove_arg_pair(
         &mut libkrun_without_libkrun_args,
@@ -242,22 +233,37 @@ fn build_podman_args_treats_libkrun_cpu_count_as_noop_for_native_task_mode() {
 }
 
 #[test]
-fn build_podman_args_enables_passt_only_when_requested_for_libkrun_task_mode() {
+fn build_podman_args_enables_passt_by_default_for_libkrun_task_mode() {
     let runtime = sidecar_runtime();
-    let args = build_args(&runtime, TaskContainerMode::Libkrun, true, Some(12345));
+    let args = build_args(&runtime, TaskContainerMode::Libkrun, false, Some(12345));
 
     assert!(
         has_arg_pair(&args, "--annotation", KRUN_USE_PASST_ANNOTATION),
-        "libkrun args should include krun.use_passt=1 when passt is requested"
+        "libkrun args should include krun.use_passt=1 by default"
     );
     assert!(
         !has_arg_pair(&args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
-        "libkrun args should not include the proxy workaround when passt is requested"
+        "libkrun args should not include the proxy workaround with default passt"
     );
 }
 
 #[test]
-fn build_podman_args_treats_use_passt_as_noop_for_native_task_mode() {
+fn build_podman_args_uses_tsi_when_requested_for_libkrun_task_mode() {
+    let runtime = sidecar_runtime();
+    let args = build_args(&runtime, TaskContainerMode::Libkrun, true, Some(12345));
+
+    assert!(
+        !has_arg_pair(&args, "--annotation", KRUN_USE_PASST_ANNOTATION),
+        "libkrun TSI args should not include krun.use_passt=1"
+    );
+    assert!(
+        has_arg_pair(&args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
+        "libkrun TSI args should include the proxy workaround"
+    );
+}
+
+#[test]
+fn build_podman_args_treats_tsi_as_noop_for_native_task_mode() {
     let runtime = sidecar_runtime();
     let args = build_args(&runtime, TaskContainerMode::Native, true, None);
 
@@ -291,7 +297,7 @@ fn sidecar_runtime() -> NixRuntime {
 fn build_args(
     nix_runtime: &NixRuntime,
     task_mode: TaskContainerMode,
-    use_passt: bool,
+    use_tsi: bool,
     proxy_port: Option<u16>,
 ) -> Vec<String> {
     let libkrun_ram_mib = if task_mode == TaskContainerMode::Libkrun {
@@ -299,43 +305,31 @@ fn build_args(
     } else {
         None
     };
-    build_args_with_mem(
-        nix_runtime,
-        task_mode,
-        use_passt,
-        proxy_port,
-        libkrun_ram_mib,
-    )
+    build_args_with_mem(nix_runtime, task_mode, use_tsi, proxy_port, libkrun_ram_mib)
 }
 
 fn build_args_with_mem(
     nix_runtime: &NixRuntime,
     task_mode: TaskContainerMode,
-    use_passt: bool,
+    use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_ram_mib: Option<u32>,
 ) -> Vec<String> {
-    build_args_result(
-        nix_runtime,
-        task_mode,
-        use_passt,
-        proxy_port,
-        libkrun_ram_mib,
-    )
-    .expect("podman args should build")
+    build_args_result(nix_runtime, task_mode, use_tsi, proxy_port, libkrun_ram_mib)
+        .expect("podman args should build")
 }
 
 fn build_args_result(
     nix_runtime: &NixRuntime,
     task_mode: TaskContainerMode,
-    use_passt: bool,
+    use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_ram_mib: Option<u32>,
 ) -> anyhow::Result<Vec<String>> {
     build_args_result_with_cpu(
         nix_runtime,
         task_mode,
-        use_passt,
+        use_tsi,
         proxy_port,
         libkrun_ram_mib,
         None,
@@ -345,7 +339,7 @@ fn build_args_result(
 fn build_args_with_cpu(
     nix_runtime: &NixRuntime,
     task_mode: TaskContainerMode,
-    use_passt: bool,
+    use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_cpu_count: Option<u32>,
 ) -> Vec<String> {
@@ -357,7 +351,7 @@ fn build_args_with_cpu(
     build_args_result_with_cpu(
         nix_runtime,
         task_mode,
-        use_passt,
+        use_tsi,
         proxy_port,
         libkrun_ram_mib,
         libkrun_cpu_count,
@@ -368,7 +362,7 @@ fn build_args_with_cpu(
 fn build_args_result_with_cpu(
     nix_runtime: &NixRuntime,
     task_mode: TaskContainerMode,
-    use_passt: bool,
+    use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_ram_mib: Option<u32>,
     libkrun_cpu_count: Option<u32>,
@@ -382,7 +376,7 @@ fn build_args_result_with_cpu(
         sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         nix_runtime,
         task_mode,
-        use_passt,
+        use_tsi,
         libkrun_ram_mib,
         libkrun_cpu_count,
         proxy_port,

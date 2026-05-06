@@ -24,11 +24,10 @@ interactive task container to run as a normal native Podman container.
 - `fuse-overlayfs` (required for default sidecar mode; included by the
   `.#agentbox-prebuilt` package runtime environment)
 - For the default libkrun task runtime: a host Podman/crun stack that supports
-  `--runtime crun`, `run.oci.handler=krun`, and `/dev/kvm`. Add `--use-passt`
-  when you also want `krun.use_passt=1` and passt-based libkrun virtio-net
-  networking. This flake provides `.#crun` with `passt` on crun's runtime
-  `PATH`, and `.#podman` wired to that custom crun; install or otherwise expose
-  `.#podman` as the host `podman` on `PATH` if you want `agentbox` to use it.
+  `--runtime crun`, `run.oci.handler=krun`, `krun.use_passt=1`, and `/dev/kvm`.
+  This flake provides `.#crun` with `passt` on crun's runtime `PATH`, and
+  `.#podman` wired to that custom crun; install or otherwise expose `.#podman`
+  as the host `podman` on `PATH` if you want `agentbox` to use it.
 
 ---
 
@@ -89,7 +88,7 @@ nix build .#container
   repo-pinned `libkrunfw.so`.
 - `.#crun`: build `zeroqn/crun` branch `fix-passt-net` with this repo's libkrun
   override, krun handler support, and `pkgs.passt` on crun's runtime `PATH`
-  for opt-in `krun.use_passt=1` passt/libkrun debugging.
+  for default `krun.use_passt=1` passt/libkrun networking.
 - `.#podman`: build Podman against the custom crun so libkrun task runs inherit
   the flake-provided crun/passt runtime path.
 - `.#container`: Podman image archive.
@@ -218,10 +217,10 @@ Run the interactive task container with crun's libkrun handler:
 ./result/bin/agentbox
 ```
 
-Enable libkrun passt networking explicitly:
+Use libkrun TSI networking instead of default passt networking:
 
 ```bash
-./result/bin/agentbox --use-passt
+./result/bin/agentbox --tsi
 ```
 
 Set libkrun VM memory explicitly in integer GiB:
@@ -245,7 +244,7 @@ Run the interactive task container with normal native Podman instead:
 ./result/bin/agentbox --task-native
 ```
 
-`--use-passt` is libkrun-only; with `--task-native` it parses but has no effect.
+`--tsi` is libkrun-only; with `--task-native` it parses but has no effect.
 `--mem` is also libkrun-only; `--task-native --mem <GiB>` fails fast instead of
 configuring native Podman memory.
 
@@ -254,19 +253,18 @@ only:
 
 ```text
 --env AGENTBOX_KVM_DROP_TO_DEV=1
---env all_proxy=1
 --tmpfs /home/dev/.config:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/tmp:rw,exec,uid=1000,gid=1000,mode=700
---runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB> [--annotation krun.cpus=<count>]
+--runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB> [--annotation krun.cpus=<count>] --annotation krun.use_passt=1
 ```
 
-With `--use-passt`, `agentbox` replaces the `all_proxy=1` Nix network detection
-workaround with the passt annotation:
+With `--tsi`, `agentbox` omits the passt annotation and adds the `all_proxy=1`
+Nix network detection workaround:
 
 ```text
---runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB> --annotation krun.use_passt=1
+--env all_proxy=1 --runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB>
 ```
 
 The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
@@ -305,9 +303,9 @@ AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --task-native
 
 Direct sharing of the native sidecar Unix socket into a libkrun VM is not
 assumed to work. Libkrun mode points the guest at the native sidecar's TCP proxy.
-By default it sets `all_proxy=1` so Nix detects network availability via its
-proxy-environment check; `--use-passt` instead enables libkrun passt networking
-with `krun.use_passt=1`. Nix commands inside the KVM guest must still be
+By default it enables libkrun passt networking with `krun.use_passt=1`; `--tsi`
+instead sets `all_proxy=1` so Nix detects network availability via its
+proxy-environment check. Nix commands inside the KVM guest must still be
 validated before claiming success on a host Podman/crun/libkrun stack.
 
 Suggested manual validation:
@@ -316,7 +314,7 @@ Suggested manual validation:
 # Use the intended host Podman stack, for example after installing .#podman.
 podman run --runtime crun --annotation run.oci.handler=krun --annotation krun.use_passt=1 <image> true
 ./result/bin/agentbox
-./result/bin/agentbox --use-passt
+./result/bin/agentbox --tsi
 ./result/bin/agentbox --mem 8
 ./result/bin/agentbox --task-native
 # inside the task shell:
