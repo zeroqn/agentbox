@@ -3,8 +3,7 @@ use std::num::NonZero;
 
 use crate::TaskContainerMode;
 
-const LIBKRUN_CPU_THRESHOLD: usize = 8;
-const GENERIC_LIBKRUN_CPU_CAP: u32 = 16;
+const PASS_ALL_CPUS_THRESHOLD: u32 = 6;
 const HOST_CPU_RESERVATION: u32 = 2;
 
 pub(crate) fn resolve_libkrun_cpu_count(task_mode: TaskContainerMode) -> Result<Option<u32>> {
@@ -19,7 +18,7 @@ pub(crate) fn resolve_libkrun_cpu_count(task_mode: TaskContainerMode) -> Result<
 fn resolve_libkrun_cpu_count_for_host(task_mode: TaskContainerMode) -> Result<Option<u32>> {
     let available = std::thread::available_parallelism()
         .context("failed to detect available CPUs for libkrun krun.cpus default")?;
-    resolve_libkrun_cpu_count_from_available(task_mode, available, GENERIC_LIBKRUN_CPU_CAP)
+    resolve_libkrun_cpu_count_from_available(task_mode, available)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -30,31 +29,23 @@ fn resolve_libkrun_cpu_count_for_host(_task_mode: TaskContainerMode) -> Result<O
 fn resolve_libkrun_cpu_count_from_available(
     task_mode: TaskContainerMode,
     available: NonZero<usize>,
-    cap: u32,
 ) -> Result<Option<u32>> {
     if task_mode != TaskContainerMode::Libkrun {
         return Ok(None);
     }
 
-    if cap == 0 {
-        anyhow::bail!("libkrun CPU cap must be at least 1");
+    let available = u32::try_from(available.get())
+        .context("host available CPU count is too large for krun.cpus")?;
+    if available <= PASS_ALL_CPUS_THRESHOLD {
+        Ok(Some(available))
+    } else {
+        Ok(Some(available - HOST_CPU_RESERVATION))
     }
-
-    let available = available.get();
-    if available <= LIBKRUN_CPU_THRESHOLD {
-        return Ok(None);
-    }
-
-    let available =
-        u32::try_from(available).context("host available CPU count is too large for krun.cpus")?;
-    Ok(Some(
-        available.saturating_sub(HOST_CPU_RESERVATION).min(cap),
-    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::{resolve_libkrun_cpu_count_from_available, GENERIC_LIBKRUN_CPU_CAP};
+    use crate::cpu::resolve_libkrun_cpu_count_from_available;
     use crate::TaskContainerMode;
     use std::num::NonZero;
 
@@ -65,76 +56,48 @@ mod tests {
     #[test]
     fn native_mode_omits_cpu_count() {
         assert_eq!(
-            resolve_libkrun_cpu_count_from_available(
-                TaskContainerMode::Native,
-                available(32),
-                GENERIC_LIBKRUN_CPU_CAP,
-            )
-            .expect("native mode should resolve"),
+            resolve_libkrun_cpu_count_from_available(TaskContainerMode::Native, available(32))
+                .expect("native mode should resolve"),
             None
         );
     }
 
     #[test]
-    fn libkrun_default_cap_omits_cpu_count_up_to_threshold() {
-        for count in [1, 2, 8] {
+    fn libkrun_passes_all_available_cpus_up_to_threshold() {
+        for count in [1, 2, 6] {
             assert_eq!(
                 resolve_libkrun_cpu_count_from_available(
                     TaskContainerMode::Libkrun,
                     available(count),
-                    GENERIC_LIBKRUN_CPU_CAP,
                 )
                 .expect("libkrun CPU policy should resolve"),
-                None,
-                "{count} available CPUs should omit krun.cpus",
+                Some(count as u32),
+                "{count} available CPUs should pass all CPUs",
             );
         }
     }
 
     #[test]
-    fn libkrun_default_cap_reserves_host_cpus_and_caps_result() {
+    fn libkrun_reserves_two_host_cpus_above_threshold() {
         for (count, expected) in [
+            (7, Some(5)),
+            (8, Some(6)),
             (9, Some(7)),
             (10, Some(8)),
             (16, Some(14)),
-            (17, Some(15)),
             (18, Some(16)),
-            (32, Some(16)),
+            (32, Some(30)),
         ] {
             assert_eq!(
                 resolve_libkrun_cpu_count_from_available(
                     TaskContainerMode::Libkrun,
                     available(count),
-                    GENERIC_LIBKRUN_CPU_CAP,
                 )
                 .expect("libkrun CPU policy should resolve"),
                 expected,
                 "{count} available CPUs should map to {expected:?}",
             );
         }
-    }
-
-    #[test]
-    fn libkrun_cpu_count_supports_injected_lower_caps() {
-        assert_eq!(
-            resolve_libkrun_cpu_count_from_available(TaskContainerMode::Libkrun, available(16), 8)
-                .expect("cap 8 should resolve"),
-            Some(8)
-        );
-        assert_eq!(
-            resolve_libkrun_cpu_count_from_available(TaskContainerMode::Libkrun, available(9), 4)
-                .expect("cap 4 should resolve"),
-            Some(4)
-        );
-    }
-
-    #[test]
-    fn libkrun_cpu_count_rejects_zero_cap() {
-        let err =
-            resolve_libkrun_cpu_count_from_available(TaskContainerMode::Libkrun, available(9), 0)
-                .expect_err("zero cap should be rejected");
-
-        assert!(err.to_string().contains("CPU cap"));
     }
 
     #[cfg(target_pointer_width = "64")]
@@ -144,7 +107,6 @@ mod tests {
         let err = resolve_libkrun_cpu_count_from_available(
             TaskContainerMode::Libkrun,
             available(too_many),
-            GENERIC_LIBKRUN_CPU_CAP,
         )
         .expect_err("CPU counts above u32::MAX should fail");
 

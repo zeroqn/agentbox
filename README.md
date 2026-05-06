@@ -230,10 +230,10 @@ When `--mem` is omitted, default libkrun mode uses 80% of detected host memory,
 rounded down to a whole GiB, and passes that value to libkrun as MiB. For
 example, a 10 GiB host produces `krun.ram_mib=8192`.
 
-Default libkrun mode does not pin CPUs. On Linux hosts with 8 or fewer available
-CPUs, `agentbox` omits `krun.cpus` and keeps crun/libkrun's default CPU
-behavior. On larger generic Linux hosts, it reserves two CPUs for the host and
-passes `krun.cpus=min(available_cpus - 2, 16)`.
+Default libkrun mode does not pin CPUs. On Linux hosts with 6 or fewer available
+CPUs, `agentbox` passes all available CPUs to KVM with `krun.cpus=<available>`.
+On larger Linux hosts, it reserves two CPUs for the host and passes
+`krun.cpus=available_cpus - 2`.
 
 Run the interactive task container with normal native Podman instead:
 
