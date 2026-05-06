@@ -8,7 +8,7 @@ fn cli_accepts_no_arguments() {
     assert_eq!(cli.image, None);
     assert!(!cli.pull_latest);
     assert!(!cli.disable_nix_sidecar);
-    assert!(!cli.task_native);
+    assert!(!cli.native);
     assert!(!cli.tsi);
     assert_eq!(cli.mem_gib, None);
 }
@@ -60,10 +60,16 @@ fn cli_accepts_disable_nix_sidecar_flag() {
 }
 
 #[test]
-fn cli_accepts_task_native_flag() {
-    let cli =
-        Cli::try_parse_from(["agentbox", "--task-native"]).expect("--task-native should parse");
-    assert!(cli.task_native);
+fn cli_accepts_native_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--native"]).expect("--native should parse");
+    assert!(cli.native);
+}
+
+#[test]
+fn cli_rejects_removed_task_native_flag() {
+    let err = Cli::try_parse_from(["agentbox", "--task-native"])
+        .expect_err("--task-native should be rejected");
+    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
 }
 
 #[test]
@@ -71,7 +77,7 @@ fn cli_accepts_tsi_flag() {
     let cli = Cli::try_parse_from(["agentbox", "--tsi"]).expect("--tsi should parse");
     assert!(cli.tsi);
     assert!(
-        !cli.task_native,
+        !cli.native,
         "--tsi is parsed independently and does not imply native mode"
     );
 }

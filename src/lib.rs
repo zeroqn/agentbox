@@ -21,7 +21,9 @@ use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shar
 use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
 use podman::command::run_podman;
 use podman::task::{build_podman_args, TaskPodmanSpec};
-use sidecar::{cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarNixRuntime};
+use sidecar::{
+    cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec, SidecarNixRuntime,
+};
 use state::resolve_state_layout;
 
 const DEFAULT_IMAGE: &str = "localhost/agentbox:latest";
@@ -77,9 +79,47 @@ enum NixRuntime {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TaskContainerMode {
+enum ContainerRuntimeMode {
     Native,
     Libkrun,
+}
+
+impl ContainerRuntimeMode {
+    pub(crate) fn state_label(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Libkrun => "libkrun",
+        }
+    }
+}
+
+fn append_libkrun_runtime_args(
+    args: &mut Vec<String>,
+    libkrun_ram_mib: Option<u32>,
+    libkrun_cpu_count: Option<u32>,
+    use_passt: bool,
+) -> Result<()> {
+    args.push("--runtime".to_owned());
+    args.push("crun".to_owned());
+    args.push("--annotation".to_owned());
+    args.push("run.oci.handler=krun".to_owned());
+
+    let ram_mib = libkrun_ram_mib
+        .ok_or_else(|| anyhow::anyhow!("libkrun runtime requires a resolved krun.ram_mib value"))?;
+    args.push("--annotation".to_owned());
+    args.push(format!("{KRUN_RAM_MIB_ANNOTATION_PREFIX}{ram_mib}"));
+
+    if let Some(cpu_count) = libkrun_cpu_count {
+        args.push("--annotation".to_owned());
+        args.push(format!("{KRUN_CPUS_ANNOTATION_PREFIX}{cpu_count}"));
+    }
+
+    if use_passt {
+        args.push("--annotation".to_owned());
+        args.push(KRUN_USE_PASST_ANNOTATION.to_owned());
+    }
+
+    Ok(())
 }
 
 pub fn entrypoint() -> ExitCode {
@@ -110,16 +150,21 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let env_sidecar_enabled =
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
     let nix_sidecar_enabled = resolve_nix_sidecar_enabled(&cli, env_sidecar_enabled);
-    let task_mode = resolve_task_mode(cli.task_native);
-    validate_task_mode(task_mode, nix_sidecar_enabled, cli.mem_gib.is_some())?;
-    let libkrun_ram_mib = resolve_libkrun_ram_mib(task_mode, cli.mem_gib)?;
-    let libkrun_cpu_count = resolve_libkrun_cpu_count(task_mode)?;
+    let runtime_mode = resolve_container_runtime_mode(cli.native);
+    validate_runtime_mode(runtime_mode, nix_sidecar_enabled, cli.mem_gib.is_some())?;
+    let libkrun_ram_mib = resolve_libkrun_ram_mib(runtime_mode, cli.mem_gib)?;
+    let libkrun_cpu_count = resolve_libkrun_cpu_count(runtime_mode)?;
 
     let nix_runtime = if nix_sidecar_enabled {
         NixRuntime::Sidecar(prepare_sidecar_nix_runtime(
             &cwd,
             state_layout.root_dir(),
             &image,
+            SidecarDaemonRuntimeSpec {
+                runtime_mode,
+                libkrun_ram_mib,
+                libkrun_cpu_count,
+            },
         )?)
     } else {
         NixRuntime::Seeded(prepare_persistent_nix_root(
@@ -142,7 +187,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             cargo_mount: &cargo_mount,
             sccache_mount: &sccache_mount,
             nix_runtime: &nix_runtime,
-            task_mode,
+            runtime_mode,
             use_tsi: cli.tsi,
             libkrun_ram_mib,
             libkrun_cpu_count,
@@ -167,24 +212,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }
 
-fn resolve_task_mode(task_native: bool) -> TaskContainerMode {
-    if task_native {
-        TaskContainerMode::Native
+fn resolve_container_runtime_mode(native: bool) -> ContainerRuntimeMode {
+    if native {
+        ContainerRuntimeMode::Native
     } else {
-        TaskContainerMode::Libkrun
+        ContainerRuntimeMode::Libkrun
     }
 }
 
-fn validate_task_mode(
-    task_mode: TaskContainerMode,
+fn validate_runtime_mode(
+    runtime_mode: ContainerRuntimeMode,
     nix_sidecar_enabled: bool,
     explicit_mem: bool,
 ) -> Result<()> {
-    validate_libkrun_memory_mode(task_mode, explicit_mem)?;
+    validate_libkrun_memory_mode(runtime_mode, explicit_mem)?;
 
-    if task_mode == TaskContainerMode::Libkrun && !nix_sidecar_enabled {
+    if runtime_mode == ContainerRuntimeMode::Libkrun && !nix_sidecar_enabled {
         anyhow::bail!(
-            "default libkrun task runtime requires native nix sidecar mode; use --task-native or remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
+            "default libkrun runtime requires nix sidecar mode; use --native or remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
         );
     }
 

@@ -2,6 +2,8 @@ use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::ContainerRuntimeMode;
+
 use super::{PodmanImageMountMode, SidecarPaths, SidecarState};
 
 pub fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> {
@@ -50,12 +52,13 @@ pub fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result
         None => String::new(),
     };
     let contents = format!(
-        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\n{proxy_port_line}",
+        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\nruntime_mode={}\n{proxy_port_line}",
         state.image,
         state.image_id,
         state.image_mount_path.display(),
         state.sidecar_name,
-        mount_mode
+        mount_mode,
+        state.runtime_mode.state_label()
     );
 
     fs::write(&paths.state_file, contents)
@@ -69,6 +72,7 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
     let mut sidecar_name = None;
     let mut mount_mode = None;
     let mut proxy_port = None;
+    let mut runtime_mode = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -104,6 +108,19 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
                         )
                     })?);
                 }
+                "runtime_mode" => {
+                    runtime_mode = Some(match value {
+                        "native" => ContainerRuntimeMode::Native,
+                        "libkrun" => ContainerRuntimeMode::Libkrun,
+                        _ => {
+                            return Err(anyhow!(
+                                "unsupported runtime_mode '{}' in '{}'",
+                                value,
+                                state_file.display()
+                            ))
+                        }
+                    });
+                }
                 _ => {}
             }
         }
@@ -118,6 +135,7 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
                 sidecar_name,
                 mount_mode: mount_mode.unwrap_or(PodmanImageMountMode::Direct),
                 proxy_port,
+                runtime_mode: runtime_mode.unwrap_or(ContainerRuntimeMode::Native),
             })
         }
         _ => Err(anyhow!("'{}' is incomplete", state_file.display())),

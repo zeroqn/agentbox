@@ -13,9 +13,9 @@ use std::process::Stdio;
 use crate::mounts::format::format_mount_arg;
 use crate::podman::command::{run_podman, run_podman_output};
 use crate::{
-    CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR, HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR,
-    HOST_NIX_WORK_DIR, NIX_STORE_DIR, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
-    TASK_CONTAINER_SIDECAR_LABEL,
+    append_libkrun_runtime_args, ContainerRuntimeMode, CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR,
+    HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR, HOST_NIX_WORK_DIR, NIX_STORE_DIR,
+    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
 };
 
 use image_mount::{inspect_image_id, mount_image_with_lowerdir, unmount_image};
@@ -38,12 +38,20 @@ struct SidecarState {
     sidecar_name: String,
     mount_mode: PodmanImageMountMode,
     proxy_port: Option<u16>,
+    runtime_mode: ContainerRuntimeMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PodmanImageMountMode {
     Direct,
     Unshare,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SidecarDaemonRuntimeSpec {
+    pub runtime_mode: ContainerRuntimeMode,
+    pub libkrun_ram_mib: Option<u32>,
+    pub libkrun_cpu_count: Option<u32>,
 }
 
 impl SidecarPaths {
@@ -58,8 +66,18 @@ impl SidecarPaths {
 }
 
 impl SidecarState {
-    fn matches(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
+    fn matches_identity(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
         self.image == image && self.image_id == image_id && self.sidecar_name == sidecar_name
+    }
+
+    fn matches(
+        &self,
+        image: &str,
+        image_id: &str,
+        sidecar_name: &str,
+        runtime_mode: ContainerRuntimeMode,
+    ) -> bool {
+        self.matches_identity(image, image_id, sidecar_name) && self.runtime_mode == runtime_mode
     }
 }
 
@@ -72,10 +90,11 @@ impl PodmanImageMountMode {
     }
 }
 
-pub fn prepare_sidecar_nix_runtime(
+pub(crate) fn prepare_sidecar_nix_runtime(
     cwd: &Path,
     state_root: &Path,
     image: &str,
+    runtime_spec: SidecarDaemonRuntimeSpec,
 ) -> Result<SidecarNixRuntime> {
     ensure_command_available("fuse-overlayfs", "required for sidecar mode")?;
 
@@ -94,7 +113,14 @@ pub fn prepare_sidecar_nix_runtime(
     let previous_state = state::read_sidecar_state(&paths)?;
 
     if let Some(state) = previous_state.as_ref() {
-        if should_reuse_previous_sidecar(state, &paths, image, &image_id, &sidecar_name)? {
+        if should_reuse_previous_sidecar(
+            state,
+            &paths,
+            image,
+            &image_id,
+            &sidecar_name,
+            runtime_spec.runtime_mode,
+        )? {
             let proxy_port = resolve_sidecar_proxy_port(&sidecar_name).unwrap_or_else(|err| {
                 eprintln!("agentbox: warning: failed to resolve sidecar proxy port: {err:#}");
                 19876
@@ -108,12 +134,21 @@ pub fn prepare_sidecar_nix_runtime(
         }
     }
 
+    reject_active_runtime_mode_mismatch(
+        previous_state.as_ref(),
+        image,
+        &image_id,
+        &sidecar_name,
+        runtime_spec.runtime_mode,
+    )?;
+
     recreate_sidecar_stack(
         &paths,
         image,
         &image_id,
         &sidecar_name,
         previous_state.as_ref(),
+        runtime_spec,
     )
 }
 
@@ -136,6 +171,7 @@ fn recreate_sidecar_stack(
     image_id: &str,
     sidecar_name: &str,
     previous_state: Option<&SidecarState>,
+    runtime_spec: SidecarDaemonRuntimeSpec,
 ) -> Result<SidecarNixRuntime> {
     if let Some(state) = previous_state {
         cleanup_sidecar_container(&state.sidecar_name)?;
@@ -157,7 +193,14 @@ fn recreate_sidecar_stack(
     )?;
 
     let merged_mount_arg = format_mount_arg(&paths.merged_dir, CONTAINER_NIX_DIR)?;
-    let sidecar_args = build_sidecar_podman_args(image, sidecar_name, &merged_mount_arg);
+    let sidecar_args = build_sidecar_podman_args(
+        image,
+        sidecar_name,
+        &merged_mount_arg,
+        runtime_spec.runtime_mode,
+        runtime_spec.libkrun_ram_mib,
+        runtime_spec.libkrun_cpu_count,
+    )?;
     let status = run_podman(
         sidecar_args,
         Stdio::null(),
@@ -186,6 +229,7 @@ fn recreate_sidecar_stack(
         sidecar_name: sidecar_name.to_owned(),
         mount_mode,
         proxy_port: Some(proxy_port),
+        runtime_mode: runtime_spec.runtime_mode,
     };
     state::write_sidecar_state(paths, &new_state)?;
 
@@ -256,8 +300,9 @@ fn should_reuse_previous_sidecar(
     image: &str,
     image_id: &str,
     sidecar_name: &str,
+    runtime_mode: ContainerRuntimeMode,
 ) -> Result<bool> {
-    let identity_matches = state.matches(image, image_id, sidecar_name);
+    let identity_matches = state.matches(image, image_id, sidecar_name, runtime_mode);
     if !identity_matches {
         return Ok(false);
     }
@@ -277,6 +322,55 @@ fn should_reuse_previous_sidecar(
         protected_same_repo_reuse,
         health::sidecar_stack_is_healthy(state, paths, image)?,
     ))
+}
+
+fn reject_active_runtime_mode_mismatch(
+    state: Option<&SidecarState>,
+    image: &str,
+    image_id: &str,
+    sidecar_name: &str,
+    requested_mode: ContainerRuntimeMode,
+) -> Result<()> {
+    let Some(state) = state else {
+        return Ok(());
+    };
+
+    if !state.matches_identity(image, image_id, sidecar_name)
+        || state.runtime_mode == requested_mode
+    {
+        return Ok(());
+    }
+
+    if active_runtime_mode_mismatch_applies(
+        state,
+        image,
+        image_id,
+        sidecar_name,
+        requested_mode,
+        sidecar_has_running_task_containers(&state.sidecar_name)?,
+    ) {
+        anyhow::bail!(
+            "nix-daemon sidecar '{}' is running in {} mode while this run requested {} mode and matching task containers are still active; wait for those tasks to exit or rerun with the matching runtime mode",
+            state.sidecar_name,
+            state.runtime_mode.state_label(),
+            requested_mode.state_label()
+        );
+    }
+
+    Ok(())
+}
+
+fn active_runtime_mode_mismatch_applies(
+    state: &SidecarState,
+    image: &str,
+    image_id: &str,
+    sidecar_name: &str,
+    requested_mode: ContainerRuntimeMode,
+    running_task_containers: bool,
+) -> bool {
+    state.matches_identity(image, image_id, sidecar_name)
+        && state.runtime_mode != requested_mode
+        && running_task_containers
 }
 
 fn protected_same_repo_reuse_applies(
@@ -333,8 +427,15 @@ fn build_sidecar_task_probe_args(sidecar_name: &str) -> Vec<String> {
     ]
 }
 
-fn build_sidecar_podman_args(image: &str, sidecar_name: &str, merged_mount: &str) -> Vec<String> {
-    vec![
+fn build_sidecar_podman_args(
+    image: &str,
+    sidecar_name: &str,
+    merged_mount: &str,
+    runtime_mode: ContainerRuntimeMode,
+    libkrun_ram_mib: Option<u32>,
+    libkrun_cpu_count: Option<u32>,
+) -> Result<Vec<String>> {
+    let mut args = vec![
         "run".to_owned(),
         "-d".to_owned(),
         "--name".to_owned(),
@@ -345,11 +446,20 @@ fn build_sidecar_podman_args(image: &str, sidecar_name: &str, merged_mount: &str
         merged_mount.to_owned(),
         "--publish".to_owned(),
         "19876".to_owned(),
+    ];
+
+    if runtime_mode == ContainerRuntimeMode::Libkrun {
+        append_libkrun_runtime_args(&mut args, libkrun_ram_mib, libkrun_cpu_count, true)?;
+    }
+
+    args.extend([
         image.to_owned(),
         "bash".to_owned(),
         "-lc".to_owned(),
         build_sidecar_start_script(),
-    ]
+    ]);
+
+    Ok(args)
 }
 
 fn build_sidecar_start_script() -> String {

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 fn build_podman_args_includes_persistent_nix_mounts() {
     let root = PersistentNixRoot::new(std::path::Path::new("/tmp/state/agentbox/project"));
     let runtime = NixRuntime::Seeded(root);
-    let args = build_args(&runtime, TaskContainerMode::Native, false, None);
+    let args = build_args(&runtime, ContainerRuntimeMode::Native, false, None);
     assert_eq!(args[3], "--userns");
     assert_eq!(args[4], "keep-id");
     assert!(args.contains(&"--hostname".to_owned()));
@@ -45,7 +45,7 @@ fn build_podman_args_includes_persistent_nix_mounts() {
 #[test]
 fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     let runtime = sidecar_runtime();
-    let args = build_args(&runtime, TaskContainerMode::Native, false, None);
+    let args = build_args(&runtime, ContainerRuntimeMode::Native, false, None);
 
     assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix:ro".to_owned()));
     assert!(args.contains(&"/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned()));
@@ -83,8 +83,8 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
 #[test]
 fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
     let runtime = sidecar_runtime();
-    let native_args = build_args(&runtime, TaskContainerMode::Native, false, None);
-    let libkrun_args = build_args(&runtime, TaskContainerMode::Libkrun, false, Some(12345));
+    let native_args = build_args(&runtime, ContainerRuntimeMode::Native, false, None);
+    let libkrun_args = build_args(&runtime, ContainerRuntimeMode::Libkrun, false, Some(12345));
 
     // Verify host UID/GID env vars are present in libkrun mode.
     let has_host_uid = libkrun_args
@@ -180,7 +180,7 @@ fn build_podman_args_includes_libkrun_cpu_annotation_when_resolved() {
     let runtime = sidecar_runtime();
     let args = build_args_with_cpu(
         &runtime,
-        TaskContainerMode::Libkrun,
+        ContainerRuntimeMode::Libkrun,
         false,
         Some(12345),
         Some(16),
@@ -205,7 +205,7 @@ fn build_podman_args_omits_libkrun_cpu_annotation_when_unresolved() {
     let runtime = sidecar_runtime();
     let args = build_args_with_cpu(
         &runtime,
-        TaskContainerMode::Libkrun,
+        ContainerRuntimeMode::Libkrun,
         false,
         Some(12345),
         None,
@@ -222,7 +222,13 @@ fn build_podman_args_omits_libkrun_cpu_annotation_when_unresolved() {
 #[test]
 fn build_podman_args_treats_libkrun_cpu_count_as_noop_for_native_task_mode() {
     let runtime = sidecar_runtime();
-    let args = build_args_with_cpu(&runtime, TaskContainerMode::Native, false, None, Some(16));
+    let args = build_args_with_cpu(
+        &runtime,
+        ContainerRuntimeMode::Native,
+        false,
+        None,
+        Some(16),
+    );
 
     assert!(
         !args
@@ -235,7 +241,7 @@ fn build_podman_args_treats_libkrun_cpu_count_as_noop_for_native_task_mode() {
 #[test]
 fn build_podman_args_enables_passt_by_default_for_libkrun_task_mode() {
     let runtime = sidecar_runtime();
-    let args = build_args(&runtime, TaskContainerMode::Libkrun, false, Some(12345));
+    let args = build_args(&runtime, ContainerRuntimeMode::Libkrun, false, Some(12345));
 
     assert!(
         has_arg_pair(&args, "--annotation", KRUN_USE_PASST_ANNOTATION),
@@ -250,7 +256,7 @@ fn build_podman_args_enables_passt_by_default_for_libkrun_task_mode() {
 #[test]
 fn build_podman_args_uses_tsi_when_requested_for_libkrun_task_mode() {
     let runtime = sidecar_runtime();
-    let args = build_args(&runtime, TaskContainerMode::Libkrun, true, Some(12345));
+    let args = build_args(&runtime, ContainerRuntimeMode::Libkrun, true, Some(12345));
 
     assert!(
         !has_arg_pair(&args, "--annotation", KRUN_USE_PASST_ANNOTATION),
@@ -265,7 +271,7 @@ fn build_podman_args_uses_tsi_when_requested_for_libkrun_task_mode() {
 #[test]
 fn build_podman_args_treats_tsi_as_noop_for_native_task_mode() {
     let runtime = sidecar_runtime();
-    let args = build_args(&runtime, TaskContainerMode::Native, true, None);
+    let args = build_args(&runtime, ContainerRuntimeMode::Native, true, None);
 
     assert!(
         !has_arg_pair(&args, "--annotation", KRUN_USE_PASST_ANNOTATION),
@@ -280,7 +286,7 @@ fn build_podman_args_treats_tsi_as_noop_for_native_task_mode() {
 #[test]
 fn build_podman_args_rejects_libkrun_mode_without_resolved_memory() {
     let runtime = sidecar_runtime();
-    let err = build_args_result(&runtime, TaskContainerMode::Libkrun, false, None, None)
+    let err = build_args_result(&runtime, ContainerRuntimeMode::Libkrun, false, None, None)
         .expect_err("libkrun without resolved memory should fail");
 
     assert!(err.to_string().contains("requires a resolved krun.ram_mib"));
@@ -297,11 +303,11 @@ fn sidecar_runtime() -> NixRuntime {
 
 fn build_args(
     nix_runtime: &NixRuntime,
-    task_mode: TaskContainerMode,
+    task_mode: ContainerRuntimeMode,
     use_tsi: bool,
     proxy_port: Option<u16>,
 ) -> Vec<String> {
-    let libkrun_ram_mib = if task_mode == TaskContainerMode::Libkrun {
+    let libkrun_ram_mib = if task_mode == ContainerRuntimeMode::Libkrun {
         Some(8192)
     } else {
         None
@@ -311,7 +317,7 @@ fn build_args(
 
 fn build_args_with_mem(
     nix_runtime: &NixRuntime,
-    task_mode: TaskContainerMode,
+    task_mode: ContainerRuntimeMode,
     use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_ram_mib: Option<u32>,
@@ -322,7 +328,7 @@ fn build_args_with_mem(
 
 fn build_args_result(
     nix_runtime: &NixRuntime,
-    task_mode: TaskContainerMode,
+    task_mode: ContainerRuntimeMode,
     use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_ram_mib: Option<u32>,
@@ -339,12 +345,12 @@ fn build_args_result(
 
 fn build_args_with_cpu(
     nix_runtime: &NixRuntime,
-    task_mode: TaskContainerMode,
+    task_mode: ContainerRuntimeMode,
     use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_cpu_count: Option<u32>,
 ) -> Vec<String> {
-    let libkrun_ram_mib = if task_mode == TaskContainerMode::Libkrun {
+    let libkrun_ram_mib = if task_mode == ContainerRuntimeMode::Libkrun {
         Some(8192)
     } else {
         None
@@ -362,7 +368,7 @@ fn build_args_with_cpu(
 
 fn build_args_result_with_cpu(
     nix_runtime: &NixRuntime,
-    task_mode: TaskContainerMode,
+    task_mode: ContainerRuntimeMode,
     use_tsi: bool,
     proxy_port: Option<u16>,
     libkrun_ram_mib: Option<u32>,
@@ -376,7 +382,7 @@ fn build_args_result_with_cpu(
         cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
         sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
         nix_runtime,
-        task_mode,
+        runtime_mode: task_mode,
         use_tsi,
         libkrun_ram_mib,
         libkrun_cpu_count,

@@ -129,7 +129,11 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
         crate::DEFAULT_IMAGE,
         "agentbox-nix-sidecar-abc",
         "/tmp/state/agentbox/project/nix-merged:/nix",
-    );
+        ContainerRuntimeMode::Native,
+        None,
+        None,
+    )
+    .expect("native sidecar args should build");
 
     assert_eq!(args[0], "run");
     assert!(args.contains(&"-d".to_owned()));
@@ -151,6 +155,42 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
 }
 
 #[test]
+fn build_sidecar_podman_args_adds_libkrun_runtime_args_in_default_mode() {
+    let args = build_sidecar_podman_args(
+        crate::DEFAULT_IMAGE,
+        "agentbox-nix-sidecar-abc",
+        "/tmp/state/agentbox/project/nix-merged:/nix",
+        ContainerRuntimeMode::Libkrun,
+        Some(8192),
+        Some(6),
+    )
+    .expect("libkrun sidecar args should build");
+
+    assert!(args
+        .windows(2)
+        .any(|w| w[0] == "--runtime" && w[1] == "crun"));
+    assert!(args
+        .windows(2)
+        .any(|w| w[0] == "--annotation" && w[1] == "run.oci.handler=krun"));
+    assert!(args
+        .windows(2)
+        .any(|w| w[0] == "--annotation" && w[1] == "krun.ram_mib=8192"));
+    assert!(args
+        .windows(2)
+        .any(|w| w[0] == "--annotation" && w[1] == "krun.cpus=6"));
+    assert!(args
+        .windows(2)
+        .any(|w| { w[0] == "--annotation" && w[1] == crate::KRUN_USE_PASST_ANNOTATION }));
+    assert!(!args.contains(&crate::TASK_KVM_DROP_TO_DEV_ENV.to_owned()));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.starts_with(crate::HOST_UID_ENV_PREFIX)));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.starts_with(crate::HOST_GID_ENV_PREFIX)));
+}
+
+#[test]
 fn sidecar_state_round_trip_via_state_file() {
     let dir = tempfile::tempdir().expect("tempdir should be created");
     let paths = SidecarPaths::new(&dir.path().join("state").join("agentbox").join("project"));
@@ -161,6 +201,7 @@ fn sidecar_state_round_trip_via_state_file() {
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
         mount_mode: PodmanImageMountMode::Unshare,
         proxy_port: Some(12345),
+        runtime_mode: ContainerRuntimeMode::Libkrun,
     };
 
     state::write_sidecar_state(&paths, &state).expect("state should be written");
@@ -174,10 +215,11 @@ fn sidecar_state_round_trip_via_state_file() {
     assert_eq!(parsed.sidecar_name, state.sidecar_name);
     assert_eq!(parsed.mount_mode, state.mount_mode);
     assert_eq!(parsed.proxy_port, state.proxy_port);
+    assert_eq!(parsed.runtime_mode, state.runtime_mode);
 }
 
 #[test]
-fn sidecar_state_without_mount_mode_defaults_to_direct() {
+fn sidecar_state_without_mount_or_runtime_mode_defaults_to_direct_native() {
     let dir = tempfile::tempdir().expect("tempdir should be created");
     let paths = SidecarPaths::new(&dir.path().join("state").join("agentbox").join("project"));
     fs::create_dir_all(
@@ -197,6 +239,71 @@ fn sidecar_state_without_mount_mode_defaults_to_direct() {
         .expect("state should parse")
         .expect("state should exist");
     assert_eq!(parsed.mount_mode, PodmanImageMountMode::Direct);
+    assert_eq!(parsed.runtime_mode, ContainerRuntimeMode::Native);
+}
+
+#[test]
+fn sidecar_state_matches_include_runtime_mode() {
+    let state = SidecarState {
+        image: crate::DEFAULT_IMAGE.to_owned(),
+        image_id: "sha256:abc123".to_owned(),
+        image_mount_path: PathBuf::from("/tmp/podman/mounts/abc"),
+        sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
+        mount_mode: PodmanImageMountMode::Direct,
+        proxy_port: Some(12345),
+        runtime_mode: ContainerRuntimeMode::Native,
+    };
+
+    assert!(state.matches(
+        crate::DEFAULT_IMAGE,
+        "sha256:abc123",
+        "agentbox-nix-sidecar-abc",
+        ContainerRuntimeMode::Native
+    ));
+    assert!(!state.matches(
+        crate::DEFAULT_IMAGE,
+        "sha256:abc123",
+        "agentbox-nix-sidecar-abc",
+        ContainerRuntimeMode::Libkrun
+    ));
+}
+
+#[test]
+fn active_runtime_mode_mismatch_blocks_only_matching_running_tasks() {
+    let state = SidecarState {
+        image: crate::DEFAULT_IMAGE.to_owned(),
+        image_id: "sha256:abc123".to_owned(),
+        image_mount_path: PathBuf::from("/tmp/podman/mounts/abc"),
+        sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
+        mount_mode: PodmanImageMountMode::Direct,
+        proxy_port: Some(12345),
+        runtime_mode: ContainerRuntimeMode::Native,
+    };
+
+    assert!(active_runtime_mode_mismatch_applies(
+        &state,
+        crate::DEFAULT_IMAGE,
+        "sha256:abc123",
+        "agentbox-nix-sidecar-abc",
+        ContainerRuntimeMode::Libkrun,
+        true
+    ));
+    assert!(!active_runtime_mode_mismatch_applies(
+        &state,
+        crate::DEFAULT_IMAGE,
+        "sha256:abc123",
+        "agentbox-nix-sidecar-abc",
+        ContainerRuntimeMode::Libkrun,
+        false
+    ));
+    assert!(!active_runtime_mode_mismatch_applies(
+        &state,
+        crate::DEFAULT_IMAGE,
+        "sha256:abc123",
+        "agentbox-nix-sidecar-abc",
+        ContainerRuntimeMode::Native,
+        true
+    ));
 }
 
 #[test]

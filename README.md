@@ -10,9 +10,9 @@ host, and supports two Nix runtime modes:
   `nix-daemon` sidecar (no `/nix/store` seed copy).
 - **Seeded mode (fallback):** copies `/nix` into project state on first run.
 
-By default, the interactive task container runs through crun's libkrun handler
-while the Nix sidecar stays native. Use `--task-native` when you need the
-interactive task container to run as a normal native Podman container.
+By default, the interactive task container and `nix-daemon` sidecar daemon run
+through crun's libkrun handler. Use `--native` when you need both runtime
+containers to run as normal native Podman containers.
 
 ---
 
@@ -23,7 +23,7 @@ interactive task container to run as a normal native Podman container.
 - `nix` (for building via flake)
 - `fuse-overlayfs` (required for default sidecar mode; included by the
   `.#agentbox-prebuilt` package runtime environment)
-- For the default libkrun task runtime: a host Podman/crun stack that supports
+- For the default libkrun runtime: a host Podman/crun stack that supports
   `--runtime crun`, `run.oci.handler=krun`, `krun.use_passt=1`, and `/dev/kvm`.
   This flake provides `.#crun` with `passt` on crun's runtime `PATH`, and
   `.#podman` wired to that custom crun; install or otherwise expose `.#podman`
@@ -89,8 +89,8 @@ nix build .#container
 - `.#crun`: build `zeroqn/crun` branch `fix-passt-net` with this repo's libkrun
   override, krun handler support, and `pkgs.passt` on crun's runtime `PATH`
   for default `krun.use_passt=1` passt/libkrun networking.
-- `.#podman`: build Podman against the custom crun so libkrun task runs inherit
-  the flake-provided crun/passt runtime path.
+- `.#podman`: build Podman against the custom crun so default libkrun task and
+  sidecar daemon runs inherit the flake-provided crun/passt runtime path.
 - `.#container`: Podman image archive.
 
 ---
@@ -148,10 +148,12 @@ What it does (high level):
 1. Resolves the selected image and mounts its filesystem.
 2. Uses image `/nix` as `lowerdir` for host `fuse-overlayfs`.
 3. Builds external merged nix tree under project state.
-4. Starts/reuses a deterministic `nix-daemon` sidecar and preserves that
-   sidecar while matching task containers are still running.
-5. Starts the interactive container with read-only `/nix` + daemon socket.
-6. When the last matching task container exits, removes the idle sidecar and
+4. Starts/reuses a deterministic `nix-daemon` sidecar daemon. In default mode,
+   that daemon container uses crun/libkrun; with `--native`, it uses normal
+   native Podman.
+5. Preserves that sidecar while matching task containers are still running.
+6. Starts the interactive container with read-only `/nix` + daemon socket.
+7. When the last matching task container exits, removes the idle sidecar and
    unmounts the `nix-merged` FUSE overlay in the matching Podman mount
    namespace so `fuse-overlayfs` does not linger.
 
@@ -164,16 +166,22 @@ Sidecar metadata is saved at:
 <state-root>/nix-sidecar.state
 ```
 
-Disable sidecar mode for one native task run:
+The metadata includes the sidecar daemon runtime mode. Legacy state files without
+that field are treated as `native`; switching between native and default libkrun
+mode recreates an idle sidecar instead of silently reusing one started under the
+wrong runtime. If matching task containers are still running, `agentbox` fails
+with guidance instead of removing their active sidecar.
+
+Disable sidecar mode for one native run:
 
 ```bash
-./result/bin/agentbox --task-native --disable-nix-sidecar
+./result/bin/agentbox --native --disable-nix-sidecar
 ```
 
-Or disable the sidecar globally when also opting into native task runtime:
+Or disable the sidecar globally when also opting into native runtime:
 
 ```bash
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --task-native
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --native
 ```
 
 ---
@@ -186,9 +194,9 @@ then reuses that data across runs.
 Use seeded mode:
 
 ```bash
-./result/bin/agentbox --task-native --disable-nix-sidecar
+./result/bin/agentbox --native --disable-nix-sidecar
 # or
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --task-native
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --native
 ```
 
 State layout:
@@ -210,9 +218,10 @@ inconsistent and refuses to auto-seed.
 
 ---
 
-### Default libkrun task runtime
+### Default libkrun runtime
 
-Run the interactive task container with crun's libkrun handler:
+Run the interactive task container and sidecar daemon with crun's libkrun
+handler:
 
 ```bash
 ./result/bin/agentbox
@@ -239,39 +248,39 @@ CPUs, `agentbox` passes all available CPUs to KVM with `krun.cpus=<available>`.
 On larger Linux hosts, it reserves two CPUs for the host and passes
 `krun.cpus=available_cpus - 2`.
 
-Run the interactive task container with normal native Podman instead:
+Run the task and sidecar daemon containers with normal native Podman instead:
 
 ```bash
-./result/bin/agentbox --task-native
+./result/bin/agentbox --native
 ```
 
-`--tsi` is libkrun-only; with `--task-native` it parses but has no effect.
-`--mem` is also libkrun-only; `--task-native --mem <GiB>` fails fast instead of
+`--tsi` is libkrun-only; with `--native` it parses but has no effect.
+`--mem` is also libkrun-only; `--native --mem <GiB>` fails fast instead of
 configuring native Podman memory.
 
-Default libkrun mode adds the following Podman arguments to the task container
-only:
+Default libkrun mode adds the following common Podman arguments to the task and
+sidecar daemon containers:
 
 ```text
---env AGENTBOX_KVM_DROP_TO_DEV=1
---tmpfs /home/dev/.config:rw,exec,uid=1000,gid=1000,mode=700
---tmpfs /home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700
---tmpfs /home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700
---tmpfs /home/dev/.cache/tmp:rw,exec,uid=1000,gid=1000,mode=700
 --runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB> [--annotation krun.cpus=<count>] --annotation krun.use_passt=1
 ```
 
-With `--tsi`, `agentbox` omits the passt annotation and adds the `all_proxy=1`
-Nix network detection workaround:
+The task container also receives task-only drop/identity arguments such as
+`AGENTBOX_KVM_DROP_TO_DEV=1` and host UID/GID environment values. The root
+sidecar daemon does not receive those task-only arguments.
+
+With `--tsi`, `agentbox` omits the passt annotation from the task container and
+adds the `all_proxy=1` Nix network detection workaround there. The sidecar daemon
+keeps publish-compatible passt networking so `--publish 19876` remains valid:
 
 ```text
 --env all_proxy=1 --runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB>
 ```
 
-The native `nix-daemon` sidecar remains the only Nix daemon authority. Sidecar
-containers, sidecar health probes, image mounts, and cleanup probes remain
-normal native Podman containers; they do not receive the libkrun task runtime
-arguments or the task-only `AGENTBOX_KVM_DROP_TO_DEV` marker.
+The `nix-daemon` sidecar remains the only Nix daemon authority. The sidecar
+daemon container receives libkrun runtime arguments by default, but sidecar
+health probes, image mounts, port lookup, task probes, cleanup probes, and mount
+inspection remain normal native Podman operations.
 
 KVM guests do not share the native Podman user namespace boundary in the same
 way as a normal rootless container. If libkrun starts the interactive task shell
@@ -279,11 +288,9 @@ as root, the image entrypoint uses the task-only marker or an interactive
 `fish -l` task command to drop to the bundled `dev` identity (`1000:1000`)
 before starting the shell. Native task containers keep the existing dynamic
 `--userns=keep-id` behavior, and the root-required sidecar keeps running as
-root. The task command also overlays fish/starship mutable state with tmpfs
-mounts under `/home/dev/.config`, `/home/dev/.local`,
-`/home/dev/.cache/starship`, and `/home/dev/.cache/tmp`, because libkrun can
-expose image-backed home directories as owned by `dev` while still rejecting
-writes from the dropped `dev` shell.
+root. The task command also uses writable host/cache mounts for Codex, Cargo,
+and sccache state while keeping sidecar-specific root behavior isolated to the
+sidecar daemon.
 
 Because this behavior is split between task launch arguments and the image
 entrypoint, rebuild the `agentbox` binary after changing task arguments and
@@ -294,18 +301,19 @@ nix build .#container
 podman load -i result
 ```
 
-Default libkrun task runtime requires sidecar mode. Use `--task-native` for
+Default libkrun runtime requires sidecar mode. Use `--native` for
 seeded mode:
 
 ```bash
-./result/bin/agentbox --task-native --disable-nix-sidecar
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --task-native
+./result/bin/agentbox --native --disable-nix-sidecar
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --native
 ```
 
-Direct sharing of the native sidecar Unix socket into a libkrun VM is not
-assumed to work. Libkrun mode points the guest at the native sidecar's TCP proxy.
-By default it enables libkrun passt networking with `krun.use_passt=1`; `--tsi`
-instead sets `all_proxy=1` so Nix detects network availability via its
+Direct sharing of the sidecar Unix socket into a separate libkrun VM is not
+assumed to work. Libkrun task mode points the guest at the sidecar daemon's TCP
+proxy. By default, task and sidecar daemon libkrun containers enable passt
+networking with `krun.use_passt=1`; `--tsi` changes only the task container by
+setting `all_proxy=1` so Nix detects network availability via its
 proxy-environment check. Nix commands inside the KVM guest must still be
 validated before claiming success on a host Podman/crun/libkrun stack.
 
@@ -317,7 +325,7 @@ podman run --runtime crun --annotation run.oci.handler=krun --annotation krun.us
 ./result/bin/agentbox
 ./result/bin/agentbox --tsi
 ./result/bin/agentbox --mem 8
-./result/bin/agentbox --task-native
+./result/bin/agentbox --native
 # inside the task shell:
 id -u
 id -g
@@ -327,9 +335,9 @@ nix build nixpkgs#hello --no-link
 ```
 
 If these Nix commands fail, record the host details and do not treat the mode as
-a working KVM Nix setup. The guest-to-host proxy forwards guest requests to a
-native host-side daemon authority, so transport and security-boundary changes
-must be documented explicitly.
+a working KVM Nix setup. The guest-to-sidecar proxy forwards task requests to the
+sidecar daemon authority, so transport and security-boundary changes must be
+documented explicitly.
 
 ---
 

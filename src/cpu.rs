@@ -1,36 +1,36 @@
 use anyhow::{Context, Result};
 use std::num::NonZero;
 
-use crate::TaskContainerMode;
+use crate::ContainerRuntimeMode;
 
 const PASS_ALL_CPUS_THRESHOLD: u32 = 6;
 const HOST_CPU_RESERVATION: u32 = 2;
 
-pub(crate) fn resolve_libkrun_cpu_count(task_mode: TaskContainerMode) -> Result<Option<u32>> {
-    if task_mode != TaskContainerMode::Libkrun {
+pub(crate) fn resolve_libkrun_cpu_count(runtime_mode: ContainerRuntimeMode) -> Result<Option<u32>> {
+    if runtime_mode != ContainerRuntimeMode::Libkrun {
         return Ok(None);
     }
 
-    resolve_libkrun_cpu_count_for_host(task_mode)
+    resolve_libkrun_cpu_count_for_host(runtime_mode)
 }
 
 #[cfg(target_os = "linux")]
-fn resolve_libkrun_cpu_count_for_host(task_mode: TaskContainerMode) -> Result<Option<u32>> {
+fn resolve_libkrun_cpu_count_for_host(runtime_mode: ContainerRuntimeMode) -> Result<Option<u32>> {
     let available = std::thread::available_parallelism()
         .context("failed to detect available CPUs for libkrun krun.cpus default")?;
-    resolve_libkrun_cpu_count_from_available(task_mode, available)
+    resolve_libkrun_cpu_count_from_available(runtime_mode, available)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn resolve_libkrun_cpu_count_for_host(_task_mode: TaskContainerMode) -> Result<Option<u32>> {
+fn resolve_libkrun_cpu_count_for_host(_runtime_mode: ContainerRuntimeMode) -> Result<Option<u32>> {
     Ok(None)
 }
 
 fn resolve_libkrun_cpu_count_from_available(
-    task_mode: TaskContainerMode,
+    runtime_mode: ContainerRuntimeMode,
     available: NonZero<usize>,
 ) -> Result<Option<u32>> {
-    if task_mode != TaskContainerMode::Libkrun {
+    if runtime_mode != ContainerRuntimeMode::Libkrun {
         return Ok(None);
     }
 
@@ -46,7 +46,7 @@ fn resolve_libkrun_cpu_count_from_available(
 #[cfg(test)]
 mod tests {
     use crate::cpu::resolve_libkrun_cpu_count_from_available;
-    use crate::TaskContainerMode;
+    use crate::ContainerRuntimeMode;
     use std::num::NonZero;
 
     fn available(count: usize) -> NonZero<usize> {
@@ -56,7 +56,7 @@ mod tests {
     #[test]
     fn native_mode_omits_cpu_count() {
         assert_eq!(
-            resolve_libkrun_cpu_count_from_available(TaskContainerMode::Native, available(32))
+            resolve_libkrun_cpu_count_from_available(ContainerRuntimeMode::Native, available(32))
                 .expect("native mode should resolve"),
             None
         );
@@ -67,7 +67,7 @@ mod tests {
         for count in [1, 2, 6] {
             assert_eq!(
                 resolve_libkrun_cpu_count_from_available(
-                    TaskContainerMode::Libkrun,
+                    ContainerRuntimeMode::Libkrun,
                     available(count),
                 )
                 .expect("libkrun CPU policy should resolve"),
@@ -90,7 +90,7 @@ mod tests {
         ] {
             assert_eq!(
                 resolve_libkrun_cpu_count_from_available(
-                    TaskContainerMode::Libkrun,
+                    ContainerRuntimeMode::Libkrun,
                     available(count),
                 )
                 .expect("libkrun CPU policy should resolve"),
@@ -105,7 +105,7 @@ mod tests {
     fn libkrun_cpu_count_rejects_u32_overflow() {
         let too_many = (u32::MAX as usize) + 1;
         let err = resolve_libkrun_cpu_count_from_available(
-            TaskContainerMode::Libkrun,
+            ContainerRuntimeMode::Libkrun,
             available(too_many),
         )
         .expect_err("CPU counts above u32::MAX should fail");

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::fs;
 
-use crate::TaskContainerMode;
+use crate::ContainerRuntimeMode;
 
 const KIB: u64 = 1024;
 const MIB_PER_GIB: u32 = 1024;
@@ -19,35 +19,35 @@ pub(crate) fn parse_mem_gib_arg(value: &str) -> std::result::Result<u32, String>
 }
 
 pub(crate) fn validate_libkrun_memory_mode(
-    task_mode: TaskContainerMode,
+    runtime_mode: ContainerRuntimeMode,
     explicit_mem: bool,
 ) -> Result<()> {
-    if task_mode == TaskContainerMode::Native && explicit_mem {
-        anyhow::bail!("--mem is only supported for the default libkrun task runtime; remove --task-native or remove --mem");
+    if runtime_mode == ContainerRuntimeMode::Native && explicit_mem {
+        anyhow::bail!("--mem is only supported for the default libkrun runtime; remove --native or remove --mem");
     }
 
     Ok(())
 }
 
 pub(crate) fn resolve_libkrun_ram_mib(
-    task_mode: TaskContainerMode,
+    runtime_mode: ContainerRuntimeMode,
     explicit_mem_gib: Option<u32>,
 ) -> Result<Option<u32>> {
-    if task_mode != TaskContainerMode::Libkrun {
+    if runtime_mode != ContainerRuntimeMode::Libkrun {
         return Ok(None);
     }
 
     let meminfo = fs::read_to_string(HOST_MEMINFO)
         .with_context(|| format!("failed to read host memory from {HOST_MEMINFO}"))?;
-    resolve_libkrun_ram_mib_from_meminfo(task_mode, explicit_mem_gib, &meminfo)
+    resolve_libkrun_ram_mib_from_meminfo(runtime_mode, explicit_mem_gib, &meminfo)
 }
 
 fn resolve_libkrun_ram_mib_from_meminfo(
-    task_mode: TaskContainerMode,
+    runtime_mode: ContainerRuntimeMode,
     explicit_mem_gib: Option<u32>,
     meminfo: &str,
 ) -> Result<Option<u32>> {
-    if task_mode != TaskContainerMode::Libkrun {
+    if runtime_mode != ContainerRuntimeMode::Libkrun {
         return Ok(None);
     }
 
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn validate_libkrun_memory_mode_rejects_native_mem() {
-        let err = validate_libkrun_memory_mode(TaskContainerMode::Native, true)
+        let err = validate_libkrun_memory_mode(ContainerRuntimeMode::Native, true)
             .expect_err("native --mem should fail");
         assert!(err.to_string().contains("--mem is only supported"));
     }
@@ -199,7 +199,7 @@ mod tests {
         let meminfo = "MemTotal:       10485760 kB
 ";
         assert_eq!(
-            resolve_libkrun_ram_mib_from_meminfo(TaskContainerMode::Libkrun, None, meminfo)
+            resolve_libkrun_ram_mib_from_meminfo(ContainerRuntimeMode::Libkrun, None, meminfo)
                 .expect("libkrun default should resolve"),
             Some(8192)
         );
@@ -210,7 +210,7 @@ mod tests {
         let meminfo = "MemTotal:       10485760 kB
 ";
         assert_eq!(
-            resolve_libkrun_ram_mib_from_meminfo(TaskContainerMode::Libkrun, Some(4), meminfo)
+            resolve_libkrun_ram_mib_from_meminfo(ContainerRuntimeMode::Libkrun, Some(4), meminfo)
                 .expect("explicit libkrun memory should resolve"),
             Some(4096)
         );
@@ -220,7 +220,7 @@ mod tests {
     fn resolve_libkrun_ram_mib_ignores_native_without_explicit_mem() {
         assert_eq!(
             resolve_libkrun_ram_mib_from_meminfo(
-                TaskContainerMode::Native,
+                ContainerRuntimeMode::Native,
                 None,
                 "MemTotal:       10485760 kB
 ",

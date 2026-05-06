@@ -11,7 +11,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --task-native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --task-native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -38,15 +38,15 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Run the interactive task container with normal native Podman instead of default libkrun",
-        long_help = "Run only the interactive task container with normal native Podman instead of the default crun/libkrun task runtime. This is the escape hatch for hosts that need native Podman behavior."
+        help = "Run task and sidecar containers with normal native Podman instead of default libkrun",
+        long_help = "Run the interactive task container and nix-daemon sidecar daemon with normal native Podman instead of the default crun/libkrun runtime. This is the escape hatch for hosts that need native Podman behavior."
     )]
-    pub task_native: bool,
+    pub native: bool,
 
     #[arg(
         long,
         help = "Use libkrun TSI networking instead of default passt networking",
-        long_help = "Use libkrun TSI networking for the default task runtime instead of adding the default krun.use_passt=1 annotation. With --task-native this flag parses but has no effect."
+        long_help = "Use libkrun TSI networking for the default task runtime instead of adding the default task krun.use_passt=1 annotation. The nix-daemon sidecar daemon keeps publish-compatible passt networking. With --native this flag parses but has no effect."
     )]
     pub tsi: bool,
 
@@ -55,7 +55,7 @@ pub struct Cli {
         value_name = "GiB",
         value_parser = parse_mem_gib_arg,
         help = "Set libkrun VM memory in GiB",
-        long_help = "Set memory for the default crun/libkrun task runtime in integer GiB. If omitted, agentbox defaults to 80% of detected host memory rounded down to a whole GiB. This flag is not supported with --task-native."
+        long_help = "Set memory for the default crun/libkrun runtime in integer GiB. If omitted, agentbox defaults to 80% of detected host memory rounded down to a whole GiB. This flag is not supported with --native."
     )]
     pub mem_gib: Option<u32>,
 }

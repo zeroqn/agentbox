@@ -2,12 +2,12 @@ use anyhow::{Context, Result};
 
 use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::{
-    NixRuntime, TaskContainerMode, CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS,
-    CONTAINER_WORKDIR, HOST_GID_ENV_PREFIX, HOST_UID_ENV_PREFIX, INTERACTIVE_SHELL,
-    KRUN_CPUS_ANNOTATION_PREFIX, KRUN_RAM_MIB_ANNOTATION_PREFIX, KRUN_USE_PASST_ANNOTATION,
-    KVM_NIX_PROXY_GUEST_NIX_REMOTE, KVM_NIX_PROXY_HOST_ENV, KVM_NIX_PROXY_PORT_ENV,
-    NIX_NETWORK_DETECTION_PROXY_ENV, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL,
-    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL, TASK_KVM_DROP_TO_DEV_ENV,
+    append_libkrun_runtime_args, ContainerRuntimeMode, NixRuntime, CONTAINER_NIX_DIR,
+    CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, HOST_GID_ENV_PREFIX,
+    HOST_UID_ENV_PREFIX, INTERACTIVE_SHELL, KVM_NIX_PROXY_GUEST_NIX_REMOTE, KVM_NIX_PROXY_HOST_ENV,
+    KVM_NIX_PROXY_PORT_ENV, NIX_NETWORK_DETECTION_PROXY_ENV, NIX_REMOTE_SOCKET,
+    TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    TASK_KVM_DROP_TO_DEV_ENV,
 };
 
 pub struct TaskPodmanSpec<'a> {
@@ -18,7 +18,7 @@ pub struct TaskPodmanSpec<'a> {
     pub cargo_mount: &'a str,
     pub sccache_mount: &'a str,
     pub nix_runtime: &'a NixRuntime,
-    pub task_mode: TaskContainerMode,
+    pub runtime_mode: ContainerRuntimeMode,
     pub use_tsi: bool,
     pub libkrun_ram_mib: Option<u32>,
     pub libkrun_cpu_count: Option<u32>,
@@ -50,7 +50,7 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
         CONTAINER_TMP_TMPFS.to_owned(),
     ];
 
-    if spec.task_mode == TaskContainerMode::Libkrun {
+    if spec.runtime_mode == ContainerRuntimeMode::Libkrun {
         args.push("--env".to_owned());
         args.push(TASK_KVM_DROP_TO_DEV_ENV.to_owned());
         args.push("--env".to_owned());
@@ -63,25 +63,15 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
             "{HOST_GID_ENV_PREFIX}{}",
             run_host_id_command("-g")?
         ));
-        args.push("--runtime".to_owned());
-        args.push("crun".to_owned());
-        args.push("--annotation".to_owned());
-        args.push("run.oci.handler=krun".to_owned());
-        let ram_mib = spec.libkrun_ram_mib.ok_or_else(|| {
-            anyhow::anyhow!("libkrun task runtime requires a resolved krun.ram_mib value")
-        })?;
-        args.push("--annotation".to_owned());
-        args.push(format!("{KRUN_RAM_MIB_ANNOTATION_PREFIX}{ram_mib}"));
-        if let Some(cpu_count) = spec.libkrun_cpu_count {
-            args.push("--annotation".to_owned());
-            args.push(format!("{KRUN_CPUS_ANNOTATION_PREFIX}{cpu_count}"));
-        }
+        append_libkrun_runtime_args(
+            &mut args,
+            spec.libkrun_ram_mib,
+            spec.libkrun_cpu_count,
+            !spec.use_tsi,
+        )?;
         if spec.use_tsi {
             args.push("--env".to_owned());
             args.push(NIX_NETWORK_DETECTION_PROXY_ENV.to_owned());
-        } else {
-            args.push("--annotation".to_owned());
-            args.push(KRUN_USE_PASST_ANNOTATION.to_owned());
         }
     }
 
@@ -100,7 +90,7 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
                 Some("ro"),
             )?);
 
-            let nix_remote = if spec.task_mode == TaskContainerMode::Libkrun {
+            let nix_remote = if spec.runtime_mode == ContainerRuntimeMode::Libkrun {
                 KVM_NIX_PROXY_GUEST_NIX_REMOTE
             } else {
                 NIX_REMOTE_SOCKET
@@ -108,7 +98,7 @@ pub fn build_podman_args(spec: TaskPodmanSpec<'_>) -> Result<Vec<String>> {
             args.push("--env".to_owned());
             args.push(format!("NIX_REMOTE={nix_remote}"));
 
-            if spec.task_mode == TaskContainerMode::Libkrun {
+            if spec.runtime_mode == ContainerRuntimeMode::Libkrun {
                 if let Some(port) = spec.proxy_port {
                     let host_ip = resolve_host_ip()?;
                     args.push("--env".to_owned());
