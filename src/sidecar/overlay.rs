@@ -114,15 +114,19 @@ fn cleanup_unshare_namespace_mount(merged_dir: &Path) -> Result<()> {
         .stderr(Stdio::null())
         .status();
 
-    match status {
+    let status_code = match &status {
         Ok(exit_status) if exit_status.success() => return Ok(()),
-        Ok(_) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => {}
-    }
+        Ok(exit_status) => exit_status.code(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => None,
+    };
 
     if path_is_mounted(merged_dir)? {
         return cleanup_current_namespace_mount(merged_dir);
+    }
+
+    if status_code != Some(2) {
+        return Ok(());
     }
 
     Err(anyhow!(
@@ -184,8 +188,9 @@ if umount "$mount_point" >/dev/null 2>&1; then
   exit 0
 fi
 if is_mounted; then
-  exit 1
+  exit 2
 fi
+exit 0
 "#;
 
 pub fn path_is_mounted(path: &Path) -> Result<bool> {
@@ -234,6 +239,23 @@ mod tests {
         assert!(args[3].contains("fusermount3 -u"));
         assert_eq!(args[4], "agentbox");
         assert_eq!(args[5], "/tmp/agentbox/nix-merged");
+    }
+
+    #[test]
+    fn unshare_cleanup_script_succeeds_when_mount_is_absent() {
+        let absent_mount = "/tmp/agentbox-nix-merged-not-mounted";
+        let status = Command::new("bash")
+            .arg("-lc")
+            .arg(UNSHARE_CLEANUP_SCRIPT)
+            .arg("agentbox")
+            .arg(absent_mount)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("bash should run cleanup script");
+
+        assert!(status.success());
     }
 
     #[test]
