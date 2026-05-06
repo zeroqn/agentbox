@@ -5,18 +5,18 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use crate::mounts::format::format_mount_arg_with_options;
 use crate::podman::command::{run_podman_capture, run_podman_output};
 use crate::{
-    CONTAINER_NIX_DIR, NIX_REMOTE_SOCKET, SIDECAR_HEALTH_ATTEMPTS, SIDECAR_HEALTH_DELAY_MS,
-    SIDECAR_LOG_TAIL_LINES, SIDECAR_SOCKET_PATH,
+    SIDECAR_HEALTH_ATTEMPTS, SIDECAR_HEALTH_DELAY_MS, SIDECAR_LOG_TAIL_LINES, SIDECAR_SOCKET_PATH,
 };
 
 use super::overlay::{cleanup_merged_mount, path_is_mounted};
 use super::{
-    cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, PodmanImageMountMode,
-    SidecarPaths, SidecarState,
+    cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, resolve_sidecar_proxy_port,
+    PodmanImageMountMode, SidecarPaths, SidecarState,
 };
+
+const SIDECAR_PROXY_HEALTH_HOST: &str = "host.containers.internal";
 
 #[derive(Debug, Clone)]
 struct SidecarStartupCleanupOutcome {
@@ -51,11 +51,7 @@ pub fn sidecar_stack_is_healthy(
         return Ok(false);
     }
 
-    if daemon_socket_probe_failure(image, &paths.merged_dir)?.is_some() {
-        return Ok(false);
-    }
-
-    if !proxy_port_is_listening(&state.sidecar_name) {
+    if proxy_socket_probe_failure(image, &state.sidecar_name)?.is_some() {
         return Ok(false);
     }
 
@@ -74,7 +70,7 @@ pub fn wait_for_socket_health(
     for _attempt in 0..SIDECAR_HEALTH_ATTEMPTS {
         last_host_socket_exists = Some(daemon_socket_exists(merged_dir)?);
         last_proxy_listening = Some(proxy_port_is_listening(sidecar_name));
-        match daemon_socket_probe_failure(image, merged_dir)? {
+        match proxy_socket_probe_failure(image, sidecar_name)? {
             None => return Ok(()),
             Some(probe_failure) => last_probe_failure = Some(probe_failure),
         }
@@ -89,7 +85,7 @@ pub fn wait_for_socket_health(
         sidecar_logs,
         sidecar_logs_error,
         socket_probe_failure: last_probe_failure.or_else(|| {
-            daemon_socket_probe_failure(image, merged_dir)
+            proxy_socket_probe_failure(image, sidecar_name)
                 .ok()
                 .flatten()
         }),
@@ -153,10 +149,16 @@ fn daemon_socket_exists(merged_dir: &Path) -> Result<bool> {
     Ok(metadata.file_type().is_socket())
 }
 
-fn daemon_socket_probe_failure(image: &str, merged_dir: &Path) -> Result<Option<String>> {
-    let merged_mount_arg =
-        format_mount_arg_with_options(merged_dir, CONTAINER_NIX_DIR, Some("ro"))?;
-    let args = build_socket_ping_podman_args(image, &merged_mount_arg);
+fn proxy_socket_probe_failure(image: &str, sidecar_name: &str) -> Result<Option<String>> {
+    let proxy_port = match resolve_sidecar_proxy_port(sidecar_name) {
+        Ok(proxy_port) => proxy_port,
+        Err(err) => {
+            return Ok(Some(format!(
+                "failed to resolve sidecar proxy host port: {err:#}"
+            )));
+        }
+    };
+    let args = build_proxy_socket_ping_podman_args(image, SIDECAR_PROXY_HEALTH_HOST, proxy_port);
     let output = run_podman_capture(args, "failed to probe nix-daemon socket")?;
     if output.status.success() {
         return Ok(None);
@@ -267,7 +269,7 @@ fn build_sidecar_socket_timeout_error(
     diagnostics: &SidecarStartupDiagnostics,
 ) -> String {
     let mut message = format!(
-        "nix-daemon socket '{}' was not connectable after startup for sidecar '{}'; {}.",
+        "nix-daemon proxy for socket '{}' was not connectable after startup for sidecar '{}'; {}.",
         SIDECAR_SOCKET_PATH, sidecar_name, cleanup_outcome.summary
     );
 
@@ -339,18 +341,53 @@ fn build_sidecar_socket_timeout_error(
     message
 }
 
-fn build_socket_ping_podman_args(image: &str, merged_mount: &str) -> Vec<String> {
+fn build_proxy_socket_ping_script(proxy_host: &str, proxy_port: u16) -> String {
+    format!(
+        r#"set -euo pipefail
+probe_socket="$(mktemp -u /tmp/agentbox-nix-health.XXXXXX.sock)"
+socat_pid=""
+cleanup() {{
+  rm -f "$probe_socket"
+  if [ -n "$socat_pid" ]; then
+    kill "$socat_pid" 2>/dev/null || true
+    wait "$socat_pid" 2>/dev/null || true
+  fi
+}}
+trap cleanup EXIT
+socat "UNIX-LISTEN:$probe_socket,fork,unlink-early,umask=000" "TCP:{proxy_host}:{proxy_port}" &
+socat_pid="$!"
+for _ in $(seq 1 50); do
+  if [ -S "$probe_socket" ]; then
+    break
+  fi
+  if ! kill -0 "$socat_pid" 2>/dev/null; then
+    echo "socat bridge exited before creating health probe socket" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if [ ! -S "$probe_socket" ]; then
+  echo "socat bridge did not create health probe socket" >&2
+  exit 1
+fi
+nix store ping --store "unix://$probe_socket""#
+    )
+}
+
+fn build_proxy_socket_ping_podman_args(
+    image: &str,
+    proxy_host: &str,
+    proxy_port: u16,
+) -> Vec<String> {
     vec![
         "run".to_owned(),
         "--rm".to_owned(),
         "--userns".to_owned(),
         "keep-id".to_owned(),
-        "--volume".to_owned(),
-        merged_mount.to_owned(),
         image.to_owned(),
         "bash".to_owned(),
         "-lc".to_owned(),
-        format!("nix store ping --store {NIX_REMOTE_SOCKET}"),
+        build_proxy_socket_ping_script(proxy_host, proxy_port),
     ]
 }
 

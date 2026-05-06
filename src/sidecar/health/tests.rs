@@ -1,22 +1,27 @@
 use super::*;
 
 #[test]
-fn build_socket_ping_podman_args_targets_nix_remote_socket() {
-    let args = build_socket_ping_podman_args(
+fn build_proxy_socket_ping_podman_args_targets_local_socat_socket() {
+    let args = build_proxy_socket_ping_podman_args(
         crate::DEFAULT_IMAGE,
-        "/tmp/state/agentbox/project/nix-merged:/nix:ro",
+        "host.containers.internal",
+        45678,
     );
 
     assert!(args.contains(&"--userns".to_owned()));
     assert!(args.contains(&"keep-id".to_owned()));
-    assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix:ro".to_owned()));
+    assert!(!args.contains(&"--volume".to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
     assert!(!args.contains(&crate::KRUN_USE_PASST_ANNOTATION.to_owned()));
-    assert_eq!(
-        args[args.len() - 1],
-        format!("nix store ping --store {}", crate::NIX_REMOTE_SOCKET)
-    );
+
+    let script = &args[args.len() - 1];
+    assert!(script.contains("mktemp -u /tmp/agentbox-nix-health."));
+    assert!(script.contains("socat \"UNIX-LISTEN:$probe_socket,fork,unlink-early,umask=000\""));
+    assert!(script.contains("\"TCP:host.containers.internal:45678\""));
+    assert!(script.contains("rm -f \"$probe_socket\""));
+    assert!(script.contains("kill \"$socat_pid\""));
+    assert!(script.contains("nix store ping --store \"unix://$probe_socket\""));
 }
 
 #[test]
@@ -78,4 +83,33 @@ fn sidecar_socket_timeout_error_requests_manual_cleanup_when_auto_cleanup_fails(
     assert!(message.contains("remove it before retrying"));
     assert!(message.contains("sidecar logs unavailable (logs missing)"));
     assert!(message.contains("host socket path exists: yes"));
+}
+
+#[test]
+fn sidecar_socket_timeout_error_names_proxy_health_boundary() {
+    let merged_dir = std::path::Path::new("/tmp/state/agentbox/project/nix-merged");
+    let cleanup_outcome = SidecarStartupCleanupOutcome {
+        summary: "removed sidecar 'agentbox-nix-sidecar-abc' (or it was already absent)".to_owned(),
+        manual_merged_cleanup_required: false,
+    };
+    let diagnostics = SidecarStartupDiagnostics {
+        socket_probe_failure: Some(
+            "stderr: socat bridge did not create health probe socket".to_owned(),
+        ),
+        host_socket_exists: Some(true),
+        proxy_port_listening: Some(true),
+        ..SidecarStartupDiagnostics::default()
+    };
+
+    let message = build_sidecar_socket_timeout_error(
+        "agentbox-nix-sidecar-abc",
+        merged_dir,
+        &cleanup_outcome,
+        &diagnostics,
+    );
+
+    assert!(message.contains("nix-daemon proxy for socket"));
+    assert!(message.contains("socket probe failure: stderr: socat bridge"));
+    assert!(message.contains("host socket path exists: yes"));
+    assert!(message.contains("proxy port 19876 listening: yes"));
 }
