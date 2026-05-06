@@ -23,6 +23,7 @@ use podman::command::run_podman;
 use podman::task::{build_podman_args, TaskPodmanSpec};
 use sidecar::{
     cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec, SidecarNixRuntime,
+    SidecarSocketHealthProbe,
 };
 use state::resolve_state_layout;
 
@@ -141,19 +142,41 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .context("failed to canonicalize current directory")?;
     let image = resolve_image(cli.image.as_deref(), cli.pull_latest)?;
     let state_layout = resolve_state_layout(&cwd)?;
-    let task_hostname = derive_task_hostname(&cwd);
-    let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
-    let codex_mount = prepare_host_codex_mount()?;
-    let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
-    let sccache_mount = prepare_shared_sccache_mount(&state_layout.sccache_dir())?;
 
     let env_sidecar_enabled =
         env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
     let nix_sidecar_enabled = resolve_nix_sidecar_enabled(&cli, env_sidecar_enabled);
     let runtime_mode = resolve_container_runtime_mode(cli.native);
+    validate_sidecar_only_mode(cli.sidecar_only, nix_sidecar_enabled)?;
     validate_runtime_mode(runtime_mode, nix_sidecar_enabled, cli.mem_gib.is_some())?;
     let libkrun_ram_mib = resolve_libkrun_ram_mib(runtime_mode, cli.mem_gib)?;
     let libkrun_cpu_count = resolve_libkrun_cpu_count(runtime_mode)?;
+
+    if !should_launch_task_container(cli.sidecar_only) {
+        let sidecar = prepare_sidecar_nix_runtime(
+            &cwd,
+            state_layout.root_dir(),
+            &image,
+            SidecarDaemonRuntimeSpec {
+                runtime_mode,
+                libkrun_ram_mib,
+                libkrun_cpu_count,
+                socket_health_probe: sidecar_socket_health_probe(cli.sidecar_only),
+            },
+        )?;
+
+        println!(
+            "agentbox: sidecar '{}' is started or reused on host port {}; leaving it running for inspection",
+            sidecar.sidecar_name, sidecar.proxy_port
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let task_hostname = derive_task_hostname(&cwd);
+    let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
+    let codex_mount = prepare_host_codex_mount()?;
+    let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
+    let sccache_mount = prepare_shared_sccache_mount(&state_layout.sccache_dir())?;
 
     let nix_runtime = if nix_sidecar_enabled {
         NixRuntime::Sidecar(prepare_sidecar_nix_runtime(
@@ -164,6 +187,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 runtime_mode,
                 libkrun_ram_mib,
                 libkrun_cpu_count,
+                socket_health_probe: sidecar_socket_health_probe(cli.sidecar_only),
             },
         )?)
     } else {
@@ -199,12 +223,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
         "failed to start podman",
     )?;
 
-    if let NixRuntime::Sidecar(sidecar) = &nix_runtime {
-        if let Err(err) = cleanup_idle_sidecar(sidecar) {
-            eprintln!(
-                "agentbox: warning: failed to cleanup idle sidecar '{}': {err:#}",
-                sidecar.sidecar_name
-            );
+    if should_cleanup_idle_sidecar_after_run(cli.sidecar_only) {
+        if let NixRuntime::Sidecar(sidecar) = &nix_runtime {
+            if let Err(err) = cleanup_idle_sidecar(sidecar) {
+                eprintln!(
+                    "agentbox: warning: failed to cleanup idle sidecar '{}': {err:#}",
+                    sidecar.sidecar_name
+                );
+            }
         }
     }
 
@@ -217,6 +243,32 @@ fn resolve_container_runtime_mode(native: bool) -> ContainerRuntimeMode {
         ContainerRuntimeMode::Native
     } else {
         ContainerRuntimeMode::Libkrun
+    }
+}
+
+fn validate_sidecar_only_mode(sidecar_only: bool, nix_sidecar_enabled: bool) -> Result<()> {
+    if sidecar_only && !nix_sidecar_enabled {
+        anyhow::bail!(
+            "--sidecar-only requires nix sidecar mode; remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
+        );
+    }
+
+    Ok(())
+}
+
+fn should_launch_task_container(sidecar_only: bool) -> bool {
+    !sidecar_only
+}
+
+fn should_cleanup_idle_sidecar_after_run(sidecar_only: bool) -> bool {
+    !sidecar_only
+}
+
+fn sidecar_socket_health_probe(sidecar_only: bool) -> SidecarSocketHealthProbe {
+    if sidecar_only {
+        SidecarSocketHealthProbe::Disabled
+    } else {
+        SidecarSocketHealthProbe::Enabled
     }
 }
 

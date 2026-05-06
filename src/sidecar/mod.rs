@@ -52,6 +52,19 @@ pub(crate) struct SidecarDaemonRuntimeSpec {
     pub runtime_mode: ContainerRuntimeMode,
     pub libkrun_ram_mib: Option<u32>,
     pub libkrun_cpu_count: Option<u32>,
+    pub socket_health_probe: SidecarSocketHealthProbe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidecarSocketHealthProbe {
+    Enabled,
+    Disabled,
+}
+
+impl SidecarSocketHealthProbe {
+    fn enabled(self) -> bool {
+        self == Self::Enabled
+    }
 }
 
 impl SidecarPaths {
@@ -120,6 +133,7 @@ pub(crate) fn prepare_sidecar_nix_runtime(
             &image_id,
             &sidecar_name,
             runtime_spec.runtime_mode,
+            runtime_spec.socket_health_probe,
         )? {
             let proxy_port = resolve_sidecar_proxy_port(&sidecar_name).unwrap_or_else(|err| {
                 eprintln!("agentbox: warning: failed to resolve sidecar proxy port: {err:#}");
@@ -215,7 +229,9 @@ fn recreate_sidecar_stack(
         ));
     }
 
-    health::wait_for_socket_health(image, sidecar_name, &paths.merged_dir, mount_mode)?;
+    if runtime_spec.socket_health_probe.enabled() {
+        health::wait_for_socket_health(image, sidecar_name, &paths.merged_dir, mount_mode)?;
+    }
 
     let proxy_port = resolve_sidecar_proxy_port(sidecar_name).unwrap_or_else(|err| {
         eprintln!("agentbox: warning: failed to resolve sidecar proxy port: {err:#}");
@@ -301,6 +317,7 @@ fn should_reuse_previous_sidecar(
     image_id: &str,
     sidecar_name: &str,
     runtime_mode: ContainerRuntimeMode,
+    socket_health_probe: SidecarSocketHealthProbe,
 ) -> Result<bool> {
     let identity_matches = state.matches(image, image_id, sidecar_name, runtime_mode);
     if !identity_matches {
@@ -320,8 +337,21 @@ fn should_reuse_previous_sidecar(
     Ok(fallback_health_gated_reuse_applies(
         identity_matches,
         protected_same_repo_reuse,
-        health::sidecar_stack_is_healthy(state, paths, image)?,
+        sidecar_stack_is_reusable(state, paths, image, socket_health_probe)?,
     ))
+}
+
+fn sidecar_stack_is_reusable(
+    state: &SidecarState,
+    paths: &SidecarPaths,
+    image: &str,
+    socket_health_probe: SidecarSocketHealthProbe,
+) -> Result<bool> {
+    if socket_health_probe.enabled() {
+        health::sidecar_stack_is_healthy(state, paths, image)
+    } else {
+        health::sidecar_stack_is_present(state, paths)
+    }
 }
 
 fn reject_active_runtime_mode_mismatch(

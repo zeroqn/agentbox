@@ -11,7 +11,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --sidecar-only\n  agentbox --native --sidecar-only\n  agentbox --native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -35,6 +35,13 @@ pub struct Cli {
         long_help = "Disable rootless sidecar mode for this run and use seeded bind mounts from the resolved external agentbox state root instead."
     )]
     pub disable_nix_sidecar: bool,
+
+    #[arg(
+        long,
+        help = "Start or reuse only the nix-daemon sidecar stack, then exit",
+        long_help = "Start or reuse only the nix-daemon sidecar stack, skip the nix-daemon socket health probe, print inspection details, and exit without launching the interactive task container. The sidecar is intentionally left running for debugging."
+    )]
+    pub sidecar_only: bool,
 
     #[arg(
         long,

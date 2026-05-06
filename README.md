@@ -184,6 +184,37 @@ Or disable the sidecar globally when also opting into native runtime:
 AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --native
 ```
 
+#### Sidecar-only debugging
+
+Start or reuse just the nix-daemon sidecar stack, print the sidecar name and
+host proxy port, and exit without launching the interactive task container:
+
+```bash
+./result/bin/agentbox --sidecar-only
+```
+
+To debug the sidecar under native Podman instead of the default libkrun daemon
+runtime:
+
+```bash
+./result/bin/agentbox --native --sidecar-only
+```
+
+`--sidecar-only` intentionally leaves the sidecar container and merged nix
+overlay running after exit so they can be inspected. It skips the nix-daemon
+socket health probe so a broken daemon can still be debugged after container
+startup. Sidecar mode must remain enabled; `--sidecar-only --disable-nix-sidecar`
+and `AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --sidecar-only` fail fast
+because there is no sidecar to start.
+
+Use the printed sidecar name for inspection and cleanup, for example:
+
+```bash
+podman logs <sidecar-name>
+podman port <sidecar-name> 19876
+podman rm -f <sidecar-name>
+```
+
 ---
 
 ### 2) Seeded mode (legacy fallback)

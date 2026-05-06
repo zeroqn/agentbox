@@ -39,6 +39,18 @@ pub fn sidecar_stack_is_healthy(
     paths: &SidecarPaths,
     image: &str,
 ) -> Result<bool> {
+    if !sidecar_stack_is_present(state, paths)? {
+        return Ok(false);
+    }
+
+    if proxy_socket_probe_failure(image, &state.sidecar_name)?.is_some() {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+pub fn sidecar_stack_is_present(state: &SidecarState, paths: &SidecarPaths) -> Result<bool> {
     if resolve_sidecar_lowerdir_for_mode(&state.image_mount_path, state.mount_mode).is_err() {
         return Ok(false);
     }
@@ -48,10 +60,6 @@ pub fn sidecar_stack_is_healthy(
     }
 
     if !is_container_running(&state.sidecar_name) {
-        return Ok(false);
-    }
-
-    if proxy_socket_probe_failure(image, &state.sidecar_name)?.is_some() {
         return Ok(false);
     }
 
