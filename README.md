@@ -131,6 +131,18 @@ AGENTBOX_IMAGE=<image-ref> ./result/bin/agentbox
 ./result/bin/agentbox --image <image-ref>
 ```
 
+Enable Podman debug logging for troubleshooting agentbox-managed Podman
+commands:
+
+```bash
+./result/bin/agentbox --debug
+./result/bin/agentbox --sidecar-only --debug
+```
+
+`--debug` passes `--log-level=debug` to Podman commands that agentbox runs,
+including task launch, sidecar setup, image inspection/mounting, health probes,
+and cleanup paths. It only changes Podman logging verbosity.
+
 ---
 
 ## Runtime modes

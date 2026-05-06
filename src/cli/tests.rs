@@ -9,6 +9,7 @@ fn cli_accepts_no_arguments() {
     assert!(!cli.pull_latest);
     assert!(!cli.disable_nix_sidecar);
     assert!(!cli.sidecar_only);
+    assert!(!cli.debug);
     assert!(!cli.native);
     assert!(!cli.tsi);
     assert_eq!(cli.mem_gib, None);
@@ -73,6 +74,20 @@ fn cli_accepts_native_sidecar_only_flags() {
         .expect("--native --sidecar-only should parse");
     assert!(cli.native);
     assert!(cli.sidecar_only);
+}
+
+#[test]
+fn cli_accepts_debug_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--debug"]).expect("--debug should parse");
+    assert!(cli.debug);
+}
+
+#[test]
+fn cli_accepts_debug_with_sidecar_only_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--sidecar-only", "--debug"])
+        .expect("--sidecar-only --debug should parse");
+    assert!(cli.sidecar_only);
+    assert!(cli.debug);
 }
 
 #[test]

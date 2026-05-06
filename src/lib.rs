@@ -19,7 +19,7 @@ use memory::{resolve_libkrun_ram_mib, validate_libkrun_memory_mode};
 use mounts::format::format_mount_arg;
 use mounts::{prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount};
 use nix_root::{prepare_persistent_nix_root, PersistentNixRoot};
-use podman::command::run_podman;
+use podman::command::{run_podman, set_podman_debug};
 use podman::task::{build_podman_args, TaskPodmanSpec};
 use sidecar::{
     cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec, SidecarNixRuntime,
@@ -136,6 +136,8 @@ pub fn entrypoint() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    set_podman_debug(cli.debug);
+
     let cwd = env::current_dir()
         .context("failed to resolve current directory")?
         .canonicalize()

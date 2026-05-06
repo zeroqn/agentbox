@@ -11,7 +11,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --sidecar-only\n  agentbox --native --sidecar-only\n  agentbox --native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --sidecar-only\n  agentbox --sidecar-only --debug\n  agentbox --native --sidecar-only\n  agentbox --native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -42,6 +42,13 @@ pub struct Cli {
         long_help = "Start or reuse only the nix-daemon sidecar stack, skip the nix-daemon socket health probe, print inspection details, and exit without launching the interactive task container. The sidecar is intentionally left running for debugging."
     )]
     pub sidecar_only: bool,
+
+    #[arg(
+        long,
+        help = "Enable Podman debug logging for agentbox-managed Podman commands",
+        long_help = "Enable Podman debug logging by passing --log-level=debug to agentbox-managed Podman commands. This is intended for troubleshooting task, sidecar, image, mount, health, and cleanup operations."
+    )]
+    pub debug: bool,
 
     #[arg(
         long,

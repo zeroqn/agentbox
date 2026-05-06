@@ -3,6 +3,8 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::podman::command::podman_command;
+
 use super::PodmanImageMountMode;
 
 pub fn mount_fuse_overlayfs(
@@ -22,7 +24,7 @@ pub fn mount_fuse_overlayfs(
     let mut command = Command::new("fuse-overlayfs");
     if mode == PodmanImageMountMode::Unshare {
         command = {
-            let mut podman_unshare = Command::new("podman");
+            let mut podman_unshare = podman_command();
             podman_unshare.arg("unshare").arg("fuse-overlayfs");
             podman_unshare
         };
@@ -107,7 +109,7 @@ fn cleanup_current_namespace_mount(merged_dir: &Path) -> Result<()> {
 }
 
 fn cleanup_unshare_namespace_mount(merged_dir: &Path) -> Result<()> {
-    let status = Command::new("podman")
+    let status = podman_command()
         .args(build_unshare_cleanup_args(merged_dir))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
