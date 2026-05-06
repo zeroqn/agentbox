@@ -19,8 +19,8 @@ use crate::{
 };
 
 use image_mount::{inspect_image_id, mount_image_with_lowerdir, unmount_image};
-use overlay::{cleanup_merged_mount, mount_fuse_overlayfs};
-pub use runtime::SidecarNixRuntime;
+use overlay::{cleanup_merged_mount, cleanup_merged_mount_all_namespaces, mount_fuse_overlayfs};
+pub(crate) use runtime::SidecarNixRuntime;
 
 #[derive(Debug, Clone)]
 struct SidecarPaths {
@@ -41,7 +41,7 @@ struct SidecarState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PodmanImageMountMode {
+pub(crate) enum PodmanImageMountMode {
     Direct,
     Unshare,
 }
@@ -103,6 +103,7 @@ pub fn prepare_sidecar_nix_runtime(
                 merged_dir: paths.merged_dir,
                 sidecar_name: sidecar_name.clone(),
                 proxy_port,
+                mount_mode: state.mount_mode,
             });
         }
     }
@@ -122,7 +123,7 @@ pub fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
     }
 
     cleanup_sidecar_container(&sidecar.sidecar_name)?;
-    cleanup_merged_mount(&sidecar.merged_dir)
+    cleanup_merged_mount(&sidecar.merged_dir, sidecar.mount_mode)
 }
 
 fn preserve_idle_sidecar(has_running_task_containers: bool) -> bool {
@@ -138,11 +139,11 @@ fn recreate_sidecar_stack(
 ) -> Result<SidecarNixRuntime> {
     if let Some(state) = previous_state {
         cleanup_sidecar_container(&state.sidecar_name)?;
-        cleanup_merged_mount(&paths.merged_dir)?;
+        cleanup_merged_mount(&paths.merged_dir, state.mount_mode)?;
         unmount_image(&state.image)?;
     } else {
         cleanup_sidecar_container(sidecar_name)?;
-        cleanup_merged_mount(&paths.merged_dir)?;
+        cleanup_merged_mount_all_namespaces(&paths.merged_dir)?;
     }
 
     let (image_mount_path, lowerdir, mount_mode) = mount_image_with_lowerdir(image)?;
@@ -171,7 +172,7 @@ fn recreate_sidecar_stack(
         ));
     }
 
-    health::wait_for_socket_health(image, sidecar_name, &paths.merged_dir)?;
+    health::wait_for_socket_health(image, sidecar_name, &paths.merged_dir, mount_mode)?;
 
     let proxy_port = resolve_sidecar_proxy_port(sidecar_name).unwrap_or_else(|err| {
         eprintln!("agentbox: warning: failed to resolve sidecar proxy port: {err:#}");
@@ -192,6 +193,7 @@ fn recreate_sidecar_stack(
         merged_dir: paths.merged_dir.clone(),
         sidecar_name: sidecar_name.to_owned(),
         proxy_port,
+        mount_mode,
     })
 }
 

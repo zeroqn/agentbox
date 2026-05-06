@@ -152,7 +152,8 @@ What it does (high level):
    sidecar while matching task containers are still running.
 5. Starts the interactive container with read-only `/nix` + daemon socket.
 6. When the last matching task container exits, removes the idle sidecar and
-   unmounts the `nix-merged` FUSE overlay so `fuse-overlayfs` does not linger.
+   unmounts the `nix-merged` FUSE overlay in the matching Podman mount
+   namespace so `fuse-overlayfs` does not linger.
 
 Overlay writes live in `<state-root>/nix-upper`; `nix-merged` is only the
 mounted merged view and may be unmounted/recreated between runs.

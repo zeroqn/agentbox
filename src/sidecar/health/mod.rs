@@ -14,7 +14,8 @@ use crate::{
 
 use super::overlay::{cleanup_merged_mount, path_is_mounted};
 use super::{
-    cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, SidecarPaths, SidecarState,
+    cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, PodmanImageMountMode,
+    SidecarPaths, SidecarState,
 };
 
 #[derive(Debug, Clone)]
@@ -61,7 +62,12 @@ pub fn sidecar_stack_is_healthy(
     Ok(true)
 }
 
-pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path) -> Result<()> {
+pub fn wait_for_socket_health(
+    image: &str,
+    sidecar_name: &str,
+    merged_dir: &Path,
+    mount_mode: PodmanImageMountMode,
+) -> Result<()> {
     let mut last_probe_failure = None;
     let mut last_host_socket_exists = None;
     let mut last_proxy_listening = None;
@@ -91,7 +97,7 @@ pub fn wait_for_socket_health(image: &str, sidecar_name: &str, merged_dir: &Path
         sidecar_state: inspect_sidecar_container_state(sidecar_name).ok(),
         host_socket_exists: last_host_socket_exists,
     };
-    let cleanup_outcome = cleanup_failed_sidecar_startup(sidecar_name, merged_dir);
+    let cleanup_outcome = cleanup_failed_sidecar_startup(sidecar_name, merged_dir, mount_mode);
     Err(anyhow!(
         "{}",
         build_sidecar_socket_timeout_error(
@@ -219,6 +225,7 @@ fn read_sidecar_logs(sidecar_name: &str) -> Result<String> {
 fn cleanup_failed_sidecar_startup(
     sidecar_name: &str,
     merged_dir: &Path,
+    mount_mode: PodmanImageMountMode,
 ) -> SidecarStartupCleanupOutcome {
     let mut summary = Vec::new();
 
@@ -233,7 +240,7 @@ fn cleanup_failed_sidecar_startup(
         )),
     }
 
-    let manual_merged_cleanup_required = match cleanup_merged_mount(merged_dir) {
+    let manual_merged_cleanup_required = match cleanup_merged_mount(merged_dir, mount_mode) {
         Ok(()) => {
             summary.push(format!("cleaned merged mount '{}'", merged_dir.display()));
             false

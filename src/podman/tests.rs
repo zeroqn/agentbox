@@ -291,6 +291,7 @@ fn sidecar_runtime() -> NixRuntime {
         merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
         proxy_port: 19876,
+        mount_mode: crate::sidecar::PodmanImageMountMode::Direct,
     })
 }
 
