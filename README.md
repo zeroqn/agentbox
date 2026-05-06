@@ -230,6 +230,11 @@ When `--mem` is omitted, default libkrun mode uses 80% of detected host memory,
 rounded down to a whole GiB, and passes that value to libkrun as MiB. For
 example, a 10 GiB host produces `krun.ram_mib=8192`.
 
+Default libkrun mode does not pin CPUs. On Linux hosts with 8 or fewer available
+CPUs, `agentbox` omits `krun.cpus` and keeps crun/libkrun's default CPU
+behavior. On larger generic Linux hosts, it reserves two CPUs for the host and
+passes `krun.cpus=min(available_cpus - 2, 16)`.
+
 Run the interactive task container with normal native Podman instead:
 
 ```bash
@@ -250,7 +255,7 @@ only:
 --tmpfs /home/dev/.local:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/starship:rw,exec,uid=1000,gid=1000,mode=700
 --tmpfs /home/dev/.cache/tmp:rw,exec,uid=1000,gid=1000,mode=700
---runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB>
+--runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB> [--annotation krun.cpus=<count>]
 ```
 
 With `--use-passt`, `agentbox` replaces the `all_proxy=1` Nix network detection

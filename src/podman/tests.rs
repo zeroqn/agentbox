@@ -34,6 +34,9 @@ fn build_podman_args_includes_persistent_nix_mounts() {
     assert!(!args
         .iter()
         .any(|arg| arg.starts_with(KRUN_RAM_MIB_ANNOTATION_PREFIX)));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.starts_with(KRUN_CPUS_ANNOTATION_PREFIX)));
     assert!(!args.contains(&NIX_NETWORK_DETECTION_PROXY_ENV.to_owned()));
     assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
     assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
@@ -67,6 +70,9 @@ fn build_podman_args_includes_sidecar_nix_mount_and_remote() {
     assert!(!args
         .iter()
         .any(|arg| arg.starts_with(KRUN_RAM_MIB_ANNOTATION_PREFIX)));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.starts_with(KRUN_CPUS_ANNOTATION_PREFIX)));
     assert!(!args.contains(&NIX_NETWORK_DETECTION_PROXY_ENV.to_owned()));
     assert!(!args.iter().any(|a| a.starts_with(HOST_UID_ENV_PREFIX)));
     assert!(!args.iter().any(|a| a.starts_with(HOST_GID_ENV_PREFIX)));
@@ -104,6 +110,12 @@ fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
     assert!(
         has_arg_pair(&libkrun_args, "--annotation", "krun.ram_mib=8192"),
         "libkrun args should include krun.ram_mib annotation"
+    );
+    assert!(
+        !libkrun_args
+            .iter()
+            .any(|arg| arg.starts_with(KRUN_CPUS_ANNOTATION_PREFIX)),
+        "libkrun args should omit krun.cpus when no CPU count is resolved"
     );
     assert!(
         has_arg_pair(&libkrun_args, "--env", NIX_NETWORK_DETECTION_PROXY_ENV),
@@ -170,6 +182,63 @@ fn build_podman_args_adds_only_libkrun_runtime_args_for_libkrun_task_mode() {
     }
 
     assert_eq!(libkrun_without_libkrun_args, native_args);
+}
+
+#[test]
+fn build_podman_args_includes_libkrun_cpu_annotation_when_resolved() {
+    let runtime = sidecar_runtime();
+    let args = build_args_with_cpu(
+        &runtime,
+        TaskContainerMode::Libkrun,
+        false,
+        Some(12345),
+        Some(16),
+    );
+
+    assert!(
+        has_arg_pair(&args, "--annotation", "run.oci.handler=krun"),
+        "libkrun args should include run.oci.handler=krun annotation"
+    );
+    assert!(
+        has_arg_pair(&args, "--annotation", "krun.ram_mib=8192"),
+        "libkrun args should include krun.ram_mib annotation"
+    );
+    assert!(
+        has_arg_pair(&args, "--annotation", "krun.cpus=16"),
+        "libkrun args should include krun.cpus annotation when CPU count is resolved"
+    );
+}
+
+#[test]
+fn build_podman_args_omits_libkrun_cpu_annotation_when_unresolved() {
+    let runtime = sidecar_runtime();
+    let args = build_args_with_cpu(
+        &runtime,
+        TaskContainerMode::Libkrun,
+        false,
+        Some(12345),
+        None,
+    );
+
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg.starts_with(KRUN_CPUS_ANNOTATION_PREFIX)),
+        "libkrun args should omit krun.cpus when no CPU count is resolved"
+    );
+}
+
+#[test]
+fn build_podman_args_treats_libkrun_cpu_count_as_noop_for_native_task_mode() {
+    let runtime = sidecar_runtime();
+    let args = build_args_with_cpu(&runtime, TaskContainerMode::Native, false, None, Some(16));
+
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg.starts_with(KRUN_CPUS_ANNOTATION_PREFIX)),
+        "native args should not include krun.cpus"
+    );
 }
 
 #[test]
@@ -263,6 +332,47 @@ fn build_args_result(
     proxy_port: Option<u16>,
     libkrun_ram_mib: Option<u32>,
 ) -> anyhow::Result<Vec<String>> {
+    build_args_result_with_cpu(
+        nix_runtime,
+        task_mode,
+        use_passt,
+        proxy_port,
+        libkrun_ram_mib,
+        None,
+    )
+}
+
+fn build_args_with_cpu(
+    nix_runtime: &NixRuntime,
+    task_mode: TaskContainerMode,
+    use_passt: bool,
+    proxy_port: Option<u16>,
+    libkrun_cpu_count: Option<u32>,
+) -> Vec<String> {
+    let libkrun_ram_mib = if task_mode == TaskContainerMode::Libkrun {
+        Some(8192)
+    } else {
+        None
+    };
+    build_args_result_with_cpu(
+        nix_runtime,
+        task_mode,
+        use_passt,
+        proxy_port,
+        libkrun_ram_mib,
+        libkrun_cpu_count,
+    )
+    .expect("podman args should build")
+}
+
+fn build_args_result_with_cpu(
+    nix_runtime: &NixRuntime,
+    task_mode: TaskContainerMode,
+    use_passt: bool,
+    proxy_port: Option<u16>,
+    libkrun_ram_mib: Option<u32>,
+    libkrun_cpu_count: Option<u32>,
+) -> anyhow::Result<Vec<String>> {
     build_podman_args(TaskPodmanSpec {
         image: DEFAULT_IMAGE,
         hostname: "project-agentbox",
@@ -274,6 +384,7 @@ fn build_args_result(
         task_mode,
         use_passt,
         libkrun_ram_mib,
+        libkrun_cpu_count,
         proxy_port,
     })
 }
