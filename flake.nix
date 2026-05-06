@@ -40,11 +40,14 @@
           rtkPrebuilt = import ./nix/pkgs/rtk-prebuilt.nix {
             inherit pkgs pins;
           };
+          libkrunfw = pkgs.callPackage ./nix/pkgs/libkrunfw.nix {
+            inherit pins;
+          };
           libkrun = import ./nix/pkgs/libkrun.nix {
-            inherit pkgs;
+            inherit pkgs libkrunfw;
           };
           crun = import ./nix/pkgs/crun.nix {
-            inherit pkgs libkrun;
+            inherit pkgs libkrun libkrunfw;
           };
           podman = pkgs.podman.override {
             inherit crun;
@@ -70,6 +73,7 @@
           agentbox = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;
+          libkrunfw = libkrunfw;
           libkrun = libkrun;
           crun = crun;
           podman = podman;

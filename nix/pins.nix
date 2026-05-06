@@ -27,6 +27,26 @@
     npmDepsHash = "sha256-HYzJ0IeE/nltV9DSLJFPBhXvX6x3T3O+WyXh7U4botY=";
   };
 
+  libkrunfwRelease = {
+    owner = "zeroqn";
+    repo = "libkrunfw";
+    tag = "agentbox-94aaf05516f0";
+    systems = {
+      x86_64-linux = {
+        asset = "libkrunfw-x86_64.tgz";
+        hash = "sha256-Fi+3NF80zjHVA0H5RP0B4nWgcUPi0ZbT7YpbIyJjd40=";
+      };
+      aarch64-linux = {
+        asset = "libkrunfw-aarch64.tgz";
+        hash = "sha256-jW0YOT3FTOU+nmiawcO2fOwUieH1WH5/SOPkdqkiB+c=";
+      };
+      riscv64-linux = {
+        asset = "libkrunfw-riscv64.tgz";
+        hash = "sha256-05eW4Gdi8SU49VRTcKs0PoNAUjbJwCiMmc9ANRMGrLE=";
+      };
+    };
+  };
+
   agentboxPrebuiltRelease = {
     owner = "zeroqn";
     repo = "agentbox";

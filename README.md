@@ -65,6 +65,7 @@ nix build .#agentbox
 nix build .#agentbox-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
+nix build .#libkrunfw
 nix build .#libkrun
 nix build .#crun
 nix build .#podman
@@ -80,9 +81,12 @@ nix build .#container
 - `.#agentbox-musl`: static host binary.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
+- `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
+  current system.
 - `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4)
   with net, sound, GPU, block, and input support enabled. Provides the
-  repo-pinned libkrun used by the custom crun output.
+  repo-pinned libkrun used by the custom crun output and links it against the
+  repo-pinned `libkrunfw.so`.
 - `.#crun`: build `zeroqn/crun` branch `fix-passt-net` with this repo's libkrun
   override, krun handler support, and `pkgs.passt` on crun's runtime `PATH`
   for opt-in `krun.use_passt=1` passt/libkrun debugging.
@@ -399,7 +403,7 @@ The container provides:
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
 - RTK (`rtk`)
-- libkrun 1.18.0 (`libkrun.so`) for nested KVM support inside the container
+- libkrun 1.18.0 (`libkrun.so`) plus pinned `libkrunfw.so` for nested KVM support inside the container
 - `nix` wrapper that clears the container NSS wrapper preload before invoking
   the real Nix binary, avoiding glibc-version mismatches in nested dev shells
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled
@@ -461,6 +465,12 @@ Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-rtk-prebuilt.sh
+```
+
+Refresh pinned `zeroqn/libkrunfw` release metadata in `nix/pins.nix`:
+
+```bash
+nix develop --command ./scripts/update-libkrunfw.sh
 ```
 
 Refresh pinned OpenCode release metadata in `nix/pins.nix` from `anomalyco/opencode`:

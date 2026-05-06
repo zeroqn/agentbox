@@ -1,4 +1,4 @@
-{ pkgs }:
+{ pkgs, libkrunfw }:
 let
   libkrunSrc = pkgs.fetchFromGitHub {
     owner = "containers";
@@ -8,6 +8,8 @@ let
   };
 in
 (pkgs.libkrun.override {
+  inherit libkrunfw;
+
   withBlk = true;
   withNet = true;
   withGpu = true;
