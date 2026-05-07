@@ -161,6 +161,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             &image,
             SidecarDaemonRuntimeSpec {
                 runtime_mode,
+                use_tsi: cli.tsi,
                 libkrun_ram_mib,
                 libkrun_cpu_count,
                 socket_health_probe: sidecar_socket_health_probe(cli.sidecar_only),
@@ -187,6 +188,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             &image,
             SidecarDaemonRuntimeSpec {
                 runtime_mode,
+                use_tsi: cli.tsi,
                 libkrun_ram_mib,
                 libkrun_cpu_count,
                 socket_health_probe: sidecar_socket_health_probe(cli.sidecar_only),

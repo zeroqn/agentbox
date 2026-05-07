@@ -178,11 +178,12 @@ Sidecar metadata is saved at:
 <state-root>/nix-sidecar.state
 ```
 
-The metadata includes the sidecar daemon runtime mode. Legacy state files without
-that field are treated as `native`; switching between native and default libkrun
-mode recreates an idle sidecar instead of silently reusing one started under the
-wrong runtime. If matching task containers are still running, `agentbox` fails
-with guidance instead of removing their active sidecar.
+The metadata includes the sidecar daemon runtime and network modes. Legacy state
+files without a runtime mode are treated as `native`; legacy state files without
+a network mode are treated as `passt`. Switching runtime mode or libkrun network
+mode recreates an idle sidecar instead of silently reusing one started with an
+incompatible configuration. If matching task containers are still running,
+`agentbox` fails with guidance instead of removing their active sidecar.
 
 Disable sidecar mode for one native run:
 
@@ -312,9 +313,11 @@ The task container also receives task-only drop/identity arguments such as
 `AGENTBOX_KVM_DROP_TO_DEV=1` and host UID/GID environment values. The root
 sidecar daemon does not receive those task-only arguments.
 
-With `--tsi`, `agentbox` omits the passt annotation from the task container and
-adds the `all_proxy=1` Nix network detection workaround there. The sidecar daemon
-keeps publish-compatible passt networking so `--publish 19876` remains valid:
+With `--tsi`, `agentbox` omits the passt annotation from both the task container
+and the sidecar daemon, and adds the `all_proxy=1` Nix network detection
+workaround to both libkrun containers. The sidecar daemon still publishes the
+Nix daemon proxy on host port `19876`; validate that publish behavior on your
+host Podman/crun/libkrun TSI stack:
 
 ```text
 --env all_proxy=1 --runtime crun --annotation run.oci.handler=krun --annotation krun.ram_mib=<MiB>
@@ -355,10 +358,11 @@ AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --native
 Direct sharing of the sidecar Unix socket into a separate libkrun VM is not
 assumed to work. Libkrun task mode points the guest at the sidecar daemon's TCP
 proxy. By default, task and sidecar daemon libkrun containers enable passt
-networking with `krun.use_passt=1`; `--tsi` changes only the task container by
-setting `all_proxy=1` so Nix detects network availability via its
-proxy-environment check. Nix commands inside the KVM guest must still be
-validated before claiming success on a host Podman/crun/libkrun stack.
+networking with `krun.use_passt=1`; `--tsi` changes both libkrun containers by
+omitting that annotation and setting `all_proxy=1` so Nix detects network
+availability via its proxy-environment check. Nix commands inside the KVM guest
+and sidecar proxy publishing must still be validated before claiming success on
+a host Podman/crun/libkrun stack.
 
 Suggested manual validation:
 
