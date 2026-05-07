@@ -149,9 +149,16 @@ fn build_sidecar_podman_args_runs_daemon_as_root_and_mounts_rw_nix() {
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
     assert!(!args.contains(&crate::KRUN_USE_PASST_ANNOTATION.to_owned()));
-    assert_eq!(args[args.len() - 3], "bash");
-    assert_eq!(args[args.len() - 2], "-lc");
-    assert!(args[args.len() - 1].contains("nix-daemon --daemon"));
+    assert_uses_embedded_sidecar_entrypoint(&args);
+}
+
+fn assert_uses_embedded_sidecar_entrypoint(args: &[String]) {
+    assert!(args
+        .windows(2)
+        .any(|w| { w[0] == "--entrypoint" && w[1] == super::SIDECAR_ENTRYPOINT }));
+    assert_eq!(args.last().map(String::as_str), Some(crate::DEFAULT_IMAGE));
+    assert!(!args.windows(2).any(|w| w[0] == "bash" && w[1] == "-lc"));
+    assert!(!args.iter().any(|arg| arg.contains("nix-daemon --daemon")));
 }
 
 #[test]
@@ -188,6 +195,7 @@ fn build_sidecar_podman_args_adds_libkrun_runtime_args_in_default_mode() {
     assert!(!args
         .iter()
         .any(|arg| arg.starts_with(crate::HOST_GID_ENV_PREFIX)));
+    assert_uses_embedded_sidecar_entrypoint(&args);
 }
 
 #[test]

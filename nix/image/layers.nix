@@ -67,6 +67,58 @@ let
     done
   '';
 
+  sidecarEntrypoint = pkgs.writeShellScriptBin "agentbox-nix-sidecar-entrypoint" ''
+    set -euo pipefail
+
+    mkdir -p /nix/var/nix/daemon-socket
+    mkdir -p /nix/var/log/nix
+    chmod 0755 /nix/var/nix/daemon-socket
+
+    echo "agentbox-sidecar: starting nix-daemon"
+    if ! command -v nix-daemon >/dev/null 2>&1; then
+      echo "agentbox-sidecar: nix-daemon not found on PATH"
+      exit 127
+    fi
+
+    unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
+
+    echo "agentbox-sidecar: /nix/store has $(ls /nix/store 2>/dev/null | wc -l) entries"
+    echo "agentbox-sidecar: /nix/var/nix/db $(if [ -d /nix/var/nix/db ]; then echo exists; else echo missing; fi)"
+
+    nix-daemon --daemon 2>/tmp/nix-daemon-stderr.log &
+    echo "agentbox-sidecar: nix-daemon spawned"
+    sleep 0.5
+
+    if [ -s /tmp/nix-daemon-stderr.log ]; then
+      echo "agentbox-sidecar: nix-daemon stderr:"
+      cat /tmp/nix-daemon-stderr.log >&2
+    fi
+
+    if pgrep -x nix-daemon >/dev/null 2>&1; then
+      echo "agentbox-sidecar: nix-daemon process is running"
+    else
+      echo "agentbox-sidecar: nix-daemon process is NOT running after startup"
+    fi
+
+    attempt=0
+    while [ ! -S /nix/var/nix/daemon-socket/socket ]; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 300 ]; then
+        echo "agentbox-sidecar: daemon socket not created after 30s"
+        ls -ald /nix/var/nix /nix/var/nix/daemon-socket || true
+        ls -al /nix/var/nix/daemon-socket || true
+        ps -ef | grep -E 'nix-daemon' | grep -v grep | grep -v agentbox || true
+        exit 1
+      fi
+      sleep 0.1
+    done
+
+    echo "agentbox-sidecar: daemon socket ready"
+    echo "agentbox-sidecar: starting nix-proxy socat"
+    agentbox-sidecar-proxy 19876 /nix/var/nix/daemon-socket/socket &
+    exec tail -f /dev/null
+  '';
+
   stableRustToolchainPackages = [
     pkgs.cargo
     clangMoldWrapper
@@ -148,6 +200,7 @@ let
     pkgs.ripgrep
     pkgs.socat
     sidecarProxyWrapper
+    sidecarEntrypoint
     pkgs.procps
     pkgs.pkg-config
     pkgs.findutils
