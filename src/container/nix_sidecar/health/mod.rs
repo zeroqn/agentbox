@@ -10,8 +10,9 @@ use crate::{
     SIDECAR_HEALTH_ATTEMPTS, SIDECAR_HEALTH_DELAY_MS, SIDECAR_LOG_TAIL_LINES, SIDECAR_SOCKET_PATH,
 };
 
-use super::overlay::{cleanup_merged_mount, path_is_mounted};
-use super::{
+use crate::container::nix_sidecar::overlay::cleanup_merged_mount;
+use crate::container::nix_sidecar::probe::{is_container_running, path_is_mounted};
+use crate::container::nix_sidecar::{
     cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, resolve_sidecar_proxy_port,
     PodmanImageMountMode, SidecarPaths, SidecarState,
 };
@@ -124,21 +125,6 @@ fn proxy_port_is_listening(sidecar_name: &str) -> bool {
     run_podman_output(args, "failed to probe sidecar proxy port")
         .map(|out| out.trim().is_empty() || out.trim() == "")
         .unwrap_or(false)
-}
-
-pub(super) fn is_container_running(container_name: &str) -> bool {
-    let args = vec![
-        "container".to_owned(),
-        "inspect".to_owned(),
-        "--format".to_owned(),
-        "{{.State.Running}}".to_owned(),
-        container_name.to_owned(),
-    ];
-
-    match run_podman_output(args, "failed to inspect sidecar container") {
-        Ok(output) => output.trim() == "true",
-        Err(_) => false,
-    }
 }
 
 fn daemon_socket_exists(merged_dir: &Path) -> Result<bool> {

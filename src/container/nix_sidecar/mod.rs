@@ -2,6 +2,7 @@ mod health;
 mod image_mount;
 mod name;
 mod overlay;
+mod probe;
 mod runtime;
 mod state;
 
@@ -19,9 +20,9 @@ use crate::{
 };
 
 const SIDECAR_ENTRYPOINT: &str = "/bin/agentbox-nix-sidecar-entrypoint";
-
 use image_mount::{inspect_image_id, mount_image_with_lowerdir, unmount_image};
 use overlay::{cleanup_merged_mount, cleanup_merged_mount_all_namespaces, mount_fuse_overlayfs};
+use probe::is_container_running;
 pub(crate) use runtime::SidecarNixRuntime;
 
 #[derive(Debug, Clone)]
@@ -302,7 +303,7 @@ fn should_reuse_previous_sidecar(
         return Ok(false);
     }
 
-    let sidecar_running = health::is_container_running(&state.sidecar_name);
+    let sidecar_running = is_container_running(&state.sidecar_name);
     let protected_same_repo_reuse = protected_same_repo_reuse_applies(
         reusable_config_matches,
         sidecar_running,

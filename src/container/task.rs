@@ -1,7 +1,7 @@
 use anyhow::Result;
 
+use crate::container::nix_sidecar::SidecarNixRuntime;
 use crate::mounts::format::format_mount_arg_with_options;
-use crate::sidecar::SidecarNixRuntime;
 use crate::{
     CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR,
     INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
@@ -114,7 +114,7 @@ mod tests {
             merged_dir: PathBuf::from("/tmp/state/agentbox/project/nix-merged"),
             sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
             proxy_port: 19876,
-            mount_mode: crate::sidecar::PodmanImageMountMode::Direct,
+            mount_mode: crate::container::nix_sidecar::PodmanImageMountMode::Direct,
         }
     }
 

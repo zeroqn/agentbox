@@ -5,7 +5,7 @@ use std::process::Stdio;
 use crate::podman::command::{run_podman, run_podman_output};
 use crate::podman::unshare::build_podman_unshare_args;
 
-use super::{resolve_sidecar_lowerdir_for_mode, PodmanImageMountMode};
+use crate::container::nix_sidecar::{resolve_sidecar_lowerdir_for_mode, PodmanImageMountMode};
 
 pub fn inspect_image_id(image: &str) -> Result<String> {
     let args = vec![

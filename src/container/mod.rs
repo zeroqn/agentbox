@@ -1,3 +1,4 @@
+mod nix_sidecar;
 mod task;
 
 use anyhow::{Context, Result};
@@ -5,15 +6,15 @@ use std::env;
 use std::process::{ExitCode, Stdio};
 
 use crate::cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
+use crate::container::nix_sidecar::{
+    cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec,
+    SidecarSocketHealthProbe,
+};
 use crate::mounts::format::format_mount_arg;
 use crate::mounts::{
     prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount,
 };
 use crate::podman::command::run_podman;
-use crate::sidecar::{
-    cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec,
-    SidecarSocketHealthProbe,
-};
 use crate::state::resolve_state_layout;
 use crate::{derive_task_hostname, CONTAINER_WORKDIR, DEFAULT_NIX_SIDECAR_ENABLED};
 
@@ -93,7 +94,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }
 
-pub(crate) fn validate_sidecar_mode(sidecar_only: bool, nix_sidecar_enabled: bool) -> Result<()> {
+fn validate_sidecar_mode(sidecar_only: bool, nix_sidecar_enabled: bool) -> Result<()> {
     if nix_sidecar_enabled {
         return Ok(());
     }
@@ -109,15 +110,15 @@ pub(crate) fn validate_sidecar_mode(sidecar_only: bool, nix_sidecar_enabled: boo
     );
 }
 
-pub(crate) fn should_launch_task_container(sidecar_only: bool) -> bool {
+fn should_launch_task_container(sidecar_only: bool) -> bool {
     !sidecar_only
 }
 
-pub(crate) fn should_cleanup_idle_sidecar_after_run(sidecar_only: bool) -> bool {
+fn should_cleanup_idle_sidecar_after_run(sidecar_only: bool) -> bool {
     !sidecar_only
 }
 
-pub(crate) fn sidecar_socket_health_probe(sidecar_only: bool) -> SidecarSocketHealthProbe {
+fn sidecar_socket_health_probe(sidecar_only: bool) -> SidecarSocketHealthProbe {
     if sidecar_only {
         SidecarSocketHealthProbe::Disabled
     } else {

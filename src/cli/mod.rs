@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::env;
 
-use crate::memory::parse_mem_gib_arg;
+use crate::libkrun::parse_mem_gib_arg;
 use crate::podman::image::{podman_image_exists, pull_image};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 

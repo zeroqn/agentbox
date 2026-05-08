@@ -6,11 +6,9 @@ use std::process::ExitCode;
 mod cli;
 mod container;
 mod libkrun;
-mod memory;
 mod mode;
 mod mounts;
 mod podman;
-mod sidecar;
 mod state;
 
 use cli::Cli;

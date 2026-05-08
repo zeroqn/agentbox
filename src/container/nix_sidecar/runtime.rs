@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::PodmanImageMountMode;
+use crate::container::nix_sidecar::PodmanImageMountMode;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SidecarNixRuntime {

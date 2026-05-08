@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Context, Result};
-use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::container::nix_sidecar::probe::path_is_mounted;
 use crate::podman::command::podman_command;
 
-use super::PodmanImageMountMode;
+use crate::container::nix_sidecar::PodmanImageMountMode;
 
 pub fn mount_fuse_overlayfs(
     lowerdir: &Path,
@@ -194,36 +194,6 @@ if is_mounted; then
 fi
 exit 0
 "#;
-
-pub fn path_is_mounted(path: &Path) -> Result<bool> {
-    if !path.exists() {
-        return Ok(false);
-    }
-
-    let target = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf())
-        .to_string_lossy()
-        .to_string();
-
-    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
-        .context("failed to read /proc/self/mountinfo for mount health check")?;
-
-    for line in mountinfo.lines() {
-        let mut fields = line.split_whitespace();
-        let _mount_id = fields.next();
-        let _parent_id = fields.next();
-        let _major_minor = fields.next();
-        let _root = fields.next();
-        let mount_point = fields.next();
-
-        if mount_point == Some(target.as_str()) {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
 
 #[cfg(test)]
 mod tests {

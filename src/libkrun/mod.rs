@@ -1,4 +1,6 @@
+mod memory;
 pub(crate) mod nix;
+pub(crate) use memory::parse_mem_gib_arg;
 
 use anyhow::Result;
 use std::process::ExitCode;
