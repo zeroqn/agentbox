@@ -13,7 +13,7 @@ fn build_proxy_socket_ping_podman_args_targets_local_socat_socket() {
     assert!(!args.contains(&"--volume".to_owned()));
     assert!(!args.contains(&"--runtime".to_owned()));
     assert!(!args.contains(&"run.oci.handler=krun".to_owned()));
-    assert!(!args.contains(&crate::KRUN_USE_PASST_ANNOTATION.to_owned()));
+    assert!(!args.iter().any(|arg| arg.contains("krun.")));
 
     let script = &args[args.len() - 1];
     assert!(script.contains("mktemp -u /tmp/agentbox-nix-health."));

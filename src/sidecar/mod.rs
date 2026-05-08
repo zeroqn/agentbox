@@ -13,10 +13,9 @@ use std::process::Stdio;
 use crate::mounts::format::format_mount_arg;
 use crate::podman::command::{run_podman, run_podman_output};
 use crate::{
-    append_libkrun_runtime_args, ContainerRuntimeMode, CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR,
-    HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR, HOST_NIX_WORK_DIR,
-    NIX_NETWORK_DETECTION_PROXY_ENV, NIX_STORE_DIR, TASK_CONTAINER_ROLE_LABEL,
-    TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL,
+    CONTAINER_NIX_DIR, HOST_NIX_MERGED_DIR, HOST_NIX_SIDECAR_STATE_FILE, HOST_NIX_UPPER_DIR,
+    HOST_NIX_WORK_DIR, NIX_STORE_DIR, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
+    TASK_CONTAINER_SIDECAR_LABEL,
 };
 
 const SIDECAR_ENTRYPOINT: &str = "/bin/agentbox-nix-sidecar-entrypoint";
@@ -41,8 +40,7 @@ struct SidecarState {
     sidecar_name: String,
     mount_mode: PodmanImageMountMode,
     proxy_port: Option<u16>,
-    runtime_mode: ContainerRuntimeMode,
-    network_mode: SidecarNetworkMode,
+    native_config: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,18 +49,8 @@ pub(crate) enum PodmanImageMountMode {
     Unshare,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SidecarNetworkMode {
-    Passt,
-    Tsi,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SidecarDaemonRuntimeSpec {
-    pub runtime_mode: ContainerRuntimeMode,
-    pub use_tsi: bool,
-    pub libkrun_ram_mib: Option<u32>,
-    pub libkrun_cpu_count: Option<u32>,
     pub socket_health_probe: SidecarSocketHealthProbe,
 }
 
@@ -94,38 +82,8 @@ impl SidecarState {
         self.image == image && self.image_id == image_id && self.sidecar_name == sidecar_name
     }
 
-    fn matches(
-        &self,
-        image: &str,
-        image_id: &str,
-        sidecar_name: &str,
-        runtime_mode: ContainerRuntimeMode,
-        network_mode: SidecarNetworkMode,
-    ) -> bool {
-        self.matches_identity(image, image_id, sidecar_name)
-            && self.runtime_mode == runtime_mode
-            && self.network_mode == network_mode
-    }
-}
-
-impl SidecarNetworkMode {
-    fn for_runtime(runtime_mode: ContainerRuntimeMode, use_tsi: bool) -> Self {
-        if runtime_mode == ContainerRuntimeMode::Libkrun && use_tsi {
-            Self::Tsi
-        } else {
-            Self::Passt
-        }
-    }
-
-    fn state_label(self) -> &'static str {
-        match self {
-            Self::Passt => "passt",
-            Self::Tsi => "tsi",
-        }
-    }
-
-    fn use_passt(self) -> bool {
-        self == Self::Passt
+    fn matches(&self, image: &str, image_id: &str, sidecar_name: &str) -> bool {
+        self.matches_identity(image, image_id, sidecar_name) && self.native_config
     }
 }
 
@@ -158,18 +116,10 @@ pub(crate) fn prepare_sidecar_nix_runtime(
 
     let image_id = inspect_image_id(image)?;
     let sidecar_name = name::derive_sidecar_name(cwd, &image_id);
-    let network_mode =
-        SidecarNetworkMode::for_runtime(runtime_spec.runtime_mode, runtime_spec.use_tsi);
     let previous_state = state::read_sidecar_state(&paths)?;
 
     if let Some(state) = previous_state.as_ref() {
-        let reusable_config_matches = state.matches(
-            image,
-            &image_id,
-            &sidecar_name,
-            runtime_spec.runtime_mode,
-            network_mode,
-        );
+        let reusable_config_matches = state.matches(image, &image_id, &sidecar_name);
         if should_reuse_previous_sidecar(
             state,
             &paths,
@@ -190,14 +140,7 @@ pub(crate) fn prepare_sidecar_nix_runtime(
         }
     }
 
-    reject_active_sidecar_config_mismatch(
-        previous_state.as_ref(),
-        image,
-        &image_id,
-        &sidecar_name,
-        runtime_spec.runtime_mode,
-        network_mode,
-    )?;
+    reject_active_legacy_sidecar_config(previous_state.as_ref(), image, &image_id, &sidecar_name)?;
 
     recreate_sidecar_stack(
         &paths,
@@ -206,7 +149,6 @@ pub(crate) fn prepare_sidecar_nix_runtime(
         &sidecar_name,
         previous_state.as_ref(),
         runtime_spec,
-        network_mode,
     )
 }
 
@@ -230,7 +172,6 @@ fn recreate_sidecar_stack(
     sidecar_name: &str,
     previous_state: Option<&SidecarState>,
     runtime_spec: SidecarDaemonRuntimeSpec,
-    network_mode: SidecarNetworkMode,
 ) -> Result<SidecarNixRuntime> {
     if let Some(state) = previous_state {
         cleanup_sidecar_container(&state.sidecar_name)?;
@@ -252,15 +193,7 @@ fn recreate_sidecar_stack(
     )?;
 
     let merged_mount_arg = format_mount_arg(&paths.merged_dir, CONTAINER_NIX_DIR)?;
-    let sidecar_args = build_sidecar_podman_args(
-        image,
-        sidecar_name,
-        &merged_mount_arg,
-        runtime_spec.runtime_mode,
-        network_mode,
-        runtime_spec.libkrun_ram_mib,
-        runtime_spec.libkrun_cpu_count,
-    )?;
+    let sidecar_args = build_sidecar_podman_args(image, sidecar_name, &merged_mount_arg)?;
     let status = run_podman(
         sidecar_args,
         Stdio::null(),
@@ -293,8 +226,7 @@ fn recreate_sidecar_stack(
         sidecar_name: sidecar_name.to_owned(),
         mount_mode,
         proxy_port: Some(proxy_port),
-        runtime_mode: runtime_spec.runtime_mode,
-        network_mode,
+        native_config: true,
     };
     state::write_sidecar_state(paths, &new_state)?;
 
@@ -400,57 +332,41 @@ fn sidecar_stack_is_reusable(
     }
 }
 
-fn reject_active_sidecar_config_mismatch(
+fn reject_active_legacy_sidecar_config(
     state: Option<&SidecarState>,
     image: &str,
     image_id: &str,
     sidecar_name: &str,
-    requested_mode: ContainerRuntimeMode,
-    requested_network_mode: SidecarNetworkMode,
 ) -> Result<()> {
     let Some(state) = state else {
         return Ok(());
     };
 
-    if !state.matches_identity(image, image_id, sidecar_name)
-        || (state.runtime_mode == requested_mode && state.network_mode == requested_network_mode)
-    {
-        return Ok(());
-    }
-
-    if active_sidecar_config_mismatch_applies(
+    if active_legacy_sidecar_config_applies(
         state,
         image,
         image_id,
         sidecar_name,
-        requested_mode,
-        requested_network_mode,
         sidecar_has_running_task_containers(&state.sidecar_name)?,
     ) {
         anyhow::bail!(
-            "nix-daemon sidecar '{}' is running in {}/{} mode while this run requested {}/{} mode and matching task containers are still active; wait for those tasks to exit or rerun with the matching runtime and network mode",
-            state.sidecar_name,
-            state.runtime_mode.state_label(),
-            state.network_mode.state_label(),
-            requested_mode.state_label(),
-            requested_network_mode.state_label()
+            "nix-daemon sidecar '{}' was started by a legacy non-container configuration and matching task containers are still active; wait for those tasks to exit before recreating the container-mode sidecar",
+            state.sidecar_name
         );
     }
 
     Ok(())
 }
 
-fn active_sidecar_config_mismatch_applies(
+fn active_legacy_sidecar_config_applies(
     state: &SidecarState,
     image: &str,
     image_id: &str,
     sidecar_name: &str,
-    requested_mode: ContainerRuntimeMode,
-    requested_network_mode: SidecarNetworkMode,
     running_task_containers: bool,
 ) -> bool {
     state.matches_identity(image, image_id, sidecar_name)
-        && (state.runtime_mode != requested_mode || state.network_mode != requested_network_mode)
+        && !state.native_config
         && running_task_containers
 }
 
@@ -512,10 +428,6 @@ fn build_sidecar_podman_args(
     image: &str,
     sidecar_name: &str,
     merged_mount: &str,
-    runtime_mode: ContainerRuntimeMode,
-    network_mode: SidecarNetworkMode,
-    libkrun_ram_mib: Option<u32>,
-    libkrun_cpu_count: Option<u32>,
 ) -> Result<Vec<String>> {
     let mut args = vec![
         "run".to_owned(),
@@ -529,19 +441,6 @@ fn build_sidecar_podman_args(
         "--publish".to_owned(),
         "19876".to_owned(),
     ];
-
-    if runtime_mode == ContainerRuntimeMode::Libkrun {
-        append_libkrun_runtime_args(
-            &mut args,
-            libkrun_ram_mib,
-            libkrun_cpu_count,
-            network_mode.use_passt(),
-        )?;
-        if network_mode == SidecarNetworkMode::Tsi {
-            args.push("--env".to_owned());
-            args.push(NIX_NETWORK_DETECTION_PROXY_ENV.to_owned());
-        }
-    }
 
     args.extend([
         "--entrypoint".to_owned(),

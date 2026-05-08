@@ -2,9 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::ContainerRuntimeMode;
-
-use super::{PodmanImageMountMode, SidecarNetworkMode, SidecarPaths, SidecarState};
+use super::{PodmanImageMountMode, SidecarPaths, SidecarState};
 
 pub fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> {
     if !paths.state_file.exists() {
@@ -52,14 +50,12 @@ pub fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result
         None => String::new(),
     };
     let contents = format!(
-        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\nruntime_mode={}\nnetwork_mode={}\n{proxy_port_line}",
+        "image={}\nimage_id={}\nimage_mount_path={}\nsidecar_name={}\nmount_mode={}\n{proxy_port_line}",
         state.image,
         state.image_id,
         state.image_mount_path.display(),
         state.sidecar_name,
         mount_mode,
-        state.runtime_mode.state_label(),
-        state.network_mode.state_label()
     );
 
     fs::write(&paths.state_file, contents)
@@ -73,8 +69,7 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
     let mut sidecar_name = None;
     let mut mount_mode = None;
     let mut proxy_port = None;
-    let mut runtime_mode = None;
-    let mut network_mode = None;
+    let mut native_config = true;
 
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -110,32 +105,8 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
                         )
                     })?);
                 }
-                "runtime_mode" => {
-                    runtime_mode = Some(match value {
-                        "native" => ContainerRuntimeMode::Native,
-                        "libkrun" => ContainerRuntimeMode::Libkrun,
-                        _ => {
-                            return Err(anyhow!(
-                                "unsupported runtime_mode '{}' in '{}'",
-                                value,
-                                state_file.display()
-                            ))
-                        }
-                    });
-                }
-                "network_mode" => {
-                    network_mode = Some(match value {
-                        "passt" => SidecarNetworkMode::Passt,
-                        "tsi" => SidecarNetworkMode::Tsi,
-                        _ => {
-                            return Err(anyhow!(
-                                "unsupported network_mode '{}' in '{}'",
-                                value,
-                                state_file.display()
-                            ))
-                        }
-                    });
-                }
+                "runtime_mode" if value != "native" => native_config = false,
+                "network_mode" if value != "passt" => native_config = false,
                 _ => {}
             }
         }
@@ -150,8 +121,7 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
                 sidecar_name,
                 mount_mode: mount_mode.unwrap_or(PodmanImageMountMode::Direct),
                 proxy_port,
-                runtime_mode: runtime_mode.unwrap_or(ContainerRuntimeMode::Native),
-                network_mode: network_mode.unwrap_or(SidecarNetworkMode::Passt),
+                native_config,
             })
         }
         _ => Err(anyhow!("'{}' is incomplete", state_file.display())),

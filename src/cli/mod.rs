@@ -11,7 +11,15 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "agentbox",
     version,
     about = "Launch a Podman shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  agentbox\n  agentbox --pull-latest\n  agentbox --native\n  agentbox --tsi\n  agentbox --mem 8\n  agentbox --sidecar-only\n  agentbox --sidecar-only --debug\n  agentbox --native --sidecar-only\n  agentbox --native --disable-nix-sidecar\n  agentbox --image ghcr.io/example/agentbox:dev\n  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+    after_help = "Examples:
+  agentbox
+  agentbox --pull-latest
+  agentbox --sidecar-only
+  agentbox --sidecar-only --debug
+  agentbox --libkrun
+  agentbox --libkrun --mem 8
+  agentbox --image ghcr.io/example/agentbox:dev
+  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -31,8 +39,8 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Disable sidecar mode and run with seeded external nix-state mounts",
-        long_help = "Disable rootless sidecar mode for this run and use seeded bind mounts from the resolved external agentbox state root instead."
+        help = "Disable sidecar mode (unsupported; seeded fallback has been removed)",
+        long_help = "Disable rootless sidecar mode for this run. This is currently unsupported because the seeded nix fallback has been removed; container mode requires the sidecar."
     )]
     pub disable_nix_sidecar: bool,
 
@@ -52,15 +60,22 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Run task and sidecar containers with normal native Podman instead of default libkrun",
-        long_help = "Run the interactive task container and nix-daemon sidecar daemon with normal native Podman instead of the default crun/libkrun runtime. This is the escape hatch for hosts that need native Podman behavior."
+        help = "Deprecated alias for the default container mode",
+        long_help = "Deprecated compatibility alias for the default container mode. agentbox now runs container mode by default, so this flag is unnecessary and cannot be combined with --libkrun."
     )]
     pub native: bool,
 
     #[arg(
         long,
-        help = "Use libkrun TSI networking instead of default passt networking",
-        long_help = "Use libkrun TSI networking for the default task runtime instead of adding the default task krun.use_passt=1 annotation. The nix-daemon sidecar daemon keeps publish-compatible passt networking. With --native this flag parses but has no effect."
+        help = "Opt into libkrun mode (currently fails until raw_image support exists)",
+        long_help = "Opt into the future Podman/libkrun mode. This path currently fails clearly before launching anything because raw_image Nix support has not been implemented yet."
+    )]
+    pub libkrun: bool,
+
+    #[arg(
+        long,
+        help = "Use libkrun TSI networking when --libkrun is implemented",
+        long_help = "Future libkrun-only networking option. This flag is rejected unless --libkrun is also present, and libkrun mode currently fails until raw_image support exists."
     )]
     pub tsi: bool,
 
@@ -68,8 +83,8 @@ pub struct Cli {
         long = "mem",
         value_name = "GiB",
         value_parser = parse_mem_gib_arg,
-        help = "Set libkrun VM memory in GiB",
-        long_help = "Set memory for the default crun/libkrun runtime in integer GiB. If omitted, agentbox defaults to 80% of detected host memory rounded down to a whole GiB. This flag is not supported with --native."
+        help = "Set future libkrun VM memory in GiB",
+        long_help = "Future libkrun-only memory option in integer GiB. This flag is rejected unless --libkrun is also present, and libkrun mode currently fails until raw_image support exists."
     )]
     pub mem_gib: Option<u32>,
 }

@@ -11,6 +11,7 @@ fn cli_accepts_no_arguments() {
     assert!(!cli.sidecar_only);
     assert!(!cli.debug);
     assert!(!cli.native);
+    assert!(!cli.libkrun);
     assert!(!cli.tsi);
     assert_eq!(cli.mem_gib, None);
 }
@@ -91,9 +92,17 @@ fn cli_accepts_debug_with_sidecar_only_flag() {
 }
 
 #[test]
-fn cli_accepts_native_flag() {
+fn cli_accepts_native_flag_as_deprecated_container_alias() {
     let cli = Cli::try_parse_from(["agentbox", "--native"]).expect("--native should parse");
     assert!(cli.native);
+    assert!(!cli.libkrun);
+}
+
+#[test]
+fn cli_accepts_libkrun_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--libkrun"]).expect("--libkrun should parse");
+    assert!(cli.libkrun);
+    assert!(!cli.native);
 }
 
 #[test]
@@ -110,6 +119,10 @@ fn cli_accepts_tsi_flag() {
     assert!(
         !cli.native,
         "--tsi is parsed independently and does not imply native mode"
+    );
+    assert!(
+        !cli.libkrun,
+        "--tsi is parsed independently; runtime validation requires --libkrun"
     );
 }
 
