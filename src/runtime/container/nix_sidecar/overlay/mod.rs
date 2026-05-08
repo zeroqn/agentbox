@@ -2,10 +2,10 @@ use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::container::nix_sidecar::probe::path_is_mounted;
 use crate::podman::process::podman_command;
+use crate::runtime::container::nix_sidecar::probe::path_is_mounted;
 
-use crate::container::nix_sidecar::PodmanImageMountMode;
+use crate::runtime::container::nix_sidecar::PodmanImageMountMode;
 
 pub fn mount_fuse_overlayfs(
     lowerdir: &Path,

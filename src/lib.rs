@@ -4,15 +4,12 @@ use std::path::Path;
 use std::process::ExitCode;
 
 mod cli;
-mod container;
-mod libkrun;
-mod mode;
 mod mounts;
 mod podman;
+mod runtime;
 mod state;
 
 use cli::Cli;
-use mode::{resolve_runtime_mode, RuntimeMode};
 use podman::process::set_podman_debug;
 
 const DEFAULT_IMAGE: &str = "localhost/agentbox:latest";
@@ -57,11 +54,7 @@ pub fn entrypoint() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     set_podman_debug(cli.debug);
-
-    match resolve_runtime_mode(&cli)? {
-        RuntimeMode::Container => container::run(cli),
-        RuntimeMode::Libkrun => libkrun::run(cli),
-    }
+    runtime::run(cli)
 }
 
 fn derive_task_hostname(cwd: &Path) -> String {

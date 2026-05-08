@@ -6,15 +6,15 @@ use std::env;
 use std::process::{ExitCode, Stdio};
 
 use crate::cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
-use crate::container::nix_sidecar::{
-    cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec,
-    SidecarSocketHealthProbe,
-};
 use crate::mounts::format::format_mount_arg;
 use crate::mounts::{
     prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount,
 };
 use crate::podman::command::run_podman;
+use crate::runtime::container::nix_sidecar::{
+    cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec,
+    SidecarSocketHealthProbe,
+};
 use crate::state::resolve_state_layout;
 use crate::{derive_task_hostname, CONTAINER_WORKDIR, DEFAULT_NIX_SIDECAR_ENABLED};
 

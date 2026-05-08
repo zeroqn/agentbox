@@ -1,14 +1,27 @@
+mod container;
+mod libkrun;
+
 use anyhow::Result;
+use std::process::ExitCode;
 
 use crate::cli::Cli;
 
+pub(crate) use libkrun::parse_mem_gib_arg;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeMode {
+enum RuntimeMode {
     Container,
     Libkrun,
 }
 
-pub(crate) fn resolve_runtime_mode(cli: &Cli) -> Result<RuntimeMode> {
+pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
+    match resolve_runtime_mode(&cli)? {
+        RuntimeMode::Container => container::run(cli),
+        RuntimeMode::Libkrun => libkrun::run(cli),
+    }
+}
+
+fn resolve_runtime_mode(cli: &Cli) -> Result<RuntimeMode> {
     if cli.native && cli.libkrun {
         anyhow::bail!("--native and --libkrun select conflicting runtime modes");
     }

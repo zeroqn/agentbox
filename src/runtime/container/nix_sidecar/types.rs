@@ -30,12 +30,12 @@ pub enum PodmanImageMountMode {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(in crate::container) struct SidecarDaemonRuntimeSpec {
+pub(in crate::runtime::container) struct SidecarDaemonRuntimeSpec {
     pub socket_health_probe: SidecarSocketHealthProbe,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::container) enum SidecarSocketHealthProbe {
+pub(in crate::runtime::container) enum SidecarSocketHealthProbe {
     Enabled,
     Disabled,
 }

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::process::Stdio;
 
-pub(in crate::container::nix_sidecar) fn ensure_command_available(
+pub(in crate::runtime::container::nix_sidecar) fn ensure_command_available(
     command: &str,
     guidance: &str,
 ) -> Result<()> {

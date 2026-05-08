@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::container::nix_sidecar::types::PodmanImageMountMode;
 use crate::podman::command::run_podman_output;
+use crate::runtime::container::nix_sidecar::types::PodmanImageMountMode;
 use crate::NIX_STORE_DIR;
 
 pub fn resolve_sidecar_lowerdir(image_mount_path: &Path) -> Result<PathBuf> {

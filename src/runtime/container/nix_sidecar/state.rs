@@ -2,7 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::container::nix_sidecar::types::{PodmanImageMountMode, SidecarPaths, SidecarState};
+use crate::runtime::container::nix_sidecar::types::{
+    PodmanImageMountMode, SidecarPaths, SidecarState,
+};
 
 pub fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> {
     if !paths.state_file.exists() {

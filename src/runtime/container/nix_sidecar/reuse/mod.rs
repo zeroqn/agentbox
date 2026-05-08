@@ -1,11 +1,13 @@
 use anyhow::Result;
 
-use crate::container::nix_sidecar::health;
-use crate::container::nix_sidecar::probe::is_container_running;
-use crate::container::nix_sidecar::sidecar_podman::task_probe::sidecar_has_running_task_containers;
-use crate::container::nix_sidecar::types::{SidecarPaths, SidecarSocketHealthProbe, SidecarState};
+use crate::runtime::container::nix_sidecar::health;
+use crate::runtime::container::nix_sidecar::probe::is_container_running;
+use crate::runtime::container::nix_sidecar::sidecar_podman::task_probe::sidecar_has_running_task_containers;
+use crate::runtime::container::nix_sidecar::types::{
+    SidecarPaths, SidecarSocketHealthProbe, SidecarState,
+};
 
-pub(in crate::container::nix_sidecar) fn should_reuse_previous_sidecar(
+pub(in crate::runtime::container::nix_sidecar) fn should_reuse_previous_sidecar(
     state: &SidecarState,
     paths: &SidecarPaths,
     image: &str,
@@ -33,7 +35,7 @@ pub(in crate::container::nix_sidecar) fn should_reuse_previous_sidecar(
     ))
 }
 
-pub(in crate::container::nix_sidecar) fn reject_active_legacy_sidecar_config(
+pub(in crate::runtime::container::nix_sidecar) fn reject_active_legacy_sidecar_config(
     state: Option<&SidecarState>,
     image: &str,
     image_id: &str,

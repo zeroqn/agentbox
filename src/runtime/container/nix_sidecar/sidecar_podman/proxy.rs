@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 
 use crate::podman::command::run_podman_output;
 
-pub(in crate::container::nix_sidecar) const SIDECAR_PROXY_CONTAINER_PORT: &str = "19876";
-pub(in crate::container::nix_sidecar) const SIDECAR_PROXY_FALLBACK_PORT: u16 = 19876;
+pub(in crate::runtime::container::nix_sidecar) const SIDECAR_PROXY_CONTAINER_PORT: &str = "19876";
+pub(in crate::runtime::container::nix_sidecar) const SIDECAR_PROXY_FALLBACK_PORT: u16 = 19876;
 
-pub(in crate::container::nix_sidecar) fn resolve_sidecar_proxy_port(
+pub(in crate::runtime::container::nix_sidecar) fn resolve_sidecar_proxy_port(
     sidecar_name: &str,
 ) -> Result<u16> {
     let output = run_podman_output(
@@ -32,7 +32,7 @@ pub(in crate::container::nix_sidecar) fn resolve_sidecar_proxy_port(
         .with_context(|| format!("invalid proxy port number: {port_str}"))
 }
 
-pub(in crate::container::nix_sidecar) fn resolve_runtime_proxy_port_or_default(
+pub(in crate::runtime::container::nix_sidecar) fn resolve_runtime_proxy_port_or_default(
     result: Result<u16>,
 ) -> u16 {
     result.unwrap_or_else(|err| {

@@ -11,9 +11,11 @@ mod sidecar_podman;
 mod state;
 mod types;
 
-pub(in crate::container) use lifecycle::{cleanup_idle_sidecar, prepare_sidecar_nix_runtime};
-pub(in crate::container) use runtime::SidecarNixRuntime;
-pub(in crate::container) use types::{
+pub(in crate::runtime::container) use lifecycle::{
+    cleanup_idle_sidecar, prepare_sidecar_nix_runtime,
+};
+pub(in crate::runtime::container) use runtime::SidecarNixRuntime;
+pub(in crate::runtime::container) use types::{
     PodmanImageMountMode, SidecarDaemonRuntimeSpec, SidecarSocketHealthProbe,
 };
 

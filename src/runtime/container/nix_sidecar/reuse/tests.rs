@@ -52,7 +52,7 @@ fn legacy_non_native_sidecar_state_is_not_reused_as_container_native() {
         image_id: "sha256:abc123".to_owned(),
         image_mount_path: PathBuf::from("/tmp/podman/mounts/abc"),
         sidecar_name: "agentbox-nix-sidecar-abc".to_owned(),
-        mount_mode: crate::container::nix_sidecar::types::PodmanImageMountMode::Direct,
+        mount_mode: crate::runtime::container::nix_sidecar::types::PodmanImageMountMode::Direct,
         proxy_port: Some(12345),
         native_config: false,
     };

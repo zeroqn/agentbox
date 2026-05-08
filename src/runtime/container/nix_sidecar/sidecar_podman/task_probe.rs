@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::podman::command::run_podman_output;
 use crate::{TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL};
 
-pub(in crate::container::nix_sidecar) fn build_sidecar_task_probe_args(
+pub(in crate::runtime::container::nix_sidecar) fn build_sidecar_task_probe_args(
     sidecar_name: &str,
 ) -> Vec<String> {
     vec![
@@ -17,7 +17,7 @@ pub(in crate::container::nix_sidecar) fn build_sidecar_task_probe_args(
     ]
 }
 
-pub(in crate::container::nix_sidecar) fn sidecar_has_running_task_containers(
+pub(in crate::runtime::container::nix_sidecar) fn sidecar_has_running_task_containers(
     sidecar_name: &str,
 ) -> Result<bool> {
     let args = build_sidecar_task_probe_args(sidecar_name);

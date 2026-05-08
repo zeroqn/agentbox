@@ -3,32 +3,34 @@ use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::container::nix_sidecar::health;
-use crate::container::nix_sidecar::image_mount::{
+use crate::podman::command::run_podman;
+use crate::runtime::container::nix_sidecar::health;
+use crate::runtime::container::nix_sidecar::image_mount::{
     inspect_image_id, mount_image_with_lowerdir, unmount_image,
 };
-use crate::container::nix_sidecar::name;
-use crate::container::nix_sidecar::overlay::{
+use crate::runtime::container::nix_sidecar::name;
+use crate::runtime::container::nix_sidecar::overlay::{
     cleanup_merged_mount, cleanup_merged_mount_all_namespaces, mount_fuse_overlayfs,
 };
-use crate::container::nix_sidecar::reuse::{
+use crate::runtime::container::nix_sidecar::reuse::{
     reject_active_legacy_sidecar_config, should_reuse_previous_sidecar,
 };
-use crate::container::nix_sidecar::runtime::SidecarNixRuntime;
-use crate::container::nix_sidecar::sidecar_podman::container::{
+use crate::runtime::container::nix_sidecar::runtime::SidecarNixRuntime;
+use crate::runtime::container::nix_sidecar::sidecar_podman::container::{
     build_merged_mount_arg, build_sidecar_podman_args, cleanup_sidecar_container,
     SIDECAR_ENTRYPOINT,
 };
-use crate::container::nix_sidecar::sidecar_podman::proxy::{
+use crate::runtime::container::nix_sidecar::sidecar_podman::proxy::{
     resolve_runtime_proxy_port_or_default, resolve_sidecar_proxy_port,
 };
-use crate::container::nix_sidecar::sidecar_podman::requirements::ensure_command_available;
-use crate::container::nix_sidecar::sidecar_podman::task_probe::sidecar_has_running_task_containers;
-use crate::container::nix_sidecar::state;
-use crate::container::nix_sidecar::types::{SidecarDaemonRuntimeSpec, SidecarPaths, SidecarState};
-use crate::podman::command::run_podman;
+use crate::runtime::container::nix_sidecar::sidecar_podman::requirements::ensure_command_available;
+use crate::runtime::container::nix_sidecar::sidecar_podman::task_probe::sidecar_has_running_task_containers;
+use crate::runtime::container::nix_sidecar::state;
+use crate::runtime::container::nix_sidecar::types::{
+    SidecarDaemonRuntimeSpec, SidecarPaths, SidecarState,
+};
 
-pub(in crate::container) fn prepare_sidecar_nix_runtime(
+pub(in crate::runtime::container) fn prepare_sidecar_nix_runtime(
     cwd: &Path,
     state_root: &Path,
     image: &str,
@@ -77,7 +79,9 @@ pub(in crate::container) fn prepare_sidecar_nix_runtime(
     )
 }
 
-pub(in crate::container) fn cleanup_idle_sidecar(sidecar: &SidecarNixRuntime) -> Result<()> {
+pub(in crate::runtime::container) fn cleanup_idle_sidecar(
+    sidecar: &SidecarNixRuntime,
+) -> Result<()> {
     if preserve_idle_sidecar(sidecar_has_running_task_containers(&sidecar.sidecar_name)?) {
         return Ok(());
     }

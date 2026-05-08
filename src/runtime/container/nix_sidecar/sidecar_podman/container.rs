@@ -2,15 +2,15 @@ use anyhow::Result;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::container::nix_sidecar::sidecar_podman::proxy::SIDECAR_PROXY_CONTAINER_PORT;
 use crate::mounts::format::format_mount_arg;
 use crate::podman::command::run_podman;
+use crate::runtime::container::nix_sidecar::sidecar_podman::proxy::SIDECAR_PROXY_CONTAINER_PORT;
 use crate::CONTAINER_NIX_DIR;
 
-pub(in crate::container::nix_sidecar) const SIDECAR_ENTRYPOINT: &str =
+pub(in crate::runtime::container::nix_sidecar) const SIDECAR_ENTRYPOINT: &str =
     "/bin/agentbox-nix-sidecar-entrypoint";
 
-pub(in crate::container::nix_sidecar) fn cleanup_sidecar_container(
+pub(in crate::runtime::container::nix_sidecar) fn cleanup_sidecar_container(
     sidecar_name: &str,
 ) -> Result<()> {
     let args = vec!["rm".to_owned(), "-f".to_owned(), sidecar_name.to_owned()];
@@ -24,7 +24,7 @@ pub(in crate::container::nix_sidecar) fn cleanup_sidecar_container(
     Ok(())
 }
 
-pub(in crate::container::nix_sidecar) fn build_sidecar_podman_args(
+pub(in crate::runtime::container::nix_sidecar) fn build_sidecar_podman_args(
     image: &str,
     sidecar_name: &str,
     merged_mount: &str,
@@ -51,7 +51,7 @@ pub(in crate::container::nix_sidecar) fn build_sidecar_podman_args(
     Ok(args)
 }
 
-pub(in crate::container::nix_sidecar) fn build_merged_mount_arg(
+pub(in crate::runtime::container::nix_sidecar) fn build_merged_mount_arg(
     merged_dir: &Path,
 ) -> Result<String> {
     format_mount_arg(merged_dir, CONTAINER_NIX_DIR)
