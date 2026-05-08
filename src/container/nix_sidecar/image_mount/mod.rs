@@ -5,7 +5,8 @@ use std::process::Stdio;
 use crate::podman::command::{run_podman, run_podman_output};
 use crate::podman::unshare::build_podman_unshare_args;
 
-use crate::container::nix_sidecar::{resolve_sidecar_lowerdir_for_mode, PodmanImageMountMode};
+use crate::container::nix_sidecar::lowerdir::resolve_sidecar_lowerdir_for_mode;
+use crate::container::nix_sidecar::types::PodmanImageMountMode;
 
 pub fn inspect_image_id(image: &str) -> Result<String> {
     let args = vec![
@@ -30,23 +31,9 @@ pub fn mount_image_with_lowerdir(image: &str) -> Result<(PathBuf, PathBuf, Podma
     let mut attempts = Vec::new();
 
     for mode in [PodmanImageMountMode::Direct, PodmanImageMountMode::Unshare] {
-        match mount_image_once(image, mode) {
-            Ok(image_mount_path) => {
-                match resolve_sidecar_lowerdir_for_mode(&image_mount_path, mode) {
-                    Ok(lowerdir) => return Ok((image_mount_path, lowerdir, mode)),
-                    Err(err) => {
-                        let _ = unmount_image_mode(image, mode);
-                        attempts.push(format!(
-                            "{} returned '{}' without a usable lowerdir: {err}",
-                            mode.label(),
-                            image_mount_path.display(),
-                        ));
-                    }
-                }
-            }
-            Err(err) => {
-                attempts.push(format!("{} failed: {err:#}", mode.label()));
-            }
+        match mount_image_attempt(image, mode) {
+            Ok(mounted) => return Ok(mounted),
+            Err(attempt) => attempts.push(attempt),
         }
     }
 
@@ -62,6 +49,24 @@ pub fn unmount_image(image: &str) -> Result<()> {
         let _ = unmount_image_mode(image, mode);
     }
     Ok(())
+}
+
+fn mount_image_attempt(
+    image: &str,
+    mode: PodmanImageMountMode,
+) -> std::result::Result<(PathBuf, PathBuf, PodmanImageMountMode), String> {
+    let image_mount_path =
+        mount_image_once(image, mode).map_err(|err| format!("{} failed: {err:#}", mode.label()))?;
+    let lowerdir = resolve_sidecar_lowerdir_for_mode(&image_mount_path, mode).map_err(|err| {
+        let _ = unmount_image_mode(image, mode);
+        format!(
+            "{} returned '{}' without a usable lowerdir: {err}",
+            mode.label(),
+            image_mount_path.display(),
+        )
+    })?;
+
+    Ok((image_mount_path, lowerdir, mode))
 }
 
 fn build_podman_image_mount_args(image: &str, mode: PodmanImageMountMode) -> Vec<String> {

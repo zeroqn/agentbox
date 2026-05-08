@@ -13,7 +13,7 @@ mod state;
 
 use cli::Cli;
 use mode::{resolve_runtime_mode, RuntimeMode};
-use podman::command::set_podman_debug;
+use podman::process::set_podman_debug;
 
 const DEFAULT_IMAGE: &str = "localhost/agentbox:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/agentbox:latest";

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::container::nix_sidecar::{PodmanImageMountMode, SidecarPaths, SidecarState};
+use crate::container::nix_sidecar::types::{PodmanImageMountMode, SidecarPaths, SidecarState};
 
 pub fn read_sidecar_state(paths: &SidecarPaths) -> Result<Option<SidecarState>> {
     if !paths.state_file.exists() {
@@ -62,14 +62,53 @@ pub fn write_sidecar_state(paths: &SidecarPaths, state: &SidecarState) -> Result
         .with_context(|| format!("failed to write '{}'", paths.state_file.display()))
 }
 
+#[derive(Default)]
+struct ParsedSidecarState {
+    image: Option<String>,
+    image_id: Option<String>,
+    image_mount_path: Option<PathBuf>,
+    sidecar_name: Option<String>,
+    mount_mode: Option<PodmanImageMountMode>,
+    proxy_port: Option<u16>,
+    native_config: bool,
+}
+
+impl ParsedSidecarState {
+    fn new() -> Self {
+        Self {
+            native_config: true,
+            ..Self::default()
+        }
+    }
+
+    fn into_sidecar_state(self, state_file: &Path) -> Result<SidecarState> {
+        let Some(image) = self.image else {
+            return Err(incomplete_state_error(state_file));
+        };
+        let Some(image_id) = self.image_id else {
+            return Err(incomplete_state_error(state_file));
+        };
+        let Some(image_mount_path) = self.image_mount_path else {
+            return Err(incomplete_state_error(state_file));
+        };
+        let Some(sidecar_name) = self.sidecar_name else {
+            return Err(incomplete_state_error(state_file));
+        };
+
+        Ok(SidecarState {
+            image,
+            image_id,
+            image_mount_path,
+            sidecar_name,
+            mount_mode: self.mount_mode.unwrap_or(PodmanImageMountMode::Direct),
+            proxy_port: self.proxy_port,
+            native_config: self.native_config,
+        })
+    }
+}
+
 fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState> {
-    let mut image = None;
-    let mut image_id = None;
-    let mut image_mount_path = None;
-    let mut sidecar_name = None;
-    let mut mount_mode = None;
-    let mut proxy_port = None;
-    let mut native_config = true;
+    let mut parsed = ParsedSidecarState::new();
 
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -77,53 +116,57 @@ fn parse_sidecar_state(contents: &str, state_file: &Path) -> Result<SidecarState
             continue;
         }
 
-        if let Some((key, value)) = trimmed.split_once('=') {
-            match key {
-                "image" => image = Some(value.to_owned()),
-                "image_id" => image_id = Some(value.to_owned()),
-                "image_mount_path" => image_mount_path = Some(PathBuf::from(value)),
-                "sidecar_name" => sidecar_name = Some(value.to_owned()),
-                "mount_mode" => {
-                    mount_mode = Some(match value {
-                        "direct" => PodmanImageMountMode::Direct,
-                        "unshare" => PodmanImageMountMode::Unshare,
-                        _ => {
-                            return Err(anyhow!(
-                                "unsupported mount_mode '{}' in '{}'",
-                                value,
-                                state_file.display()
-                            ))
-                        }
-                    })
-                }
-                "proxy_port" => {
-                    proxy_port = Some(value.parse::<u16>().map_err(|_| {
-                        anyhow!(
-                            "invalid proxy_port '{}' in '{}'",
-                            value,
-                            state_file.display()
-                        )
-                    })?);
-                }
-                "runtime_mode" if value != "native" => native_config = false,
-                "network_mode" if value != "passt" => native_config = false,
-                _ => {}
-            }
-        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        apply_state_entry(&mut parsed, key, value, state_file)?;
     }
 
-    match (image, image_id, image_mount_path, sidecar_name) {
-        (Some(image), Some(image_id), Some(image_mount_path), Some(sidecar_name)) => {
-            Ok(SidecarState {
-                image,
-                image_id,
-                image_mount_path,
-                sidecar_name,
-                mount_mode: mount_mode.unwrap_or(PodmanImageMountMode::Direct),
-                proxy_port,
-                native_config,
-            })
-        }
-        _ => Err(anyhow!("'{}' is incomplete", state_file.display())),
+    parsed.into_sidecar_state(state_file)
+}
+
+fn apply_state_entry(
+    parsed: &mut ParsedSidecarState,
+    key: &str,
+    value: &str,
+    state_file: &Path,
+) -> Result<()> {
+    match key {
+        "image" => parsed.image = Some(value.to_owned()),
+        "image_id" => parsed.image_id = Some(value.to_owned()),
+        "image_mount_path" => parsed.image_mount_path = Some(PathBuf::from(value)),
+        "sidecar_name" => parsed.sidecar_name = Some(value.to_owned()),
+        "mount_mode" => parsed.mount_mode = Some(parse_mount_mode(value, state_file)?),
+        "proxy_port" => parsed.proxy_port = Some(parse_proxy_port(value, state_file)?),
+        "runtime_mode" if value != "native" => parsed.native_config = false,
+        "network_mode" if value != "passt" => parsed.native_config = false,
+        _ => {}
     }
+    Ok(())
+}
+
+fn parse_mount_mode(value: &str, state_file: &Path) -> Result<PodmanImageMountMode> {
+    match value {
+        "direct" => Ok(PodmanImageMountMode::Direct),
+        "unshare" => Ok(PodmanImageMountMode::Unshare),
+        _ => Err(anyhow!(
+            "unsupported mount_mode '{}' in '{}'",
+            value,
+            state_file.display()
+        )),
+    }
+}
+
+fn parse_proxy_port(value: &str, state_file: &Path) -> Result<u16> {
+    value.parse::<u16>().map_err(|_| {
+        anyhow!(
+            "invalid proxy_port '{}' in '{}'",
+            value,
+            state_file.display()
+        )
+    })
+}
+
+fn incomplete_state_error(state_file: &Path) -> anyhow::Error {
+    anyhow!("'{}' is incomplete", state_file.display())
 }

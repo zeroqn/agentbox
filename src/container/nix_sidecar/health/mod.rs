@@ -10,12 +10,12 @@ use crate::{
     SIDECAR_HEALTH_ATTEMPTS, SIDECAR_HEALTH_DELAY_MS, SIDECAR_LOG_TAIL_LINES, SIDECAR_SOCKET_PATH,
 };
 
+use crate::container::nix_sidecar::lowerdir::resolve_sidecar_lowerdir_for_mode;
 use crate::container::nix_sidecar::overlay::cleanup_merged_mount;
 use crate::container::nix_sidecar::probe::{is_container_running, path_is_mounted};
-use crate::container::nix_sidecar::{
-    cleanup_sidecar_container, resolve_sidecar_lowerdir_for_mode, resolve_sidecar_proxy_port,
-    PodmanImageMountMode, SidecarPaths, SidecarState,
-};
+use crate::container::nix_sidecar::sidecar_podman::container::cleanup_sidecar_container;
+use crate::container::nix_sidecar::sidecar_podman::proxy::resolve_sidecar_proxy_port;
+use crate::container::nix_sidecar::types::{PodmanImageMountMode, SidecarPaths, SidecarState};
 
 const SIDECAR_PROXY_HEALTH_HOST: &str = "host.containers.internal";
 

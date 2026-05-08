@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::process::Stdio;
 
-use super::command::{run_podman, run_podman_capture};
+use crate::podman::command::{run_podman, run_podman_capture};
 
 pub fn podman_image_exists(image: &str) -> Result<bool> {
     let args = vec!["image".to_owned(), "exists".to_owned(), image.to_owned()];
