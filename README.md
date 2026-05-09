@@ -87,8 +87,9 @@ nix build .#container
   current system.
 - `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4)
   with net, sound, GPU, block, and input support enabled.
-- `.#crun`: build `zeroqn/crun` branch `fix-passt-net` with this repo's libkrun
-  override, krun handler support, and `pkgs.passt` on crun's runtime `PATH`.
+- `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
+  override, krun handler support, raw data disk annotation support, and `pkgs.passt`
+  on crun's runtime `PATH`.
 - `.#podman`: build Podman against the custom crun for libkrun/raw-image
   development.
 - `.#container`: Podman image archive.
