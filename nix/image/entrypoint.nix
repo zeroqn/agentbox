@@ -72,6 +72,115 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     fi
   }
 
+  require_tool() {
+    tool_path="$1"
+    tool_name="$2"
+    if [ ! -x "$tool_path" ]; then
+      echo "agentbox-entrypoint: ERROR: required tool '$tool_name' is not available at '$tool_path'" >&2
+      exit 1
+    fi
+  }
+
+  find_agentbox_nix_disk() {
+    disk_label="$1"
+    disk_id="$2"
+
+    if disk_path="$(${pkgs.util-linux}/bin/blkid -L "$disk_label" 2>/dev/null)" && [ -n "$disk_path" ]; then
+      printf '%s\n' "$disk_path"
+      return 0
+    fi
+
+    for candidate in /dev/disk/by-id/*"$disk_id"* /dev/vd? /dev/sd? /dev/xvd? /dev/nvme?n? /dev/pmem?; do
+      [ -e "$candidate" ] || continue
+      if candidate_label="$(${pkgs.util-linux}/bin/blkid -o value -s LABEL "$candidate" 2>/dev/null)" \
+        && [ "$candidate_label" = "$disk_label" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+
+    return 1
+  }
+
+  bootstrap_libkrun_nix_overlay() {
+    if [ "$(id -u)" != "0" ]; then
+      echo "agentbox-entrypoint: ERROR: libkrun /nix overlay bootstrap must run as root" >&2
+      exit 1
+    fi
+
+    require_tool "${pkgs.util-linux}/bin/blkid" "blkid"
+    require_tool "${pkgs.util-linux}/bin/mount" "mount"
+    require_tool "${pkgs.btrfs-progs}/bin/btrfs" "btrfs"
+    require_tool "${pkgs.nix}/bin/nix-daemon" "nix-daemon"
+
+    agentbox_disk_id="''${AGENTBOX_LIBKRUN_NIX_DISK_ID:-agentbox-nix}"
+    agentbox_disk_label="''${AGENTBOX_LIBKRUN_NIX_DISK_LABEL:-AGENTBOX_NIX}"
+    agentbox_run_dir="/run/agentbox"
+    agentbox_disk_mount="$agentbox_run_dir/nix-disk"
+    agentbox_lower_dir="$agentbox_run_dir/nix-lower"
+    agentbox_upper_dir="$agentbox_disk_mount/upper"
+    agentbox_work_dir="$agentbox_disk_mount/work"
+    agentbox_socket="/nix/var/nix/daemon-socket/socket"
+
+    mkdir -p "$agentbox_run_dir" "$agentbox_disk_mount" "$agentbox_lower_dir"
+
+    if ! agentbox_disk="$(find_agentbox_nix_disk "$agentbox_disk_label" "$agentbox_disk_id")"; then
+      echo "agentbox-entrypoint: ERROR: libkrun /nix btrfs disk not found (label=$agentbox_disk_label id=$agentbox_disk_id)" >&2
+      exit 1
+    fi
+
+    if ! ${pkgs.util-linux}/bin/findmnt -rn "$agentbox_lower_dir" >/dev/null 2>&1; then
+      if ! ${pkgs.util-linux}/bin/mount --bind /nix "$agentbox_lower_dir"; then
+        echo "agentbox-entrypoint: ERROR: failed to preserve image /nix lowerdir at $agentbox_lower_dir" >&2
+        exit 1
+      fi
+      if ! ${pkgs.util-linux}/bin/mount -o remount,bind,ro "$agentbox_lower_dir"; then
+        echo "agentbox-entrypoint: ERROR: failed to make image /nix lowerdir read-only at $agentbox_lower_dir" >&2
+        exit 1
+      fi
+    fi
+
+    if ! ${pkgs.util-linux}/bin/findmnt -rn "$agentbox_disk_mount" >/dev/null 2>&1; then
+      if ! ${pkgs.util-linux}/bin/mount -t btrfs "$agentbox_disk" "$agentbox_disk_mount"; then
+        echo "agentbox-entrypoint: ERROR: failed to mount libkrun /nix btrfs disk '$agentbox_disk' at '$agentbox_disk_mount'" >&2
+        exit 1
+      fi
+    fi
+
+    if ! ${pkgs.btrfs-progs}/bin/btrfs filesystem resize max "$agentbox_disk_mount" >/dev/null 2>&1; then
+      echo "agentbox-entrypoint: warning: btrfs resize max failed for '$agentbox_disk_mount'; continuing with existing filesystem size" >&2
+    fi
+
+    mkdir -p "$agentbox_upper_dir" "$agentbox_work_dir"
+
+    if ! ${pkgs.util-linux}/bin/mount -t overlay overlay \
+      -o "lowerdir=$agentbox_lower_dir,upperdir=$agentbox_upper_dir,workdir=$agentbox_work_dir" \
+      /nix; then
+      echo "agentbox-entrypoint: ERROR: failed to mount libkrun overlay at /nix" >&2
+      exit 1
+    fi
+
+    mkdir -p /nix/var/nix/daemon-socket
+    ${pkgs.nix}/bin/nix-daemon &
+    agentbox_nix_daemon_pid="$!"
+
+    for _ in $(seq 1 100); do
+      if [ -S "$agentbox_socket" ]; then
+        export NIX_REMOTE="unix://$agentbox_socket"
+        return 0
+      fi
+      if ! kill -0 "$agentbox_nix_daemon_pid" 2>/dev/null; then
+        echo "agentbox-entrypoint: ERROR: nix-daemon exited before creating '$agentbox_socket'" >&2
+        exit 1
+      fi
+      sleep 0.1
+    done
+
+    echo "agentbox-entrypoint: ERROR: nix-daemon did not create '$agentbox_socket' before timeout" >&2
+    exit 1
+  }
+
+
   if [ -e /etc/passwd ]; then
     sed '/^dev:/d' /etc/passwd > "$tmpdir/passwd"
   else
@@ -141,7 +250,23 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
 
   export TMPDIR="$user_tmpdir"
 
+  if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
+    bootstrap_libkrun_nix_overlay
+  fi
+
   if [ "$drop_to_dev" = "1" ]; then
+    if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
+      exec ${pkgs.util-linux}/bin/setpriv --reuid="$dev_uid" --regid="$dev_gid" --clear-groups \
+        ${pkgs.bashInteractive}/bin/bash -c '
+          socket_path="''${NIX_REMOTE#unix://}"
+          if [ -z "$socket_path" ] || [ ! -S "$socket_path" ]; then
+            echo "agentbox-entrypoint: ERROR: libkrun in-guest nix-daemon socket is not accessible after dropping privileges: $socket_path" >&2
+            exit 1
+          fi
+          exec "$@"
+        ' bash "$@"
+    fi
+
     agentbox_proxy_sock="/tmp/agentbox-nix-daemon.sock"
     agentbox_proxy_host="''${AGENTBOX_NIX_PROXY_HOST:-}"
     agentbox_proxy_port="''${AGENTBOX_NIX_PROXY_PORT:-19876}"

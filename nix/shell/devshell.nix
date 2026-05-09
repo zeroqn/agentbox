@@ -2,6 +2,7 @@
 
 pkgs.mkShell {
   packages = [
+    pkgs.btrfs-progs
     pkgs.cargo
     pkgs.clippy
     pkgs.curl
@@ -13,6 +14,7 @@ pkgs.mkShell {
     pkgs.rustc
     pkgs.rustfmt
     pkgs.starship
+    pkgs.util-linux
   ];
 
   shellHook = ''

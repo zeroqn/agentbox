@@ -11,9 +11,9 @@ Current runtime split:
 - **Container mode (default):** native Podman task container plus host
   `fuse-overlayfs` and a reusable `nix-daemon` sidecar. This is the supported
   working mode.
-- **Libkrun mode (explicit opt-in):** reserved for the future solo VM + raw
-  image path. `--libkrun` currently fails clearly before launching anything
-  because `raw_image` Nix support is not implemented yet.
+- **Libkrun mode (explicit opt-in):** Podman + crun/libkrun VM mode with one
+  sparse raw btrfs data image attached through `krun.disk.0.*` annotations.
+  The guest uses that disk for a persistent kernel overlay at `/nix`.
 
 Seeded `/nix` copy fallback has been removed. Disabling the sidecar now fails
 instead of copying `/nix/store` into agentbox state.
@@ -27,9 +27,12 @@ instead of copying `/nix/store` into agentbox state.
 - `nix` (for building via flake)
 - `fuse-overlayfs` (required for default container sidecar mode; included by
   the `.#agentbox-prebuilt` package runtime environment)
-
-The flake still provides libkrun-related build outputs for development and the
-future raw-image path, but the current CLI does not launch a working libkrun VM.
+- `mkfs.btrfs` and `blkid` on the host for first-time libkrun raw-image
+  creation and reuse validation (`btrfs-progs` + `util-linux`; included in
+  `nix develop`)
+- libkrun mode additionally requires Podman using the custom crun/libkrun stack
+  that supports `krun_add_disk` annotations plus guest kernel overlay and btrfs
+  support.
 
 ---
 
@@ -225,32 +228,70 @@ podman rm -f <sidecar-name>
 
 ---
 
-### 2) Libkrun mode (future raw-image path)
+### 2) Libkrun mode (persistent raw-image `/nix` path)
 
-Libkrun mode remains an explicit opt-in, but it is not available until the
-future `libkrun/nix/raw_image` implementation exists:
+Libkrun mode is an explicit opt-in VM path:
 
 ```bash
 ./result/bin/agentbox --libkrun
+./result/bin/agentbox --libkrun --mem 8
+./result/bin/agentbox --libkrun --tsi
 ```
 
-Expected current behavior: fail before image resolution, sidecar setup, overlay
-setup, seeded state preparation, or task launch with a raw-image-not-implemented
-message.
+On first run, agentbox creates a sparse btrfs raw image at:
 
-`--tsi` and `--mem` are future libkrun-only options. They are rejected unless
-`--libkrun` is also present:
+```text
+<state-root>/libkrun-nix.raw
+```
+
+The default apparent size is `64 GiB`. Because the file is sparse, host disk
+usage grows as blocks are written, but the guest-visible capacity is still the
+raw file's apparent size at VM start.
+
+The raw image is attached with crun annotations:
+
+```text
+run.oci.handler=krun
+krun.disk.0.path=<state-root>/libkrun-nix.raw
+krun.disk.0.id=agentbox-nix
+krun.disk.0.readonly=false
+```
+
+When `--tsi` is passed, agentbox also requests crun's libkrun passt network
+path with `krun.use_passt=1`.
+
+Inside the libkrun guest, the entrypoint finds the attached btrfs disk by label
+(`AGENTBOX_NIX`), mounts it under `/run/agentbox/nix-disk`, bind-mounts the
+image-provided `/nix` as a read-only lowerdir, and mounts a kernel overlay at
+`/nix` using disk-backed upper/work directories. After the overlay is active, it
+starts an in-guest `nix-daemon`, exports
+`NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
+privilege drop, then runs the shell as the host UID/GID. The daemon is tied to
+the VM/container lifecycle and is not separately supervised in v1.
+
+Existing raw images are reused only if `blkid` reports btrfs. Agentbox refuses
+to overwrite invalid existing images.
+
+Manual resize flow for v1:
 
 ```bash
-./result/bin/agentbox --libkrun --tsi
-./result/bin/agentbox --libkrun --mem 8
+# Stop any running libkrun VM first.
+truncate -s 128G <state-root>/libkrun-nix.raw
+./result/bin/agentbox --libkrun
 ```
 
-`--native --libkrun` is rejected as conflicting mode selection.
+On restart, the guest entrypoint attempts `btrfs filesystem resize max` on the
+mounted data disk so the filesystem consumes the larger apparent image size. No
+live auto-resize, state migration, multi-disk management, snapshot/rollback UX,
+or root-disk mutation is implemented.
 
-Libkrun mode intentionally does **not** use the container sidecar/overlay bridge
-and does **not** fall back to seeded Nix state. The future direction is a solo VM
-launched through Podman + libkrun with a raw image mounted into it.
+`--tsi` and `--mem` remain libkrun-only options and are rejected unless
+`--libkrun` is also present. `--native --libkrun` is rejected as conflicting mode
+selection.
+
+Libkrun mode intentionally does **not** use the container sidecar/overlay bridge,
+does **not** set `AGENTBOX_NIX_PROXY_HOST`, and does **not** fall back to seeded
+Nix state.
 
 ---
 

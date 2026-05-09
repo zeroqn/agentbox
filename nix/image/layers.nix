@@ -192,6 +192,7 @@ let
 
   baseImagePackages = [
     pkgs.bashInteractive
+    pkgs.btrfs-progs
     pkgs.cacert
     pkgs.coreutils
     pkgs.curl

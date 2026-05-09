@@ -67,15 +67,15 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Opt into libkrun mode (currently fails until raw_image support exists)",
-        long_help = "Opt into the future Podman/libkrun mode. This path currently fails clearly before launching anything because raw_image Nix support has not been implemented yet."
+        help = "Opt into libkrun mode with persistent raw-image /nix overlay",
+        long_help = "Opt into Podman/libkrun mode. This creates or reuses a sparse btrfs raw image under agentbox state, attaches it through crun krun.disk annotations, and uses it for a persistent /nix overlay inside the guest."
     )]
     pub libkrun: bool,
 
     #[arg(
         long,
-        help = "Use libkrun TSI networking when --libkrun is implemented",
-        long_help = "Future libkrun-only networking option. This flag is rejected unless --libkrun is also present, and libkrun mode currently fails until raw_image support exists."
+        help = "Use libkrun passt/TSI networking with --libkrun",
+        long_help = "Libkrun-only networking option. This flag is rejected unless --libkrun is also present."
     )]
     pub tsi: bool,
 
@@ -83,8 +83,8 @@ pub struct Cli {
         long = "mem",
         value_name = "GiB",
         value_parser = parse_mem_gib_arg,
-        help = "Set future libkrun VM memory in GiB",
-        long_help = "Future libkrun-only memory option in integer GiB. This flag is rejected unless --libkrun is also present, and libkrun mode currently fails until raw_image support exists."
+        help = "Set libkrun VM memory in GiB",
+        long_help = "Libkrun-only memory option in integer GiB. This flag is rejected unless --libkrun is also present."
     )]
     pub mem_gib: Option<u32>,
 }
