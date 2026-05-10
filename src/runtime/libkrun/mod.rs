@@ -4,10 +4,11 @@ pub(crate) use memory::parse_mem_gib_arg;
 
 use anyhow::{Context, Result};
 use std::env;
+use std::path::{Path, PathBuf};
 use std::process::{ExitCode, Stdio};
 
 use crate::cli::{resolve_image, Cli};
-use crate::mounts::format::format_mount_arg;
+use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::mounts::{
     prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount,
 };
@@ -25,6 +26,11 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     let image = resolve_image(cli.image.as_deref(), cli.pull_latest)?;
     let state_layout = resolve_state_layout(&cwd)?;
 
+    let debug_entrypoint = cli
+        .libkrun_debug_entrypoint
+        .as_deref()
+        .map(resolve_debug_entrypoint_mount)
+        .transpose()?;
     let raw_nix_disk = nix::raw_image::prepare(state_layout.root_dir())?;
     let task_hostname = derive_task_hostname(&cwd);
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
@@ -46,6 +52,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             host_gid,
             mem_gib: cli.mem_gib,
             tsi: cli.tsi,
+            debug_entrypoint: debug_entrypoint.as_ref(),
         })?,
         Stdio::inherit(),
         Stdio::inherit(),
@@ -61,9 +68,43 @@ fn current_host_ids() -> (u32, u32) {
     (unsafe { libc::getuid() }, unsafe { libc::getgid() })
 }
 
+const LIBKRUN_DEBUG_ENTRYPOINT_TARGET: &str = "/bin/agentbox-debug-entrypoint";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DebugEntrypointMount {
+    source: PathBuf,
+    mount_arg: String,
+    target: &'static str,
+}
+
+fn resolve_debug_entrypoint_mount(path: &Path) -> Result<DebugEntrypointMount> {
+    let source = path.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve libkrun debug entrypoint '{}'",
+            path.display()
+        )
+    })?;
+    if !source.is_file() {
+        anyhow::bail!(
+            "libkrun debug entrypoint '{}' is not a regular file",
+            source.display()
+        );
+    }
+
+    let mount_arg =
+        format_mount_arg_with_options(&source, LIBKRUN_DEBUG_ENTRYPOINT_TARGET, Some("ro"))?;
+
+    Ok(DebugEntrypointMount {
+        source,
+        mount_arg,
+        target: LIBKRUN_DEBUG_ENTRYPOINT_TARGET,
+    })
+}
+
 mod task {
     use anyhow::Result;
 
+    use super::DebugEntrypointMount;
     use crate::runtime::libkrun::nix::raw_image::RawNixDisk;
     use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
@@ -83,6 +124,7 @@ mod task {
         pub(crate) host_gid: u32,
         pub(crate) mem_gib: Option<u32>,
         pub(crate) tsi: bool,
+        pub(crate) debug_entrypoint: Option<&'a DebugEntrypointMount>,
     }
 
     pub(crate) fn build_libkrun_task_podman_args(
@@ -141,6 +183,13 @@ mod task {
         if spec.tsi {
             args.push("--annotation".to_owned());
             args.push("krun.use_passt=1".to_owned());
+        }
+
+        if let Some(debug_entrypoint) = spec.debug_entrypoint {
+            args.push("--volume".to_owned());
+            args.push(debug_entrypoint.mount_arg.clone());
+            args.push("--entrypoint".to_owned());
+            args.push(debug_entrypoint.target.to_owned());
         }
 
         args.push(spec.image.to_owned());
@@ -213,6 +262,27 @@ mod task {
             assert!(!args.contains(&"keep-id".to_owned()));
         }
 
+        #[test]
+        fn libkrun_task_args_can_override_entrypoint_for_guest_debugging() {
+            let disk = raw_disk();
+            let debug_entrypoint = DebugEntrypointMount {
+                source: PathBuf::from("/tmp/debug-entrypoint.sh"),
+                mount_arg: "/tmp/debug-entrypoint.sh:/bin/agentbox-debug-entrypoint:ro".to_owned(),
+                target: "/bin/agentbox-debug-entrypoint",
+            };
+            let args = build_args_with_debug_entrypoint(&disk, Some(&debug_entrypoint));
+            let joined = args.join("\n");
+
+            assert!(joined
+                .contains("--volume\n/tmp/debug-entrypoint.sh:/bin/agentbox-debug-entrypoint:ro"));
+            assert!(joined.contains("--entrypoint\n/bin/agentbox-debug-entrypoint"));
+            assert!(joined.contains(&format!(
+                "--entrypoint\n/bin/agentbox-debug-entrypoint\n{}\n{}\n-l",
+                crate::DEFAULT_IMAGE,
+                INTERACTIVE_SHELL
+            )));
+        }
+
         fn raw_disk() -> RawNixDisk {
             RawNixDisk {
                 path: PathBuf::from("/tmp/state/agentbox/project/libkrun-nix.raw"),
@@ -224,6 +294,13 @@ mod task {
         }
 
         fn build_args(raw_nix_disk: &RawNixDisk) -> Vec<String> {
+            build_args_with_debug_entrypoint(raw_nix_disk, None)
+        }
+
+        fn build_args_with_debug_entrypoint(
+            raw_nix_disk: &RawNixDisk,
+            debug_entrypoint: Option<&DebugEntrypointMount>,
+        ) -> Vec<String> {
             build_libkrun_task_podman_args(LibkrunTaskPodmanSpec {
                 image: crate::DEFAULT_IMAGE,
                 hostname: "project-agentbox",
@@ -236,6 +313,7 @@ mod task {
                 host_gid: 1002,
                 mem_gib: Some(8),
                 tsi: true,
+                debug_entrypoint,
             })
             .expect("libkrun task args should build")
         }

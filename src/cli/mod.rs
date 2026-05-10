@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::env;
+use std::path::PathBuf;
 
 use crate::podman::image::{podman_image_exists, pull_image};
 use crate::runtime::parse_mem_gib_arg;
@@ -18,6 +19,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox --sidecar-only --debug
   agentbox --libkrun
   agentbox --libkrun --mem 8
+  agentbox --libkrun --libkrun-debug-entrypoint ./debug-entrypoint.sh
   agentbox --image ghcr.io/example/agentbox:dev
   AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
@@ -87,6 +89,14 @@ pub struct Cli {
         long_help = "Libkrun-only memory option in integer GiB. This flag is rejected unless --libkrun is also present."
     )]
     pub mem_gib: Option<u32>,
+
+    #[arg(
+        long = "libkrun-debug-entrypoint",
+        value_name = "PATH",
+        help = "Override the image entrypoint in libkrun mode for guest debugging",
+        long_help = "Libkrun-only debug option. Bind-mount the host script read-only and use it as the container entrypoint, bypassing the image entrypoint so guest state such as /sys/class/block can be inspected before /nix disk bootstrap."
+    )]
+    pub libkrun_debug_entrypoint: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

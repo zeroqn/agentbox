@@ -269,6 +269,39 @@ starts an in-guest `nix-daemon`, exports
 privilege drop, then runs the shell as the host UID/GID. The daemon is tied to
 the VM/container lifecycle and is not separately supervised in v1.
 
+For guest-side debugging, pass a temporary entrypoint script to bypass the normal
+image entrypoint and run custom diagnostics before handing off to the requested
+command:
+
+```bash
+cat > /tmp/agentbox-libkrun-debug-entrypoint <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "== agentbox libkrun debug entrypoint =="
+id
+printf 'working directory: %s\n' "$PWD"
+printf 'command:'
+printf ' %q' "$@"
+printf '\n'
+
+# Add temporary diagnostics here, for example:
+# mount
+# ls -la /workspace /nix /run/agentbox || true
+
+exec "$@"
+EOF
+chmod +x /tmp/agentbox-libkrun-debug-entrypoint
+./result/bin/agentbox --libkrun \
+  --libkrun-debug-entrypoint /tmp/agentbox-libkrun-debug-entrypoint
+```
+
+The script is bind-mounted read-only at `/bin/agentbox-debug-entrypoint` and used
+as the container entrypoint. The usual interactive shell (`fish -l`) is still
+passed as arguments, so `exec "$@"` opens the shell after printing diagnostics.
+This debug path runs as root and intentionally skips the normal `/nix` bootstrap
+and host UID/GID privilege drop.
+
 Existing raw images are reused only if `blkid` reports btrfs. Agentbox refuses
 to overwrite invalid existing images.
 

@@ -14,6 +14,7 @@ fn cli_accepts_no_arguments() {
     assert!(!cli.libkrun);
     assert!(!cli.tsi);
     assert_eq!(cli.mem_gib, None);
+    assert_eq!(cli.libkrun_debug_entrypoint, None);
 }
 
 #[test]
@@ -137,6 +138,22 @@ fn cli_rejects_removed_use_passt_flag() {
 fn cli_accepts_mem_flag() {
     let cli = Cli::try_parse_from(["agentbox", "--mem", "8"]).expect("--mem should parse");
     assert_eq!(cli.mem_gib, Some(8));
+}
+
+#[test]
+fn cli_accepts_libkrun_debug_entrypoint_flag() {
+    let cli = Cli::try_parse_from([
+        "agentbox",
+        "--libkrun",
+        "--libkrun-debug-entrypoint",
+        "./debug-entrypoint.sh",
+    ])
+    .expect("--libkrun-debug-entrypoint should parse");
+    assert!(cli.libkrun);
+    assert_eq!(
+        cli.libkrun_debug_entrypoint.as_deref(),
+        Some(std::path::Path::new("./debug-entrypoint.sh"))
+    );
 }
 
 #[test]

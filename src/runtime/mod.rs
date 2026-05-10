@@ -33,6 +33,9 @@ fn resolve_runtime_mode(cli: &Cli) -> Result<RuntimeMode> {
         if cli.mem_gib.is_some() {
             anyhow::bail!("--mem is only supported with --libkrun");
         }
+        if cli.libkrun_debug_entrypoint.is_some() {
+            anyhow::bail!("--libkrun-debug-entrypoint is only supported with --libkrun");
+        }
     }
 
     if cli.libkrun {
@@ -98,5 +101,17 @@ mod tests {
         assert!(err
             .to_string()
             .contains("--mem is only supported with --libkrun"));
+    }
+
+    #[test]
+    fn debug_entrypoint_requires_libkrun() {
+        let err = resolve_runtime_mode(&parse(&[
+            "--libkrun-debug-entrypoint",
+            "./debug-entrypoint.sh",
+        ]))
+        .expect_err("--libkrun-debug-entrypoint should fail outside libkrun mode");
+        assert!(err
+            .to_string()
+            .contains("--libkrun-debug-entrypoint is only supported with --libkrun"));
     }
 }
