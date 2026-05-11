@@ -269,10 +269,10 @@ image-provided `/nix` as a read-only lowerdir, and mounts a kernel overlay at
 starts an in-guest `nix-daemon`, exports
 `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
 privilege drop, then runs the shell as the host UID/GID. The libkrun task also
-uses `--userns=keep-id`, so `/workspace` ownership matches the host user while
-the image-default root entrypoint can still perform root-only `/nix` bootstrap.
-The daemon is tied to the VM/container lifecycle and is not separately
-supervised in v1.
+uses `--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the
+host user while the entrypoint still starts as root for `/run/agentbox`
+creation and root-only `/nix` bootstrap. The daemon is tied to the VM/container
+lifecycle and is not separately supervised in v1.
 
 For guest-side debugging, pass a temporary entrypoint script to bypass the normal
 image entrypoint and run custom diagnostics before handing off to the requested

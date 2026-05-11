@@ -137,6 +137,8 @@ mod task {
             "-it".to_owned(),
             "--userns".to_owned(),
             "keep-id".to_owned(),
+            "--user".to_owned(),
+            "0:0".to_owned(),
             "--runtime".to_owned(),
             "crun".to_owned(),
             "--annotation".to_owned(),
@@ -234,6 +236,7 @@ mod task {
             assert!(args.contains(&LIBKRUN_KVM_DROP_TO_DEV_ENV.to_owned()));
             assert!(joined.contains("--userns\nkeep-id"));
             assert!(!joined.contains("keep-id:"));
+            assert!(joined.contains("--user\n0:0"));
             assert!(args.contains(&"/tmp/project:/workspace".to_owned()));
             assert!(args.contains(&"/home/alice/.codex:/home/dev/.codex".to_owned()));
             assert!(args.contains(&"/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned()));
