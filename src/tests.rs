@@ -52,6 +52,8 @@ fn libkrun_entrypoint_preserves_lowerdir_mounts_overlay_and_starts_guest_daemon(
         "mount --bind /nix \"$agentbox_lower_dir\"",
         "mount -o remount,bind,ro \"$agentbox_lower_dir\"",
         "btrfs filesystem resize max \"$agentbox_disk_mount\"",
+        "mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/var/nix\"",
+        "chmod 0755 \"$agentbox_upper_dir/var\" \"$agentbox_upper_dir/var/nix\"",
         "lowerdir=$agentbox_lower_dir,upperdir=$agentbox_upper_dir,workdir=$agentbox_work_dir",
         "${pkgs.nix}/bin/nix-daemon &",
         "export NIX_REMOTE=\"unix://$agentbox_socket\"",
@@ -59,6 +61,49 @@ fn libkrun_entrypoint_preserves_lowerdir_mounts_overlay_and_starts_guest_daemon(
     ] {
         assert!(ENTRYPOINT.contains(required), "missing {required}");
     }
+}
+
+#[test]
+fn libkrun_entrypoint_preseeds_var_nix_before_overlay_mount() {
+    let resize = ENTRYPOINT
+        .find("btrfs filesystem resize max \"$agentbox_disk_mount\"")
+        .expect("btrfs resize should happen before upperdir preseed");
+    let preseed_mkdir = ENTRYPOINT
+        .find("mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/var/nix\"")
+        .expect("upperdir /var/nix preseed mkdir should exist");
+    let preseed_chmod = ENTRYPOINT
+        .find("chmod 0755 \"$agentbox_upper_dir/var\" \"$agentbox_upper_dir/var/nix\"")
+        .expect("upperdir /var/nix preseed chmod should exist");
+    let overlay_mount = ENTRYPOINT
+        .find("${pkgs.util-linux}/bin/mount -t overlay overlay")
+        .expect("overlay mount should exist");
+    let socket_mkdir = ENTRYPOINT
+        .find("mkdir -p /nix/var/nix/daemon-socket")
+        .expect("daemon socket directory mkdir should exist");
+    let daemon_start = ENTRYPOINT
+        .find("${pkgs.nix}/bin/nix-daemon &")
+        .expect("nix-daemon start should exist");
+
+    assert!(
+        resize < preseed_mkdir,
+        "btrfs resize should happen before upperdir /var/nix preseed"
+    );
+    assert!(
+        preseed_mkdir < preseed_chmod,
+        "upperdir /var/nix mkdir should happen before chmod"
+    );
+    assert!(
+        preseed_chmod < overlay_mount,
+        "upperdir /var/nix chmod should happen before overlay mount"
+    );
+    assert!(
+        overlay_mount < socket_mkdir,
+        "daemon socket directory should be created after overlay mount"
+    );
+    assert!(
+        socket_mkdir < daemon_start,
+        "daemon socket directory should be created before nix-daemon starts"
+    );
 }
 
 #[test]
