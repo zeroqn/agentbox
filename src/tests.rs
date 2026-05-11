@@ -52,7 +52,10 @@ fn libkrun_entrypoint_preserves_lowerdir_mounts_overlay_and_starts_guest_daemon(
         "mount --bind /nix \"$agentbox_lower_dir\"",
         "mount -o remount,bind,ro \"$agentbox_lower_dir\"",
         "btrfs filesystem resize max \"$agentbox_disk_mount\"",
-        "mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var/nix\"",
+        "mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var\"",
+        "${pkgs.coreutils}/bin/cp -a --no-clobber \"$agentbox_lower_dir/var/.\" \"$agentbox_upper_dir/var/\"",
+        "failed to preseed libkrun upperdir /nix/var from image lowerdir",
+        "mkdir -p \"$agentbox_upper_dir/var/nix\"",
         "${pkgs.coreutils}/bin/chown :nixbld \"$agentbox_upper_dir/store\"",
         "chmod 1775 \"$agentbox_upper_dir/store\"",
         "chmod 0755 \"$agentbox_upper_dir/var\" \"$agentbox_upper_dir/var/nix\"",
@@ -71,8 +74,14 @@ fn libkrun_entrypoint_preseeds_store_and_var_nix_before_overlay_mount() {
         .find("btrfs filesystem resize max \"$agentbox_disk_mount\"")
         .expect("btrfs resize should happen before upperdir preseed");
     let preseed_mkdir = ENTRYPOINT
-        .find("mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var/nix\"")
-        .expect("upperdir /store and /var/nix preseed mkdir should exist");
+        .find("mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var\"")
+        .expect("upperdir /store and /var preseed mkdir should exist");
+    let var_copy = ENTRYPOINT
+        .find("${pkgs.coreutils}/bin/cp -a --no-clobber \"$agentbox_lower_dir/var/.\" \"$agentbox_upper_dir/var/\"")
+        .expect("image /nix/var should be copied into upperdir before overlay mount");
+    let var_nix_mkdir = ENTRYPOINT
+        .find("mkdir -p \"$agentbox_upper_dir/var/nix\"")
+        .expect("upperdir /var/nix preseed mkdir should exist");
     let preseed_chmod = ENTRYPOINT
         .find("chmod 1775 \"$agentbox_upper_dir/store\"")
         .expect("upperdir /store chmod should exist");
@@ -98,6 +107,18 @@ fn libkrun_entrypoint_preseeds_store_and_var_nix_before_overlay_mount() {
     );
     assert!(
         preseed_mkdir < preseed_chmod,
+        "upperdir /var mkdir should happen before chmod"
+    );
+    assert!(
+        preseed_mkdir < var_copy,
+        "upperdir /var should exist before copying image /nix/var"
+    );
+    assert!(
+        var_copy < var_nix_mkdir,
+        "image /nix/var copy should happen before ensuring upperdir /var/nix exists"
+    );
+    assert!(
+        var_nix_mkdir < preseed_chmod,
         "upperdir /var/nix mkdir should happen before chmod"
     );
     assert!(
@@ -115,6 +136,10 @@ fn libkrun_entrypoint_preseeds_store_and_var_nix_before_overlay_mount() {
     assert!(
         var_nix_chmod < overlay_mount,
         "upperdir /var/nix chmod should happen before overlay mount"
+    );
+    assert!(
+        var_copy < overlay_mount,
+        "image /nix/var copy should happen before overlay mount"
     );
     assert!(
         overlay_mount < socket_mkdir,
