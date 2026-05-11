@@ -269,9 +269,13 @@ available CPUs pass all CPUs through, while larger hosts reserve 2 CPUs for the
 host. On non-Linux hosts or when CPU count is unavailable, `krun.cpus` is
 omitted.
 
-Libkrun mode enables passt networking by default with `krun.use_passt=1`. When
-`--tsi` is passed, agentbox switches to the TSI/proxy environment path instead:
-it omits `krun.use_passt=1` and passes `no_proxy=1` into the guest.
+Libkrun mode enables passt networking by default with `krun.use_passt=1`. In
+that default passt path, the normal image entrypoint also ensures the guest
+resolver starts with `nameserver 169.254.1.1`, matching passt's DNS forwarder,
+while preserving any existing resolver lines after it. When `--tsi` is passed,
+agentbox switches to the TSI/proxy environment path instead: it omits
+`krun.use_passt=1`, skips the passt resolver injection, and passes `no_proxy=1`
+into the guest.
 
 Inside the libkrun guest, the entrypoint finds the attached btrfs disk by label
 (`AGENTBOX_NIX`), mounts it under `/run/agentbox/nix-disk`, bind-mounts the
@@ -319,7 +323,9 @@ The script is bind-mounted read-only at `/bin/agentbox-debug-entrypoint` and use
 as the container entrypoint. The usual interactive shell (`fish -l`) is still
 passed as arguments, so `exec "$@"` opens the shell after printing diagnostics.
 This debug path runs as root and intentionally skips the normal `/nix` bootstrap
-and host UID/GID privilege drop.
+and host UID/GID privilege drop. It also skips normal entrypoint conveniences
+such as the passt `/etc/resolv.conf` check, so add those diagnostics or setup
+steps manually if the debug script needs them.
 
 Existing raw images are reused only if `blkid` reports btrfs. Agentbox refuses
 to overwrite invalid existing images.

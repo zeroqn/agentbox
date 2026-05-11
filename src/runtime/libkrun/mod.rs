@@ -117,6 +117,7 @@ mod task {
     pub(crate) const LIBKRUN_HANDLER_ANNOTATION: &str = "run.oci.handler=krun";
     pub(crate) const LIBKRUN_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY=1";
     pub(crate) const LIBKRUN_KVM_DROP_TO_DEV_ENV: &str = "AGENTBOX_KVM_DROP_TO_DEV=1";
+    pub(crate) const LIBKRUN_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST=1";
     pub(crate) const LIBKRUN_USE_PASST_ANNOTATION: &str = "krun.use_passt=1";
     pub(crate) const LIBKRUN_RAM_MIB_ANNOTATION_PREFIX: &str = "krun.ram_mib=";
     pub(crate) const LIBKRUN_CPUS_ANNOTATION_PREFIX: &str = "krun.cpus=";
@@ -201,6 +202,8 @@ mod task {
             args.push("--env".to_owned());
             args.push(LIBKRUN_TSI_PROXY_ENV.to_owned());
         } else {
+            args.push("--env".to_owned());
+            args.push(LIBKRUN_USE_PASST_ENV.to_owned());
             args.push("--annotation".to_owned());
             args.push(LIBKRUN_USE_PASST_ANNOTATION.to_owned());
         }
@@ -263,6 +266,7 @@ mod task {
             );
             assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
             assert!(args.contains(&CONTAINER_TMP_TMPFS.to_owned()));
+            assert!(args.contains(&LIBKRUN_USE_PASST_ENV.to_owned()));
             assert!(args.contains(&LIBKRUN_USE_PASST_ANNOTATION.to_owned()));
             assert!(!joined.contains("--memory"));
             assert!(!args.contains(&LIBKRUN_TSI_PROXY_ENV.to_owned()));
@@ -296,6 +300,7 @@ mod task {
             assert!(joined.contains("--annotation\nkrun.cpus=16"));
             assert!(joined.contains("--env\nno_proxy=1"));
             assert!(!args.contains(&LIBKRUN_USE_PASST_ANNOTATION.to_owned()));
+            assert!(!args.contains(&LIBKRUN_USE_PASST_ENV.to_owned()));
             assert!(!joined.contains("--memory"));
         }
 

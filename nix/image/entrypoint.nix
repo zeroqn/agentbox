@@ -81,6 +81,50 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     fi
   }
 
+  # BEGIN agentbox passt DNS helper
+  ensure_libkrun_passt_resolv_conf() {
+    if [ "''${AGENTBOX_LIBKRUN_USE_PASST:-}" != "1" ]; then
+      return 0
+    fi
+
+    resolv_conf="''${1:-/etc/resolv.conf}"
+    passt_dns_line="nameserver 169.254.1.1"
+    resolv_tmp="$tmpdir/resolv.conf.passt.$$"
+
+    if ! printf '%s\n' "$passt_dns_line" > "$resolv_tmp"; then
+      echo "agentbox-entrypoint: warning: failed to stage passt DNS resolver for '$resolv_conf'" >&2
+      return 0
+    fi
+
+    if [ -e "$resolv_conf" ]; then
+      if [ ! -r "$resolv_conf" ]; then
+        echo "agentbox-entrypoint: warning: cannot read '$resolv_conf'; leaving passt DNS resolver unchanged" >&2
+        rm -f "$resolv_tmp"
+        return 0
+      fi
+
+      while IFS= read -r resolv_line || [ -n "$resolv_line" ]; do
+        if [ "$resolv_line" = "$passt_dns_line" ]; then
+          continue
+        fi
+        if ! printf '%s\n' "$resolv_line" >> "$resolv_tmp"; then
+          echo "agentbox-entrypoint: warning: failed to normalize passt DNS resolver in '$resolv_conf'" >&2
+          rm -f "$resolv_tmp"
+          return 0
+        fi
+      done < "$resolv_conf"
+    fi
+
+    if ! cat "$resolv_tmp" > "$resolv_conf"; then
+      echo "agentbox-entrypoint: warning: failed to write passt DNS resolver to '$resolv_conf'" >&2
+      rm -f "$resolv_tmp"
+      return 0
+    fi
+
+    rm -f "$resolv_tmp"
+  }
+  # END agentbox passt DNS helper
+
   find_agentbox_nix_disk() {
     disk_label="$1"
     disk_id="$2"
@@ -261,6 +305,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   export TMPDIR="$user_tmpdir"
 
   if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
+    ensure_libkrun_passt_resolv_conf
     bootstrap_libkrun_nix_overlay
   fi
 
