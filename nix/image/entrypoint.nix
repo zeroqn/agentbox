@@ -151,7 +151,9 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
       echo "agentbox-entrypoint: warning: btrfs resize max failed for '$agentbox_disk_mount'; continuing with existing filesystem size" >&2
     fi
 
-    mkdir -p "$agentbox_upper_dir" "$agentbox_work_dir" "$agentbox_upper_dir/var/nix"
+    mkdir -p "$agentbox_upper_dir" "$agentbox_work_dir" "$agentbox_upper_dir/store" "$agentbox_upper_dir/var/nix"
+    ${pkgs.coreutils}/bin/chown :nixbld "$agentbox_upper_dir/store"
+    chmod 1775 "$agentbox_upper_dir/store"
     chmod 0755 "$agentbox_upper_dir/var" "$agentbox_upper_dir/var/nix"
 
     if ! ${pkgs.util-linux}/bin/mount -t overlay overlay \

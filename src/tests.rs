@@ -52,7 +52,9 @@ fn libkrun_entrypoint_preserves_lowerdir_mounts_overlay_and_starts_guest_daemon(
         "mount --bind /nix \"$agentbox_lower_dir\"",
         "mount -o remount,bind,ro \"$agentbox_lower_dir\"",
         "btrfs filesystem resize max \"$agentbox_disk_mount\"",
-        "mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/var/nix\"",
+        "mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var/nix\"",
+        "${pkgs.coreutils}/bin/chown :nixbld \"$agentbox_upper_dir/store\"",
+        "chmod 1775 \"$agentbox_upper_dir/store\"",
         "chmod 0755 \"$agentbox_upper_dir/var\" \"$agentbox_upper_dir/var/nix\"",
         "lowerdir=$agentbox_lower_dir,upperdir=$agentbox_upper_dir,workdir=$agentbox_work_dir",
         "${pkgs.nix}/bin/nix-daemon &",
@@ -64,16 +66,22 @@ fn libkrun_entrypoint_preserves_lowerdir_mounts_overlay_and_starts_guest_daemon(
 }
 
 #[test]
-fn libkrun_entrypoint_preseeds_var_nix_before_overlay_mount() {
+fn libkrun_entrypoint_preseeds_store_and_var_nix_before_overlay_mount() {
     let resize = ENTRYPOINT
         .find("btrfs filesystem resize max \"$agentbox_disk_mount\"")
         .expect("btrfs resize should happen before upperdir preseed");
     let preseed_mkdir = ENTRYPOINT
-        .find("mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/var/nix\"")
-        .expect("upperdir /var/nix preseed mkdir should exist");
+        .find("mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var/nix\"")
+        .expect("upperdir /store and /var/nix preseed mkdir should exist");
     let preseed_chmod = ENTRYPOINT
+        .find("chmod 1775 \"$agentbox_upper_dir/store\"")
+        .expect("upperdir /store chmod should exist");
+    let var_nix_chmod = ENTRYPOINT
         .find("chmod 0755 \"$agentbox_upper_dir/var\" \"$agentbox_upper_dir/var/nix\"")
         .expect("upperdir /var/nix preseed chmod should exist");
+    let preseed_chown = ENTRYPOINT
+        .find("${pkgs.coreutils}/bin/chown :nixbld \"$agentbox_upper_dir/store\"")
+        .expect("upperdir /store group ownership should be set to nixbld");
     let overlay_mount = ENTRYPOINT
         .find("${pkgs.util-linux}/bin/mount -t overlay overlay")
         .expect("overlay mount should exist");
@@ -93,7 +101,19 @@ fn libkrun_entrypoint_preseeds_var_nix_before_overlay_mount() {
         "upperdir /var/nix mkdir should happen before chmod"
     );
     assert!(
+        preseed_chown < preseed_chmod,
+        "upperdir /store group ownership should be set before final chmod"
+    );
+    assert!(
+        preseed_chown < overlay_mount,
+        "upperdir /store group ownership should be set before overlay mount"
+    );
+    assert!(
         preseed_chmod < overlay_mount,
+        "upperdir /store chmod should happen before overlay mount"
+    );
+    assert!(
+        var_nix_chmod < overlay_mount,
         "upperdir /var/nix chmod should happen before overlay mount"
     );
     assert!(
@@ -103,6 +123,10 @@ fn libkrun_entrypoint_preseeds_var_nix_before_overlay_mount() {
     assert!(
         socket_mkdir < daemon_start,
         "daemon socket directory should be created before nix-daemon starts"
+    );
+    assert!(
+        !ENTRYPOINT.contains("chown -R :nixbld"),
+        "libkrun bootstrap must not recursively chown /nix/store children"
     );
 }
 

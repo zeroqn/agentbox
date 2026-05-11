@@ -265,8 +265,11 @@ path with `krun.use_passt=1`.
 Inside the libkrun guest, the entrypoint finds the attached btrfs disk by label
 (`AGENTBOX_NIX`), mounts it under `/run/agentbox/nix-disk`, bind-mounts the
 image-provided `/nix` as a read-only lowerdir, and mounts a kernel overlay at
-`/nix` using disk-backed upper/work directories. After the overlay is active, it
-starts an in-guest `nix-daemon`, exports
+`/nix` using disk-backed upper/work directories. During upperdir bootstrap,
+agentbox makes the overlaid `/nix/store` directory owned by the `nixbld` group;
+the store directory mode is `1775`, while store entries inherited from the image
+may remain `root:root`. After the overlay is active, it starts an in-guest
+`nix-daemon`, exports
 `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
 privilege drop, then runs the shell as the host UID/GID. The libkrun task also
 uses `--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the
