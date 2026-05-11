@@ -1,3 +1,4 @@
+mod cpu;
 mod memory;
 pub(crate) mod nix;
 pub(crate) use memory::parse_mem_gib_arg;
@@ -16,6 +17,8 @@ use crate::podman::command::run_podman;
 use crate::state::resolve_state_layout;
 use crate::{derive_task_hostname, CONTAINER_WORKDIR};
 
+use cpu::resolve_libkrun_cpu_count;
+use memory::resolve_libkrun_ram_mib;
 use task::{build_libkrun_task_podman_args, LibkrunTaskPodmanSpec};
 
 pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
@@ -38,6 +41,8 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
     let sccache_mount = prepare_shared_sccache_mount(&state_layout.sccache_dir())?;
     let (host_uid, host_gid) = current_host_ids();
+    let ram_mib = resolve_libkrun_ram_mib(cli.mem_gib)?;
+    let cpu_count = resolve_libkrun_cpu_count()?;
 
     let status = run_podman(
         build_libkrun_task_podman_args(LibkrunTaskPodmanSpec {
@@ -50,7 +55,8 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             raw_nix_disk: &raw_nix_disk,
             host_uid,
             host_gid,
-            mem_gib: cli.mem_gib,
+            ram_mib,
+            cpu_count,
             tsi: cli.tsi,
             debug_entrypoint: debug_entrypoint.as_ref(),
         })?,
@@ -111,6 +117,10 @@ mod task {
     pub(crate) const LIBKRUN_HANDLER_ANNOTATION: &str = "run.oci.handler=krun";
     pub(crate) const LIBKRUN_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY=1";
     pub(crate) const LIBKRUN_KVM_DROP_TO_DEV_ENV: &str = "AGENTBOX_KVM_DROP_TO_DEV=1";
+    pub(crate) const LIBKRUN_USE_PASST_ANNOTATION: &str = "krun.use_passt=1";
+    pub(crate) const LIBKRUN_RAM_MIB_ANNOTATION_PREFIX: &str = "krun.ram_mib=";
+    pub(crate) const LIBKRUN_CPUS_ANNOTATION_PREFIX: &str = "krun.cpus=";
+    pub(crate) const LIBKRUN_TSI_PROXY_ENV: &str = "all_proxy=1";
 
     pub(crate) struct LibkrunTaskPodmanSpec<'a> {
         pub(crate) image: &'a str,
@@ -122,7 +132,8 @@ mod task {
         pub(crate) raw_nix_disk: &'a RawNixDisk,
         pub(crate) host_uid: u32,
         pub(crate) host_gid: u32,
-        pub(crate) mem_gib: Option<u32>,
+        pub(crate) ram_mib: u32,
+        pub(crate) cpu_count: Option<u32>,
         pub(crate) tsi: bool,
         pub(crate) debug_entrypoint: Option<&'a DebugEntrypointMount>,
     }
@@ -143,6 +154,8 @@ mod task {
             "crun".to_owned(),
             "--annotation".to_owned(),
             LIBKRUN_HANDLER_ANNOTATION.to_owned(),
+            "--annotation".to_owned(),
+            format!("{}{}", LIBKRUN_RAM_MIB_ANNOTATION_PREFIX, spec.ram_mib),
             "--annotation".to_owned(),
             format!("krun.disk.0.path={}", disk.path.display()),
             "--annotation".to_owned(),
@@ -179,14 +192,17 @@ mod task {
             CONTAINER_TMP_TMPFS.to_owned(),
         ];
 
-        if let Some(mem_gib) = spec.mem_gib {
-            args.push("--memory".to_owned());
-            args.push(format!("{}G", mem_gib));
+        if let Some(cpu_count) = spec.cpu_count {
+            args.push("--annotation".to_owned());
+            args.push(format!("{}{}", LIBKRUN_CPUS_ANNOTATION_PREFIX, cpu_count));
         }
 
         if spec.tsi {
+            args.push("--env".to_owned());
+            args.push(LIBKRUN_TSI_PROXY_ENV.to_owned());
+        } else {
             args.push("--annotation".to_owned());
-            args.push("krun.use_passt=1".to_owned());
+            args.push(LIBKRUN_USE_PASST_ANNOTATION.to_owned());
         }
 
         if let Some(debug_entrypoint) = spec.debug_entrypoint {
@@ -221,6 +237,8 @@ mod task {
             assert!(args.contains(&"--runtime".to_owned()));
             assert!(args.contains(&"crun".to_owned()));
             assert!(args.contains(&LIBKRUN_HANDLER_ANNOTATION.to_owned()));
+            assert!(args.contains(&"krun.ram_mib=8192".to_owned()));
+            assert!(args.contains(&"krun.cpus=16".to_owned()));
             assert!(args.contains(
                 &"krun.disk.0.path=/tmp/state/agentbox/project/libkrun-nix.raw".to_owned()
             ));
@@ -245,8 +263,9 @@ mod task {
             );
             assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
             assert!(args.contains(&CONTAINER_TMP_TMPFS.to_owned()));
-            assert!(joined.contains("--memory\n8G"));
-            assert!(args.contains(&"krun.use_passt=1".to_owned()));
+            assert!(args.contains(&LIBKRUN_USE_PASST_ANNOTATION.to_owned()));
+            assert!(!joined.contains("--memory"));
+            assert!(!args.contains(&LIBKRUN_TSI_PROXY_ENV.to_owned()));
             assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
             assert_eq!(args[args.len() - 1], "-l");
         }
@@ -265,6 +284,33 @@ mod task {
             assert!(!joined.contains("/nix-merged:/nix"));
             assert!(!joined.contains("/nix/store:/nix/store"));
             assert!(!joined.contains("/nix/var/nix:/nix/var/nix"));
+        }
+
+        #[test]
+        fn libkrun_task_args_use_tsi_proxy_env_instead_of_default_passt_when_requested() {
+            let disk = raw_disk();
+            let args = build_args_with_tsi(&disk, true);
+            let joined = args.join("\n");
+
+            assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
+            assert!(joined.contains("--annotation\nkrun.cpus=16"));
+            assert!(joined.contains("--env\nall_proxy=1"));
+            assert!(!args.contains(&LIBKRUN_USE_PASST_ANNOTATION.to_owned()));
+            assert!(!joined.contains("--memory"));
+        }
+
+        #[test]
+        fn libkrun_task_args_omit_cpu_annotation_when_cpu_count_is_unresolved() {
+            let disk = raw_disk();
+            let args = build_args_with_cpu_count(&disk, None);
+            let joined = args.join("\n");
+
+            assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
+            assert!(!args
+                .iter()
+                .any(|arg| arg.starts_with(LIBKRUN_CPUS_ANNOTATION_PREFIX)));
+            assert!(args.contains(&LIBKRUN_USE_PASST_ANNOTATION.to_owned()));
+            assert!(!joined.contains("--memory"));
         }
 
         #[test]
@@ -302,8 +348,28 @@ mod task {
             build_args_with_debug_entrypoint(raw_nix_disk, None)
         }
 
+        fn build_args_with_tsi(raw_nix_disk: &RawNixDisk, tsi: bool) -> Vec<String> {
+            build_args_with_options(raw_nix_disk, tsi, Some(16), None)
+        }
+
+        fn build_args_with_cpu_count(
+            raw_nix_disk: &RawNixDisk,
+            cpu_count: Option<u32>,
+        ) -> Vec<String> {
+            build_args_with_options(raw_nix_disk, false, cpu_count, None)
+        }
+
         fn build_args_with_debug_entrypoint(
             raw_nix_disk: &RawNixDisk,
+            debug_entrypoint: Option<&DebugEntrypointMount>,
+        ) -> Vec<String> {
+            build_args_with_options(raw_nix_disk, false, Some(16), debug_entrypoint)
+        }
+
+        fn build_args_with_options(
+            raw_nix_disk: &RawNixDisk,
+            tsi: bool,
+            cpu_count: Option<u32>,
             debug_entrypoint: Option<&DebugEntrypointMount>,
         ) -> Vec<String> {
             build_libkrun_task_podman_args(LibkrunTaskPodmanSpec {
@@ -316,8 +382,9 @@ mod task {
                 raw_nix_disk,
                 host_uid: 1001,
                 host_gid: 1002,
-                mem_gib: Some(8),
-                tsi: true,
+                ram_mib: 8192,
+                cpu_count,
+                tsi,
                 debug_entrypoint,
             })
             .expect("libkrun task args should build")

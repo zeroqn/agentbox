@@ -254,13 +254,24 @@ The raw image is attached with crun annotations:
 
 ```text
 run.oci.handler=krun
+krun.ram_mib=<memory MiB>
+krun.cpus=<cpu count>
 krun.disk.0.path=<state-root>/libkrun-nix.raw
 krun.disk.0.id=agentbox-nix
 krun.disk.0.readonly=false
+krun.use_passt=1
 ```
 
-When `--tsi` is passed, agentbox also requests crun's libkrun passt network
-path with `krun.use_passt=1`.
+By default, agentbox sizes libkrun memory to 80% of host memory, rounded down to
+whole GiB, and emits that value with `krun.ram_mib=<MiB>`. Pass `--mem <GiB>` to
+override it. On Linux, agentbox also emits `krun.cpus=<n>`: hosts with up to 6
+available CPUs pass all CPUs through, while larger hosts reserve 2 CPUs for the
+host. On non-Linux hosts or when CPU count is unavailable, `krun.cpus` is
+omitted.
+
+Libkrun mode enables passt networking by default with `krun.use_passt=1`. When
+`--tsi` is passed, agentbox switches to the TSI/proxy environment path instead:
+it omits `krun.use_passt=1` and passes `all_proxy=1` into the guest.
 
 Inside the libkrun guest, the entrypoint finds the attached btrfs disk by label
 (`AGENTBOX_NIX`), mounts it under `/run/agentbox/nix-disk`, bind-mounts the

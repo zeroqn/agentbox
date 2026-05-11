@@ -76,8 +76,8 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Use libkrun passt/TSI networking with --libkrun",
-        long_help = "Libkrun-only networking option. This flag is rejected unless --libkrun is also present."
+        help = "Use libkrun TSI/proxy networking instead of default passt with --libkrun",
+        long_help = "Libkrun-only networking option. By default libkrun mode enables passt with krun.use_passt=1; --tsi switches to the TSI/proxy environment path. This flag is rejected unless --libkrun is also present."
     )]
     pub tsi: bool,
 
@@ -86,7 +86,7 @@ pub struct Cli {
         value_name = "GiB",
         value_parser = parse_mem_gib_arg,
         help = "Set libkrun VM memory in GiB",
-        long_help = "Libkrun-only memory option in integer GiB. This flag is rejected unless --libkrun is also present."
+        long_help = "Libkrun-only memory option in integer GiB, emitted as a krun.ram_mib annotation. If omitted, agentbox derives a default from host memory. This flag is rejected unless --libkrun is also present."
     )]
     pub mem_gib: Option<u32>,
 
