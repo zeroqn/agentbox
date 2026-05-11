@@ -13,7 +13,9 @@ Current runtime split:
   working mode.
 - **Libkrun mode (explicit opt-in):** Podman + crun/libkrun VM mode with one
   sparse raw btrfs data image attached through `krun.disk.0.*` annotations.
-  The guest uses that disk for a persistent kernel overlay at `/nix`.
+  The guest uses that disk for a persistent kernel overlay at `/nix`, and the
+  `/workspace` bind mount uses `--userns=keep-id` so ownership matches the host
+  user after the guest drops privileges.
 
 Seeded `/nix` copy fallback has been removed. Disabling the sidecar now fails
 instead of copying `/nix/store` into agentbox state.
@@ -266,8 +268,11 @@ image-provided `/nix` as a read-only lowerdir, and mounts a kernel overlay at
 `/nix` using disk-backed upper/work directories. After the overlay is active, it
 starts an in-guest `nix-daemon`, exports
 `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
-privilege drop, then runs the shell as the host UID/GID. The daemon is tied to
-the VM/container lifecycle and is not separately supervised in v1.
+privilege drop, then runs the shell as the host UID/GID. The libkrun task also
+uses `--userns=keep-id`, so `/workspace` ownership matches the host user while
+the image-default root entrypoint can still perform root-only `/nix` bootstrap.
+The daemon is tied to the VM/container lifecycle and is not separately
+supervised in v1.
 
 For guest-side debugging, pass a temporary entrypoint script to bypass the normal
 image entrypoint and run custom diagnostics before handing off to the requested
@@ -418,7 +423,8 @@ If `clang -fuse-ld=mold` ever stops resolving correctly in-image, the fallback
 is to pin `mold` explicitly inside the wrapper and update this document to
 match.
 
-It runs with `--userns=keep-id` so `/workspace` ownership matches host mapping.
+Both container and libkrun task containers run with `--userns=keep-id` so
+`/workspace` ownership matches host mapping.
 
 ---
 

@@ -135,6 +135,8 @@ mod task {
             "run".to_owned(),
             "--rm".to_owned(),
             "-it".to_owned(),
+            "--userns".to_owned(),
+            "keep-id".to_owned(),
             "--runtime".to_owned(),
             "crun".to_owned(),
             "--annotation".to_owned(),
@@ -230,6 +232,8 @@ mod task {
             assert!(args.contains(&"AGENTBOX_HOST_UID=1001".to_owned()));
             assert!(args.contains(&"AGENTBOX_HOST_GID=1002".to_owned()));
             assert!(args.contains(&LIBKRUN_KVM_DROP_TO_DEV_ENV.to_owned()));
+            assert!(joined.contains("--userns\nkeep-id"));
+            assert!(!joined.contains("keep-id:"));
             assert!(args.contains(&"/tmp/project:/workspace".to_owned()));
             assert!(args.contains(&"/home/alice/.codex:/home/dev/.codex".to_owned()));
             assert!(args.contains(&"/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned()));
@@ -258,8 +262,6 @@ mod task {
             assert!(!joined.contains("/nix-merged:/nix"));
             assert!(!joined.contains("/nix/store:/nix/store"));
             assert!(!joined.contains("/nix/var/nix:/nix/var/nix"));
-            assert!(!args.contains(&"--userns".to_owned()));
-            assert!(!args.contains(&"keep-id".to_owned()));
         }
 
         #[test]
