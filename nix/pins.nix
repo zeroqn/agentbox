@@ -2,14 +2,14 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.15.3";
-    srcHash = "sha256-4AEk6aS12RNj/duqXV5m7nO2zGdLvzlSypHQfS7apLU=";
-    npmDepsHash = "sha256-LUu71MYbUqewhxmc6CiD/vbYOZZfkJITVYqMzEniwYc=";
+    version = "0.16.4";
+    srcHash = "sha256-tbQK9Dm7ZqjLgQJfLRcGntzauIz4VwL5VidFQ/yDhdE=";
+    npmDepsHash = "sha256-3bQJh8NOiqaFbiM0K4TQwDqwVvitBwjry5/fmbyc3Bw=";
     exploreHarnessSystems = {
       x86_64-linux = {
         asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
         binary = "omx-explore-harness";
-        hash = "sha256-jEBei3Nv/aQuEFQkDZz8BcZr3A/jzFm5N4mvJkYAP/4=";
+        hash = "sha256-QzCrgjJ9ofKMBWfzjskS9qd/XxHEO13wxVet7ajnD9o=";
       };
     };
   };
@@ -52,11 +52,11 @@
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-70c65f004b0e";
+    tag = "sha-343518be8605";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
-        hash = "sha256-z7PCRPOBvHu/Ircg2tPfu7PjyWDFAuldo6rh2N71FhM=";
+        hash = "sha256-FUnEAAfXxOn4B9EM5itI6A/GGFan83HNXIX+cfttdFQ=";
       };
     };
   };
@@ -64,12 +64,12 @@
   rtkPrebuiltRelease = {
     owner = "rtk-ai";
     repo = "rtk";
-    tag = "v0.38.0";
+    tag = "v0.39.0";
     systems = {
       x86_64-linux = {
         asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
         binary = "rtk";
-        hash = "sha256-m6+zVkUPsPZqfy1o0EaNGx4nAWPxYgV05npMj4FtlhA=";
+        hash = "sha256-BuWCuhmW7wPnakQbmJarp53Rt0bOU50igpbGgbHFQBw=";
       };
     };
   };
