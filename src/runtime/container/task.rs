@@ -105,7 +105,7 @@ mod tests {
         assert!(!joined.contains("NIX_PROXY"));
         assert!(!joined.contains("krun."));
         assert!(!joined.contains("run.oci.handler=krun"));
-        assert!(!joined.contains("all_proxy=1"));
+        assert!(!joined.contains("no_proxy=1"));
         assert!(!args.contains(&"--runtime".to_owned()));
     }
 

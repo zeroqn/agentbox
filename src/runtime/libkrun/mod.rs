@@ -120,7 +120,7 @@ mod task {
     pub(crate) const LIBKRUN_USE_PASST_ANNOTATION: &str = "krun.use_passt=1";
     pub(crate) const LIBKRUN_RAM_MIB_ANNOTATION_PREFIX: &str = "krun.ram_mib=";
     pub(crate) const LIBKRUN_CPUS_ANNOTATION_PREFIX: &str = "krun.cpus=";
-    pub(crate) const LIBKRUN_TSI_PROXY_ENV: &str = "all_proxy=1";
+    pub(crate) const LIBKRUN_TSI_PROXY_ENV: &str = "no_proxy=1";
 
     pub(crate) struct LibkrunTaskPodmanSpec<'a> {
         pub(crate) image: &'a str,
@@ -294,7 +294,7 @@ mod task {
 
             assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
             assert!(joined.contains("--annotation\nkrun.cpus=16"));
-            assert!(joined.contains("--env\nall_proxy=1"));
+            assert!(joined.contains("--env\nno_proxy=1"));
             assert!(!args.contains(&LIBKRUN_USE_PASST_ANNOTATION.to_owned()));
             assert!(!joined.contains("--memory"));
         }

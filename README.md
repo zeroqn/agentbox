@@ -271,7 +271,7 @@ omitted.
 
 Libkrun mode enables passt networking by default with `krun.use_passt=1`. When
 `--tsi` is passed, agentbox switches to the TSI/proxy environment path instead:
-it omits `krun.use_passt=1` and passes `all_proxy=1` into the guest.
+it omits `krun.use_passt=1` and passes `no_proxy=1` into the guest.
 
 Inside the libkrun guest, the entrypoint finds the attached btrfs disk by label
 (`AGENTBOX_NIX`), mounts it under `/run/agentbox/nix-disk`, bind-mounts the
