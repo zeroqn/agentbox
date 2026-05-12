@@ -431,7 +431,7 @@ agentbox repos and containers.
 The container provides:
 
 - interactive `fish` + `starship`
-- Codex CLI, OpenCode (`opencode`), Pi (`pi`), and `oh-my-codex` (`omx`)
+- Codex CLI, bubblewrap (`bwrap`), OpenCode (`opencode`), Pi (`pi`), and `oh-my-codex` (`omx`)
 - prebuilt `omx-explore-harness` with `OMX_EXPLORE_BIN` preset to the bundled binary
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)

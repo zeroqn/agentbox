@@ -180,6 +180,7 @@ let
 
   agentImagePackages = [
     pkgsMaster.codex
+    pkgs.bubblewrap
     opencode
     piCodingAgent
     ohMyCodex
