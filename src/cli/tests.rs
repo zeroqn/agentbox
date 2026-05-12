@@ -93,7 +93,7 @@ fn cli_accepts_debug_with_sidecar_only_flag() {
 }
 
 #[test]
-fn cli_accepts_native_flag_as_deprecated_container_alias() {
+fn cli_accepts_native_flag_as_container_selector() {
     let cli = Cli::try_parse_from(["agentbox", "--native"]).expect("--native should parse");
     assert!(cli.native);
     assert!(!cli.libkrun);
@@ -123,7 +123,7 @@ fn cli_accepts_tsi_flag() {
     );
     assert!(
         !cli.libkrun,
-        "--tsi is parsed independently; runtime validation requires --libkrun"
+        "--tsi is parsed independently; runtime validation resolves default libkrun mode"
     );
 }
 

@@ -4,18 +4,18 @@
 for your current project.
 
 It mounts the current directory at `/workspace`, persists Codex/Cargo state on
-the host, and runs Nix through a rootless sidecar stack by default.
+the host, and runs Nix inside the default libkrun guest runtime.
 
 Current runtime split:
 
-- **Container mode (default):** native Podman task container plus host
-  `fuse-overlayfs` and a reusable `nix-daemon` sidecar. This is the supported
-  working mode.
-- **Libkrun mode (explicit opt-in):** Podman + crun/libkrun VM mode with one
-  sparse raw btrfs data image attached through `krun.disk.0.*` annotations.
-  The guest uses that disk for a persistent kernel overlay at `/nix`, and the
-  `/workspace` bind mount uses `--userns=keep-id` so ownership matches the host
-  user after the guest drops privileges.
+- **Libkrun mode (default):** Podman + crun/libkrun VM mode with one sparse
+  raw btrfs data image attached through `krun.disk.0.*` annotations. The guest
+  uses that disk for a persistent kernel overlay at `/nix`, and the `/workspace`
+  bind mount uses `--userns=keep-id` so ownership matches the host user after
+  the guest drops privileges.
+- **Container mode (`--native`):** native Podman task container plus host
+  `fuse-overlayfs` and a reusable `nix-daemon` sidecar. `--sidecar-only` also
+  selects this mode for sidecar debugging.
 
 Seeded `/nix` copy fallback has been removed. Disabling the sidecar now fails
 instead of copying `/nix/store` into agentbox state.
@@ -27,13 +27,13 @@ instead of copying `/nix/store` into agentbox state.
 - Linux
 - `podman`
 - `nix` (for building via flake)
-- `fuse-overlayfs` (required for default container sidecar mode; included by
-  the `.#agentbox-prebuilt` package runtime environment)
+- `fuse-overlayfs` (required for `--native` container sidecar mode; included
+  by the `.#agentbox-prebuilt` package runtime environment)
 - `mkfs.btrfs` and `blkid` on the host for first-time libkrun raw-image
   creation and reuse validation (`btrfs-progs` + `util-linux`; included in
   `nix develop`)
-- libkrun mode additionally requires Podman using the custom crun/libkrun stack
-  that supports `krun_add_disk` annotations plus guest kernel overlay and btrfs
+- default libkrun mode requires Podman using the custom crun/libkrun stack that
+  supports `krun_add_disk` annotations plus guest kernel overlay and btrfs
   support.
 
 ---
@@ -83,8 +83,8 @@ nix build .#container
 - `.#agentbox`: compile from source.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
-  `fuse-overlayfs` into the runtime environment for default container sidecar
-  mode.
+  `fuse-overlayfs` into the runtime environment for `--native` container
+  sidecar mode.
 - `.#agentbox-musl`: static host binary.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
@@ -109,7 +109,7 @@ Show CLI help:
 nix develop --command cargo run -- --help
 ```
 
-Build image + binary, then run the default container mode:
+Build image + binary, then run the default libkrun mode:
 
 ```bash
 nix build .#container
@@ -153,92 +153,20 @@ and cleanup paths. It only changes Podman logging verbosity.
 
 ## Runtime modes
 
-### 1) Container mode (default)
+### 1) Libkrun mode (default)
 
 Run:
 
 ```bash
 ./result/bin/agentbox
-```
-
-`--native` is kept as a deprecated compatibility alias for the same container
-mode. It is no longer required:
-
-```bash
-./result/bin/agentbox --native
-```
-
-What container mode does (high level):
-
-1. Resolves the selected image and mounts its filesystem.
-2. Uses image `/nix` as `lowerdir` for host `fuse-overlayfs`.
-3. Builds an external merged Nix tree under project state.
-4. Starts/reuses a deterministic native Podman `nix-daemon` sidecar daemon.
-5. Preserves that sidecar while matching task containers are still running.
-6. Starts the interactive container with read-only `/nix` + daemon socket.
-7. When the last matching task container exits, removes the idle sidecar and
-   unmounts the `nix-merged` FUSE overlay in the matching Podman mount
-   namespace so `fuse-overlayfs` does not linger.
-
-Overlay writes live in `<state-root>/nix-upper`; `nix-merged` is only the
-mounted merged view and may be unmounted/recreated between runs.
-
-Sidecar metadata is saved at:
-
-```text
-<state-root>/nix-sidecar.state
-```
-
-New sidecar metadata is container-only. Legacy metadata from older libkrun/TSI
-sidecar experiments is tolerated for safe cleanup/recreate decisions, but it is
-not reused as the current native sidecar configuration while matching legacy task
-containers are still active.
-
-#### Sidecar requirement
-
-Container mode requires the sidecar. Seeded fallback has been removed, so these
-fail clearly:
-
-```bash
-./result/bin/agentbox --disable-nix-sidecar
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox
-./result/bin/agentbox --sidecar-only --disable-nix-sidecar
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --sidecar-only
-```
-
-#### Sidecar-only debugging
-
-Start or reuse just the nix-daemon sidecar stack, print the sidecar name and
-host proxy port, and exit without launching the interactive task container:
-
-```bash
-./result/bin/agentbox --sidecar-only
-```
-
-`--sidecar-only` intentionally leaves the sidecar container and merged nix
-overlay running after exit so they can be inspected. It skips the nix-daemon
-socket health probe so a broken daemon can still be debugged after container
-startup.
-
-Use the printed sidecar name for inspection and cleanup, for example:
-
-```bash
-podman logs <sidecar-name>
-podman port <sidecar-name> 19876
-podman rm -f <sidecar-name>
-```
-
----
-
-### 2) Libkrun mode (persistent raw-image `/nix` path)
-
-Libkrun mode is an explicit opt-in VM path:
-
-```bash
 ./result/bin/agentbox --libkrun
-./result/bin/agentbox --libkrun --mem 8
-./result/bin/agentbox --libkrun --tsi
+./result/bin/agentbox --mem 8
+./result/bin/agentbox --tsi
 ```
+
+`--libkrun` remains accepted as an explicit selector for the default runtime.
+Libkrun-only options such as `--mem`, `--tsi`, and
+`--libkrun-debug-entrypoint` are valid without adding `--libkrun`.
 
 On first run, agentbox creates a sparse btrfs raw image at:
 
@@ -315,8 +243,7 @@ printf '\n'
 exec "$@"
 EOF
 chmod +x /tmp/agentbox-libkrun-debug-entrypoint
-./result/bin/agentbox --libkrun \
-  --libkrun-debug-entrypoint /tmp/agentbox-libkrun-debug-entrypoint
+./result/bin/agentbox --libkrun-debug-entrypoint /tmp/agentbox-libkrun-debug-entrypoint
 ```
 
 The script is bind-mounted read-only at `/bin/agentbox-debug-entrypoint` and used
@@ -335,7 +262,7 @@ Manual resize flow for v1:
 ```bash
 # Stop any running libkrun VM first.
 truncate -s 128G <state-root>/libkrun-nix.raw
-./result/bin/agentbox --libkrun
+./result/bin/agentbox
 ```
 
 On restart, the guest entrypoint attempts `btrfs filesystem resize max` on the
@@ -343,13 +270,91 @@ mounted data disk so the filesystem consumes the larger apparent image size. No
 live auto-resize, state migration, multi-disk management, snapshot/rollback UX,
 or root-disk mutation is implemented.
 
-`--tsi` and `--mem` remain libkrun-only options and are rejected unless
-`--libkrun` is also present. `--native --libkrun` is rejected as conflicting mode
-selection.
+`--native --libkrun` is rejected as conflicting mode selection. Container
+sidecar controls such as `--sidecar-only`, `--disable-nix-sidecar`, and
+`AGENTBOX_NIX_SIDECAR=0` are rejected with `--libkrun` because libkrun does not
+use the container sidecar/overlay bridge.
 
 Libkrun mode intentionally does **not** use the container sidecar/overlay bridge,
 does **not** set `AGENTBOX_NIX_PROXY_HOST`, and does **not** fall back to seeded
 Nix state.
+
+---
+
+### 2) Container mode (`--native`)
+
+Run:
+
+```bash
+./result/bin/agentbox --native
+```
+
+What container mode does (high level):
+
+1. Resolves the selected image and mounts its filesystem.
+2. Uses image `/nix` as `lowerdir` for host `fuse-overlayfs`.
+3. Builds an external merged Nix tree under project state.
+4. Starts/reuses a deterministic native Podman `nix-daemon` sidecar daemon.
+5. Preserves that sidecar while matching task containers are still running.
+6. Starts the interactive container with read-only `/nix` + daemon socket.
+7. When the last matching task container exits, removes the idle sidecar and
+   unmounts the `nix-merged` FUSE overlay in the matching Podman mount
+   namespace so `fuse-overlayfs` does not linger.
+
+Overlay writes live in `<state-root>/nix-upper`; `nix-merged` is only the
+mounted merged view and may be unmounted/recreated between runs.
+
+Sidecar metadata is saved at:
+
+```text
+<state-root>/nix-sidecar.state
+```
+
+New sidecar metadata is container-only. Legacy metadata from older libkrun/TSI
+sidecar experiments is tolerated for safe cleanup/recreate decisions, but it is
+not reused as the current native sidecar configuration while matching legacy task
+containers are still active.
+
+#### Sidecar requirement
+
+Container mode requires the sidecar. Seeded fallback has been removed, so these
+fail clearly through container validation:
+
+```bash
+./result/bin/agentbox --native --disable-nix-sidecar
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --native
+./result/bin/agentbox --sidecar-only --disable-nix-sidecar
+AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --sidecar-only
+```
+
+Without `--native` or `--sidecar-only`, `--disable-nix-sidecar` and
+`AGENTBOX_NIX_SIDECAR=0` are rejected before launch because libkrun is the
+default and does not use the container sidecar. Pass `--native` if you intended
+container mode.
+
+#### Sidecar-only debugging
+
+Start or reuse just the container nix-daemon sidecar stack, print the sidecar
+name and host proxy port, and exit without launching the interactive task
+container:
+
+```bash
+./result/bin/agentbox --sidecar-only
+```
+
+`--sidecar-only` implicitly selects container mode. It intentionally leaves the
+sidecar container and merged nix overlay running after exit so they can be
+inspected. It skips the nix-daemon socket health probe so a broken daemon can
+still be debugged after container startup. `--libkrun --sidecar-only` is rejected
+as conflicting mode selection.
+
+Use the printed sidecar name for inspection and cleanup, for example:
+
+```bash
+podman logs <sidecar-name>
+podman port <sidecar-name> 19876
+podman rm -f <sidecar-name>
+```
 
 ---
 

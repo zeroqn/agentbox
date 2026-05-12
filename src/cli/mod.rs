@@ -15,11 +15,12 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     after_help = "Examples:
   agentbox
   agentbox --pull-latest
+  agentbox --native
   agentbox --sidecar-only
   agentbox --sidecar-only --debug
   agentbox --libkrun
-  agentbox --libkrun --mem 8
-  agentbox --libkrun --libkrun-debug-entrypoint ./debug-entrypoint.sh
+  agentbox --mem 8
+  agentbox --libkrun-debug-entrypoint ./debug-entrypoint.sh
   agentbox --image ghcr.io/example/agentbox:dev
   AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
@@ -42,14 +43,14 @@ pub struct Cli {
     #[arg(
         long,
         help = "Disable sidecar mode (unsupported; seeded fallback has been removed)",
-        long_help = "Disable rootless sidecar mode for this run. This is currently unsupported because the seeded nix fallback has been removed; container mode requires the sidecar."
+        long_help = "Disable rootless container sidecar mode for this run. This is currently unsupported because the seeded nix fallback has been removed; container mode requires the sidecar. Libkrun mode is the default and does not use this sidecar."
     )]
     pub disable_nix_sidecar: bool,
 
     #[arg(
         long,
-        help = "Start or reuse only the nix-daemon sidecar stack, then exit",
-        long_help = "Start or reuse only the nix-daemon sidecar stack, skip the nix-daemon socket health probe, print inspection details, and exit without launching the interactive task container. The sidecar is intentionally left running for debugging."
+        help = "Start or reuse only the container nix-daemon sidecar stack, then exit",
+        long_help = "Start or reuse only the container-mode nix-daemon sidecar stack, skip the nix-daemon socket health probe, print inspection details, and exit without launching the interactive task container. This implicitly selects container mode and leaves the sidecar running for debugging."
     )]
     pub sidecar_only: bool,
 
@@ -62,22 +63,22 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Deprecated alias for the default container mode",
-        long_help = "Deprecated compatibility alias for the default container mode. agentbox now runs container mode by default, so this flag is unnecessary and cannot be combined with --libkrun."
+        help = "Use native Podman container mode instead of the default libkrun mode",
+        long_help = "Use native Podman container mode with the host-side nix-daemon sidecar instead of the default libkrun mode. This cannot be combined with --libkrun."
     )]
     pub native: bool,
 
     #[arg(
         long,
-        help = "Opt into libkrun mode with persistent raw-image /nix overlay",
-        long_help = "Opt into Podman/libkrun mode. This creates or reuses a sparse btrfs raw image under agentbox state, attaches it through crun krun.disk annotations, and uses it for a persistent /nix overlay inside the guest."
+        help = "Use default libkrun mode with persistent raw-image /nix overlay",
+        long_help = "Use Podman/libkrun mode explicitly. This is the default runtime mode; it creates or reuses a sparse btrfs raw image under agentbox state, attaches it through crun krun.disk annotations, and uses it for a persistent /nix overlay inside the guest."
     )]
     pub libkrun: bool,
 
     #[arg(
         long,
-        help = "Use libkrun TSI/proxy networking instead of default passt with --libkrun",
-        long_help = "Libkrun-only networking option. By default libkrun mode enables passt with krun.use_passt=1; --tsi switches to the TSI/proxy environment path. This flag is rejected unless --libkrun is also present."
+        help = "Use libkrun TSI/proxy networking instead of default passt",
+        long_help = "Libkrun-only networking option. By default libkrun mode enables passt with krun.use_passt=1; --tsi switches to the TSI/proxy environment path. This flag is valid in default libkrun mode and rejected with container mode selectors such as --native or --sidecar-only."
     )]
     pub tsi: bool,
 
@@ -86,7 +87,7 @@ pub struct Cli {
         value_name = "GiB",
         value_parser = parse_mem_gib_arg,
         help = "Set libkrun VM memory in GiB",
-        long_help = "Libkrun-only memory option in integer GiB, emitted as a krun.ram_mib annotation. If omitted, agentbox derives a default from host memory. This flag is rejected unless --libkrun is also present."
+        long_help = "Libkrun-only memory option in integer GiB, emitted as a krun.ram_mib annotation. If omitted, agentbox derives a default from host memory. This flag is valid in default libkrun mode and rejected with container mode selectors such as --native or --sidecar-only."
     )]
     pub mem_gib: Option<u32>,
 
