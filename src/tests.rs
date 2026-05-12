@@ -296,6 +296,7 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         "btrfs filesystem resize max \"$containers_mount\"",
         "containers_run_dir=\"/run/user/$dev_uid\"",
         "chmod 0700 \"$containers_run_dir\"",
+        "export XDG_STATE_HOME=\"$HOME/.local/state\"",
         "export XDG_RUNTIME_DIR=\"$containers_run_dir\"",
         "driver = \"btrfs\"",
         "graphroot = \"$containers_storage_dir\"",
@@ -316,6 +317,11 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         "\"type\": \"insecureAcceptAnything\"",
         "\"transports\": {",
         "\"docker-daemon\": {",
+        "ensure_dev_home_ownership()",
+        "mkdir -p \"$HOME\" \"$HOME/.local\" \"$XDG_STATE_HOME\"",
+        "chown \"$dev_uid:$dev_gid\" \"$HOME\" \"$HOME/.local\" \"$XDG_STATE_HOME\"",
+        "chmod 0700 \"$XDG_STATE_HOME\"",
+        "rootless Podman home/state directories are not writable after dropping privileges",
         "enable_rootless_user_namespaces",
         "userns_limit_path=/proc/sys/user/max_user_namespaces",
         "userns_limit_target=28633",
@@ -351,6 +357,9 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
     let userns_call = ENTRYPOINT
         .rfind("enable_rootless_user_namespaces")
         .expect("user namespace sysctl helper should be called");
+    let home_ownership_call = ENTRYPOINT
+        .rfind("ensure_dev_home_ownership")
+        .expect("dev home ownership helper should be called");
     let subid_call = ENTRYPOINT
         .rfind("materialize_dev_subid_files")
         .expect("subid materialization should be called");
@@ -361,6 +370,7 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         .find("unshare --user --map-subids true")
         .expect("rootless idmap preflight should run");
 
+    assert!(home_ownership_call < userns_call);
     assert!(userns_call < subid_call);
     assert!(subid_call < idmap_helper_call);
     assert!(idmap_helper_call < idmap_preflight);

@@ -8,6 +8,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   export SHELL=${pkgs.fish}/bin/fish
   export XDG_CONFIG_HOME="$HOME/.config"
   export XDG_DATA_HOME="$HOME/.local/share"
+  export XDG_STATE_HOME="$HOME/.local/state"
   export XDG_CACHE_HOME="$HOME/.cache"
   user_tmpdir="$XDG_CACHE_HOME/tmp"
   if [ "$#" -eq 0 ]; then
@@ -117,6 +118,23 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
       exit 1
     fi
     chmod 0644 /etc/passwd /etc/group
+  }
+
+  ensure_dev_home_ownership() {
+    if [ "$(id -u)" != "0" ]; then
+      return 0
+    fi
+
+    if ! mkdir -p "$HOME" "$HOME/.local" "$XDG_STATE_HOME"; then
+      echo "agentbox-entrypoint: ERROR: failed to create writable dev home/state directories" >&2
+      exit 1
+    fi
+    if ! chown "$dev_uid:$dev_gid" "$HOME" "$HOME/.local" "$XDG_STATE_HOME"; then
+      echo "agentbox-entrypoint: ERROR: failed to chown dev home/state directories to $dev_uid:$dev_gid" >&2
+      exit 1
+    fi
+    chmod 0755 "$HOME" "$HOME/.local"
+    chmod 0700 "$XDG_STATE_HOME"
   }
 
   materialize_dev_subid_files() {
@@ -530,6 +548,7 @@ EOF_POLICY_JSON
 
   if [ "$drop_to_dev" = "1" ]; then
     materialize_dev_identity_files
+    ensure_dev_home_ownership
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
       enable_rootless_user_namespaces
       materialize_dev_subid_files
@@ -607,6 +626,10 @@ EOF_POLICY_JSON
             exit 1
           fi
           if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+            if [ ! -w "$HOME" ] || [ -z "''${XDG_STATE_HOME:-}" ] || [ ! -d "$XDG_STATE_HOME" ] || [ ! -w "$XDG_STATE_HOME" ]; then
+              echo "agentbox-entrypoint: ERROR: rootless Podman home/state directories are not writable after dropping privileges" >&2
+              exit 1
+            fi
             if [ -z "''${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
               echo "agentbox-entrypoint: ERROR: rootless Podman XDG_RUNTIME_DIR is not writable after dropping privileges: ''${XDG_RUNTIME_DIR:-unset}" >&2
               exit 1

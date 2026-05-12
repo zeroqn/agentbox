@@ -223,8 +223,9 @@ into the guest.
 Inside the libkrun guest, the entrypoint first prepares rootless Podman for the
 final `dev` user. It writes real `/etc/passwd`, `/etc/group`, `/etc/subuid`, and
 `/etc/subgid` entries for the dynamic host UID/GID, installs setuid
-`newuidmap`/`newgidmap` helpers in `/run/agentbox/idmap-bin`, mounts the
-container disk by label (`AGENTBOX_CONTAINERS`) at
+`newuidmap`/`newgidmap` helpers in `/run/agentbox/idmap-bin`, creates and
+chowns `/home/dev`, `/home/dev/.local`, and `/home/dev/.local/state` to the
+final `dev` UID/GID, mounts the container disk by label (`AGENTBOX_CONTAINERS`) at
 `/home/dev/.local/share/containers`, and writes:
 
 ```text
