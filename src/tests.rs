@@ -26,6 +26,25 @@ fn task_hostname_falls_back_when_directory_name_has_no_slug_chars() {
     );
 }
 
+#[test]
+fn task_container_name_prefixes_unique_suffix_with_current_directory_name() {
+    assert_eq!(
+        derive_task_container_name_with_suffix(
+            std::path::Path::new("/tmp/My repo.name!"),
+            "random-suffix"
+        ),
+        "my-repo-name-random-suffix"
+    );
+}
+
+#[test]
+fn task_container_name_falls_back_when_directory_name_has_no_slug_chars() {
+    assert_eq!(
+        derive_task_container_name_with_suffix(std::path::Path::new("/tmp/!!!"), "random-suffix"),
+        "workspace-random-suffix"
+    );
+}
+
 const ENTRYPOINT: &str = include_str!("../nix/image/entrypoint.nix");
 
 #[test]

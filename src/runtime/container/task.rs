@@ -10,6 +10,7 @@ use crate::{
 
 pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) image: &'a str,
+    pub(crate) container_name: &'a str,
     pub(crate) hostname: &'a str,
     pub(crate) workspace_mount: &'a str,
     pub(crate) codex_mount: &'a str,
@@ -26,6 +27,8 @@ pub(crate) fn build_container_task_podman_args(
         "run".to_owned(),
         "--rm".to_owned(),
         "-it".to_owned(),
+        "--name".to_owned(),
+        spec.container_name.to_owned(),
         "--userns".to_owned(),
         "keep-id".to_owned(),
         "--workdir".to_owned(),
@@ -71,8 +74,10 @@ mod tests {
         let args = build_args(&runtime);
 
         assert_eq!(args[0], "run");
-        assert_eq!(args[3], "--userns");
-        assert_eq!(args[4], "keep-id");
+        assert!(args.contains(&"--name".to_owned()));
+        assert!(args.contains(&"project-random".to_owned()));
+        assert_eq!(args[5], "--userns");
+        assert_eq!(args[6], "keep-id");
         assert!(args.contains(&"/tmp/project:/workspace".to_owned()));
         assert!(args.contains(&"/home/alice/.codex:/home/dev/.codex".to_owned()));
         assert!(args.contains(&"/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned()));
@@ -121,6 +126,7 @@ mod tests {
     fn build_args(nix_runtime: &SidecarNixRuntime) -> Vec<String> {
         build_container_task_podman_args(ContainerTaskPodmanSpec {
             image: crate::DEFAULT_IMAGE,
+            container_name: "project-random",
             hostname: "project-agentbox",
             workspace_mount: "/tmp/project:/workspace",
             codex_mount: "/home/alice/.codex:/home/dev/.codex",

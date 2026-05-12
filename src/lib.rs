@@ -1,7 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{self, ExitCode};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cli;
 mod mounts;
@@ -59,6 +62,33 @@ fn run(cli: Cli) -> Result<ExitCode> {
 
 fn derive_task_hostname(cwd: &Path) -> String {
     format!("{}-{TASK_HOSTNAME_SUFFIX}", derive_workspace_slug(cwd))
+}
+
+fn derive_task_container_name(cwd: &Path) -> String {
+    derive_task_container_name_with_suffix(cwd, &derive_task_container_name_suffix())
+}
+
+fn derive_task_container_name_with_suffix(cwd: &Path, suffix: &str) -> String {
+    format!("{}-{suffix}", derive_workspace_slug(cwd))
+}
+
+fn derive_task_container_name_suffix() -> String {
+    if let Ok(suffix) = random_task_container_name_suffix() {
+        return suffix;
+    }
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+
+    format!("{:x}-{timestamp:x}", process::id())
+}
+
+fn random_task_container_name_suffix() -> io::Result<String> {
+    let mut bytes = [0; 8];
+    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(format!("{:016x}", u64::from_ne_bytes(bytes)))
 }
 
 fn derive_workspace_slug(cwd: &Path) -> String {

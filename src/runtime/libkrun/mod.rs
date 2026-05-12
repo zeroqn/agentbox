@@ -15,7 +15,7 @@ use crate::mounts::{
 };
 use crate::podman::command::run_podman;
 use crate::state::resolve_state_layout;
-use crate::{derive_task_hostname, CONTAINER_WORKDIR};
+use crate::{derive_task_container_name, derive_task_hostname, CONTAINER_WORKDIR};
 
 use cpu::resolve_libkrun_cpu_count;
 use memory::resolve_libkrun_ram_mib;
@@ -35,6 +35,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
         .map(resolve_debug_entrypoint_mount)
         .transpose()?;
     let raw_nix_disk = nix::raw_image::prepare(state_layout.root_dir())?;
+    let task_container_name = derive_task_container_name(&cwd);
     let task_hostname = derive_task_hostname(&cwd);
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
     let codex_mount = prepare_host_codex_mount()?;
@@ -47,6 +48,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     let status = run_podman(
         build_libkrun_task_podman_args(LibkrunTaskPodmanSpec {
             image: &image,
+            container_name: &task_container_name,
             hostname: &task_hostname,
             workspace_mount: &workspace_mount,
             codex_mount: &codex_mount,
@@ -125,6 +127,7 @@ mod task {
 
     pub(crate) struct LibkrunTaskPodmanSpec<'a> {
         pub(crate) image: &'a str,
+        pub(crate) container_name: &'a str,
         pub(crate) hostname: &'a str,
         pub(crate) workspace_mount: &'a str,
         pub(crate) codex_mount: &'a str,
@@ -147,6 +150,8 @@ mod task {
             "run".to_owned(),
             "--rm".to_owned(),
             "-it".to_owned(),
+            "--name".to_owned(),
+            spec.container_name.to_owned(),
             "--userns".to_owned(),
             "keep-id".to_owned(),
             "--user".to_owned(),
@@ -237,6 +242,8 @@ mod task {
             let joined = args.join("\n");
 
             assert_eq!(args[0], "run");
+            assert!(args.contains(&"--name".to_owned()));
+            assert!(args.contains(&"project-random".to_owned()));
             assert!(args.contains(&"--runtime".to_owned()));
             assert!(args.contains(&"crun".to_owned()));
             assert!(args.contains(&LIBKRUN_HANDLER_ANNOTATION.to_owned()));
@@ -379,6 +386,7 @@ mod task {
         ) -> Vec<String> {
             build_libkrun_task_podman_args(LibkrunTaskPodmanSpec {
                 image: crate::DEFAULT_IMAGE,
+                container_name: "project-random",
                 hostname: "project-agentbox",
                 workspace_mount: "/tmp/project:/workspace",
                 codex_mount: "/home/alice/.codex:/home/dev/.codex",

@@ -154,6 +154,11 @@ commands:
 including task launch, sidecar setup, image inspection/mounting, health probes,
 and cleanup paths. It only changes Podman logging verbosity.
 
+Task containers, including libkrun-backed tasks, are named with the current
+repo/workspace slug followed by a unique suffix. For example, a checkout named
+`my-repo` appears in `podman ps` as `my-repo-<suffix>`, making active tasks easy
+to map back to their repo.
+
 ---
 
 ## Runtime modes

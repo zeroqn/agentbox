@@ -16,7 +16,10 @@ use crate::runtime::container::nix_sidecar::{
     SidecarSocketHealthProbe,
 };
 use crate::state::resolve_state_layout;
-use crate::{derive_task_hostname, CONTAINER_WORKDIR, DEFAULT_NIX_SIDECAR_ENABLED};
+use crate::{
+    derive_task_container_name, derive_task_hostname, CONTAINER_WORKDIR,
+    DEFAULT_NIX_SIDECAR_ENABLED,
+};
 
 use task::{build_container_task_podman_args, ContainerTaskPodmanSpec};
 
@@ -50,6 +53,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    let task_container_name = derive_task_container_name(&cwd);
     let task_hostname = derive_task_hostname(&cwd);
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
     let codex_mount = prepare_host_codex_mount()?;
@@ -68,6 +72,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     let status = run_podman(
         build_container_task_podman_args(ContainerTaskPodmanSpec {
             image: &image,
+            container_name: &task_container_name,
             hostname: &task_hostname,
             workspace_mount: &workspace_mount,
             codex_mount: &codex_mount,
