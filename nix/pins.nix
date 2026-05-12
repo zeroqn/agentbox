@@ -21,10 +21,12 @@
   };
 
   piCodingAgent = {
-    version = "0.71.0";
-    rev = "8040dd6ded6bd52b2b6271ab3588c4474715a4dd";
-    srcHash = "sha256-brxktr/vTBLGlhEyfFRrBO0JSy9cJhnZXKk+ucge2uM=";
-    npmDepsHash = "sha256-HYzJ0IeE/nltV9DSLJFPBhXvX6x3T3O+WyXh7U4botY=";
+    version = "0.74.0";
+    owner = "earendil-works";
+    repo = "pi";
+    rev = "v0.74.0";
+    srcHash = "sha256-wEiqOezD8w08vyuenh3Kk+YCYBbQoEq67wATDEKy5XM=";
+    npmDepsHash = "sha256-oYPxb8RmyprZwmBzzvlke7p3b18Ja5atnpzJW7emK5A=";
   };
 
   libkrunfwRelease = {

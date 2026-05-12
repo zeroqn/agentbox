@@ -5,8 +5,8 @@ pkgs.buildNpmPackage {
   version = pins.piCodingAgent.version;
 
   src = pkgs.fetchFromGitHub {
-    owner = "badlogic";
-    repo = "pi-mono";
+    owner = pins.piCodingAgent.owner;
+    repo = pins.piCodingAgent.repo;
     rev = pins.piCodingAgent.rev;
     hash = pins.piCodingAgent.srcHash;
   };
@@ -17,6 +17,8 @@ pkgs.buildNpmPackage {
   npmRebuildFlags = [ "--ignore-scripts" ];
 
   postPatch = ''
+    cp ${./pi-coding-agent-package.json} package.json
+    cp ${./pi-coding-agent-package-lock.json} package-lock.json
     substituteInPlace packages/ai/package.json \
       --replace-fail 'npm run generate-models && tsgo -p tsconfig.build.json' \
                      'tsgo -p tsconfig.build.json'
@@ -46,12 +48,12 @@ pkgs.buildNpmPackage {
   versionCheckProgramArg = "--version";
 
   passthru = {
-    sourceUrl = "https://github.com/badlogic/pi-mono/tree/${pins.piCodingAgent.rev}/packages/coding-agent";
+    sourceUrl = "https://github.com/${pins.piCodingAgent.owner}/${pins.piCodingAgent.repo}/tree/${pins.piCodingAgent.rev}/packages/coding-agent";
   };
 
   meta = {
     description = "Minimal terminal coding harness";
-    homepage = "https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent";
+    homepage = "https://github.com/${pins.piCodingAgent.owner}/${pins.piCodingAgent.repo}/tree/main/packages/coding-agent";
     license = pkgs.lib.licenses.mit;
     mainProgram = "pi";
     platforms = [
