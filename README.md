@@ -6,6 +6,11 @@ for your current project.
 It mounts the current directory at `/workspace`, persists Codex/Cargo state on
 the host, and runs Nix inside the default libkrun guest runtime.
 
+> **Runtime notice:** default libkrun mode is not a stock Podman runtime. It is
+> intended to run with this flake's custom `crun`/Podman build and the pinned
+> `libkrunfw` firmware package, which provide the `krun` handler, raw data disk
+> annotations, and nested-KVM firmware support used by agentbox.
+
 Current runtime split:
 
 - **Libkrun mode (default):** Podman + crun/libkrun VM mode with one sparse
