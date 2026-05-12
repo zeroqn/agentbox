@@ -239,6 +239,13 @@ container disk by label (`AGENTBOX_CONTAINERS`) at
 pins crun, conmon, cgroupfs, file events, and netavark/pasta helper paths for
 this non-systemd guest.
 
+Before dropping privileges, the entrypoint also enables the guest kernel's
+rootless user namespace knobs required by Podman: it raises
+`/proc/sys/user/max_user_namespaces` to at least `28633`, and sets
+`/proc/sys/kernel/unprivileged_userns_clone=1` when that distro-specific sysctl
+exists. Startup still fails fast if the kernel does not expose user namespace
+support or refuses those writes.
+
 The entrypoint then finds the `/nix` btrfs disk by label (`AGENTBOX_NIX`),
 mounts it under `/run/agentbox/nix-disk`, bind-mounts the image-provided `/nix`
 as a read-only lowerdir, and mounts a kernel overlay at `/nix` using disk-backed

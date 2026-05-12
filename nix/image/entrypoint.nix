@@ -191,6 +191,48 @@ EOF_NIXBLD_GIDS
     export PATH="/run/agentbox/idmap-bin:$PATH"
   }
 
+  enable_rootless_user_namespaces() {
+    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" != "1" ]; then
+      return 0
+    fi
+    if [ "$(id -u)" != "0" ]; then
+      return 0
+    fi
+
+    userns_limit_path=/proc/sys/user/max_user_namespaces
+    userns_limit_target=28633
+    if [ ! -e "$userns_limit_path" ]; then
+      echo "agentbox-entrypoint: ERROR: kernel does not expose $userns_limit_path; rootless Podman needs user namespace support" >&2
+      exit 1
+    fi
+
+    userns_limit_current="$(cat "$userns_limit_path" 2>/dev/null || printf '0')"
+    if [ -z "$userns_limit_current" ]; then
+      userns_limit_current=0
+    else
+      case "$userns_limit_current" in
+        *[!0-9]*) userns_limit_current=0 ;;
+      esac
+    fi
+    if [ "$userns_limit_current" -lt "$userns_limit_target" ]; then
+      if ! printf '%s\n' "$userns_limit_target" > "$userns_limit_path"; then
+        echo "agentbox-entrypoint: ERROR: failed to set $userns_limit_path=$userns_limit_target for rootless Podman" >&2
+        exit 1
+      fi
+    fi
+
+    unprivileged_userns_path=/proc/sys/kernel/unprivileged_userns_clone
+    if [ -e "$unprivileged_userns_path" ]; then
+      unprivileged_userns_current="$(cat "$unprivileged_userns_path" 2>/dev/null || printf '0')"
+      if [ "$unprivileged_userns_current" != "1" ]; then
+        if ! printf '1\n' > "$unprivileged_userns_path"; then
+          echo "agentbox-entrypoint: ERROR: failed to set $unprivileged_userns_path=1 for rootless Podman" >&2
+          exit 1
+        fi
+      fi
+    fi
+  }
+
   # BEGIN agentbox passt DNS helper
   ensure_libkrun_passt_resolv_conf() {
     if [ "''${AGENTBOX_LIBKRUN_USE_PASST:-}" != "1" ]; then
@@ -451,6 +493,7 @@ EOF_CONTAINERS_CONF
   if [ "$drop_to_dev" = "1" ]; then
     materialize_dev_identity_files
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+      enable_rootless_user_namespaces
       materialize_dev_subid_files
       prepare_rootless_podman_idmap_helpers
     fi

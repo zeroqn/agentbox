@@ -306,6 +306,12 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         "network_backend = \"netavark\"",
         "conmon_path = [\"${conmon}/bin/conmon\"]",
         "crun = [\"${crun}/bin/crun\"]",
+        "enable_rootless_user_namespaces",
+        "userns_limit_path=/proc/sys/user/max_user_namespaces",
+        "userns_limit_target=28633",
+        "unprivileged_userns_path=/proc/sys/kernel/unprivileged_userns_clone",
+        "failed to set $userns_limit_path=$userns_limit_target",
+        "failed to set $unprivileged_userns_path=1",
         "materialize_dev_subid_files",
         "newuidmap",
         "newgidmap",
@@ -329,6 +335,23 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
     assert!(!storage_conf.contains("mount_program"));
     assert!(!storage_conf.contains("driver = \"overlay\""));
     assert!(!storage_conf.contains("driver = \"vfs\""));
+
+    let userns_call = ENTRYPOINT
+        .rfind("enable_rootless_user_namespaces")
+        .expect("user namespace sysctl helper should be called");
+    let subid_call = ENTRYPOINT
+        .rfind("materialize_dev_subid_files")
+        .expect("subid materialization should be called");
+    let idmap_helper_call = ENTRYPOINT
+        .rfind("prepare_rootless_podman_idmap_helpers")
+        .expect("idmap helper installation should be called");
+    let idmap_preflight = ENTRYPOINT
+        .find("unshare --user --map-subids true")
+        .expect("rootless idmap preflight should run");
+
+    assert!(userns_call < subid_call);
+    assert!(subid_call < idmap_helper_call);
+    assert!(idmap_helper_call < idmap_preflight);
 }
 
 #[test]
