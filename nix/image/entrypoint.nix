@@ -393,8 +393,31 @@ EOF_REGISTRIES_CONF
       exit 1
     fi
 
-    chown "$dev_uid:$dev_gid" "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf" "$containers_config_dir/registries.conf"
-    chmod 0644 "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf" "$containers_config_dir/registries.conf"
+    if ! cat > "$containers_config_dir/policy.json" <<EOF_POLICY_JSON
+{
+  "default": [
+    {
+      "type": "insecureAcceptAnything"
+    }
+  ],
+  "transports": {
+    "docker-daemon": {
+      "": [
+        {
+          "type": "insecureAcceptAnything"
+        }
+      ]
+    }
+  }
+}
+EOF_POLICY_JSON
+    then
+      echo "agentbox-entrypoint: ERROR: failed to write rootless Podman policy.json at $containers_config_dir/policy.json" >&2
+      exit 1
+    fi
+
+    chown "$dev_uid:$dev_gid" "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf" "$containers_config_dir/registries.conf" "$containers_config_dir/policy.json"
+    chmod 0644 "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf" "$containers_config_dir/registries.conf" "$containers_config_dir/policy.json"
     export XDG_RUNTIME_DIR="$containers_run_dir"
   }
 

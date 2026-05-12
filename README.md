@@ -231,6 +231,7 @@ container disk by label (`AGENTBOX_CONTAINERS`) at
 /home/dev/.config/containers/storage.conf
 /home/dev/.config/containers/containers.conf
 /home/dev/.config/containers/registries.conf
+/home/dev/.config/containers/policy.json
 ```
 
 `storage.conf` is generated with `driver = "btrfs"`, graphroot
@@ -240,7 +241,9 @@ container disk by label (`AGENTBOX_CONTAINERS`) at
 pins crun, conmon, cgroupfs, file events, and netavark/pasta helper paths for
 this non-systemd guest. `registries.conf` leaves blocked and insecure registry
 lists empty and sets the unqualified image search registry to `docker.io` so
-commands such as `podman pull alpine` work inside the guest.
+commands such as `podman pull alpine` work inside the guest. `policy.json`
+sets the default and `docker-daemon` transports to `insecureAcceptAnything` so
+the guest has a local image signature policy for development pulls.
 
 Before dropping privileges, the entrypoint also enables the guest kernel's
 rootless user namespace knobs required by Podman: it raises
