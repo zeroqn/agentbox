@@ -378,8 +378,23 @@ EOF_CONTAINERS_CONF
       exit 1
     fi
 
-    chown "$dev_uid:$dev_gid" "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf"
-    chmod 0644 "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf"
+    if ! cat > "$containers_config_dir/registries.conf" <<EOF_REGISTRIES_CONF
+[registries.block]
+registries = []
+
+[registries.insecure]
+registries = []
+
+[registries.search]
+registries = ["docker.io"]
+EOF_REGISTRIES_CONF
+    then
+      echo "agentbox-entrypoint: ERROR: failed to write rootless Podman registries.conf at $containers_config_dir/registries.conf" >&2
+      exit 1
+    fi
+
+    chown "$dev_uid:$dev_gid" "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf" "$containers_config_dir/registries.conf"
+    chmod 0644 "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf" "$containers_config_dir/registries.conf"
     export XDG_RUNTIME_DIR="$containers_run_dir"
   }
 

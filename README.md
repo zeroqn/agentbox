@@ -230,6 +230,7 @@ container disk by label (`AGENTBOX_CONTAINERS`) at
 ```text
 /home/dev/.config/containers/storage.conf
 /home/dev/.config/containers/containers.conf
+/home/dev/.config/containers/registries.conf
 ```
 
 `storage.conf` is generated with `driver = "btrfs"`, graphroot
@@ -237,7 +238,9 @@ container disk by label (`AGENTBOX_CONTAINERS`) at
 `/run/user/<dev-uid>/containers`. It intentionally has no `mount_program`, no
 `overlay` driver fallback, and no `vfs` driver fallback. `containers.conf`
 pins crun, conmon, cgroupfs, file events, and netavark/pasta helper paths for
-this non-systemd guest.
+this non-systemd guest. `registries.conf` leaves blocked and insecure registry
+lists empty and sets the unqualified image search registry to `docker.io` so
+commands such as `podman pull alpine` work inside the guest.
 
 Before dropping privileges, the entrypoint also enables the guest kernel's
 rootless user namespace knobs required by Podman: it raises
