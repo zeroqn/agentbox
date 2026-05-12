@@ -32,19 +32,19 @@
   libkrunfwRelease = {
     owner = "zeroqn";
     repo = "libkrunfw";
-    tag = "agentbox-dabd42827ad1";
+    tag = "agentbox-125c62fe14d8";
     systems = {
       x86_64-linux = {
         asset = "libkrunfw-x86_64.tgz";
-        hash = "sha256-mV9speOrdgzVfXmwCWhY1SctoYtKfXVR3aNk2tdF9gw=";
+        hash = "sha256-tn2QO0cIR80AijBft/3pX/JBQ4EJmg+DclpVegMr4uE=";
       };
       aarch64-linux = {
         asset = "libkrunfw-aarch64.tgz";
-        hash = "sha256-tYb2lC1i5jkT7M42FU1pjVW2iNEpJHHx7OSyqpCfzPE=";
+        hash = "sha256-9Bf+qQ+/S5Zezn+Yb0xRXtqmdlr5LF9dP3X4gg5rijU=";
       };
       riscv64-linux = {
         asset = "libkrunfw-riscv64.tgz";
-        hash = "sha256-9M259kpHs/4tt1sr3NeSpAfxrQY5bMeZfAsmchGFRbc=";
+        hash = "sha256-8RvevzrW0DTY+bFIqKQOkJ+IVyhU7deHLRE1d8bK+TE=";
       };
     };
   };
