@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, agentboxMuslPackage, entrypoint, fishConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -191,6 +191,16 @@ let
     pathsToLink = [ "/" ];
   };
 
+  rootlessPodmanImagePackages = [
+    podman
+    crun
+    pkgs.conmon
+    pkgs.netavark
+    pkgs.aardvark-dns
+    pkgs.passt
+    pkgs.shadow
+  ];
+
   baseImagePackages = [
     pkgs.bashInteractive
     pkgs.btrfs-progs
@@ -237,6 +247,7 @@ let
 
   imagePackages =
     baseImagePackages
+    ++ rootlessPodmanImagePackages
     ++ cToolchainImagePackages
     ++ [
       rustToolchainImageLayer

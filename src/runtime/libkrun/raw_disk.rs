@@ -1,0 +1,254 @@
+use anyhow::{anyhow, Context, Result};
+use std::fs::{self, File};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RawDiskSpec {
+    pub(crate) file_name: &'static str,
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) size_bytes: u64,
+    pub(crate) size_hint: &'static str,
+    pub(crate) diagnostic_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RawBtrfsDisk {
+    pub(crate) path: PathBuf,
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) status: RawBtrfsDiskStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RawBtrfsDiskStatus {
+    Created,
+    Reused,
+}
+
+pub(crate) trait RawImageCommandRunner {
+    fn mkfs_btrfs(&self, path: &Path, label: &str, spec: &RawDiskSpec) -> Result<()>;
+    fn probe_fs_type(&self, path: &Path, spec: &RawDiskSpec) -> Result<String>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HostRawImageCommandRunner;
+
+impl RawImageCommandRunner for HostRawImageCommandRunner {
+    fn mkfs_btrfs(&self, path: &Path, label: &str, spec: &RawDiskSpec) -> Result<()> {
+        let output = Command::new("mkfs.btrfs")
+            .arg("-f")
+            .arg("-L")
+            .arg(label)
+            .arg(path)
+            .output()
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => anyhow!(
+                    "mkfs.btrfs is required to create the {}; install btrfs-progs and retry",
+                    spec.diagnostic_name
+                ),
+                _ => err.into(),
+            })
+            .with_context(|| format!("failed to run mkfs.btrfs for '{}'", path.display()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.is_empty() {
+                anyhow::bail!("mkfs.btrfs failed for '{}'", path.display());
+            }
+            anyhow::bail!("mkfs.btrfs failed for '{}': {stderr}", path.display());
+        }
+
+        Ok(())
+    }
+
+    fn probe_fs_type(&self, path: &Path, spec: &RawDiskSpec) -> Result<String> {
+        let output = Command::new("blkid")
+            .arg("-o")
+            .arg("value")
+            .arg("-s")
+            .arg("TYPE")
+            .arg(path)
+            .output()
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => anyhow!(
+                    "blkid is required to validate the existing {}; install util-linux and retry",
+                    spec.diagnostic_name
+                ),
+                _ => err.into(),
+            })
+            .with_context(|| format!("failed to run blkid for '{}'", path.display()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.is_empty() {
+                anyhow::bail!("failed to detect filesystem type for '{}'", path.display());
+            }
+            anyhow::bail!(
+                "failed to detect filesystem type for '{}': {stderr}",
+                path.display()
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+}
+
+pub(crate) fn prepare(state_root: &Path, spec: &RawDiskSpec) -> Result<RawBtrfsDisk> {
+    prepare_with_runner(state_root, spec, &HostRawImageCommandRunner)
+}
+
+pub(crate) fn prepare_with_runner(
+    state_root: &Path,
+    spec: &RawDiskSpec,
+    runner: &impl RawImageCommandRunner,
+) -> Result<RawBtrfsDisk> {
+    let path = state_root.join(spec.file_name);
+    prepare_path_with_runner(&path, spec, runner)
+}
+
+pub(crate) fn prepare_path_with_runner(
+    path: &Path,
+    spec: &RawDiskSpec,
+    runner: &impl RawImageCommandRunner,
+) -> Result<RawBtrfsDisk> {
+    if path.exists() {
+        validate_existing(path, spec, runner)?;
+        return Ok(disk(path.to_path_buf(), spec, RawBtrfsDiskStatus::Reused));
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create '{}'", parent.display()))?;
+    }
+
+    let file = File::create_new(path).with_context(|| {
+        format!(
+            "failed to create {} '{}'",
+            spec.diagnostic_name,
+            path.display()
+        )
+    })?;
+    file.set_len(spec.size_bytes).with_context(|| {
+        format!(
+            "failed to set {} '{}' to {} bytes",
+            spec.diagnostic_name,
+            path.display(),
+            spec.size_bytes
+        )
+    })?;
+    drop(file);
+
+    if let Err(err) = runner.mkfs_btrfs(path, spec.label, spec) {
+        let _ = fs::remove_file(path);
+        return Err(err).with_context(|| {
+            format!(
+                "failed to format new {} '{}' as btrfs",
+                spec.diagnostic_name,
+                path.display()
+            )
+        });
+    }
+
+    Ok(disk(path.to_path_buf(), spec, RawBtrfsDiskStatus::Created))
+}
+
+fn validate_existing(
+    path: &Path,
+    spec: &RawDiskSpec,
+    runner: &impl RawImageCommandRunner,
+) -> Result<()> {
+    let metadata = path
+        .metadata()
+        .with_context(|| format!("failed to inspect '{}'", path.display()))?;
+    if !metadata.is_file() {
+        anyhow::bail!(
+            "existing {} path '{}' is not a regular file; refusing to overwrite it",
+            spec.diagnostic_name,
+            path.display()
+        );
+    }
+
+    if metadata.len() < spec.size_bytes {
+        anyhow::bail!(
+            "existing {} '{}' is {} bytes, below the required {} bytes; stop the VM, extend it with 'truncate -s {} {}', then retry",
+            spec.diagnostic_name,
+            path.display(),
+            metadata.len(),
+            spec.size_bytes,
+            spec.size_hint,
+            path.display()
+        );
+    }
+
+    let fs_type = runner.probe_fs_type(path, spec)?;
+    if fs_type != "btrfs" {
+        anyhow::bail!(
+            "existing {} '{}' has filesystem type '{}', expected btrfs; refusing to reformat automatically",
+            spec.diagnostic_name,
+            path.display(),
+            if fs_type.is_empty() { "unknown" } else { &fs_type }
+        );
+    }
+
+    Ok(())
+}
+
+fn disk(path: PathBuf, spec: &RawDiskSpec, status: RawBtrfsDiskStatus) -> RawBtrfsDisk {
+    RawBtrfsDisk {
+        path,
+        id: spec.id.to_owned(),
+        label: spec.label.to_owned(),
+        size_bytes: spec.size_bytes,
+        status,
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    #[derive(Default)]
+    pub(crate) struct FakeRunner {
+        pub(crate) mkfs_calls: RefCell<Vec<(PathBuf, String, &'static str)>>,
+        probe_results: RefCell<VecDeque<Result<String, String>>>,
+    }
+
+    impl FakeRunner {
+        pub(crate) fn with_probe(fs_type: &str) -> Self {
+            let runner = Self::default();
+            runner
+                .probe_results
+                .borrow_mut()
+                .push_back(Ok(fs_type.to_owned()));
+            runner
+        }
+
+        pub(crate) fn mkfs_call_count(&self) -> usize {
+            self.mkfs_calls.borrow().len()
+        }
+    }
+
+    impl RawImageCommandRunner for FakeRunner {
+        fn mkfs_btrfs(&self, path: &Path, label: &str, spec: &RawDiskSpec) -> Result<()> {
+            self.mkfs_calls.borrow_mut().push((
+                path.to_path_buf(),
+                label.to_owned(),
+                spec.diagnostic_name,
+            ));
+            Ok(())
+        }
+
+        fn probe_fs_type(&self, _path: &Path, _spec: &RawDiskSpec) -> Result<String> {
+            match self.probe_results.borrow_mut().pop_front() {
+                Some(Ok(value)) => Ok(value),
+                Some(Err(message)) => Err(anyhow!(message)),
+                None => Err(anyhow!("unexpected probe")),
+            }
+        }
+    }
+}

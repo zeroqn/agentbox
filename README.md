@@ -13,11 +13,12 @@ the host, and runs Nix inside the default libkrun guest runtime.
 
 Current runtime split:
 
-- **Libkrun mode (default):** Podman + crun/libkrun VM mode with one sparse
-  raw btrfs data image attached through `krun.disk.0.*` annotations. The guest
-  uses that disk for a persistent kernel overlay at `/nix`, and the `/workspace`
-  bind mount uses `--userns=keep-id` so ownership matches the host user after
-  the guest drops privileges.
+- **Libkrun mode (default):** Podman + crun/libkrun VM mode with two sparse
+  raw btrfs data images attached through `krun.disk.*` annotations. The guest
+  uses disk 0 for a persistent kernel overlay at `/nix` and disk 1 for
+  rootless Podman storage as `dev` with the Podman `btrfs` storage driver.
+  The `/workspace` bind mount uses `--userns=keep-id` so ownership matches the
+  host user after the guest drops privileges.
 - **Container mode (`--native`):** native Podman task container plus host
   `fuse-overlayfs` and a reusable `nix-daemon` sidecar. `--sidecar-only` also
   selects this mode for sidecar debugging.
@@ -178,17 +179,18 @@ Run:
 Libkrun-only options such as `--mem`, `--tsi`, and
 `--libkrun-debug-entrypoint` are valid without adding `--libkrun`.
 
-On first run, agentbox creates a sparse btrfs raw image at:
+On first run, agentbox creates two sparse btrfs raw images:
 
 ```text
 <state-root>/libkrun-nix.raw
+<state-root>/libkrun-containers.raw
 ```
 
-The default apparent size is `64 GiB`. Because the file is sparse, host disk
-usage grows as blocks are written, but the guest-visible capacity is still the
-raw file's apparent size at VM start.
+Each default apparent size is `64 GiB`. Because the files are sparse, host disk
+usage grows as blocks are written, but guest-visible capacity is still each raw
+file's apparent size at VM start.
 
-The raw image is attached with crun annotations:
+The raw images are attached with crun annotations:
 
 ```text
 run.oci.handler=krun
@@ -197,6 +199,9 @@ krun.cpus=<cpu count>
 krun.disk.0.path=<state-root>/libkrun-nix.raw
 krun.disk.0.id=agentbox-nix
 krun.disk.0.readonly=false
+krun.disk.1.path=<state-root>/libkrun-containers.raw
+krun.disk.1.id=agentbox-containers
+krun.disk.1.readonly=false
 krun.use_passt=1
 ```
 
@@ -215,20 +220,39 @@ agentbox switches to the TSI/proxy environment path instead: it omits
 `krun.use_passt=1`, skips the passt resolver injection, and passes `no_proxy=1`
 into the guest.
 
-Inside the libkrun guest, the entrypoint finds the attached btrfs disk by label
-(`AGENTBOX_NIX`), mounts it under `/run/agentbox/nix-disk`, bind-mounts the
-image-provided `/nix` as a read-only lowerdir, and mounts a kernel overlay at
-`/nix` using disk-backed upper/work directories. During upperdir bootstrap,
-agentbox makes the overlaid `/nix/store` directory owned by the `nixbld` group;
-the store directory mode is `1775`, while store entries inherited from the image
-may remain `root:root`. After the overlay is active, it starts an in-guest
-`nix-daemon`, exports
+Inside the libkrun guest, the entrypoint first prepares rootless Podman for the
+final `dev` user. It writes real `/etc/passwd`, `/etc/group`, `/etc/subuid`, and
+`/etc/subgid` entries for the dynamic host UID/GID, installs setuid
+`newuidmap`/`newgidmap` helpers in `/run/agentbox/idmap-bin`, mounts the
+container disk by label (`AGENTBOX_CONTAINERS`) at
+`/home/dev/.local/share/containers`, and writes:
+
+```text
+/home/dev/.config/containers/storage.conf
+/home/dev/.config/containers/containers.conf
+```
+
+`storage.conf` is generated with `driver = "btrfs"`, graphroot
+`/home/dev/.local/share/containers/storage`, and runroot
+`/run/user/<dev-uid>/containers`. It intentionally has no `mount_program`, no
+`overlay` driver fallback, and no `vfs` driver fallback. `containers.conf`
+pins crun, conmon, cgroupfs, file events, and netavark/pasta helper paths for
+this non-systemd guest.
+
+The entrypoint then finds the `/nix` btrfs disk by label (`AGENTBOX_NIX`),
+mounts it under `/run/agentbox/nix-disk`, bind-mounts the image-provided `/nix`
+as a read-only lowerdir, and mounts a kernel overlay at `/nix` using disk-backed
+upper/work directories. During upperdir bootstrap, agentbox makes the overlaid
+`/nix/store` directory owned by the `nixbld` group; the store directory mode is
+`1775`, while store entries inherited from the image may remain `root:root`.
+After the overlay is active, it starts an in-guest `nix-daemon`, exports
 `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
-privilege drop, then runs the shell as the host UID/GID. The libkrun task also
-uses `--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the
-host user while the entrypoint still starts as root for `/run/agentbox`
-creation and root-only `/nix` bootstrap. The daemon is tied to the VM/container
-lifecycle and is not separately supervised in v1.
+privilege drop, verifies the rootless Podman btrfs config preconditions, then
+runs the shell as the host UID/GID. The libkrun task also uses
+`--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the host
+user while the entrypoint still starts as root for `/run/agentbox` creation and
+root-only bootstrap. The daemon is tied to the VM/container lifecycle and is not
+separately supervised in v1.
 
 For guest-side debugging, pass a temporary entrypoint script to bypass the normal
 image entrypoint and run custom diagnostics before handing off to the requested
@@ -272,13 +296,27 @@ Manual resize flow for v1:
 ```bash
 # Stop any running libkrun VM first.
 truncate -s 128G <state-root>/libkrun-nix.raw
+truncate -s 128G <state-root>/libkrun-containers.raw
 ./result/bin/agentbox
 ```
 
-On restart, the guest entrypoint attempts `btrfs filesystem resize max` on the
-mounted data disk so the filesystem consumes the larger apparent image size. No
-live auto-resize, state migration, multi-disk management, snapshot/rollback UX,
-or root-disk mutation is implemented.
+Resize only the disk that needs more space. On restart, the guest entrypoint
+attempts `btrfs filesystem resize max` on each mounted data disk so the
+filesystem consumes the larger apparent image size. No live auto-resize, state
+migration/reset UX, snapshot/rollback UX, host-port helper UX, rootful nested
+Podman workflow, or native-mode nested-Podman support is implemented.
+
+Manual host smoke checklist for the nested rootless Podman feature:
+
+1. Build and load `.#container`, then start default libkrun mode on the host.
+2. Inside the guest, confirm the shell is `dev` and run `podman info`; verify
+   rootless mode and storage driver `btrfs`.
+3. Run `podman run --rm docker.io/library/alpine:latest echo hello` or an
+   equivalent dev/test container.
+4. Exit and restart agentbox; verify the pulled image/storage persists via
+   `<state-root>/libkrun-containers.raw`.
+5. Confirm no fuse-overlayfs path/config/binary is required by the rootless
+   Podman setup.
 
 `--native --libkrun` is rejected as conflicting mode selection. Container
 sidecar controls such as `--sidecar-only`, `--disable-nix-sidecar`, and
@@ -286,8 +324,8 @@ sidecar controls such as `--sidecar-only`, `--disable-nix-sidecar`, and
 use the container sidecar/overlay bridge.
 
 Libkrun mode intentionally does **not** use the container sidecar/overlay bridge,
-does **not** set `AGENTBOX_NIX_PROXY_HOST`, and does **not** fall back to seeded
-Nix state.
+does **not** set `AGENTBOX_NIX_PROXY_HOST`, does **not** fall back to seeded Nix
+state, and does **not** use fuse-overlayfs for nested rootless Podman storage.
 
 ---
 

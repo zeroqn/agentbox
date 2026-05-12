@@ -49,20 +49,25 @@ const ENTRYPOINT: &str = include_str!("../nix/image/entrypoint.nix");
 
 #[test]
 fn libkrun_entrypoint_branch_is_env_gated_and_does_not_require_proxy_host() {
-    let gate = r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
+    let container_gate = r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+    bootstrap_libkrun_containers_storage
+  fi"#;
+    let nix_gate = r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
     ensure_libkrun_passt_resolv_conf
     bootstrap_libkrun_nix_overlay
   fi"#;
-    assert!(ENTRYPOINT.contains(gate));
+    assert!(ENTRYPOINT.contains(container_gate));
+    assert!(ENTRYPOINT.contains(nix_gate));
 
     let libkrun_branch_start = ENTRYPOINT
-        .find(r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then"#)
-        .expect("libkrun branch should exist");
+        .find(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#)
+        .expect("libkrun container storage branch should exist");
     let proxy_branch_start = ENTRYPOINT
         .find(r#"agentbox_proxy_host="''${AGENTBOX_NIX_PROXY_HOST:-}""#)
         .expect("legacy proxy branch should remain for non-libkrun drop mode");
     let libkrun_branch = &ENTRYPOINT[libkrun_branch_start..proxy_branch_start];
 
+    assert!(libkrun_branch.contains("bootstrap_libkrun_containers_storage"));
     assert!(libkrun_branch.contains("bootstrap_libkrun_nix_overlay"));
     assert!(libkrun_branch.contains("NIX_REMOTE#unix://"));
     assert!(!libkrun_branch.contains("AGENTBOX_NIX_PROXY_HOST"));
@@ -262,6 +267,71 @@ fn libkrun_entrypoint_preseeds_store_and_var_nix_before_overlay_mount() {
 }
 
 #[test]
+fn libkrun_entrypoint_bootstraps_container_storage_before_nix_overlay() {
+    let home_data = ENTRYPOINT
+        .find("materialize_writable_dir \"$home_data_dir\" \"$tmpdir/home-data\"")
+        .expect("home data materialization should exist");
+    let container_call = ENTRYPOINT
+        .find("\n    bootstrap_libkrun_containers_storage\n")
+        .expect("container storage bootstrap call should exist");
+    let nix_call = ENTRYPOINT
+        .find("\n    bootstrap_libkrun_nix_overlay\n")
+        .expect("nix overlay bootstrap call should exist");
+    let setpriv = ENTRYPOINT
+        .find("setpriv --reuid=\"$dev_uid\"")
+        .expect("privilege drop should exist");
+
+    assert!(home_data < container_call);
+    assert!(container_call < nix_call);
+    assert!(nix_call < setpriv);
+}
+
+#[test]
+fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
+    for required in [
+        "bootstrap_libkrun_containers_storage()",
+        "AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL",
+        "AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID",
+        "containers_mount=\"$home_data_dir/containers\"",
+        "btrfs filesystem resize max \"$containers_mount\"",
+        "containers_run_dir=\"/run/user/$dev_uid\"",
+        "chmod 0700 \"$containers_run_dir\"",
+        "export XDG_RUNTIME_DIR=\"$containers_run_dir\"",
+        "driver = \"btrfs\"",
+        "graphroot = \"$containers_storage_dir\"",
+        "runroot = \"$containers_runroot\"",
+        "cgroup_manager = \"cgroupfs\"",
+        "events_logger = \"file\"",
+        "[network]",
+        "network_backend = \"netavark\"",
+        "conmon_path = [\"${conmon}/bin/conmon\"]",
+        "crun = [\"${crun}/bin/crun\"]",
+        "materialize_dev_subid_files",
+        "newuidmap",
+        "newgidmap",
+        "failed to write rootless Podman storage.conf",
+        "failed to write rootless Podman containers.conf",
+        "unshare --user --map-subids true",
+        "rootless Podman idmap preflight failed",
+    ] {
+        assert!(ENTRYPOINT.contains(required), "missing {required}");
+    }
+
+    let storage_conf_start = ENTRYPOINT
+        .find("cat > \"$containers_config_dir/storage.conf\"")
+        .expect("storage.conf writer should exist");
+    let storage_conf_end = ENTRYPOINT[storage_conf_start..]
+        .find("EOF_STORAGE_CONF")
+        .expect("storage.conf heredoc should end")
+        + storage_conf_start;
+    let storage_conf = &ENTRYPOINT[storage_conf_start..storage_conf_end];
+
+    assert!(!storage_conf.contains("mount_program"));
+    assert!(!storage_conf.contains("driver = \"overlay\""));
+    assert!(!storage_conf.contains("driver = \"vfs\""));
+}
+
+#[test]
 fn libkrun_entrypoint_has_fail_fast_diagnostics_for_expected_failures() {
     for diagnostic in [
         "required tool '$tool_name' is not available",
@@ -280,6 +350,24 @@ fn libkrun_entrypoint_has_fail_fast_diagnostics_for_expected_failures() {
 fn image_includes_btrfs_progs_for_guest_bootstrap() {
     let layers = include_str!("../nix/image/layers.nix");
     assert!(layers.contains("pkgs.btrfs-progs"));
+}
+
+#[test]
+fn image_includes_rootless_podman_stack_without_fuse_overlayfs() {
+    let layers = include_str!("../nix/image/layers.nix");
+    for required in [
+        "rootlessPodmanImagePackages",
+        "podman",
+        "crun",
+        "pkgs.conmon",
+        "pkgs.netavark",
+        "pkgs.aardvark-dns",
+        "pkgs.passt",
+        "pkgs.shadow",
+    ] {
+        assert!(layers.contains(required), "missing {required}");
+    }
+    assert!(!layers.contains("fuse-overlayfs"));
 }
 
 fn entrypoint_passt_dns_helper() -> String {

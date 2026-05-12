@@ -61,6 +61,8 @@
               piCodingAgent
               rtkPrebuilt
               libkrun
+              podman
+              crun
               ;
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };

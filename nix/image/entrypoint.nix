@@ -1,4 +1,4 @@
-{ pkgs, fishConfig, starshipConfig }:
+{ pkgs, fishConfig, starshipConfig, podman ? pkgs.podman, crun ? pkgs.crun, conmon ? pkgs.conmon, netavark ? pkgs.netavark, aardvarkDns ? pkgs.aardvark-dns, passt ? pkgs.passt, shadow ? pkgs.shadow }:
 
 pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   set -euo pipefail
@@ -81,6 +81,116 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     fi
   }
 
+
+  id_in_subid_range() {
+    candidate="$1"
+    subid_start="$2"
+    subid_count="$3"
+    subid_end=$((subid_start + subid_count - 1))
+
+    [ "$candidate" -ge "$subid_start" ] && [ "$candidate" -le "$subid_end" ]
+  }
+
+  reject_subid_overlap() {
+    candidate="$1"
+    candidate_name="$2"
+    subid_start="$3"
+    subid_count="$4"
+
+    if id_in_subid_range "$candidate" "$subid_start" "$subid_count"; then
+      echo "agentbox-entrypoint: ERROR: subordinate ID range $subid_start:$subid_count overlaps $candidate_name id $candidate" >&2
+      exit 1
+    fi
+  }
+
+  materialize_dev_identity_files() {
+    if [ "$(id -u)" != "0" ]; then
+      return 0
+    fi
+
+    if ! cat "$tmpdir/passwd" > /etc/passwd; then
+      echo "agentbox-entrypoint: ERROR: failed to materialize dynamic dev entry in /etc/passwd" >&2
+      exit 1
+    fi
+    if ! cat "$tmpdir/group" > /etc/group; then
+      echo "agentbox-entrypoint: ERROR: failed to materialize dynamic dev entry in /etc/group" >&2
+      exit 1
+    fi
+    chmod 0644 /etc/passwd /etc/group
+  }
+
+  materialize_dev_subid_files() {
+    if [ "$(id -u)" != "0" ]; then
+      return 0
+    fi
+
+    subid_start=100000
+    subid_count=65536
+    reject_subid_overlap 0 root "$subid_start" "$subid_count"
+    reject_subid_overlap "$dev_uid" dev-uid "$subid_start" "$subid_count"
+    reject_subid_overlap "$dev_gid" dev-gid "$subid_start" "$subid_count"
+
+    if [ -e /etc/passwd ]; then
+      while IFS= read -r protected_uid; do
+        [ -n "$protected_uid" ] || continue
+        reject_subid_overlap "$protected_uid" nixbld-uid "$subid_start" "$subid_count"
+      done <<EOF_NIXBLD_UIDS
+$(${pkgs.gawk}/bin/awk -F: '$1 ~ /^nixbld[0-9]+$/ { print $3 }' /etc/passwd)
+EOF_NIXBLD_UIDS
+    fi
+
+    if [ -e /etc/group ]; then
+      while IFS= read -r protected_gid; do
+        [ -n "$protected_gid" ] || continue
+        reject_subid_overlap "$protected_gid" nixbld-gid "$subid_start" "$subid_count"
+      done <<EOF_NIXBLD_GIDS
+$(${pkgs.gawk}/bin/awk -F: '$1 == "nixbld" { print $3 }' /etc/group)
+EOF_NIXBLD_GIDS
+    fi
+
+    for subid_file in /etc/subuid /etc/subgid; do
+      if [ -e "$subid_file" ]; then
+        sed '/^dev:/d' "$subid_file" > "$tmpdir/$(basename "$subid_file")"
+      else
+        : > "$tmpdir/$(basename "$subid_file")"
+      fi
+      printf 'dev:%s:%s\n' "$subid_start" "$subid_count" >> "$tmpdir/$(basename "$subid_file")"
+      if ! cat "$tmpdir/$(basename "$subid_file")" > "$subid_file"; then
+        echo "agentbox-entrypoint: ERROR: failed to materialize $subid_file for rootless Podman" >&2
+        exit 1
+      fi
+      chmod 0644 "$subid_file"
+    done
+  }
+
+  install_idmap_helper() {
+    src="$1"
+    name="$2"
+    helper_dir=/run/agentbox/idmap-bin
+    dst="$helper_dir/$name"
+
+    require_tool "$src" "$name"
+    mkdir -p "$helper_dir"
+    if ! ${pkgs.coreutils}/bin/install -m 4755 -o 0 -g 0 "$src" "$dst"; then
+      echo "agentbox-entrypoint: ERROR: failed to install root-owned setuid $name helper at $dst" >&2
+      exit 1
+    fi
+    if [ ! -u "$dst" ]; then
+      echo "agentbox-entrypoint: ERROR: installed idmap helper '$dst' is not setuid; rootless Podman would fall back to single-UID mode" >&2
+      exit 1
+    fi
+  }
+
+  prepare_rootless_podman_idmap_helpers() {
+    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" != "1" ]; then
+      return 0
+    fi
+
+    install_idmap_helper "${shadow}/bin/newuidmap" newuidmap
+    install_idmap_helper "${shadow}/bin/newgidmap" newgidmap
+    export PATH="/run/agentbox/idmap-bin:$PATH"
+  }
+
   # BEGIN agentbox passt DNS helper
   ensure_libkrun_passt_resolv_conf() {
     if [ "''${AGENTBOX_LIBKRUN_USE_PASST:-}" != "1" ]; then
@@ -125,7 +235,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   }
   # END agentbox passt DNS helper
 
-  find_agentbox_nix_disk() {
+  find_agentbox_btrfs_disk() {
     disk_label="$1"
     disk_id="$2"
 
@@ -144,6 +254,91 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     done
 
     return 1
+  }
+
+
+  bootstrap_libkrun_containers_storage() {
+    if [ "$(id -u)" != "0" ]; then
+      echo "agentbox-entrypoint: ERROR: libkrun container storage bootstrap must run as root" >&2
+      exit 1
+    fi
+
+    require_tool "${pkgs.util-linux}/bin/blkid" "blkid"
+    require_tool "${pkgs.util-linux}/bin/mount" "mount"
+    require_tool "${pkgs.util-linux}/bin/findmnt" "findmnt"
+    require_tool "${pkgs.btrfs-progs}/bin/btrfs" "btrfs"
+    require_tool "${podman}/bin/podman" "podman"
+    require_tool "${crun}/bin/crun" "crun"
+    require_tool "${conmon}/bin/conmon" "conmon"
+    require_tool "${netavark}/bin/netavark" "netavark"
+    require_tool "${aardvarkDns}/bin/aardvark-dns" "aardvark-dns"
+    require_tool "${passt}/bin/pasta" "pasta"
+    require_tool "/run/agentbox/idmap-bin/newuidmap" "newuidmap"
+    require_tool "/run/agentbox/idmap-bin/newgidmap" "newgidmap"
+
+    container_disk_id="''${AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID:-agentbox-containers}"
+    container_disk_label="''${AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL:-AGENTBOX_CONTAINERS}"
+    containers_mount="$home_data_dir/containers"
+    containers_storage_dir="$containers_mount/storage"
+    containers_config_dir="$home_config_dir/containers"
+    containers_run_dir="/run/user/$dev_uid"
+    containers_runroot="$containers_run_dir/containers"
+
+    mkdir -p "$containers_mount" "$containers_config_dir" "$containers_runroot"
+
+    if ! container_disk="$(find_agentbox_btrfs_disk "$container_disk_label" "$container_disk_id")"; then
+      echo "agentbox-entrypoint: ERROR: libkrun container storage btrfs disk not found (label=$container_disk_label id=$container_disk_id)" >&2
+      exit 1
+    fi
+
+    if ! ${pkgs.util-linux}/bin/findmnt -rn "$containers_mount" >/dev/null 2>&1; then
+      if ! ${pkgs.util-linux}/bin/mount -t btrfs "$container_disk" "$containers_mount"; then
+        echo "agentbox-entrypoint: ERROR: failed to mount libkrun container storage btrfs disk '$container_disk' at '$containers_mount'" >&2
+        exit 1
+      fi
+    fi
+
+    if ! ${pkgs.btrfs-progs}/bin/btrfs filesystem resize max "$containers_mount" >/dev/null 2>&1; then
+      echo "agentbox-entrypoint: warning: btrfs resize max failed for '$containers_mount'; continuing with existing container storage filesystem size" >&2
+    fi
+
+    mkdir -p "$containers_storage_dir" "$containers_config_dir" "$containers_runroot"
+    chmod 0700 "$containers_run_dir"
+    chown "$dev_uid:$dev_gid" "$containers_mount" "$containers_storage_dir" "$containers_config_dir" "$containers_run_dir" "$containers_runroot"
+
+    if ! cat > "$containers_config_dir/storage.conf" <<EOF_STORAGE_CONF
+[storage]
+driver = "btrfs"
+graphroot = "$containers_storage_dir"
+runroot = "$containers_runroot"
+EOF_STORAGE_CONF
+    then
+      echo "agentbox-entrypoint: ERROR: failed to write rootless Podman storage.conf at $containers_config_dir/storage.conf" >&2
+      exit 1
+    fi
+
+    if ! cat > "$containers_config_dir/containers.conf" <<EOF_CONTAINERS_CONF
+[engine]
+cgroup_manager = "cgroupfs"
+events_logger = "file"
+runtime = "crun"
+conmon_path = ["${conmon}/bin/conmon"]
+helper_binaries_dir = ["${netavark}/bin", "${aardvarkDns}/bin", "${passt}/bin", "/run/agentbox/idmap-bin"]
+
+[engine.runtimes]
+crun = ["${crun}/bin/crun"]
+
+[network]
+network_backend = "netavark"
+EOF_CONTAINERS_CONF
+    then
+      echo "agentbox-entrypoint: ERROR: failed to write rootless Podman containers.conf at $containers_config_dir/containers.conf" >&2
+      exit 1
+    fi
+
+    chown "$dev_uid:$dev_gid" "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf"
+    chmod 0644 "$containers_config_dir/storage.conf" "$containers_config_dir/containers.conf"
+    export XDG_RUNTIME_DIR="$containers_run_dir"
   }
 
   bootstrap_libkrun_nix_overlay() {
@@ -168,7 +363,7 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
 
     mkdir -p "$agentbox_run_dir" "$agentbox_disk_mount" "$agentbox_lower_dir"
 
-    if ! agentbox_disk="$(find_agentbox_nix_disk "$agentbox_disk_label" "$agentbox_disk_id")"; then
+    if ! agentbox_disk="$(find_agentbox_btrfs_disk "$agentbox_disk_label" "$agentbox_disk_id")"; then
       echo "agentbox-entrypoint: ERROR: libkrun /nix btrfs disk not found (label=$agentbox_disk_label id=$agentbox_disk_id)" >&2
       exit 1
     fi
@@ -253,6 +448,14 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
     chmod 0644 "$tmpdir/passwd" "$tmpdir/group"
   fi
 
+  if [ "$drop_to_dev" = "1" ]; then
+    materialize_dev_identity_files
+    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+      materialize_dev_subid_files
+      prepare_rootless_podman_idmap_helpers
+    fi
+  fi
+
   export NSS_WRAPPER_PASSWD="$tmpdir/passwd"
   export NSS_WRAPPER_GROUP="$tmpdir/group"
   if [ -n "''${LD_PRELOAD-}" ]; then
@@ -304,6 +507,10 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
 
   export TMPDIR="$user_tmpdir"
 
+  if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+    bootstrap_libkrun_containers_storage
+  fi
+
   if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
     ensure_libkrun_passt_resolv_conf
     bootstrap_libkrun_nix_overlay
@@ -317,6 +524,29 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
           if [ -z "$socket_path" ] || [ ! -S "$socket_path" ]; then
             echo "agentbox-entrypoint: ERROR: libkrun in-guest nix-daemon socket is not accessible after dropping privileges: $socket_path" >&2
             exit 1
+          fi
+          if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+            if [ -z "''${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
+              echo "agentbox-entrypoint: ERROR: rootless Podman XDG_RUNTIME_DIR is not writable after dropping privileges: ''${XDG_RUNTIME_DIR:-unset}" >&2
+              exit 1
+            fi
+            storage_conf="$HOME/.config/containers/storage.conf"
+            if [ ! -f "$storage_conf" ] || ! grep -q '"'"'driver = "btrfs"'"'"' "$storage_conf"; then
+              echo "agentbox-entrypoint: ERROR: rootless Podman storage.conf is missing btrfs driver at $storage_conf" >&2
+              exit 1
+            fi
+            if grep -Eq '"'"'mount_program|driver = "(overlay|vfs)"'"'"' "$storage_conf"; then
+              echo "agentbox-entrypoint: ERROR: rootless Podman storage.conf contains a forbidden overlay/vfs/fuse fallback" >&2
+              exit 1
+            fi
+            if [ ! -w "$HOME/.local/share/containers/storage" ]; then
+              echo "agentbox-entrypoint: ERROR: rootless Podman btrfs graphroot is not writable after dropping privileges" >&2
+              exit 1
+            fi
+            if ! ${pkgs.util-linux}/bin/unshare --user --map-subids true; then
+              echo "agentbox-entrypoint: ERROR: rootless Podman idmap preflight failed; check /etc/subuid, /etc/subgid, newuidmap/newgidmap, and user namespace support" >&2
+              exit 1
+            fi
           fi
           exec "$@"
         ' bash "$@"

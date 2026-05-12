@@ -1,6 +1,8 @@
+pub(crate) mod containers;
 mod cpu;
 mod memory;
 pub(crate) mod nix;
+mod raw_disk;
 pub(crate) use memory::parse_mem_gib_arg;
 
 use anyhow::{Context, Result};
@@ -35,6 +37,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
         .map(resolve_debug_entrypoint_mount)
         .transpose()?;
     let raw_nix_disk = nix::raw_image::prepare(state_layout.root_dir())?;
+    let raw_container_disk = containers::raw_image::prepare(state_layout.root_dir())?;
     let task_container_name = derive_task_container_name(&cwd);
     let task_hostname = derive_task_hostname(&cwd);
     let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
@@ -55,6 +58,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             cargo_mount: &cargo_mount,
             sccache_mount: &sccache_mount,
             raw_nix_disk: &raw_nix_disk,
+            raw_container_disk: &raw_container_disk,
             host_uid,
             host_gid,
             ram_mib,
@@ -113,11 +117,13 @@ mod task {
     use anyhow::Result;
 
     use super::DebugEntrypointMount;
+    use crate::runtime::libkrun::containers::raw_image::RawContainerDisk;
     use crate::runtime::libkrun::nix::raw_image::RawNixDisk;
     use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
     pub(crate) const LIBKRUN_HANDLER_ANNOTATION: &str = "run.oci.handler=krun";
     pub(crate) const LIBKRUN_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY=1";
+    pub(crate) const LIBKRUN_CONTAINERS_STORAGE_ENV: &str = "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE=1";
     pub(crate) const LIBKRUN_KVM_DROP_TO_DEV_ENV: &str = "AGENTBOX_KVM_DROP_TO_DEV=1";
     pub(crate) const LIBKRUN_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST=1";
     pub(crate) const LIBKRUN_USE_PASST_ANNOTATION: &str = "krun.use_passt=1";
@@ -134,6 +140,7 @@ mod task {
         pub(crate) cargo_mount: &'a str,
         pub(crate) sccache_mount: &'a str,
         pub(crate) raw_nix_disk: &'a RawNixDisk,
+        pub(crate) raw_container_disk: &'a RawContainerDisk,
         pub(crate) host_uid: u32,
         pub(crate) host_gid: u32,
         pub(crate) ram_mib: u32,
@@ -146,6 +153,7 @@ mod task {
         spec: LibkrunTaskPodmanSpec<'_>,
     ) -> Result<Vec<String>> {
         let disk = spec.raw_nix_disk;
+        let container_disk = spec.raw_container_disk;
         let mut args = vec![
             "run".to_owned(),
             "--rm".to_owned(),
@@ -168,6 +176,12 @@ mod task {
             format!("krun.disk.0.id={}", disk.id),
             "--annotation".to_owned(),
             "krun.disk.0.readonly=false".to_owned(),
+            "--annotation".to_owned(),
+            format!("krun.disk.1.path={}", container_disk.path.display()),
+            "--annotation".to_owned(),
+            format!("krun.disk.1.id={}", container_disk.id),
+            "--annotation".to_owned(),
+            "krun.disk.1.readonly=false".to_owned(),
             "--workdir".to_owned(),
             CONTAINER_WORKDIR.to_owned(),
             "--hostname".to_owned(),
@@ -188,6 +202,15 @@ mod task {
             format!("AGENTBOX_LIBKRUN_NIX_DISK_ID={}", disk.id),
             "--env".to_owned(),
             format!("AGENTBOX_LIBKRUN_NIX_DISK_LABEL={}", disk.label),
+            "--env".to_owned(),
+            LIBKRUN_CONTAINERS_STORAGE_ENV.to_owned(),
+            "--env".to_owned(),
+            format!("AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID={}", container_disk.id),
+            "--env".to_owned(),
+            format!(
+                "AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL={}",
+                container_disk.label
+            ),
             "--env".to_owned(),
             format!("AGENTBOX_HOST_UID={}", spec.host_uid),
             "--env".to_owned(),
@@ -230,6 +253,10 @@ mod task {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::runtime::libkrun::containers::raw_image::{
+            RawContainerDisk, RawContainerDiskStatus, RAW_CONTAINER_DISK_LABEL,
+            RAW_CONTAINER_DISK_SIZE_BYTES,
+        };
         use crate::runtime::libkrun::nix::raw_image::{
             RawNixDisk, RawNixDiskStatus, RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
         };
@@ -238,7 +265,8 @@ mod task {
         #[test]
         fn libkrun_task_args_include_krun_disk_annotations_and_guest_overlay_env() {
             let disk = raw_disk();
-            let args = build_args(&disk);
+            let container_disk = raw_container_disk();
+            let args = build_args(&disk, &container_disk);
             let joined = args.join("\n");
 
             assert_eq!(args[0], "run");
@@ -254,10 +282,21 @@ mod task {
             ));
             assert!(args.contains(&"krun.disk.0.id=agentbox-nix".to_owned()));
             assert!(args.contains(&"krun.disk.0.readonly=false".to_owned()));
+            assert!(args.contains(
+                &"krun.disk.1.path=/tmp/state/agentbox/project/libkrun-containers.raw".to_owned()
+            ));
+            assert!(args.contains(&"krun.disk.1.id=agentbox-containers".to_owned()));
+            assert!(args.contains(&"krun.disk.1.readonly=false".to_owned()));
             assert!(args.contains(&LIBKRUN_NIX_OVERLAY_ENV.to_owned()));
             assert!(args.contains(&"AGENTBOX_LIBKRUN_NIX_DISK_ID=agentbox-nix".to_owned()));
             assert!(args.contains(&format!(
                 "AGENTBOX_LIBKRUN_NIX_DISK_LABEL={RAW_NIX_DISK_LABEL}"
+            )));
+            assert!(args.contains(&LIBKRUN_CONTAINERS_STORAGE_ENV.to_owned()));
+            assert!(args
+                .contains(&"AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID=agentbox-containers".to_owned()));
+            assert!(args.contains(&format!(
+                "AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL={RAW_CONTAINER_DISK_LABEL}"
             )));
             assert!(args.contains(&"AGENTBOX_HOST_UID=1001".to_owned()));
             assert!(args.contains(&"AGENTBOX_HOST_GID=1002".to_owned()));
@@ -284,7 +323,8 @@ mod task {
         #[test]
         fn libkrun_task_args_exclude_container_sidecar_and_nix_proxy_paths() {
             let disk = raw_disk();
-            let args = build_args(&disk);
+            let container_disk = raw_container_disk();
+            let args = build_args(&disk, &container_disk);
             let joined = args.join("\n");
 
             assert!(!joined.contains("io.agentbox.sidecar"));
@@ -300,7 +340,8 @@ mod task {
         #[test]
         fn libkrun_task_args_use_tsi_proxy_env_instead_of_default_passt_when_requested() {
             let disk = raw_disk();
-            let args = build_args_with_tsi(&disk, true);
+            let container_disk = raw_container_disk();
+            let args = build_args_with_tsi(&disk, &container_disk, true);
             let joined = args.join("\n");
 
             assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
@@ -314,7 +355,8 @@ mod task {
         #[test]
         fn libkrun_task_args_omit_cpu_annotation_when_cpu_count_is_unresolved() {
             let disk = raw_disk();
-            let args = build_args_with_cpu_count(&disk, None);
+            let container_disk = raw_container_disk();
+            let args = build_args_with_cpu_count(&disk, &container_disk, None);
             let joined = args.join("\n");
 
             assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
@@ -328,12 +370,14 @@ mod task {
         #[test]
         fn libkrun_task_args_can_override_entrypoint_for_guest_debugging() {
             let disk = raw_disk();
+            let container_disk = raw_container_disk();
             let debug_entrypoint = DebugEntrypointMount {
                 source: PathBuf::from("/tmp/debug-entrypoint.sh"),
                 mount_arg: "/tmp/debug-entrypoint.sh:/bin/agentbox-debug-entrypoint:ro".to_owned(),
                 target: "/bin/agentbox-debug-entrypoint",
             };
-            let args = build_args_with_debug_entrypoint(&disk, Some(&debug_entrypoint));
+            let args =
+                build_args_with_debug_entrypoint(&disk, &container_disk, Some(&debug_entrypoint));
             let joined = args.join("\n");
 
             assert!(joined
@@ -356,30 +400,56 @@ mod task {
             }
         }
 
-        fn build_args(raw_nix_disk: &RawNixDisk) -> Vec<String> {
-            build_args_with_debug_entrypoint(raw_nix_disk, None)
+        fn raw_container_disk() -> RawContainerDisk {
+            RawContainerDisk {
+                path: PathBuf::from("/tmp/state/agentbox/project/libkrun-containers.raw"),
+                id: "agentbox-containers".to_owned(),
+                label: RAW_CONTAINER_DISK_LABEL.to_owned(),
+                size_bytes: RAW_CONTAINER_DISK_SIZE_BYTES,
+                status: RawContainerDiskStatus::Reused,
+            }
         }
 
-        fn build_args_with_tsi(raw_nix_disk: &RawNixDisk, tsi: bool) -> Vec<String> {
-            build_args_with_options(raw_nix_disk, tsi, Some(16), None)
+        fn build_args(
+            raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
+        ) -> Vec<String> {
+            build_args_with_debug_entrypoint(raw_nix_disk, raw_container_disk, None)
+        }
+
+        fn build_args_with_tsi(
+            raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
+            tsi: bool,
+        ) -> Vec<String> {
+            build_args_with_options(raw_nix_disk, raw_container_disk, tsi, Some(16), None)
         }
 
         fn build_args_with_cpu_count(
             raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
             cpu_count: Option<u32>,
         ) -> Vec<String> {
-            build_args_with_options(raw_nix_disk, false, cpu_count, None)
+            build_args_with_options(raw_nix_disk, raw_container_disk, false, cpu_count, None)
         }
 
         fn build_args_with_debug_entrypoint(
             raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
             debug_entrypoint: Option<&DebugEntrypointMount>,
         ) -> Vec<String> {
-            build_args_with_options(raw_nix_disk, false, Some(16), debug_entrypoint)
+            build_args_with_options(
+                raw_nix_disk,
+                raw_container_disk,
+                false,
+                Some(16),
+                debug_entrypoint,
+            )
         }
 
         fn build_args_with_options(
             raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
             tsi: bool,
             cpu_count: Option<u32>,
             debug_entrypoint: Option<&DebugEntrypointMount>,
@@ -393,6 +463,7 @@ mod task {
                 cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
                 sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
                 raw_nix_disk,
+                raw_container_disk,
                 host_uid: 1001,
                 host_gid: 1002,
                 ram_mib: 8192,
