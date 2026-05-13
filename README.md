@@ -38,6 +38,8 @@ instead of copying `/nix/store` into agentbox state.
 - `mkfs.btrfs` and `blkid` on the host for first-time libkrun raw-image
   creation and reuse validation (`btrfs-progs` + `util-linux`; included in
   `nix develop`)
+- `/dev/net/tun` on the host for libkrun mode, passed through to the guest so
+  nested rootless Podman can set up TUN-backed networking.
 - default libkrun mode requires Podman using the custom crun/libkrun stack that
   supports `krun_add_disk` annotations plus guest kernel overlay and btrfs
   support.
@@ -203,6 +205,7 @@ krun.disk.1.path=<state-root>/libkrun-containers.raw
 krun.disk.1.id=agentbox-containers
 krun.disk.1.readonly=false
 krun.use_passt=1
+--device /dev/net/tun:/dev/net/tun
 ```
 
 By default, agentbox sizes libkrun memory to 80% of host memory, rounded down to
@@ -265,7 +268,9 @@ privilege drop, verifies the rootless Podman btrfs config preconditions, then
 runs the shell as the host UID/GID. The libkrun task also uses
 `--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the host
 user while the entrypoint still starts as root for `/run/agentbox` creation and
-root-only bootstrap. The daemon is tied to the VM/container lifecycle and is not
+root-only bootstrap. The libkrun task passes the host `/dev/net/tun` through to
+the guest at the same path so nested rootless Podman can bring up container
+networking. The daemon is tied to the VM/container lifecycle and is not
 separately supervised in v1.
 
 For guest-side debugging, pass a temporary entrypoint script to bypass the normal
@@ -325,8 +330,9 @@ Manual host smoke checklist for the nested rootless Podman feature:
 1. Build and load `.#container`, then start default libkrun mode on the host.
 2. Inside the guest, confirm the shell is `dev` and run `podman info`; verify
    rootless mode and storage driver `btrfs`.
-3. Run `podman run --rm docker.io/library/alpine:latest echo hello` or an
-   equivalent dev/test container.
+3. Confirm `/dev/net/tun` exists inside the guest, then run
+   `podman run --rm docker.io/library/alpine:latest echo hello` or an equivalent
+   dev/test container.
 4. Exit and restart agentbox; verify the pulled image/storage persists via
    `<state-root>/libkrun-containers.raw`.
 5. Confirm no fuse-overlayfs path/config/binary is required by the rootless

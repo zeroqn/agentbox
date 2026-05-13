@@ -130,6 +130,7 @@ mod task {
     pub(crate) const LIBKRUN_RAM_MIB_ANNOTATION_PREFIX: &str = "krun.ram_mib=";
     pub(crate) const LIBKRUN_CPUS_ANNOTATION_PREFIX: &str = "krun.cpus=";
     pub(crate) const LIBKRUN_TSI_PROXY_ENV: &str = "no_proxy=1";
+    pub(crate) const LIBKRUN_TUN_DEVICE: &str = "/dev/net/tun:/dev/net/tun";
 
     pub(crate) struct LibkrunTaskPodmanSpec<'a> {
         pub(crate) image: &'a str,
@@ -182,6 +183,8 @@ mod task {
             format!("krun.disk.1.id={}", container_disk.id),
             "--annotation".to_owned(),
             "krun.disk.1.readonly=false".to_owned(),
+            "--device".to_owned(),
+            LIBKRUN_TUN_DEVICE.to_owned(),
             "--workdir".to_owned(),
             CONTAINER_WORKDIR.to_owned(),
             "--hostname".to_owned(),
@@ -287,6 +290,7 @@ mod task {
             ));
             assert!(args.contains(&"krun.disk.1.id=agentbox-containers".to_owned()));
             assert!(args.contains(&"krun.disk.1.readonly=false".to_owned()));
+            assert!(joined.contains(&format!("--device\n{LIBKRUN_TUN_DEVICE}")));
             assert!(args.contains(&LIBKRUN_NIX_OVERLAY_ENV.to_owned()));
             assert!(args.contains(&"AGENTBOX_LIBKRUN_NIX_DISK_ID=agentbox-nix".to_owned()));
             assert!(args.contains(&format!(
