@@ -8,25 +8,14 @@ mod fs;
 mod process;
 mod runtime;
 
-use cli::{ContainerSubcommand, GuestInitCli, LibkrunSubcommand, PodmanSubcommand, RuntimeCommand};
+use cli::GuestInitCli;
 
 pub fn entrypoint() -> Result<()> {
     run(GuestInitCli::parse())
 }
 
 fn run(cli: GuestInitCli) -> Result<()> {
-    match cli.runtime {
-        RuntimeCommand::Libkrun(libkrun) => match libkrun.command {
-            LibkrunSubcommand::Enter(enter) => runtime::libkrun::enter(enter.resolved_command()),
-            LibkrunSubcommand::Podman(podman) => match podman.command {
-                PodmanSubcommand::Prep => components::podman::root::run_prep_to_status(),
-                PodmanSubcommand::Wait => components::podman::user::wait_for_prep(),
-            },
-        },
-        RuntimeCommand::Container(container) => match container.command {
-            ContainerSubcommand::Enter(enter) => runtime::container::enter(enter),
-        },
-    }
+    runtime::run(cli.runtime)
 }
 
 #[cfg(test)]

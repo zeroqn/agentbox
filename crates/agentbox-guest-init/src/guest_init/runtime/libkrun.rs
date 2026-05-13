@@ -1,6 +1,8 @@
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 
+use crate::guest_init::cli::{LibkrunCommand, LibkrunSubcommand, PodmanSubcommand};
+use crate::guest_init::components;
 use crate::guest_init::components::env::{LibkrunEnv, DEFAULT_SHELL};
 use crate::guest_init::components::home::identity::{validate_host_identity, DevIdentity};
 use crate::guest_init::{command, process};
@@ -36,7 +38,17 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LibkrunEnterOpera
     ]
 }
 
-pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
+pub(in crate::guest_init) fn run(command: LibkrunCommand) -> Result<()> {
+    match command.command {
+        LibkrunSubcommand::Enter(enter_command) => enter(enter_command.resolved_command()),
+        LibkrunSubcommand::Podman(podman) => match podman.command {
+            PodmanSubcommand::Prep => components::podman::root::run_prep_to_status(),
+            PodmanSubcommand::Wait => components::podman::user::wait_for_prep(),
+        },
+    }
+}
+
+fn enter(command: Vec<String>) -> Result<()> {
     let env_contract = LibkrunEnv::from_process_env()?;
     let (uid, gid) = if process::is_root() {
         let (uid, gid) = env_contract.require_host_identity()?;
