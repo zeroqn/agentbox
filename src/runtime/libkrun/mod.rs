@@ -36,6 +36,11 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
         .as_deref()
         .map(resolve_debug_entrypoint_mount)
         .transpose()?;
+    let debug_guest_init = cli
+        .libkrun_debug_guest_init
+        .as_deref()
+        .map(resolve_debug_guest_init_mount)
+        .transpose()?;
     let raw_nix_disk = nix::raw_image::prepare(state_layout.root_dir())?;
     let raw_container_disk = containers::raw_image::prepare(state_layout.root_dir())?;
     let task_container_name = derive_task_container_name(&cwd);
@@ -65,6 +70,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             cpu_count,
             tsi: cli.tsi,
             debug_entrypoint: debug_entrypoint.as_ref(),
+            debug_guest_init: debug_guest_init.as_ref(),
         })?,
         Stdio::inherit(),
         Stdio::inherit(),
@@ -81,12 +87,20 @@ fn current_host_ids() -> (u32, u32) {
 }
 
 const LIBKRUN_DEBUG_ENTRYPOINT_TARGET: &str = "/bin/agentbox-debug-entrypoint";
+const LIBKRUN_GUEST_INIT_TARGET_ENV: &str = "AGENTBOX_LIBKRUN_GUEST_INIT_TARGET";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DebugEntrypointMount {
     source: PathBuf,
     mount_arg: String,
     target: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DebugGuestInitMount {
+    source: PathBuf,
+    mount_arg: String,
+    target: String,
 }
 
 fn resolve_debug_entrypoint_mount(path: &Path) -> Result<DebugEntrypointMount> {
@@ -113,10 +127,55 @@ fn resolve_debug_entrypoint_mount(path: &Path) -> Result<DebugEntrypointMount> {
     })
 }
 
+fn resolve_debug_guest_init_mount(path: &Path) -> Result<DebugGuestInitMount> {
+    let target = libkrun_guest_init_target()?;
+    resolve_debug_guest_init_mount_to(path, &target)
+}
+
+fn resolve_debug_guest_init_mount_to(path: &Path, target: &str) -> Result<DebugGuestInitMount> {
+    let source = path.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve libkrun debug guest-init '{}'",
+            path.display()
+        )
+    })?;
+    if !source.is_file() {
+        anyhow::bail!(
+            "libkrun debug guest-init '{}' is not a regular file",
+            source.display()
+        );
+    }
+
+    let mount_arg = format_mount_arg_with_options(&source, target, Some("ro"))?;
+
+    Ok(DebugGuestInitMount {
+        source,
+        mount_arg,
+        target: target.to_owned(),
+    })
+}
+
+fn libkrun_guest_init_target() -> Result<String> {
+    if let Ok(target) = env::var(LIBKRUN_GUEST_INIT_TARGET_ENV) {
+        if !target.is_empty() {
+            return Ok(target);
+        }
+    }
+
+    option_env!("AGENTBOX_LIBKRUN_GUEST_INIT_TARGET")
+        .filter(|target| !target.is_empty())
+        .map(ToOwned::to_owned)
+        .with_context(|| {
+            format!(
+                "--libkrun-debug-guest-init requires {LIBKRUN_GUEST_INIT_TARGET_ENV}; use the Nix-built agentbox binary or set the image guest-init path explicitly"
+            )
+        })
+}
+
 mod task {
     use anyhow::Result;
 
-    use super::DebugEntrypointMount;
+    use super::{DebugEntrypointMount, DebugGuestInitMount};
     use crate::runtime::libkrun::containers::raw_image::RawContainerDisk;
     use crate::runtime::libkrun::nix::raw_image::RawNixDisk;
     use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
@@ -148,6 +207,7 @@ mod task {
         pub(crate) cpu_count: Option<u32>,
         pub(crate) tsi: bool,
         pub(crate) debug_entrypoint: Option<&'a DebugEntrypointMount>,
+        pub(crate) debug_guest_init: Option<&'a DebugGuestInitMount>,
     }
 
     pub(crate) fn build_libkrun_task_podman_args(
@@ -244,6 +304,11 @@ mod task {
             args.push(debug_entrypoint.mount_arg.clone());
             args.push("--entrypoint".to_owned());
             args.push(debug_entrypoint.target.to_owned());
+        }
+
+        if let Some(debug_guest_init) = spec.debug_guest_init {
+            args.push("--volume".to_owned());
+            args.push(debug_guest_init.mount_arg.clone());
         }
 
         args.push(spec.image.to_owned());
@@ -394,6 +459,32 @@ mod task {
             )));
         }
 
+        #[test]
+        fn libkrun_task_args_can_override_guest_init_without_changing_entrypoint() {
+            let disk = raw_disk();
+            let container_disk = raw_container_disk();
+            let debug_guest_init = DebugGuestInitMount {
+                source: PathBuf::from("/tmp/agentbox-guest-init"),
+                mount_arg:
+                    "/tmp/agentbox-guest-init:/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"
+                        .to_owned(),
+                target: "/nix/store/hash-agentbox/bin/agentbox-guest-init".to_owned(),
+            };
+            let args =
+                build_args_with_debug_guest_init(&disk, &container_disk, Some(&debug_guest_init));
+            let joined = args.join("\n");
+
+            assert!(joined.contains(
+                "--volume\n/tmp/agentbox-guest-init:/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"
+            ));
+            assert!(!args.contains(&"--entrypoint".to_owned()));
+            assert!(joined.contains(&format!(
+                "{}\n{}\n-l",
+                crate::DEFAULT_IMAGE,
+                INTERACTIVE_SHELL
+            )));
+        }
+
         fn raw_disk() -> RawNixDisk {
             RawNixDisk {
                 path: PathBuf::from("/tmp/state/agentbox/project/libkrun-nix.raw"),
@@ -418,7 +509,14 @@ mod task {
             raw_nix_disk: &RawNixDisk,
             raw_container_disk: &RawContainerDisk,
         ) -> Vec<String> {
-            build_args_with_debug_entrypoint(raw_nix_disk, raw_container_disk, None)
+            build_args_with_options(
+                raw_nix_disk,
+                raw_container_disk,
+                false,
+                Some(16),
+                None,
+                None,
+            )
         }
 
         fn build_args_with_tsi(
@@ -426,7 +524,7 @@ mod task {
             raw_container_disk: &RawContainerDisk,
             tsi: bool,
         ) -> Vec<String> {
-            build_args_with_options(raw_nix_disk, raw_container_disk, tsi, Some(16), None)
+            build_args_with_options(raw_nix_disk, raw_container_disk, tsi, Some(16), None, None)
         }
 
         fn build_args_with_cpu_count(
@@ -434,7 +532,14 @@ mod task {
             raw_container_disk: &RawContainerDisk,
             cpu_count: Option<u32>,
         ) -> Vec<String> {
-            build_args_with_options(raw_nix_disk, raw_container_disk, false, cpu_count, None)
+            build_args_with_options(
+                raw_nix_disk,
+                raw_container_disk,
+                false,
+                cpu_count,
+                None,
+                None,
+            )
         }
 
         fn build_args_with_debug_entrypoint(
@@ -448,6 +553,22 @@ mod task {
                 false,
                 Some(16),
                 debug_entrypoint,
+                None,
+            )
+        }
+
+        fn build_args_with_debug_guest_init(
+            raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
+            debug_guest_init: Option<&DebugGuestInitMount>,
+        ) -> Vec<String> {
+            build_args_with_options(
+                raw_nix_disk,
+                raw_container_disk,
+                false,
+                Some(16),
+                None,
+                debug_guest_init,
             )
         }
 
@@ -457,6 +578,7 @@ mod task {
             tsi: bool,
             cpu_count: Option<u32>,
             debug_entrypoint: Option<&DebugEntrypointMount>,
+            debug_guest_init: Option<&DebugGuestInitMount>,
         ) -> Vec<String> {
             build_libkrun_task_podman_args(LibkrunTaskPodmanSpec {
                 image: crate::DEFAULT_IMAGE,
@@ -474,6 +596,7 @@ mod task {
                 cpu_count,
                 tsi,
                 debug_entrypoint,
+                debug_guest_init,
             })
             .expect("libkrun task args should build")
         }
@@ -487,5 +610,27 @@ mod tests {
     #[test]
     fn current_host_ids_are_available_for_kvm_drop_contract() {
         let (_uid, _gid) = current_host_ids();
+    }
+
+    #[test]
+    fn resolve_debug_guest_init_mount_targets_image_guest_init_path() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let source = dir.path().join("agentbox-guest-init");
+        std::fs::write(&source, "#!/bin/sh\n").expect("debug guest-init should be written");
+
+        let mount = resolve_debug_guest_init_mount_to(
+            &source,
+            "/nix/store/hash-agentbox/bin/agentbox-guest-init",
+        )
+        .expect("debug guest-init mount should resolve");
+
+        assert_eq!(mount.source, source.canonicalize().unwrap());
+        assert_eq!(
+            mount.target,
+            "/nix/store/hash-agentbox/bin/agentbox-guest-init"
+        );
+        assert!(mount
+            .mount_arg
+            .ends_with(":/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"));
     }
 }

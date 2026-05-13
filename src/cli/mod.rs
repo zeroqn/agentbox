@@ -21,6 +21,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox --libkrun
   agentbox --mem 8
   agentbox --libkrun-debug-entrypoint ./debug-entrypoint.sh
+  agentbox --libkrun-debug-guest-init ./agentbox-guest-init
   agentbox --image ghcr.io/example/agentbox:dev
   AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
@@ -98,6 +99,14 @@ pub struct Cli {
         long_help = "Libkrun-only debug option. Bind-mount the host script read-only and use it as the container entrypoint, bypassing the image entrypoint so guest state such as /sys/class/block can be inspected before /nix disk bootstrap."
     )]
     pub libkrun_debug_entrypoint: Option<PathBuf>,
+
+    #[arg(
+        long = "libkrun-debug-guest-init",
+        value_name = "PATH",
+        help = "Override agentbox-guest-init in libkrun mode for guest debugging",
+        long_help = "Libkrun-only debug option. Bind-mount the host agentbox-guest-init binary read-only over the in-image guest-init path while preserving the normal image entrypoint and arguments. This lets guest-init fixes be tested without rebuilding the container image."
+    )]
+    pub libkrun_debug_guest_init: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

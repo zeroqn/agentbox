@@ -46,6 +46,7 @@ fn task_container_name_falls_back_when_directory_name_has_no_slug_chars() {
 const ENTRYPOINT: &str = include_str!("../nix/image/entrypoint.nix");
 const LAYERS: &str = include_str!("../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../nix/image/container.nix");
+const AGENTBOX_RUST_NIX: &str = include_str!("../nix/pkgs/agentbox-rust.nix");
 
 #[test]
 fn image_entrypoint_remains_agentbox_entrypoint_for_normal_container_mode() {
@@ -75,6 +76,13 @@ fn entrypoint_dispatches_libkrun_to_rust_guest_init_early() {
         .expect("fallback legacy libkrun function should remain behind disable guard");
     assert!(dispatch < bash_env_setup);
     assert!(dispatch < legacy_podman_bootstrap);
+}
+
+#[test]
+fn nix_agentbox_binary_knows_libkrun_guest_init_image_path() {
+    assert!(AGENTBOX_RUST_NIX.contains(
+        r#"AGENTBOX_LIBKRUN_GUEST_INIT_TARGET = "${agentboxMuslPackage}/bin/agentbox-guest-init";"#
+    ));
 }
 
 #[test]

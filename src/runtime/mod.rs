@@ -69,6 +69,9 @@ fn resolve_runtime_mode_with_sidecar_env(
         if cli.libkrun_debug_entrypoint.is_some() {
             anyhow::bail!("--libkrun-debug-entrypoint is only supported in libkrun mode");
         }
+        if cli.libkrun_debug_guest_init.is_some() {
+            anyhow::bail!("--libkrun-debug-guest-init is only supported in libkrun mode");
+        }
     }
 
     if !selects_container && (cli.disable_nix_sidecar || env_sidecar_disabled) {
@@ -256,6 +259,14 @@ mod tests {
             .unwrap(),
             RuntimeMode::Libkrun
         );
+        assert_eq!(
+            resolve_with_sidecar_env(
+                &["--libkrun-debug-guest-init", "./agentbox-guest-init",],
+                true,
+            )
+            .unwrap(),
+            RuntimeMode::Libkrun
+        );
     }
 
     #[test]
@@ -284,6 +295,19 @@ mod tests {
         assert!(debug_err
             .to_string()
             .contains("--libkrun-debug-entrypoint is only supported in libkrun mode"));
+
+        let guest_init_err = resolve_with_sidecar_env(
+            &[
+                "--native",
+                "--libkrun-debug-guest-init",
+                "./agentbox-guest-init",
+            ],
+            true,
+        )
+        .expect_err("--native --libkrun-debug-guest-init should fail");
+        assert!(guest_init_err
+            .to_string()
+            .contains("--libkrun-debug-guest-init is only supported in libkrun mode"));
     }
 
     #[test]
@@ -312,6 +336,19 @@ mod tests {
         assert!(debug_err
             .to_string()
             .contains("--libkrun-debug-entrypoint is only supported in libkrun mode"));
+
+        let guest_init_err = resolve_with_sidecar_env(
+            &[
+                "--sidecar-only",
+                "--libkrun-debug-guest-init",
+                "./agentbox-guest-init",
+            ],
+            true,
+        )
+        .expect_err("--sidecar-only --libkrun-debug-guest-init should fail");
+        assert!(guest_init_err
+            .to_string()
+            .contains("--libkrun-debug-guest-init is only supported in libkrun mode"));
     }
 
     #[test]
@@ -322,6 +359,22 @@ mod tests {
                     "--libkrun",
                     "--libkrun-debug-entrypoint",
                     "./debug-entrypoint.sh",
+                ],
+                true,
+            )
+            .unwrap(),
+            RuntimeMode::Libkrun
+        );
+    }
+
+    #[test]
+    fn debug_guest_init_flag_is_valid_with_explicit_libkrun() {
+        assert_eq!(
+            resolve_with_sidecar_env(
+                &[
+                    "--libkrun",
+                    "--libkrun-debug-guest-init",
+                    "./agentbox-guest-init",
                 ],
                 true,
             )

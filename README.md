@@ -341,6 +341,22 @@ and host UID/GID privilege drop. It also skips normal entrypoint conveniences
 such as the passt `/etc/resolv.conf` check, so add those diagnostics or setup
 steps manually if the debug script needs them.
 
+To test a modified `agentbox-guest-init` without rebuilding the container image,
+build only the static guest-init binary and bind-mount it over the in-image
+guest-init path:
+
+```bash
+nix build .#agentbox-musl -o result-musl
+./result/bin/agentbox --libkrun-debug-guest-init ./result-musl/bin/agentbox-guest-init
+```
+
+This keeps the normal image entrypoint and shell arguments intact, but the
+entrypoint executes the host-provided `agentbox-guest-init` binary. The host
+`agentbox` binary must know the image guest-init path; the Nix-built
+`./result/bin/agentbox` wires this automatically. If you are running a
+non-Nix-built `agentbox` binary, set `AGENTBOX_LIBKRUN_GUEST_INIT_TARGET` to the
+image path printed by the Nix build before using `--libkrun-debug-guest-init`.
+
 Existing raw images are reused only if `blkid` reports btrfs. Agentbox refuses
 to overwrite invalid existing images.
 

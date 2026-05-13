@@ -7,6 +7,8 @@ let
     version = agentboxVersion;
     src = self;
 
+    AGENTBOX_LIBKRUN_GUEST_INIT_TARGET = "${agentboxMuslPackage}/bin/agentbox-guest-init";
+
     cargoLock = {
       lockFile = ../../Cargo.lock;
     };
