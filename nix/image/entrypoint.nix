@@ -1,7 +1,12 @@
-{ pkgs, fishConfig, starshipConfig, podman ? pkgs.podman, crun ? pkgs.crun, conmon ? pkgs.conmon, netavark ? pkgs.netavark, aardvarkDns ? pkgs.aardvark-dns, passt ? pkgs.passt, shadow ? pkgs.shadow }:
+{ pkgs, fishConfig, starshipConfig, agentboxMuslPackage, podman ? pkgs.podman, crun ? pkgs.crun, conmon ? pkgs.conmon, netavark ? pkgs.netavark, aardvarkDns ? pkgs.aardvark-dns, passt ? pkgs.passt, shadow ? pkgs.shadow }:
 
 pkgs.writeShellScriptBin "agentbox-entrypoint" ''
   set -euo pipefail
+
+  if [ "''${AGENTBOX_GUEST_INIT_DISABLE:-}" != "1" ] \
+    && { [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ] || [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; }; then
+    exec ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun enter -- "$@"
+  fi
 
   export USER=dev
   export HOME=/home/dev

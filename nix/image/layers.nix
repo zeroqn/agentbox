@@ -33,6 +33,9 @@ let
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
+    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman wait
+    fi
     exec ${podman}/bin/podman "$@"
   '';
   sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''

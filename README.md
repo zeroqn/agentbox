@@ -223,13 +223,37 @@ agentbox switches to the TSI/proxy environment path instead: it omits
 `krun.use_passt=1`, skips the passt resolver injection, and passes `no_proxy=1`
 into the guest.
 
-Inside the libkrun guest, the entrypoint first prepares rootless Podman for the
-final `dev` user. It writes real `/etc/passwd`, `/etc/group`, `/etc/subuid`, and
-`/etc/subgid` entries for the dynamic host UID/GID, installs setuid
-`newuidmap`/`newgidmap` helpers in `/run/agentbox/idmap-bin`, creates and
-chowns `/home/dev`, `/home/dev/.local`, and `/home/dev/.local/state` to the
-final `dev` UID/GID, mounts the container disk by label (`AGENTBOX_CONTAINERS`) at
-`/home/dev/.local/share/containers`, and writes:
+Inside the libkrun guest, the generated image entrypoint now acts as a small
+trampoline for libkrun runs and immediately execs the Rust guest initializer:
+
+```bash
+agentbox-guest-init libkrun enter -- fish -l
+```
+
+Normal `--native` container mode intentionally stays on the existing Bash
+entrypoint path. Set `AGENTBOX_GUEST_INIT_DISABLE=1` only for debugging the old
+libkrun Bash fallback in the image.
+
+`agentbox-guest-init` performs the root-required shell prerequisites before the
+privilege drop: it writes real `/etc/passwd` and `/etc/group` entries for the
+dynamic host UID/GID, creates/chowns `/home/dev` and the XDG home directories,
+normalizes passt DNS when `krun.use_passt=1`, mounts the persistent `/nix`
+overlay, starts `nix-daemon`, and waits for
+`/nix/var/nix/daemon-socket/socket`. Those `/nix` steps remain blocking because
+Nix-backed tools must not race shell startup.
+
+Rootless Podman setup is lazy. Before dropping to `dev`, the Rust initializer
+spawns root-required Podman prep in the background and records progress in:
+
+```text
+/run/agentbox/podman-prep.status
+/run/agentbox/podman-prep.log
+```
+
+The background prep owns `/etc/subuid`, `/etc/subgid`, setuid
+`newuidmap`/`newgidmap` helpers in `/run/agentbox/idmap-bin`, rootless user
+namespace sysctls, `/dev/net/tun` permissions, the container btrfs disk mount at
+`/home/dev/.local/share/containers`, and the rootless Podman config files:
 
 ```text
 /home/dev/.config/containers/storage.conf
@@ -237,6 +261,12 @@ final `dev` UID/GID, mounts the container disk by label (`AGENTBOX_CONTAINERS`) 
 /home/dev/.config/containers/registries.conf
 /home/dev/.config/containers/policy.json
 ```
+
+The image `podman` command is a compatibility wrapper. In libkrun mode it first
+runs `agentbox-guest-init libkrun podman wait`, which waits for the background
+prep to become `ready` or reports a failed/stale/timeout status with the log
+path, then execs the packaged Podman binary. Non-libkrun Podman wrapper behavior
+is unchanged.
 
 `storage.conf` is generated with `driver = "btrfs"`, graphroot
 `/home/dev/.local/share/containers/storage`, and runroot
@@ -246,24 +276,20 @@ pins crun, conmon, cgroupfs, file events, and netavark/pasta helper paths for
 this non-systemd guest, while setting `cgroups = "disabled"` so rootless nested
 containers do not require systemd cgroup delegation or write access under
 `/sys/fs/cgroup`. This means v1 nested guest containers do not provide
-cgroup-based resource-limit enforcement. The image `podman` command is also a
-small compatibility wrapper that clears the entrypoint's NSS wrapper preload
-environment (`LD_PRELOAD`, `NSS_WRAPPER_PASSWD`, and `NSS_WRAPPER_GROUP`) before
-running the packaged Podman binary, matching the existing Nix compatibility
-wrapper behavior. `registries.conf` leaves blocked and insecure registry lists
-empty and sets the unqualified image search registry to `docker.io` so commands
-such as `podman pull alpine` work inside the guest. `policy.json` sets the
-default and `docker-daemon` transports to `insecureAcceptAnything` so the guest
-has a local image signature policy for development pulls.
+cgroup-based resource-limit enforcement. `registries.conf` leaves blocked and
+insecure registry lists empty and sets the unqualified image search registry to
+`docker.io` so commands such as `podman pull alpine` work inside the guest.
+`policy.json` sets the default and `docker-daemon` transports to
+`insecureAcceptAnything` so the guest has a local image signature policy for
+development pulls.
 
-Before dropping privileges, the entrypoint also enables the guest kernel's
-rootless user namespace knobs required by Podman: it raises
-`/proc/sys/user/max_user_namespaces` to at least `28633`, and sets
-`/proc/sys/kernel/unprivileged_userns_clone=1` when that distro-specific sysctl
-exists. Startup still fails fast if the kernel does not expose user namespace
-support or refuses those writes.
+The background prep also enables the guest kernel's rootless user namespace
+knobs required by Podman: it raises `/proc/sys/user/max_user_namespaces` to at
+least `28633`, and sets `/proc/sys/kernel/unprivileged_userns_clone=1` when that
+distro-specific sysctl exists. First `podman` use fails clearly if the kernel
+does not expose user namespace support or refuses those writes.
 
-The entrypoint then finds the `/nix` btrfs disk by label (`AGENTBOX_NIX`),
+The Rust guest initializer finds the `/nix` btrfs disk by label (`AGENTBOX_NIX`),
 mounts it under `/run/agentbox/nix-disk`, bind-mounts the image-provided `/nix`
 as a read-only lowerdir, and mounts a kernel overlay at `/nix` using disk-backed
 upper/work directories. During upperdir bootstrap, agentbox makes the overlaid
@@ -271,8 +297,8 @@ upper/work directories. During upperdir bootstrap, agentbox makes the overlaid
 `1775`, while store entries inherited from the image may remain `root:root`.
 After the overlay is active, it starts an in-guest `nix-daemon`, exports
 `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
-privilege drop, verifies the rootless Podman btrfs config preconditions, then
-runs the shell as the host UID/GID. The libkrun task also uses
+privilege drop, starts lazy Podman prep, then runs the shell as the host
+UID/GID. The libkrun task also uses
 `--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the host
 user while the entrypoint still starts as root for `/run/agentbox` creation and
 root-only bootstrap. The libkrun task passes the host `/dev/net/tun` through to

@@ -1,6 +1,4 @@
 use super::*;
-use std::fs;
-use std::process::Command;
 
 #[test]
 fn task_hostname_uses_current_directory_name() {
@@ -46,382 +44,88 @@ fn task_container_name_falls_back_when_directory_name_has_no_slug_chars() {
 }
 
 const ENTRYPOINT: &str = include_str!("../nix/image/entrypoint.nix");
+const LAYERS: &str = include_str!("../nix/image/layers.nix");
+const CONTAINER_NIX: &str = include_str!("../nix/image/container.nix");
 
 #[test]
-fn libkrun_entrypoint_branch_is_env_gated_and_does_not_require_proxy_host() {
-    let container_gate = r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
-    bootstrap_libkrun_containers_storage
-  fi"#;
-    let nix_gate = r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
-    ensure_libkrun_passt_resolv_conf
-    bootstrap_libkrun_nix_overlay
-  fi"#;
-    assert!(ENTRYPOINT.contains(container_gate));
-    assert!(ENTRYPOINT.contains(nix_gate));
-
-    let libkrun_branch_start = ENTRYPOINT
-        .find(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#)
-        .expect("libkrun container storage branch should exist");
-    let proxy_branch_start = ENTRYPOINT
-        .find(r#"agentbox_proxy_host="''${AGENTBOX_NIX_PROXY_HOST:-}""#)
-        .expect("legacy proxy branch should remain for non-libkrun drop mode");
-    let libkrun_branch = &ENTRYPOINT[libkrun_branch_start..proxy_branch_start];
-
-    assert!(libkrun_branch.contains("bootstrap_libkrun_containers_storage"));
-    assert!(libkrun_branch.contains("bootstrap_libkrun_nix_overlay"));
-    assert!(libkrun_branch.contains("NIX_REMOTE#unix://"));
-    assert!(!libkrun_branch.contains("AGENTBOX_NIX_PROXY_HOST"));
+fn image_entrypoint_remains_agentbox_entrypoint_for_normal_container_mode() {
+    assert!(CONTAINER_NIX.contains(r#"Entrypoint = [ "${entrypoint}/bin/agentbox-entrypoint" ];"#));
+    let config_start = CONTAINER_NIX
+        .find("config = {")
+        .expect("image config should exist");
+    assert!(!CONTAINER_NIX[config_start..].contains("agentbox-guest-init"));
 }
 
 #[test]
-fn libkrun_entrypoint_passt_dns_helper_is_passt_gated_and_runs_before_bootstrap() {
-    let helper = entrypoint_passt_dns_helper();
-    assert!(helper.contains("AGENTBOX_LIBKRUN_USE_PASST"));
-    assert!(helper.contains("nameserver 169.254.1.1"));
-    assert!(!helper.contains("AGENTBOX_LIBKRUN_NIX_OVERLAY"));
+fn entrypoint_dispatches_libkrun_to_rust_guest_init_early() {
+    let dispatch_gate = r#"if [ "''${AGENTBOX_GUEST_INIT_DISABLE:-}" != "1" ] \
+    && { [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ] || [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; }; then"#;
+    assert!(ENTRYPOINT.contains(dispatch_gate));
+    assert!(ENTRYPOINT
+        .contains(r#"exec ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun enter -- "$@""#));
 
-    let helper_call = ENTRYPOINT
-        .find("\n    ensure_libkrun_passt_resolv_conf\n")
-        .expect("passt DNS helper should be called in libkrun branch");
-    let bootstrap_call = ENTRYPOINT
-        .find("\n    bootstrap_libkrun_nix_overlay\n")
-        .expect("libkrun bootstrap should be called in libkrun branch");
-    assert!(
-        helper_call < bootstrap_call,
-        "passt DNS should be normalized before libkrun bootstrap"
-    );
+    let dispatch = ENTRYPOINT
+        .find("agentbox-guest-init libkrun enter")
+        .expect("libkrun dispatch should exist");
+    let bash_env_setup = ENTRYPOINT
+        .find("export USER=dev")
+        .expect("normal Bash body should remain");
+    let legacy_podman_bootstrap = ENTRYPOINT
+        .find("bootstrap_libkrun_containers_storage()")
+        .expect("fallback legacy libkrun function should remain behind disable guard");
+    assert!(dispatch < bash_env_setup);
+    assert!(dispatch < legacy_podman_bootstrap);
 }
 
 #[test]
-fn libkrun_entrypoint_passt_dns_inserts_missing_nameserver_first() {
-    assert_eq!(
-        normalize_resolv_conf_with_entrypoint_helper(Some(
-            "search example.test\nnameserver 8.8.8.8\noptions ndots:1\n"
-        )),
-        "nameserver 169.254.1.1\nsearch example.test\nnameserver 8.8.8.8\noptions ndots:1\n"
-    );
+fn entrypoint_preserves_normal_container_bash_path() {
+    assert!(ENTRYPOINT.contains("export USER=dev"));
+    assert!(ENTRYPOINT.contains("materialize_writable_dir()"));
+    assert!(ENTRYPOINT.contains("exec \"$@\""));
+    assert!(!ENTRYPOINT.contains("agentbox-guest-init container enter"));
 }
 
 #[test]
-fn libkrun_entrypoint_passt_dns_keeps_existing_first_nameserver_without_duplicate() {
-    let resolv_conf = "nameserver 169.254.1.1\nnameserver 8.8.8.8\n";
-    assert_eq!(
-        normalize_resolv_conf_with_entrypoint_helper(Some(resolv_conf)),
-        resolv_conf
-    );
+fn podman_wrapper_waits_only_for_libkrun_container_storage() {
+    assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
+    assert!(LAYERS.contains("agentbox-guest-init libkrun podman wait"));
+    let gate = LAYERS
+        .find("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE")
+        .expect("libkrun container storage gate should exist");
+    let wait = LAYERS
+        .find("agentbox-guest-init libkrun podman wait")
+        .expect("podman wait should exist");
+    let exec = LAYERS
+        .find(r#"exec ${podman}/bin/podman "$@""#)
+        .expect("real podman exec should exist");
+    assert!(gate < wait);
+    assert!(wait < exec);
 }
 
 #[test]
-fn libkrun_entrypoint_passt_dns_moves_later_nameserver_to_first() {
-    assert_eq!(
-        normalize_resolv_conf_with_entrypoint_helper(Some(
-            "nameserver 8.8.8.8\nnameserver 169.254.1.1\n"
-        )),
-        "nameserver 169.254.1.1\nnameserver 8.8.8.8\n"
-    );
-}
-
-#[test]
-fn libkrun_entrypoint_passt_dns_collapses_duplicate_nameservers() {
-    assert_eq!(
-        normalize_resolv_conf_with_entrypoint_helper(Some(
-            "nameserver 169.254.1.1\nnameserver 8.8.8.8\nnameserver 169.254.1.1\n"
-        )),
-        "nameserver 169.254.1.1\nnameserver 8.8.8.8\n"
-    );
-}
-
-#[test]
-fn libkrun_entrypoint_passt_dns_preserves_resolver_context_after_passt_line() {
-    assert_eq!(
-        normalize_resolv_conf_with_entrypoint_helper(Some(
-            "# generated by runtime\nsearch example.test\noptions timeout:1\nnameserver 1.1.1.1\n"
-        )),
-        "nameserver 169.254.1.1\n# generated by runtime\nsearch example.test\noptions timeout:1\nnameserver 1.1.1.1\n"
-    );
-}
-
-#[test]
-fn libkrun_entrypoint_passt_dns_creates_missing_resolv_conf() {
-    assert_eq!(
-        normalize_resolv_conf_with_entrypoint_helper(None),
-        "nameserver 169.254.1.1\n"
-    );
-}
-
-#[test]
-fn libkrun_entrypoint_passt_dns_helper_is_noop_without_passt_env() {
-    assert_eq!(
-        run_resolv_conf_helper(Some("nameserver 8.8.8.8\n"), false),
-        Some("nameserver 8.8.8.8\n".to_owned())
-    );
-}
-
-#[test]
-fn libkrun_entrypoint_preserves_lowerdir_mounts_overlay_and_starts_guest_daemon() {
+fn podman_wrapper_unsets_compat_env_before_execing_real_podman() {
     for required in [
-        "mount --bind /nix \"$agentbox_lower_dir\"",
-        "mount -o remount,bind,ro \"$agentbox_lower_dir\"",
-        "btrfs filesystem resize max \"$agentbox_disk_mount\"",
-        "mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var\"",
-        "${pkgs.coreutils}/bin/cp -a --no-clobber \"$agentbox_lower_dir/var/.\" \"$agentbox_upper_dir/var/\"",
-        "failed to preseed libkrun upperdir /nix/var from image lowerdir",
-        "mkdir -p \"$agentbox_upper_dir/var/nix\"",
-        "${pkgs.coreutils}/bin/chown :nixbld \"$agentbox_upper_dir/store\"",
-        "chmod 1775 \"$agentbox_upper_dir/store\"",
-        "chmod 0755 \"$agentbox_upper_dir/var\" \"$agentbox_upper_dir/var/nix\"",
-        "lowerdir=$agentbox_lower_dir,upperdir=$agentbox_upper_dir,workdir=$agentbox_work_dir",
-        "${pkgs.nix}/bin/nix-daemon &",
-        "export NIX_REMOTE=\"unix://$agentbox_socket\"",
-        "libkrun in-guest nix-daemon socket is not accessible after dropping privileges",
-    ] {
-        assert!(ENTRYPOINT.contains(required), "missing {required}");
-    }
-}
-
-#[test]
-fn libkrun_entrypoint_preseeds_store_and_var_nix_before_overlay_mount() {
-    let resize = ENTRYPOINT
-        .find("btrfs filesystem resize max \"$agentbox_disk_mount\"")
-        .expect("btrfs resize should happen before upperdir preseed");
-    let preseed_mkdir = ENTRYPOINT
-        .find("mkdir -p \"$agentbox_upper_dir\" \"$agentbox_work_dir\" \"$agentbox_upper_dir/store\" \"$agentbox_upper_dir/var\"")
-        .expect("upperdir /store and /var preseed mkdir should exist");
-    let var_copy = ENTRYPOINT
-        .find("${pkgs.coreutils}/bin/cp -a --no-clobber \"$agentbox_lower_dir/var/.\" \"$agentbox_upper_dir/var/\"")
-        .expect("image /nix/var should be copied into upperdir before overlay mount");
-    let var_nix_mkdir = ENTRYPOINT
-        .find("mkdir -p \"$agentbox_upper_dir/var/nix\"")
-        .expect("upperdir /var/nix preseed mkdir should exist");
-    let preseed_chmod = ENTRYPOINT
-        .find("chmod 1775 \"$agentbox_upper_dir/store\"")
-        .expect("upperdir /store chmod should exist");
-    let var_nix_chmod = ENTRYPOINT
-        .find("chmod 0755 \"$agentbox_upper_dir/var\" \"$agentbox_upper_dir/var/nix\"")
-        .expect("upperdir /var/nix preseed chmod should exist");
-    let preseed_chown = ENTRYPOINT
-        .find("${pkgs.coreutils}/bin/chown :nixbld \"$agentbox_upper_dir/store\"")
-        .expect("upperdir /store group ownership should be set to nixbld");
-    let overlay_mount = ENTRYPOINT
-        .find("${pkgs.util-linux}/bin/mount -t overlay overlay")
-        .expect("overlay mount should exist");
-    let socket_mkdir = ENTRYPOINT
-        .find("mkdir -p /nix/var/nix/daemon-socket")
-        .expect("daemon socket directory mkdir should exist");
-    let daemon_start = ENTRYPOINT
-        .find("${pkgs.nix}/bin/nix-daemon &")
-        .expect("nix-daemon start should exist");
-
-    assert!(
-        resize < preseed_mkdir,
-        "btrfs resize should happen before upperdir /var/nix preseed"
-    );
-    assert!(
-        preseed_mkdir < preseed_chmod,
-        "upperdir /var mkdir should happen before chmod"
-    );
-    assert!(
-        preseed_mkdir < var_copy,
-        "upperdir /var should exist before copying image /nix/var"
-    );
-    assert!(
-        var_copy < var_nix_mkdir,
-        "image /nix/var copy should happen before ensuring upperdir /var/nix exists"
-    );
-    assert!(
-        var_nix_mkdir < preseed_chmod,
-        "upperdir /var/nix mkdir should happen before chmod"
-    );
-    assert!(
-        preseed_chown < preseed_chmod,
-        "upperdir /store group ownership should be set before final chmod"
-    );
-    assert!(
-        preseed_chown < overlay_mount,
-        "upperdir /store group ownership should be set before overlay mount"
-    );
-    assert!(
-        preseed_chmod < overlay_mount,
-        "upperdir /store chmod should happen before overlay mount"
-    );
-    assert!(
-        var_nix_chmod < overlay_mount,
-        "upperdir /var/nix chmod should happen before overlay mount"
-    );
-    assert!(
-        var_copy < overlay_mount,
-        "image /nix/var copy should happen before overlay mount"
-    );
-    assert!(
-        overlay_mount < socket_mkdir,
-        "daemon socket directory should be created after overlay mount"
-    );
-    assert!(
-        socket_mkdir < daemon_start,
-        "daemon socket directory should be created before nix-daemon starts"
-    );
-    assert!(
-        !ENTRYPOINT.contains("chown -R :nixbld"),
-        "libkrun bootstrap must not recursively chown /nix/store children"
-    );
-}
-
-#[test]
-fn libkrun_entrypoint_bootstraps_container_storage_before_nix_overlay() {
-    let home_data = ENTRYPOINT
-        .find("materialize_writable_dir \"$home_data_dir\" \"$tmpdir/home-data\"")
-        .expect("home data materialization should exist");
-    let container_call = ENTRYPOINT
-        .find("\n    bootstrap_libkrun_containers_storage\n")
-        .expect("container storage bootstrap call should exist");
-    let nix_call = ENTRYPOINT
-        .find("\n    bootstrap_libkrun_nix_overlay\n")
-        .expect("nix overlay bootstrap call should exist");
-    let setpriv = ENTRYPOINT
-        .find("setpriv --reuid=\"$dev_uid\"")
-        .expect("privilege drop should exist");
-
-    assert!(home_data < container_call);
-    assert!(container_call < nix_call);
-    assert!(nix_call < setpriv);
-}
-
-#[test]
-fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
-    for required in [
-        "bootstrap_libkrun_containers_storage()",
-        "AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL",
-        "AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID",
-        "containers_mount=\"$home_data_dir/containers\"",
-        "btrfs filesystem resize max \"$containers_mount\"",
-        "containers_run_dir=\"/run/user/$dev_uid\"",
-        "chmod 0700 \"$containers_run_dir\"",
-        "export XDG_STATE_HOME=\"$HOME/.local/state\"",
-        "export XDG_RUNTIME_DIR=\"$containers_run_dir\"",
-        "driver = \"btrfs\"",
-        "graphroot = \"$containers_storage_dir\"",
-        "runroot = \"$containers_runroot\"",
-        "[containers]",
-        "cgroups = \"disabled\"",
-        "cgroup_manager = \"cgroupfs\"",
-        "events_logger = \"file\"",
-        "[network]",
-        "network_backend = \"netavark\"",
-        "conmon_path = [\"${conmon}/bin/conmon\"]",
-        "crun = [\"${crun}/bin/crun\"]",
-        "cat > \"$containers_config_dir/registries.conf\"",
-        "[registries.block]",
-        "[registries.insecure]",
-        "[registries.search]",
-        "registries = [\"docker.io\"]",
-        "cat > \"$containers_config_dir/policy.json\"",
-        "\"default\": [",
-        "\"type\": \"insecureAcceptAnything\"",
-        "\"transports\": {",
-        "\"docker-daemon\": {",
-        "ensure_dev_home_ownership()",
-        "mkdir -p \"$HOME\" \"$HOME/.local\" \"$XDG_STATE_HOME\"",
-        "chown \"$dev_uid:$dev_gid\" \"$HOME\" \"$HOME/.local\" \"$XDG_STATE_HOME\"",
-        "chmod 0700 \"$XDG_STATE_HOME\"",
-        "rootless Podman home/state directories are not writable after dropping privileges",
-        "enable_rootless_user_namespaces",
-        "userns_limit_path=/proc/sys/user/max_user_namespaces",
-        "userns_limit_target=28633",
-        "unprivileged_userns_path=/proc/sys/kernel/unprivileged_userns_clone",
-        "failed to set $userns_limit_path=$userns_limit_target",
-        "failed to set $unprivileged_userns_path=1",
-        "prepare_rootless_podman_tun_device",
-        "tun_device=/dev/net/tun",
-        "[ ! -c \"$tun_device\" ]",
-        "chmod 0666 \"$tun_device\"",
-        "rootless Podman TUN device is missing",
-        "failed to make $tun_device accessible to rootless Podman",
-        "materialize_dev_subid_files",
-        "newuidmap",
-        "newgidmap",
-        "failed to write rootless Podman storage.conf",
-        "failed to write rootless Podman containers.conf",
-        "failed to write rootless Podman registries.conf",
-        "failed to write rootless Podman policy.json",
-        "unshare --user --map-subids true",
-        "rootless Podman idmap preflight failed",
-        "rootless Podman containers.conf is missing cgroups disabled",
-    ] {
-        assert!(ENTRYPOINT.contains(required), "missing {required}");
-    }
-
-    let storage_conf_start = ENTRYPOINT
-        .find("cat > \"$containers_config_dir/storage.conf\"")
-        .expect("storage.conf writer should exist");
-    let storage_conf_end = ENTRYPOINT[storage_conf_start..]
-        .find("EOF_STORAGE_CONF")
-        .expect("storage.conf heredoc should end")
-        + storage_conf_start;
-    let storage_conf = &ENTRYPOINT[storage_conf_start..storage_conf_end];
-
-    assert!(!storage_conf.contains("mount_program"));
-    assert!(!storage_conf.contains("driver = \"overlay\""));
-    assert!(!storage_conf.contains("driver = \"vfs\""));
-
-    let userns_call = ENTRYPOINT
-        .rfind("enable_rootless_user_namespaces")
-        .expect("user namespace sysctl helper should be called");
-    let home_ownership_call = ENTRYPOINT
-        .rfind("ensure_dev_home_ownership")
-        .expect("dev home ownership helper should be called");
-    let tun_call = ENTRYPOINT
-        .rfind("prepare_rootless_podman_tun_device")
-        .expect("rootless Podman TUN helper should be called");
-    let subid_call = ENTRYPOINT
-        .rfind("materialize_dev_subid_files")
-        .expect("subid materialization should be called");
-    let idmap_helper_call = ENTRYPOINT
-        .rfind("prepare_rootless_podman_idmap_helpers")
-        .expect("idmap helper installation should be called");
-    let idmap_preflight = ENTRYPOINT
-        .find("unshare --user --map-subids true")
-        .expect("rootless idmap preflight should run");
-
-    assert!(home_ownership_call < userns_call);
-    assert!(userns_call < tun_call);
-    assert!(tun_call < subid_call);
-    assert!(subid_call < idmap_helper_call);
-    assert!(idmap_helper_call < idmap_preflight);
-}
-
-#[test]
-fn libkrun_entrypoint_has_fail_fast_diagnostics_for_expected_failures() {
-    for diagnostic in [
-        "required tool '$tool_name' is not available",
-        "libkrun /nix btrfs disk not found",
-        "failed to preserve image /nix lowerdir",
-        "failed to mount libkrun /nix btrfs disk",
-        "failed to mount libkrun overlay at /nix",
-        "nix-daemon exited before creating",
-        "nix-daemon did not create",
-    ] {
-        assert!(ENTRYPOINT.contains(diagnostic), "missing {diagnostic}");
-    }
-}
-
-#[test]
-fn image_includes_btrfs_progs_for_guest_bootstrap() {
-    let layers = include_str!("../nix/image/layers.nix");
-    assert!(layers.contains("pkgs.btrfs-progs"));
-}
-
-#[test]
-fn image_includes_rootless_podman_stack_without_fuse_overlayfs() {
-    let layers = include_str!("../nix/image/layers.nix");
-    for required in [
-        "rootlessPodmanImagePackages",
         "podmanCommandCompat",
         "pkgs.writeShellScriptBin \"podman\"",
         "unset LD_PRELOAD",
         "unset NSS_WRAPPER_PASSWD",
         "unset NSS_WRAPPER_GROUP",
-        "exec ${podman}/bin/podman \"$@\"",
-        "[ nixCommandCompat podmanCommandCompat ]",
+        r#"exec ${podman}/bin/podman "$@""#,
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn image_includes_btrfs_progs_for_guest_bootstrap() {
+    assert!(LAYERS.contains("pkgs.btrfs-progs"));
+}
+
+#[test]
+fn image_includes_rootless_podman_stack_without_fuse_overlayfs() {
+    for required in [
+        "rootlessPodmanImagePackages",
+        "podmanCommandCompat",
         "podman",
         "crun",
         "pkgs.conmon",
@@ -430,76 +134,7 @@ fn image_includes_rootless_podman_stack_without_fuse_overlayfs() {
         "pkgs.passt",
         "pkgs.shadow",
     ] {
-        assert!(layers.contains(required), "missing {required}");
+        assert!(LAYERS.contains(required), "missing {required}");
     }
-    assert!(!layers.contains("fuse-overlayfs"));
-}
-
-fn entrypoint_passt_dns_helper() -> String {
-    let start = ENTRYPOINT
-        .find("# BEGIN agentbox passt DNS helper")
-        .expect("passt DNS helper start marker should exist");
-    let end = ENTRYPOINT
-        .find("# END agentbox passt DNS helper")
-        .expect("passt DNS helper end marker should exist");
-    ENTRYPOINT[start..end].replace("''${", "${")
-}
-
-fn normalize_resolv_conf_with_entrypoint_helper(input: Option<&str>) -> String {
-    run_resolv_conf_helper(input, true).expect("resolv.conf should exist after passt normalization")
-}
-
-fn run_resolv_conf_helper(input: Option<&str>, passt_enabled: bool) -> Option<String> {
-    let test_dir = std::env::temp_dir().join(format!(
-        "agentbox-resolv-test-{}-{}",
-        std::process::id(),
-        unique_test_suffix()
-    ));
-    fs::create_dir_all(&test_dir).expect("test temp dir should be created");
-
-    let resolv_conf = test_dir.join("resolv.conf");
-    if let Some(contents) = input {
-        fs::write(&resolv_conf, contents).expect("input resolv.conf should be written");
-    }
-
-    let env_line = if passt_enabled {
-        "export AGENTBOX_LIBKRUN_USE_PASST=1"
-    } else {
-        "unset AGENTBOX_LIBKRUN_USE_PASST"
-    };
-    let script = format!(
-        r#"set -euo pipefail
-tmpdir="{tmpdir}"
-{helper}
-{env_line}
-ensure_libkrun_passt_resolv_conf "{resolv_conf}"
-"#,
-        tmpdir = test_dir.display(),
-        helper = entrypoint_passt_dns_helper(),
-        env_line = env_line,
-        resolv_conf = resolv_conf.display(),
-    );
-
-    let output = Command::new("bash")
-        .arg("-c")
-        .arg(script)
-        .output()
-        .expect("bash should run entrypoint helper fixture");
-    assert!(
-        output.status.success(),
-        "entrypoint helper fixture failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let result = fs::read_to_string(&resolv_conf).ok();
-    fs::remove_dir_all(&test_dir).expect("test temp dir should be removed");
-    result
-}
-
-fn unique_test_suffix() -> String {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    COUNTER.fetch_add(1, Ordering::Relaxed).to_string()
+    assert!(!LAYERS.contains("fuse-overlayfs"));
 }

@@ -2,7 +2,7 @@
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   entrypoint = import ./entrypoint.nix {
-    inherit pkgs podman crun;
+    inherit pkgs podman crun agentboxMuslPackage;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
   };
