@@ -301,6 +301,8 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         "driver = \"btrfs\"",
         "graphroot = \"$containers_storage_dir\"",
         "runroot = \"$containers_runroot\"",
+        "[containers]",
+        "cgroups = \"disabled\"",
         "cgroup_manager = \"cgroupfs\"",
         "events_logger = \"file\"",
         "[network]",
@@ -343,6 +345,7 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         "failed to write rootless Podman policy.json",
         "unshare --user --map-subids true",
         "rootless Podman idmap preflight failed",
+        "rootless Podman containers.conf is missing cgroups disabled",
     ] {
         assert!(ENTRYPOINT.contains(required), "missing {required}");
     }
@@ -412,6 +415,13 @@ fn image_includes_rootless_podman_stack_without_fuse_overlayfs() {
     let layers = include_str!("../nix/image/layers.nix");
     for required in [
         "rootlessPodmanImagePackages",
+        "podmanCommandCompat",
+        "pkgs.writeShellScriptBin \"podman\"",
+        "unset LD_PRELOAD",
+        "unset NSS_WRAPPER_PASSWD",
+        "unset NSS_WRAPPER_GROUP",
+        "exec ${podman}/bin/podman \"$@\"",
+        "[ nixCommandCompat podmanCommandCompat ]",
         "podman",
         "crun",
         "pkgs.conmon",

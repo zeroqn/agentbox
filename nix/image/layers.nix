@@ -29,6 +29,12 @@ let
     unset NSS_WRAPPER_GROUP
     exec ${pkgs.nix}/bin/nix "$@"
   '';
+  podmanCommandCompat = pkgs.writeShellScriptBin "podman" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    exec ${podman}/bin/podman "$@"
+  '';
   sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''
     LISTEN_PORT="$1"
     SOCKET_PATH="$2"
@@ -255,7 +261,7 @@ let
       toolingImageLayer
       agentImageLayer
     ];
-  imagePath = pkgs.lib.makeBinPath ([ nixCommandCompat ] ++ imagePackages);
+  imagePath = pkgs.lib.makeBinPath ([ nixCommandCompat podmanCommandCompat ] ++ imagePackages);
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
   imageContents = imagePackages ++ [
@@ -269,6 +275,7 @@ let
     fishConfig
     agentboxMuslPackage
     nixCommandCompat
+    podmanCommandCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
@@ -378,6 +385,7 @@ in
     imagePath
     clangMoldWrapper
     nixCommandCompat
+    podmanCommandCompat
     nixBuilderGroupId
     nixBuilderGroupMembers
     nixBuilderPasswdEntries

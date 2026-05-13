@@ -397,6 +397,9 @@ EOF_STORAGE_CONF
     fi
 
     if ! cat > "$containers_config_dir/containers.conf" <<EOF_CONTAINERS_CONF
+[containers]
+cgroups = "disabled"
+
 [engine]
 cgroup_manager = "cgroupfs"
 events_logger = "file"
@@ -665,6 +668,11 @@ EOF_POLICY_JSON
             fi
             if [ ! -w "$HOME/.local/share/containers/storage" ]; then
               echo "agentbox-entrypoint: ERROR: rootless Podman btrfs graphroot is not writable after dropping privileges" >&2
+              exit 1
+            fi
+            containers_conf="$HOME/.config/containers/containers.conf"
+            if [ ! -f "$containers_conf" ] || ! grep -q '"'"'cgroups = "disabled"'"'"' "$containers_conf"; then
+              echo "agentbox-entrypoint: ERROR: rootless Podman containers.conf is missing cgroups disabled at $containers_conf" >&2
               exit 1
             fi
             if ! ${pkgs.util-linux}/bin/unshare --user --map-subids true; then

@@ -243,11 +243,18 @@ final `dev` UID/GID, mounts the container disk by label (`AGENTBOX_CONTAINERS`) 
 `/run/user/<dev-uid>/containers`. It intentionally has no `mount_program`, no
 `overlay` driver fallback, and no `vfs` driver fallback. `containers.conf`
 pins crun, conmon, cgroupfs, file events, and netavark/pasta helper paths for
-this non-systemd guest. `registries.conf` leaves blocked and insecure registry
-lists empty and sets the unqualified image search registry to `docker.io` so
-commands such as `podman pull alpine` work inside the guest. `policy.json`
-sets the default and `docker-daemon` transports to `insecureAcceptAnything` so
-the guest has a local image signature policy for development pulls.
+this non-systemd guest, while setting `cgroups = "disabled"` so rootless nested
+containers do not require systemd cgroup delegation or write access under
+`/sys/fs/cgroup`. This means v1 nested guest containers do not provide
+cgroup-based resource-limit enforcement. The image `podman` command is also a
+small compatibility wrapper that clears the entrypoint's NSS wrapper preload
+environment (`LD_PRELOAD`, `NSS_WRAPPER_PASSWD`, and `NSS_WRAPPER_GROUP`) before
+running the packaged Podman binary, matching the existing Nix compatibility
+wrapper behavior. `registries.conf` leaves blocked and insecure registry lists
+empty and sets the unqualified image search registry to `docker.io` so commands
+such as `podman pull alpine` work inside the guest. `policy.json` sets the
+default and `docker-daemon` transports to `insecureAcceptAnything` so the guest
+has a local image signature policy for development pulls.
 
 Before dropping privileges, the entrypoint also enables the guest kernel's
 rootless user namespace knobs required by Podman: it raises
