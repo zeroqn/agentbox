@@ -5,6 +5,8 @@ pkgs.writeShellScriptBin "agentbox-entrypoint" ''
 
   if [ "''${AGENTBOX_GUEST_INIT_DISABLE:-}" != "1" ] \
     && { [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ] || [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; }; then
+    export AGENTBOX_FISH_CONFIG_SOURCE=${fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish
+    export AGENTBOX_STARSHIP_CONFIG_SOURCE=${starshipConfig}/share/agentbox/starship.toml
     exec ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun enter -- "$@"
   fi
 

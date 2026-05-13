@@ -1,8 +1,12 @@
 use anyhow::{bail, Context, Result};
+use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::guest_init::runtime::libkrun::{DEV_HOME, DEV_USER};
 use crate::guest_init::{fs, process};
+
+const FISH_CONFIG_SOURCE_ENV: &str = "AGENTBOX_FISH_CONFIG_SOURCE";
+const STARSHIP_CONFIG_SOURCE_ENV: &str = "AGENTBOX_STARSHIP_CONFIG_SOURCE";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct DevIdentity {
@@ -33,7 +37,8 @@ pub(in crate::guest_init) fn materialize(identity: &DevIdentity) -> Result<()> {
         .context("failed to materialize dynamic dev entry in /etc/passwd")?;
     fs::write_file(Path::new("/etc/group"), &group, 0o644)
         .context("failed to materialize dynamic dev entry in /etc/group")?;
-    ensure_home_dirs(identity)
+    ensure_home_dirs(identity)?;
+    materialize_shell_configs(identity)
 }
 
 pub(in crate::guest_init) fn ensure_home_dirs(identity: &DevIdentity) -> Result<()> {
@@ -51,6 +56,116 @@ pub(in crate::guest_init) fn ensure_home_dirs(identity: &DevIdentity) -> Result<
     }
     fs::chmod(Path::new("/home/dev/.local/state"), 0o700)?;
     fs::chmod(Path::new("/home/dev/.cache/tmp"), 0o700)?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellConfigSources {
+    fish_config: PathBuf,
+    starship_config: PathBuf,
+}
+
+impl ShellConfigSources {
+    fn from_env() -> Result<Option<Self>> {
+        match (
+            env::var_os(FISH_CONFIG_SOURCE_ENV),
+            env::var_os(STARSHIP_CONFIG_SOURCE_ENV),
+        ) {
+            (Some(fish_config), Some(starship_config)) => Ok(Some(Self {
+                fish_config: PathBuf::from(fish_config),
+                starship_config: PathBuf::from(starship_config),
+            })),
+            (None, None) => Ok(None),
+            (None, Some(_)) => bail!(
+                "{FISH_CONFIG_SOURCE_ENV} is required when {STARSHIP_CONFIG_SOURCE_ENV} is set"
+            ),
+            (Some(_), None) => bail!(
+                "{STARSHIP_CONFIG_SOURCE_ENV} is required when {FISH_CONFIG_SOURCE_ENV} is set"
+            ),
+        }
+    }
+}
+
+fn materialize_shell_configs(identity: &DevIdentity) -> Result<()> {
+    let Some(sources) = ShellConfigSources::from_env()? else {
+        return Ok(());
+    };
+    materialize_shell_config_files(identity, &sources, true)
+}
+
+fn materialize_shell_config_files(
+    identity: &DevIdentity,
+    sources: &ShellConfigSources,
+    set_ownership: bool,
+) -> Result<()> {
+    let config_dir = identity.home.join(".config");
+    let fish_config_dir = config_dir.join("fish");
+    let fish_conf_dir = fish_config_dir.join("conf.d");
+    let fish_data_dir = identity.home.join(".local/share/fish");
+    let fish_completions_dir = fish_config_dir.join("completions");
+    let fish_functions_dir = fish_config_dir.join("functions");
+    let starship_cache_dir = identity.home.join(".cache/starship");
+
+    for path in [
+        fish_config_dir.as_path(),
+        fish_conf_dir.as_path(),
+        fish_completions_dir.as_path(),
+        fish_functions_dir.as_path(),
+        fish_data_dir.as_path(),
+        starship_cache_dir.as_path(),
+    ] {
+        create_dir_for_identity(path, identity, set_ownership)?;
+    }
+
+    copy_config_file_if_missing(
+        &sources.starship_config,
+        &config_dir.join("starship.toml"),
+        identity,
+        set_ownership,
+    )
+    .context("failed to materialize bundled starship config")?;
+    copy_config_file_if_missing(
+        &sources.fish_config,
+        &fish_conf_dir.join("agentbox-starship.fish"),
+        identity,
+        set_ownership,
+    )
+    .context("failed to materialize bundled fish starship config")?;
+
+    Ok(())
+}
+
+fn create_dir_for_identity(path: &Path, identity: &DevIdentity, set_ownership: bool) -> Result<()> {
+    fs::create_dir_all(path)?;
+    if set_ownership {
+        fs::chown(path, identity.uid, identity.gid)?;
+    }
+    Ok(())
+}
+
+fn copy_config_file_if_missing(
+    source: &Path,
+    target: &Path,
+    identity: &DevIdentity,
+    set_ownership: bool,
+) -> Result<()> {
+    if target.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        create_dir_for_identity(parent, identity, set_ownership)?;
+    }
+    std::fs::copy(source, target).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    fs::chmod(target, 0o644)?;
+    if set_ownership {
+        fs::chown(target, identity.uid, identity.gid)?;
+    }
     Ok(())
 }
 

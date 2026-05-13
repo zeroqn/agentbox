@@ -62,9 +62,21 @@ fn entrypoint_dispatches_libkrun_to_rust_guest_init_early() {
     let dispatch_gate = r#"if [ "''${AGENTBOX_GUEST_INIT_DISABLE:-}" != "1" ] \
     && { [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ] || [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; }; then"#;
     assert!(ENTRYPOINT.contains(dispatch_gate));
+    assert!(ENTRYPOINT.contains(
+        r#"export AGENTBOX_FISH_CONFIG_SOURCE=${fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"#
+    ));
+    assert!(ENTRYPOINT.contains(
+        r#"export AGENTBOX_STARSHIP_CONFIG_SOURCE=${starshipConfig}/share/agentbox/starship.toml"#
+    ));
     assert!(ENTRYPOINT
         .contains(r#"exec ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun enter -- "$@""#));
 
+    let fish_config_export = ENTRYPOINT
+        .find("AGENTBOX_FISH_CONFIG_SOURCE")
+        .expect("fish config source should be exported");
+    let starship_config_export = ENTRYPOINT
+        .find("AGENTBOX_STARSHIP_CONFIG_SOURCE")
+        .expect("starship config source should be exported");
     let dispatch = ENTRYPOINT
         .find("agentbox-guest-init libkrun enter")
         .expect("libkrun dispatch should exist");
@@ -74,6 +86,8 @@ fn entrypoint_dispatches_libkrun_to_rust_guest_init_early() {
     let legacy_podman_bootstrap = ENTRYPOINT
         .find("bootstrap_libkrun_containers_storage()")
         .expect("fallback legacy libkrun function should remain behind disable guard");
+    assert!(fish_config_export < dispatch);
+    assert!(starship_config_export < dispatch);
     assert!(dispatch < bash_env_setup);
     assert!(dispatch < legacy_podman_bootstrap);
 }
