@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::ffi::CString;
 
-use crate::guest_init::root::home::DevIdentity;
+use crate::guest_init::components::home::identity::DevIdentity;
 
 pub(in crate::guest_init) fn uid() -> u32 {
     unsafe { libc::getuid() }

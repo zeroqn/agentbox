@@ -1,4 +1,4 @@
-use crate::guest_init::root::nix::{planned_operations, NixOperation};
+use crate::guest_init::components::nix::root::{planned_operations, NixOperation};
 
 #[test]
 fn nix_bootstrap_operation_order_keeps_nix_blocking() {

@@ -1,4 +1,4 @@
-use crate::guest_init::status::{
+use crate::guest_init::components::podman::status::{
     format_wait_timeout, mark_ready_for_pid, read_status, write_running_unless_terminal,
     write_status, PodmanPrepState, PodmanPrepStatus,
 };

@@ -1,10 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use std::time::Duration;
 
 use crate::guest_init::command;
-use crate::guest_init::runtime::libkrun::LibkrunEnv;
+use crate::guest_init::components::env::LibkrunEnv;
 use crate::guest_init::{fs, process};
 
 pub(in crate::guest_init) const SOCKET_PATH: &str = "/nix/var/nix/daemon-socket/socket";
@@ -49,13 +48,10 @@ pub(in crate::guest_init) fn bootstrap(env_contract: &LibkrunEnv) -> Result<()> 
         command::require_on_path(tool)?;
     }
 
-    let disk = find_btrfs_disk(&env_contract.nix_disk_label, &env_contract.nix_disk_id)
-        .with_context(|| {
-            format!(
-                "libkrun /nix btrfs disk not found (label={} id={})",
-                env_contract.nix_disk_label, env_contract.nix_disk_id
-            )
-        })?;
+    let disk = crate::guest_init::components::disk::nix::find_disk(
+        &env_contract.nix_disk_label,
+        &env_contract.nix_disk_id,
+    )?;
     let run_dir = Path::new("/run/agentbox");
     let disk_mount = run_dir.join("nix-disk");
     let lower_dir = run_dir.join("nix-lower");
@@ -120,35 +116,6 @@ pub(in crate::guest_init) fn bootstrap(env_contract: &LibkrunEnv) -> Result<()> 
     bail!("nix-daemon did not create '{SOCKET_PATH}' before timeout")
 }
 
-pub(in crate::guest_init) fn find_btrfs_disk(label: &str, disk_id: &str) -> Result<PathBuf> {
-    if let Some(path) = command::output_trimmed("blkid", &["-L", label])? {
-        return Ok(PathBuf::from(path));
-    }
-    let patterns = [
-        format!("/dev/disk/by-id/*{disk_id}*"),
-        "/dev/vd?".to_owned(),
-        "/dev/sd?".to_owned(),
-        "/dev/xvd?".to_owned(),
-        "/dev/nvme?n?".to_owned(),
-        "/dev/pmem?".to_owned(),
-    ];
-    for pattern in patterns {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(format!("for candidate in {pattern}; do [ -e \"$candidate\" ] && printf '%s\n' \"$candidate\"; done"))
-            .output()
-            .context("failed to enumerate disk candidates")?;
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if command::output_trimmed("blkid", &["-o", "value", "-s", "LABEL", line])?.as_deref()
-                == Some(label)
-            {
-                return Ok(PathBuf::from(line));
-            }
-        }
-    }
-    Err(anyhow!("no btrfs disk with label {label} and id {disk_id}"))
-}
-
 fn preseed_upper(lower_dir: &Path, upper_dir: &Path, work_dir: &Path) -> Result<()> {
     fs::create_dir_all(upper_dir)?;
     fs::create_dir_all(work_dir)?;
@@ -185,5 +152,5 @@ fn path_str(path: &Path) -> Result<&str> {
 }
 
 #[cfg(test)]
-#[path = "nix_tests.rs"]
+#[path = "root_tests.rs"]
 mod tests;

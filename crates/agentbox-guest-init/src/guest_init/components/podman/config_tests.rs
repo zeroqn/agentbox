@@ -1,23 +1,8 @@
-use crate::guest_init::root::home::DevIdentity;
-use crate::guest_init::root::podman::{
-    containers_conf, planned_operations, policy_json, registries_conf, storage_conf,
-    PodmanPrepOperation, PodmanToolPaths,
+use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::components::podman::config::{
+    containers_conf, policy_json, registries_conf, storage_conf, PodmanToolPaths,
 };
 use std::path::PathBuf;
-
-#[test]
-fn podman_prep_operation_order_keeps_root_setup_before_configs() {
-    let ops = planned_operations();
-    let pos = |op| ops.iter().position(|candidate| candidate == &op).unwrap();
-    assert_eq!(pos(PodmanPrepOperation::WriteRunningStatus), 0);
-    assert!(pos(PodmanPrepOperation::PrepareTun) < pos(PodmanPrepOperation::MaterializeSubids));
-    assert!(
-        pos(PodmanPrepOperation::MaterializeSubids) < pos(PodmanPrepOperation::InstallIdmapHelpers)
-    );
-    assert!(
-        pos(PodmanPrepOperation::MountContainerStorage) < pos(PodmanPrepOperation::WriteConfig)
-    );
-}
 
 #[test]
 fn podman_prep_generates_btrfs_storage_config_without_fallbacks() {

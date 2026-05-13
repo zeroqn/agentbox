@@ -1,5 +1,7 @@
-use crate::guest_init::root::nix::{planned_operations as nix_ops, NixOperation};
-use crate::guest_init::root::podman::{planned_operations as podman_ops, PodmanPrepOperation};
+use crate::guest_init::components::nix::root::{planned_operations as nix_ops, NixOperation};
+use crate::guest_init::components::podman::root::{
+    planned_operations as podman_ops, PodmanPrepOperation,
+};
 
 #[test]
 fn orchestration_derives_shell_env_before_background_podman_prep() {

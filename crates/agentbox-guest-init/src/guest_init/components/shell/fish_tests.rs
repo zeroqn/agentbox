@@ -1,14 +1,8 @@
-use super::{materialize_shell_config_files, DevIdentity, ShellConfigSources};
+use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::components::shell::fish::{materialize_config_files, ShellConfigSources};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-
-#[test]
-fn dev_identity_uses_fixed_home_and_selected_shell() {
-    let identity = DevIdentity::new(501, 20, PathBuf::from("/bin/fish"));
-    assert_eq!(identity.home, PathBuf::from("/home/dev"));
-    assert_eq!(identity.shell, PathBuf::from("/bin/fish"));
-}
 
 #[test]
 fn shell_config_materialization_installs_fish_starship_payloads() {
@@ -33,7 +27,7 @@ fn shell_config_materialization_installs_fish_starship_payloads() {
         starship_config: starship_source,
     };
 
-    materialize_shell_config_files(&identity, &sources, false)
+    materialize_config_files(&identity, &sources, false)
         .expect("shell config files should materialize");
 
     assert_eq!(
@@ -109,7 +103,7 @@ fn shell_config_materialization_preserves_existing_user_config() {
         starship_config: starship_source,
     };
 
-    materialize_shell_config_files(&identity, &sources, false)
+    materialize_config_files(&identity, &sources, false)
         .expect("shell config files should materialize");
 
     assert_eq!(

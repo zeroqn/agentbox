@@ -1,6 +1,6 @@
-use crate::guest_init::status;
-use crate::guest_init::status::PodmanPrepStatus;
-use crate::guest_init::user::podman::wait_for_status;
+use crate::guest_init::components::podman::status;
+use crate::guest_init::components::podman::status::PodmanPrepStatus;
+use crate::guest_init::components::podman::user::wait_for_status;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::tempdir;

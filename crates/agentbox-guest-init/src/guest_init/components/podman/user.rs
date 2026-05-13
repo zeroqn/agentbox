@@ -2,9 +2,9 @@ use anyhow::{bail, Result};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::guest_init::components::env::{PODMAN_STATUS_PATH, PODMAN_WAIT_TIMEOUT_SECS};
+use crate::guest_init::components::podman::status::{self, PodmanPrepState, PodmanPrepStatus};
 use crate::guest_init::process;
-use crate::guest_init::runtime::libkrun::{PODMAN_STATUS_PATH, PODMAN_WAIT_TIMEOUT_SECS};
-use crate::guest_init::status::{self, PodmanPrepState, PodmanPrepStatus};
 
 pub(in crate::guest_init) fn wait_for_prep() -> Result<()> {
     wait_for_status(
@@ -95,5 +95,5 @@ fn log_suffix(status: &PodmanPrepStatus) -> String {
 }
 
 #[cfg(test)]
-#[path = "podman_tests.rs"]
+#[path = "user_tests.rs"]
 mod tests;
