@@ -37,10 +37,17 @@ impl ShellConfigSources {
 }
 
 pub(in crate::guest_init) fn materialize_configs(identity: &DevIdentity) -> Result<()> {
+    materialize_configs_with_ownership(identity, true)
+}
+
+pub(in crate::guest_init) fn materialize_configs_with_ownership(
+    identity: &DevIdentity,
+    set_ownership: bool,
+) -> Result<()> {
     let Some(sources) = ShellConfigSources::from_env()? else {
         return Ok(());
     };
-    materialize_config_files(identity, &sources, true)
+    materialize_config_files(identity, &sources, set_ownership)
 }
 
 pub(in crate::guest_init) fn materialize_config_files(

@@ -57,7 +57,7 @@ fn parses_libkrun_podman_prep_and_wait() {
 }
 
 #[test]
-fn parses_container_enter_shape_without_wiring_image_to_it() {
+fn parses_container_enter_command_for_image_entrypoint() {
     let cli = GuestInitCli::try_parse_from([
         "agentbox-guest-init",
         "container",

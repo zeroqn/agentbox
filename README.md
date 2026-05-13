@@ -216,25 +216,31 @@ host. On non-Linux hosts or when CPU count is unavailable, `krun.cpus` is
 omitted.
 
 Libkrun mode enables passt networking by default with `krun.use_passt=1`. In
-that default passt path, the normal image entrypoint also ensures the guest
+that default passt path, `agentbox-guest-init libkrun enter` ensures the guest
 resolver starts with `nameserver 169.254.1.1`, matching passt's DNS forwarder,
 while preserving any existing resolver lines after it. When `--tsi` is passed,
 agentbox switches to the TSI/proxy environment path instead: it omits
 `krun.use_passt=1`, skips the passt resolver injection, and passes `no_proxy=1`
 into the guest.
 
-Inside the libkrun guest, the generated image entrypoint now acts as a small
-trampoline for libkrun runs and immediately execs the Rust guest initializer:
+The generated image entrypoint directly invokes the Rust guest initializer for
+normal container startup:
+
+```bash
+agentbox-guest-init container enter -- fish -l
+```
+
+If the libkrun environment flags are present, `container enter` routes the run
+to the existing libkrun initializer before doing normal container setup:
 
 ```bash
 agentbox-guest-init libkrun enter -- fish -l
 ```
 
-Normal `--native` container mode intentionally stays on the existing Bash
-entrypoint path. Set `AGENTBOX_GUEST_INIT_DISABLE=1` only for debugging the old
-libkrun Bash fallback in the image.
+There is no supported `AGENTBOX_GUEST_INIT_DISABLE=1` fallback for normal
+container startup.
 
-`agentbox-guest-init` performs the root-required shell prerequisites before the
+For libkrun runs, `agentbox-guest-init` performs the root-required shell prerequisites before the
 privilege drop: it writes real `/etc/passwd` and `/etc/group` entries for the
 dynamic host UID/GID, creates/chowns `/home/dev` and the XDG home directories,
 normalizes passt DNS when `krun.use_passt=1`, mounts the persistent `/nix`

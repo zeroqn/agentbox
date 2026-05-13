@@ -47,49 +47,55 @@ const ENTRYPOINT: &str = include_str!("../../../nix/image/entrypoint.nix");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
+const GUEST_CONTAINER_RUNTIME: &str =
+    include_str!("../../agentbox-guest-init/src/guest_init/runtime/container.rs");
 
 #[test]
-fn image_entrypoint_remains_agentbox_entrypoint_for_normal_container_mode() {
-    assert!(CONTAINER_NIX.contains(r#"Entrypoint = [ "${entrypoint}/bin/agentbox-entrypoint" ];"#));
+fn image_entrypoint_invokes_guest_init_container_enter_directly() {
+    assert!(CONTAINER_NIX.contains(
+        r#"Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "container" "enter" "--" ];"#
+    ));
     let config_start = CONTAINER_NIX
         .find("config = {")
         .expect("image config should exist");
-    assert!(!CONTAINER_NIX[config_start..].contains("agentbox-guest-init"));
+    assert!(!CONTAINER_NIX[config_start..].contains("agentbox-entrypoint"));
 }
 
 #[test]
-fn entrypoint_dispatches_libkrun_to_rust_guest_init_early() {
-    let dispatch_gate = r#"if [ "''${AGENTBOX_GUEST_INIT_DISABLE:-}" != "1" ] \
-    && { [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ] || [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; }; then"#;
-    assert!(ENTRYPOINT.contains(dispatch_gate));
-    assert!(ENTRYPOINT.contains(
-        r#"export AGENTBOX_FISH_CONFIG_SOURCE=${fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"#
-    ));
-    assert!(ENTRYPOINT.contains(
-        r#"export AGENTBOX_STARSHIP_CONFIG_SOURCE=${starshipConfig}/share/agentbox/starship.toml"#
-    ));
-    assert!(ENTRYPOINT
-        .contains(r#"exec ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun enter -- "$@""#));
+fn image_env_exposes_guest_init_runtime_payloads() {
+    for required in [
+        r#"SHELL=${pkgs.fish}/bin/fish"#,
+        r#"AGENTBOX_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"#,
+        r#"AGENTBOX_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"#,
+        r#"AGENTBOX_NSS_WRAPPER_LIB=${pkgs.nss_wrapper}/lib/libnss_wrapper.so"#,
+    ] {
+        assert!(CONTAINER_NIX.contains(required), "missing {required}");
+    }
+}
 
-    let fish_config_export = ENTRYPOINT
-        .find("AGENTBOX_FISH_CONFIG_SOURCE")
-        .expect("fish config source should be exported");
-    let starship_config_export = ENTRYPOINT
-        .find("AGENTBOX_STARSHIP_CONFIG_SOURCE")
-        .expect("starship config source should be exported");
-    let dispatch = ENTRYPOINT
-        .find("agentbox-guest-init libkrun enter")
-        .expect("libkrun dispatch should exist");
-    let bash_env_setup = ENTRYPOINT
-        .find("export USER=dev")
-        .expect("normal Bash body should remain");
-    let legacy_podman_bootstrap = ENTRYPOINT
-        .find("bootstrap_libkrun_containers_storage()")
-        .expect("fallback legacy libkrun function should remain behind disable guard");
-    assert!(fish_config_export < dispatch);
-    assert!(starship_config_export < dispatch);
-    assert!(dispatch < bash_env_setup);
-    assert!(dispatch < legacy_podman_bootstrap);
+#[test]
+fn container_guest_init_dispatches_libkrun_before_normal_setup() {
+    for required in [
+        "const LIBKRUN_NIX_OVERLAY_ENV",
+        "const LIBKRUN_CONTAINERS_STORAGE_ENV",
+        "fn should_dispatch_libkrun_from_env()",
+        r#""libkrun".to_owned()"#,
+        r#""enter".to_owned()"#,
+        r#""--".to_owned()"#,
+    ] {
+        assert!(
+            GUEST_CONTAINER_RUNTIME.contains(required),
+            "missing {required}"
+        );
+    }
+
+    let dispatch = GUEST_CONTAINER_RUNTIME
+        .find("should_dispatch_libkrun_from_env()")
+        .expect("libkrun dispatch gate should exist");
+    let identity = GUEST_CONTAINER_RUNTIME
+        .find("derive_identity_plan")
+        .expect("normal identity setup should exist");
+    assert!(dispatch < identity);
 }
 
 #[test]
@@ -100,11 +106,18 @@ fn nix_agentbox_binary_knows_libkrun_guest_init_image_path() {
 }
 
 #[test]
-fn entrypoint_preserves_normal_container_bash_path() {
+fn legacy_bash_entrypoint_is_not_the_image_config_entrypoint() {
     assert!(ENTRYPOINT.contains("export USER=dev"));
     assert!(ENTRYPOINT.contains("materialize_writable_dir()"));
     assert!(ENTRYPOINT.contains("exec \"$@\""));
-    assert!(!ENTRYPOINT.contains("agentbox-guest-init container enter"));
+    assert!(!CONTAINER_NIX.contains("${entrypoint}/bin/agentbox-entrypoint"));
+}
+
+#[test]
+fn image_layers_include_guest_init_config_payloads() {
+    assert!(LAYERS.contains("fishConfig"));
+    assert!(LAYERS.contains("starshipConfig"));
+    assert!(LAYERS.contains("agentboxMuslPackage"));
 }
 
 #[test]
