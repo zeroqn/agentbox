@@ -23,16 +23,10 @@ pub(in crate::guest_init) fn bootstrap(
     fs::create_dir_all(config_dir)?;
     fs::create_dir_all(&runroot)?;
 
-    let disk = crate::guest_init::components::disk::btrfs::find_labeled_disk(
+    let disk = crate::guest_init::components::disk::containers::find_disk(
         &env_contract.containers_disk_label,
         &env_contract.containers_disk_id,
-    )
-    .with_context(|| {
-        format!(
-            "libkrun container storage btrfs disk not found (label={} id={})",
-            env_contract.containers_disk_label, env_contract.containers_disk_id
-        )
-    })?;
+    )?;
     if !command::status_ok("findmnt", &["-rn", path_str(mount)?])? {
         command::run(
             "mount",
