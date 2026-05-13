@@ -209,6 +209,25 @@ EOF_NIXBLD_GIDS
     export PATH="/run/agentbox/idmap-bin:$PATH"
   }
 
+  prepare_rootless_podman_tun_device() {
+    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" != "1" ]; then
+      return 0
+    fi
+    if [ "$(id -u)" != "0" ]; then
+      return 0
+    fi
+
+    tun_device=/dev/net/tun
+    if [ ! -c "$tun_device" ]; then
+      echo "agentbox-entrypoint: ERROR: rootless Podman TUN device is missing at $tun_device; ensure host /dev/net/tun is passed into the libkrun guest" >&2
+      exit 1
+    fi
+    if ! chmod 0666 "$tun_device"; then
+      echo "agentbox-entrypoint: ERROR: failed to make $tun_device accessible to rootless Podman" >&2
+      exit 1
+    fi
+  }
+
   enable_rootless_user_namespaces() {
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" != "1" ]; then
       return 0
@@ -551,6 +570,7 @@ EOF_POLICY_JSON
     ensure_dev_home_ownership
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
       enable_rootless_user_namespaces
+      prepare_rootless_podman_tun_device
       materialize_dev_subid_files
       prepare_rootless_podman_idmap_helpers
     fi

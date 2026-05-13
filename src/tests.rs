@@ -328,6 +328,12 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         "unprivileged_userns_path=/proc/sys/kernel/unprivileged_userns_clone",
         "failed to set $userns_limit_path=$userns_limit_target",
         "failed to set $unprivileged_userns_path=1",
+        "prepare_rootless_podman_tun_device",
+        "tun_device=/dev/net/tun",
+        "[ ! -c \"$tun_device\" ]",
+        "chmod 0666 \"$tun_device\"",
+        "rootless Podman TUN device is missing",
+        "failed to make $tun_device accessible to rootless Podman",
         "materialize_dev_subid_files",
         "newuidmap",
         "newgidmap",
@@ -360,6 +366,9 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
     let home_ownership_call = ENTRYPOINT
         .rfind("ensure_dev_home_ownership")
         .expect("dev home ownership helper should be called");
+    let tun_call = ENTRYPOINT
+        .rfind("prepare_rootless_podman_tun_device")
+        .expect("rootless Podman TUN helper should be called");
     let subid_call = ENTRYPOINT
         .rfind("materialize_dev_subid_files")
         .expect("subid materialization should be called");
@@ -371,7 +380,8 @@ fn libkrun_entrypoint_configures_rootless_podman_btrfs_without_fallbacks() {
         .expect("rootless idmap preflight should run");
 
     assert!(home_ownership_call < userns_call);
-    assert!(userns_call < subid_call);
+    assert!(userns_call < tun_call);
+    assert!(tun_call < subid_call);
     assert!(subid_call < idmap_helper_call);
     assert!(idmap_helper_call < idmap_preflight);
 }

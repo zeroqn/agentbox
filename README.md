@@ -269,9 +269,10 @@ runs the shell as the host UID/GID. The libkrun task also uses
 `--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the host
 user while the entrypoint still starts as root for `/run/agentbox` creation and
 root-only bootstrap. The libkrun task passes the host `/dev/net/tun` through to
-the guest at the same path so nested rootless Podman can bring up container
-networking. The daemon is tied to the VM/container lifecycle and is not
-separately supervised in v1.
+the guest at the same path, and the entrypoint makes the guest device node
+world-readable/writable before dropping privileges, so nested rootless Podman can
+bring up container networking. The daemon is tied to the VM/container lifecycle
+and is not separately supervised in v1.
 
 For guest-side debugging, pass a temporary entrypoint script to bypass the normal
 image entrypoint and run custom diagnostics before handing off to the requested
