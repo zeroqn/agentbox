@@ -6,6 +6,7 @@ mod command;
 mod components;
 mod fs;
 mod process;
+mod profile;
 mod runtime;
 
 use cli::GuestInitCli;

@@ -145,8 +145,7 @@ AGENTBOX_IMAGE=<image-ref> ./result/bin/agentbox
 ./result/bin/agentbox --image <image-ref>
 ```
 
-Enable Podman debug logging for troubleshooting agentbox-managed Podman
-commands:
+Enable debug logging for troubleshooting agentbox-managed Podman commands:
 
 ```bash
 ./result/bin/agentbox --debug
@@ -155,7 +154,23 @@ commands:
 
 `--debug` passes `--log-level=debug` to Podman commands that agentbox runs,
 including task launch, sidecar setup, image inspection/mounting, health probes,
-and cleanup paths. It only changes Podman logging verbosity.
+and cleanup paths. It also allows guest-side diagnostic reports to use stderr.
+
+Collect `agentbox-guest-init` component timings for the task container:
+
+```bash
+./result/bin/agentbox --profile --debug
+./result/bin/agentbox --native --profile --debug
+```
+
+`--profile` enables guest-init timing collection. Timings are printed only when
+`--debug` is also set, and the report is written to stderr so stdout remains
+reserved for command output. `--profile` without `--debug` enables measurement
+but suppresses the report; `--debug` without `--profile` does not print a timing
+report. Libkrun background Podman prep/wait workers and sidecar-only runs do
+not emit guest-init profile reports. `--profile --debug` cannot be combined
+with `--libkrun-debug-entrypoint` because that debug path bypasses
+`agentbox-guest-init`.
 
 Task containers, including libkrun-backed tasks, are named with the current
 repo/workspace slug followed by a unique suffix. For example, a checkout named

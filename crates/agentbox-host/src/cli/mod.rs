@@ -18,6 +18,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox --native
   agentbox --sidecar-only
   agentbox --sidecar-only --debug
+  agentbox --profile --debug
   agentbox --libkrun
   agentbox --mem 8
   agentbox --libkrun-debug-entrypoint ./debug-entrypoint.sh
@@ -61,6 +62,13 @@ pub struct Cli {
         long_help = "Enable Podman debug logging by passing --log-level=debug to agentbox-managed Podman commands. This is intended for troubleshooting task, sidecar, image, mount, health, and cleanup operations."
     )]
     pub debug: bool,
+
+    #[arg(
+        long,
+        help = "Enable guest-init component timing collection",
+        long_help = "Enable agentbox-guest-init component timing collection for the task container. Timing is reported to stderr only when --debug is also set, so normal command stdout remains reserved for command output."
+    )]
+    pub profile: bool,
 
     #[arg(
         long,

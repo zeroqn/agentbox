@@ -17,13 +17,18 @@ pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) cargo_mount: &'a str,
     pub(crate) sccache_mount: &'a str,
     pub(crate) nix_runtime: &'a SidecarNixRuntime,
+    pub(crate) guest_profile: bool,
+    pub(crate) guest_debug: bool,
 }
+
+pub(crate) const GUEST_PROFILE_ENV: &str = "AGENTBOX_GUEST_PROFILE=1";
+pub(crate) const GUEST_DEBUG_ENV: &str = "AGENTBOX_GUEST_DEBUG=1";
 
 pub(crate) fn build_container_task_podman_args(
     spec: ContainerTaskPodmanSpec<'_>,
 ) -> Result<Vec<String>> {
     let sidecar = spec.nix_runtime;
-    let args = vec![
+    let mut args = vec![
         "run".to_owned(),
         "--rm".to_owned(),
         "-it".to_owned(),
@@ -55,10 +60,21 @@ pub(crate) fn build_container_task_podman_args(
         format!("{TASK_CONTAINER_ROLE_LABEL}={TASK_CONTAINER_ROLE_VALUE}"),
         "--label".to_owned(),
         format!("{TASK_CONTAINER_SIDECAR_LABEL}={}", sidecar.sidecar_name),
-        spec.image.to_owned(),
-        INTERACTIVE_SHELL.to_owned(),
-        "-l".to_owned(),
     ];
+
+    if spec.guest_profile {
+        args.push("--env".to_owned());
+        args.push(GUEST_PROFILE_ENV.to_owned());
+    }
+
+    if spec.guest_debug {
+        args.push("--env".to_owned());
+        args.push(GUEST_DEBUG_ENV.to_owned());
+    }
+
+    args.push(spec.image.to_owned());
+    args.push(INTERACTIVE_SHELL.to_owned());
+    args.push("-l".to_owned());
 
     Ok(args)
 }
@@ -133,7 +149,32 @@ mod tests {
             cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
             sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
             nix_runtime,
+            guest_profile: false,
+            guest_debug: false,
         })
         .expect("container task args should build")
+    }
+
+    #[test]
+    fn container_task_args_include_guest_profile_and_debug_env_when_requested() {
+        let runtime = sidecar_runtime();
+        let args = build_container_task_podman_args(ContainerTaskPodmanSpec {
+            image: crate::DEFAULT_IMAGE,
+            container_name: "project-random",
+            hostname: "project-agentbox",
+            workspace_mount: "/tmp/project:/workspace",
+            codex_mount: "/home/alice/.codex:/home/dev/.codex",
+            cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
+            sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+            nix_runtime: &runtime,
+            guest_profile: true,
+            guest_debug: true,
+        })
+        .expect("container task args should build");
+
+        assert!(args.contains(&GUEST_PROFILE_ENV.to_owned()));
+        assert!(args.contains(&GUEST_DEBUG_ENV.to_owned()));
+        assert_eq!(args[args.len() - 2], INTERACTIVE_SHELL);
+        assert_eq!(args[args.len() - 1], "-l");
     }
 }

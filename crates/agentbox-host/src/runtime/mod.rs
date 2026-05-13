@@ -80,6 +80,12 @@ fn resolve_runtime_mode_with_sidecar_env(
         );
     }
 
+    if !selects_container && cli.profile && cli.debug && cli.libkrun_debug_entrypoint.is_some() {
+        anyhow::bail!(
+            "--profile --debug cannot be combined with --libkrun-debug-entrypoint because the debug entrypoint bypasses agentbox-guest-init profiling"
+        );
+    }
+
     if selects_container {
         return Ok(RuntimeMode::Container);
     }
@@ -397,5 +403,24 @@ mod tests {
         assert!(err
             .to_string()
             .contains("--libkrun-debug-entrypoint is only supported in libkrun mode"));
+    }
+
+    #[test]
+    fn profile_debug_rejects_libkrun_debug_entrypoint_bypass() {
+        let err = resolve_with_sidecar_env(
+            &[
+                "--profile",
+                "--debug",
+                "--libkrun-debug-entrypoint",
+                "./debug-entrypoint.sh",
+            ],
+            true,
+        )
+        .expect_err("--profile --debug with debug entrypoint should fail");
+
+        let message = err.to_string();
+        assert!(message.contains("--profile --debug"));
+        assert!(message.contains("--libkrun-debug-entrypoint"));
+        assert!(message.contains("bypasses agentbox-guest-init profiling"));
     }
 }

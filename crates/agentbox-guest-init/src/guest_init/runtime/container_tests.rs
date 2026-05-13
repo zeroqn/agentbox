@@ -282,11 +282,27 @@ fn container_enter_operation_order_dispatches_libkrun_before_normal_setup() {
             < pos(ContainerEnterOperation::DeriveIdentity)
     );
     assert!(
+        pos(ContainerEnterOperation::DispatchLibkrunIfRequested)
+            < pos(ContainerEnterOperation::StartProfilerAfterLibkrunDispatch)
+    );
+    assert!(
+        pos(ContainerEnterOperation::StartProfilerAfterLibkrunDispatch)
+            < pos(ContainerEnterOperation::DeriveIdentity)
+    );
+    assert!(
         pos(ContainerEnterOperation::ExportShellEnvironment)
             < pos(ContainerEnterOperation::MaterializeNssWrapper)
     );
     assert!(
         pos(ContainerEnterOperation::MaterializeHomeConfig)
+            < pos(ContainerEnterOperation::DropAndExec)
+    );
+    assert!(
+        pos(ContainerEnterOperation::ClearProfileEnvBeforeExec)
+            < pos(ContainerEnterOperation::DropAndExec)
+    );
+    assert!(
+        pos(ContainerEnterOperation::ReportProfileBeforeExec)
             < pos(ContainerEnterOperation::DropAndExec)
     );
 }

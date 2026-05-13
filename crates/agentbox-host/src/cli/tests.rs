@@ -10,6 +10,7 @@ fn cli_accepts_no_arguments() {
     assert!(!cli.disable_nix_sidecar);
     assert!(!cli.sidecar_only);
     assert!(!cli.debug);
+    assert!(!cli.profile);
     assert!(!cli.native);
     assert!(!cli.libkrun);
     assert!(!cli.tsi);
@@ -82,6 +83,20 @@ fn cli_accepts_native_sidecar_only_flags() {
 #[test]
 fn cli_accepts_debug_flag() {
     let cli = Cli::try_parse_from(["agentbox", "--debug"]).expect("--debug should parse");
+    assert!(cli.debug);
+}
+
+#[test]
+fn cli_accepts_profile_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--profile"]).expect("--profile should parse");
+    assert!(cli.profile);
+}
+
+#[test]
+fn cli_accepts_profile_with_debug_flag() {
+    let cli = Cli::try_parse_from(["agentbox", "--profile", "--debug"])
+        .expect("--profile --debug should parse");
+    assert!(cli.profile);
     assert!(cli.debug);
 }
 

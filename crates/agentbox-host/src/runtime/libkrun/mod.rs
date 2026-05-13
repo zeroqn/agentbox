@@ -69,6 +69,8 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             ram_mib,
             cpu_count,
             tsi: cli.tsi,
+            guest_profile: cli.profile,
+            guest_debug: cli.debug,
             debug_entrypoint: debug_entrypoint.as_ref(),
             debug_guest_init: debug_guest_init.as_ref(),
         })?,
@@ -190,6 +192,8 @@ mod task {
     pub(crate) const LIBKRUN_CPUS_ANNOTATION_PREFIX: &str = "krun.cpus=";
     pub(crate) const LIBKRUN_TSI_PROXY_ENV: &str = "no_proxy=1";
     pub(crate) const LIBKRUN_TUN_DEVICE: &str = "/dev/net/tun:/dev/net/tun";
+    pub(crate) const GUEST_PROFILE_ENV: &str = "AGENTBOX_GUEST_PROFILE=1";
+    pub(crate) const GUEST_DEBUG_ENV: &str = "AGENTBOX_GUEST_DEBUG=1";
 
     pub(crate) struct LibkrunTaskPodmanSpec<'a> {
         pub(crate) image: &'a str,
@@ -206,6 +210,8 @@ mod task {
         pub(crate) ram_mib: u32,
         pub(crate) cpu_count: Option<u32>,
         pub(crate) tsi: bool,
+        pub(crate) guest_profile: bool,
+        pub(crate) guest_debug: bool,
         pub(crate) debug_entrypoint: Option<&'a DebugEntrypointMount>,
         pub(crate) debug_guest_init: Option<&'a DebugGuestInitMount>,
     }
@@ -297,6 +303,16 @@ mod task {
             args.push(LIBKRUN_USE_PASST_ENV.to_owned());
             args.push("--annotation".to_owned());
             args.push(LIBKRUN_USE_PASST_ANNOTATION.to_owned());
+        }
+
+        if spec.guest_profile {
+            args.push("--env".to_owned());
+            args.push(GUEST_PROFILE_ENV.to_owned());
+        }
+
+        if spec.guest_debug {
+            args.push("--env".to_owned());
+            args.push(GUEST_DEBUG_ENV.to_owned());
         }
 
         if let Some(debug_entrypoint) = spec.debug_entrypoint {
@@ -485,6 +501,36 @@ mod task {
             )));
         }
 
+        #[test]
+        fn libkrun_task_args_include_guest_profile_and_debug_env_when_requested() {
+            let disk = raw_disk();
+            let container_disk = raw_container_disk();
+            let args = build_args_with_guest_diagnostics(&disk, &container_disk, true, true);
+
+            assert!(args.contains(&GUEST_PROFILE_ENV.to_owned()));
+            assert!(args.contains(&GUEST_DEBUG_ENV.to_owned()));
+        }
+
+        #[test]
+        fn libkrun_task_args_omit_guest_profile_and_debug_env_by_default() {
+            let disk = raw_disk();
+            let container_disk = raw_container_disk();
+            let args = build_args(&disk, &container_disk);
+
+            assert!(!args.contains(&GUEST_PROFILE_ENV.to_owned()));
+            assert!(!args.contains(&GUEST_DEBUG_ENV.to_owned()));
+        }
+
+        #[test]
+        fn libkrun_task_args_can_pass_guest_debug_without_profile() {
+            let disk = raw_disk();
+            let container_disk = raw_container_disk();
+            let args = build_args_with_guest_diagnostics(&disk, &container_disk, false, true);
+
+            assert!(!args.contains(&GUEST_PROFILE_ENV.to_owned()));
+            assert!(args.contains(&GUEST_DEBUG_ENV.to_owned()));
+        }
+
         fn raw_disk() -> RawNixDisk {
             RawNixDisk {
                 path: PathBuf::from("/tmp/state/agentbox/project/libkrun-nix.raw"),
@@ -580,6 +626,46 @@ mod task {
             debug_entrypoint: Option<&DebugEntrypointMount>,
             debug_guest_init: Option<&DebugGuestInitMount>,
         ) -> Vec<String> {
+            build_args_with_full_options(
+                raw_nix_disk,
+                raw_container_disk,
+                tsi,
+                cpu_count,
+                false,
+                false,
+                debug_entrypoint,
+                debug_guest_init,
+            )
+        }
+
+        fn build_args_with_guest_diagnostics(
+            raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
+            guest_profile: bool,
+            guest_debug: bool,
+        ) -> Vec<String> {
+            build_args_with_full_options(
+                raw_nix_disk,
+                raw_container_disk,
+                false,
+                Some(16),
+                guest_profile,
+                guest_debug,
+                None,
+                None,
+            )
+        }
+
+        fn build_args_with_full_options(
+            raw_nix_disk: &RawNixDisk,
+            raw_container_disk: &RawContainerDisk,
+            tsi: bool,
+            cpu_count: Option<u32>,
+            guest_profile: bool,
+            guest_debug: bool,
+            debug_entrypoint: Option<&DebugEntrypointMount>,
+            debug_guest_init: Option<&DebugGuestInitMount>,
+        ) -> Vec<String> {
             build_libkrun_task_podman_args(LibkrunTaskPodmanSpec {
                 image: crate::DEFAULT_IMAGE,
                 container_name: "project-random",
@@ -595,6 +681,8 @@ mod task {
                 ram_mib: 8192,
                 cpu_count,
                 tsi,
+                guest_profile,
+                guest_debug,
                 debug_entrypoint,
                 debug_guest_init,
             })

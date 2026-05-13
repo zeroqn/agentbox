@@ -79,6 +79,8 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             cargo_mount: &cargo_mount,
             sccache_mount: &sccache_mount,
             nix_runtime: &nix_runtime,
+            guest_profile: cli.profile,
+            guest_debug: cli.debug,
         })?,
         Stdio::inherit(),
         Stdio::inherit(),

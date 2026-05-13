@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::guest_init::cli::{ContainerCommand, ContainerSubcommand, EnterCommand};
 use crate::guest_init::components::env::DEV_USER;
 use crate::guest_init::components::home::identity::DevIdentity;
-use crate::guest_init::{command, fs as guest_fs, process};
+use crate::guest_init::{command, fs as guest_fs, process, profile};
 
 const NSS_WRAPPER_LIB_ENV: &str = "AGENTBOX_NSS_WRAPPER_LIB";
 const HOST_UID_ENV: &str = "AGENTBOX_HOST_UID";
@@ -21,10 +21,13 @@ const LIBKRUN_CONTAINERS_STORAGE_ENV: &str = "AGENTBOX_LIBKRUN_CONTAINERS_STORAG
 pub(in crate::guest_init) enum ContainerEnterOperation {
     ResolveCommand,
     DispatchLibkrunIfRequested,
+    StartProfilerAfterLibkrunDispatch,
     DeriveIdentity,
     ExportShellEnvironment,
     MaterializeNssWrapper,
     MaterializeHomeConfig,
+    ClearProfileEnvBeforeExec,
+    ReportProfileBeforeExec,
     DropAndExec,
 }
 
@@ -33,10 +36,13 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<ContainerEnterOpe
     vec![
         ContainerEnterOperation::ResolveCommand,
         ContainerEnterOperation::DispatchLibkrunIfRequested,
+        ContainerEnterOperation::StartProfilerAfterLibkrunDispatch,
         ContainerEnterOperation::DeriveIdentity,
         ContainerEnterOperation::ExportShellEnvironment,
         ContainerEnterOperation::MaterializeNssWrapper,
         ContainerEnterOperation::MaterializeHomeConfig,
+        ContainerEnterOperation::ClearProfileEnvBeforeExec,
+        ContainerEnterOperation::ReportProfileBeforeExec,
         ContainerEnterOperation::DropAndExec,
     ]
 }
@@ -66,32 +72,52 @@ fn enter(command: EnterCommand) -> Result<()> {
         return process::exec_command(&libkrun_dispatch_argv(&command)?);
     }
 
-    let identity_plan = derive_identity_plan(&command, ProcessIds::current(), &ProcessEnv)?;
-    let shell_env = normal_shell_environment(&identity_plan.identity);
-    export_vars(&shell_env);
-    let nss_plan = build_nss_wrapper_plan(
-        Path::new("/etc/passwd"),
-        Path::new("/etc/group"),
-        &identity_plan.identity,
-        &ProcessEnv.var("LD_PRELOAD").unwrap_or_default(),
-        ProcessEnv.var(NSS_WRAPPER_LIB_ENV).as_deref(),
-    )?;
-    let nss_dir = materialize_nss_wrapper(&nss_plan, identity_plan.drop_to_dev)?;
-    export_vars(&[
-        (
-            "NSS_WRAPPER_PASSWD".to_owned(),
-            nss_dir.join("passwd").display().to_string(),
-        ),
-        (
-            "NSS_WRAPPER_GROUP".to_owned(),
-            nss_dir.join("group").display().to_string(),
-        ),
-        ("LD_PRELOAD".to_owned(), nss_plan.ld_preload),
-    ]);
-    materialize_home_config(&identity_plan.identity, identity_plan.drop_to_dev)?;
+    let mut profiler = profile::GuestProfiler::from_process_env("container enter");
+    let identity_plan = profiler.measure_result("derive-identity", || {
+        derive_identity_plan(&command, ProcessIds::current(), &ProcessEnv)
+    })?;
+    let shell_env = profiler.measure("derive-shell-env", || {
+        normal_shell_environment(&identity_plan.identity)
+    });
+    profiler.measure("export-shell-env", || export_vars(&shell_env));
+    let nss_plan = profiler.measure_result("build-nss-wrapper", || {
+        build_nss_wrapper_plan(
+            Path::new("/etc/passwd"),
+            Path::new("/etc/group"),
+            &identity_plan.identity,
+            &ProcessEnv.var("LD_PRELOAD").unwrap_or_default(),
+            ProcessEnv.var(NSS_WRAPPER_LIB_ENV).as_deref(),
+        )
+    })?;
+    let nss_dir = profiler.measure_result("materialize-nss-wrapper", || {
+        materialize_nss_wrapper(&nss_plan, identity_plan.drop_to_dev)
+    })?;
+    profiler.measure("export-nss-wrapper-env", || {
+        export_vars(&[
+            (
+                "NSS_WRAPPER_PASSWD".to_owned(),
+                nss_dir.join("passwd").display().to_string(),
+            ),
+            (
+                "NSS_WRAPPER_GROUP".to_owned(),
+                nss_dir.join("group").display().to_string(),
+            ),
+            ("LD_PRELOAD".to_owned(), nss_plan.ld_preload),
+        ]);
+    });
+    profiler.measure_result("materialize-home-config", || {
+        materialize_home_config(&identity_plan.identity, identity_plan.drop_to_dev)
+    })?;
 
     if identity_plan.drop_to_dev {
-        materialize_dev_identity_files(&nss_dir)?;
+        profiler.measure_result("materialize-dev-identity", || {
+            materialize_dev_identity_files(&nss_dir)
+        })?;
+    }
+
+    profile::clear_guest_profile_env();
+    profiler.report_before_exec()?;
+    if identity_plan.drop_to_dev {
         process::drop_to_identity_and_exec(&identity_plan.identity, &command)
     } else {
         process::exec_command(&command)
