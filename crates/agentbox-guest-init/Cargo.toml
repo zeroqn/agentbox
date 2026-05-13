@@ -1,0 +1,16 @@
+[package]
+name = "agentbox-guest-init"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "agentbox-guest-init"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

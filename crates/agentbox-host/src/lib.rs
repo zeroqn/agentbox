@@ -7,7 +7,6 @@ use std::process::{self, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cli;
-mod guest_init;
 mod mounts;
 mod podman;
 mod runtime;
@@ -51,16 +50,6 @@ pub fn entrypoint() -> ExitCode {
         Ok(code) => code,
         Err(err) => {
             eprintln!("agentbox: {err:#}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-pub fn guest_init_entrypoint() -> ExitCode {
-    match guest_init::entrypoint() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("agentbox-guest-init: {err:#}");
             ExitCode::from(1)
         }
     }

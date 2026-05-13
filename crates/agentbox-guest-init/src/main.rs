@@ -1,5 +1,5 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    agentbox::guest_init_entrypoint()
+    agentbox_guest_init::entrypoint()
 }

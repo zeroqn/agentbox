@@ -114,7 +114,7 @@ nix build .#container
 Show CLI help:
 
 ```bash
-nix develop --command cargo run -- --help
+nix develop --command cargo run -p agentbox-host -- --help
 ```
 
 Build image + binary, then run the default libkrun mode:

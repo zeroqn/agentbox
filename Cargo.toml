@@ -1,14 +1,20 @@
-[package]
-name = "agentbox"
+[workspace]
+members = [
+  "crates/agentbox-host",
+  "crates/agentbox-guest-init",
+]
+default-members = [
+  "crates/agentbox-host",
+  "crates/agentbox-guest-init",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive", "env"] }
 libc = "0.2"
-
-[dev-dependencies]
 tempfile = "3.23.0"

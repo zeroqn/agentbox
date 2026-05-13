@@ -43,10 +43,10 @@ fn task_container_name_falls_back_when_directory_name_has_no_slug_chars() {
     );
 }
 
-const ENTRYPOINT: &str = include_str!("../nix/image/entrypoint.nix");
-const LAYERS: &str = include_str!("../nix/image/layers.nix");
-const CONTAINER_NIX: &str = include_str!("../nix/image/container.nix");
-const AGENTBOX_RUST_NIX: &str = include_str!("../nix/pkgs/agentbox-rust.nix");
+const ENTRYPOINT: &str = include_str!("../../../nix/image/entrypoint.nix");
+const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
+const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
+const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
 
 #[test]
 fn image_entrypoint_remains_agentbox_entrypoint_for_normal_container_mode() {

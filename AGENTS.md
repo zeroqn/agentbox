@@ -11,17 +11,22 @@ It also supports an optional host-side `fuse-overlayfs` mount rooted under
 
 ## Repository Layout
 
-- `src/main.rs`: CLI parsing, Podman argument construction, overlay mount setup,
-  mount inspection, cleanup, and unit tests.
-- `flake.nix`: development shell, Rust package, and container image definition.
+- `crates/agentbox-host/`: host-side `agentbox` CLI, Podman/libkrun runtime
+  orchestration, mount/state handling, and host-side unit tests.
+- `crates/agentbox-guest-init/`: in-guest `agentbox-guest-init` bootstrap
+  binary, root/user setup, guest Podman preparation, status files, and tests.
+- `flake.nix`: development shell, Rust packages, and container image definition.
 - `README.md`: user-facing build, run, and overlay usage documentation.
-- `Cargo.toml` / `Cargo.lock`: Rust package metadata and dependency lockfile.
+- `Cargo.toml` / `Cargo.lock`: Rust workspace metadata and dependency lockfile.
 
 ## Working Style
 
-- Keep changes narrow and consistent with the existing single-binary structure.
-- Prefer extending the unit tests in `src/main.rs` when changing CLI behavior or
-  mount argument construction.
+- Keep changes narrow and consistent with the host/guest crate ownership split.
+- Prefer extending host tests under `crates/agentbox-host/src/` when changing
+  CLI, runtime, Podman, mount, or state behavior.
+- Prefer extending guest tests under `crates/agentbox-guest-init/src/` when
+  changing in-guest bootstrap, root/user setup, guest Podman prep, or status
+  behavior.
 - Update `README.md` whenever user-visible behavior, requirements, or run
   commands change.
 - Preserve any existing user changes in the worktree. Do not revert unrelated
