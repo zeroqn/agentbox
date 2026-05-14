@@ -170,7 +170,9 @@ but suppresses the report; `--debug` without `--profile` does not print a timing
 report. Libkrun background Podman prep/wait workers and sidecar-only runs do
 not emit guest-init profile reports. `--profile --debug` cannot be combined
 with `--libkrun-debug-entrypoint` because that debug path bypasses
-`agentbox-guest-init`.
+`agentbox-guest-init`. When libkrun `/nix` overlay bootstrap runs, nested
+`bootstrap-nix:*` rows break down disk discovery, mount/preseed work, daemon
+startup, and the `bootstrap-nix:wait-socket` polling loop.
 
 Task containers, including libkrun-backed tasks, are named with the current
 repo/workspace slug followed by a unique suffix. For example, a checkout named

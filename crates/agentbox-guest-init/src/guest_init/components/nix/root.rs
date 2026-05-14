@@ -4,9 +4,23 @@ use std::time::Duration;
 
 use crate::guest_init::command;
 use crate::guest_init::components::env::LibkrunEnv;
+use crate::guest_init::profile::ProfileRecorder;
 use crate::guest_init::{fs, process};
 
 pub(in crate::guest_init) const SOCKET_PATH: &str = "/nix/var/nix/daemon-socket/socket";
+
+const PROFILE_REQUIRE_TOOLS: &str = "bootstrap-nix:require-tools";
+const PROFILE_FIND_DISK: &str = "bootstrap-nix:find-disk";
+const PROFILE_PREPARE_RUN_DIRS: &str = "bootstrap-nix:prepare-run-dirs";
+const PROFILE_BIND_LOWER: &str = "bootstrap-nix:bind-lower";
+const PROFILE_REMOUNT_LOWER_READONLY: &str = "bootstrap-nix:remount-lower-readonly";
+const PROFILE_MOUNT_DISK: &str = "bootstrap-nix:mount-disk";
+const PROFILE_RESIZE_DISK: &str = "bootstrap-nix:resize-disk";
+const PROFILE_PRESEED_UPPER: &str = "bootstrap-nix:preseed-upper";
+const PROFILE_MOUNT_OVERLAY: &str = "bootstrap-nix:mount-overlay";
+const PROFILE_CREATE_SOCKET_DIR: &str = "bootstrap-nix:create-socket-dir";
+const PROFILE_START_DAEMON: &str = "bootstrap-nix:start-daemon";
+const PROFILE_WAIT_SOCKET: &str = "bootstrap-nix:wait-socket";
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,83 +51,137 @@ pub(in crate::guest_init) fn planned_operations() -> Vec<NixOperation> {
     ]
 }
 
-pub(in crate::guest_init) fn bootstrap(env_contract: &LibkrunEnv) -> Result<()> {
+#[cfg(test)]
+pub(in crate::guest_init) fn planned_profile_labels() -> Vec<&'static str> {
+    vec![
+        PROFILE_REQUIRE_TOOLS,
+        PROFILE_FIND_DISK,
+        PROFILE_PREPARE_RUN_DIRS,
+        PROFILE_BIND_LOWER,
+        PROFILE_REMOUNT_LOWER_READONLY,
+        PROFILE_MOUNT_DISK,
+        PROFILE_RESIZE_DISK,
+        PROFILE_PRESEED_UPPER,
+        PROFILE_MOUNT_OVERLAY,
+        PROFILE_CREATE_SOCKET_DIR,
+        PROFILE_START_DAEMON,
+        PROFILE_WAIT_SOCKET,
+    ]
+}
+
+pub(in crate::guest_init) fn bootstrap(
+    env_contract: &LibkrunEnv,
+    profiler: &mut impl ProfileRecorder,
+) -> Result<()> {
     if !env_contract.nix_overlay {
         return Ok(());
     }
     if !process::is_root() {
         bail!("libkrun /nix overlay bootstrap must run as root");
     }
-    for tool in ["blkid", "mount", "findmnt", "btrfs", "nix-daemon"] {
-        command::require_on_path(tool)?;
-    }
+    profiler.measure_result(PROFILE_REQUIRE_TOOLS, || {
+        for tool in ["blkid", "mount", "findmnt", "btrfs", "nix-daemon"] {
+            command::require_on_path(tool)?;
+        }
+        Ok(())
+    })?;
 
-    let disk = crate::guest_init::components::disk::nix::find_disk(
-        &env_contract.nix_disk_label,
-        &env_contract.nix_disk_id,
-    )?;
+    let disk = profiler.measure_result(PROFILE_FIND_DISK, || {
+        crate::guest_init::components::disk::nix::find_disk(
+            &env_contract.nix_disk_label,
+            &env_contract.nix_disk_id,
+        )
+    })?;
     let run_dir = Path::new("/run/agentbox");
     let disk_mount = run_dir.join("nix-disk");
     let lower_dir = run_dir.join("nix-lower");
     let upper_dir = disk_mount.join("upper");
     let work_dir = disk_mount.join("work");
 
-    fs::create_dir_all(run_dir)?;
-    fs::create_dir_all(&disk_mount)?;
-    fs::create_dir_all(&lower_dir)?;
+    profiler.measure_result(PROFILE_PREPARE_RUN_DIRS, || {
+        fs::create_dir_all(run_dir)?;
+        fs::create_dir_all(&disk_mount)?;
+        fs::create_dir_all(&lower_dir)?;
+        Ok(())
+    })?;
 
-    if !findmnt(&lower_dir)? {
+    let lower_was_bound = profiler.measure_result(PROFILE_BIND_LOWER, || {
+        if findmnt(&lower_dir)? {
+            return Ok(false);
+        }
         command::run("mount", &["--bind", "/nix", path_str(&lower_dir)?])
             .context("failed to preserve image /nix lowerdir")?;
+        Ok(true)
+    })?;
+    profiler.measure_result(PROFILE_REMOUNT_LOWER_READONLY, || {
+        if !lower_was_bound {
+            return Ok(());
+        }
         command::run("mount", &["-o", "remount,bind,ro", path_str(&lower_dir)?])
             .context("failed to make image /nix lowerdir read-only")?;
-    }
+        Ok(())
+    })?;
 
-    if !findmnt(&disk_mount)? {
-        command::run(
-            "mount",
-            &["-t", "btrfs", path_str(&disk)?, path_str(&disk_mount)?],
-        )
-        .context("failed to mount libkrun /nix btrfs disk")?;
-    }
+    profiler.measure_result(PROFILE_MOUNT_DISK, || {
+        if !findmnt(&disk_mount)? {
+            command::run(
+                "mount",
+                &["-t", "btrfs", path_str(&disk)?, path_str(&disk_mount)?],
+            )
+            .context("failed to mount libkrun /nix btrfs disk")?;
+        }
+        Ok(())
+    })?;
 
-    if let Err(err) = command::run(
-        "btrfs",
-        &["filesystem", "resize", "max", path_str(&disk_mount)?],
-    ) {
-        eprintln!(
+    profiler.measure_result(PROFILE_RESIZE_DISK, || {
+        if let Err(err) = command::run(
+            "btrfs",
+            &["filesystem", "resize", "max", path_str(&disk_mount)?],
+        ) {
+            eprintln!(
             "agentbox-guest-init: warning: btrfs resize max failed for '{}': {err:#}; continuing with existing filesystem size",
             disk_mount.display()
         );
-    }
+        }
+        Ok(())
+    })?;
 
-    preseed_upper(&lower_dir, &upper_dir, &work_dir)?;
+    profiler.measure_result(PROFILE_PRESEED_UPPER, || {
+        preseed_upper(&lower_dir, &upper_dir, &work_dir)
+    })?;
     let options = format!(
         "lowerdir={},upperdir={},workdir={}",
         lower_dir.display(),
         upper_dir.display(),
         work_dir.display()
     );
-    command::run(
-        "mount",
-        &["-t", "overlay", "overlay", "-o", &options, "/nix"],
-    )
-    .context("failed to mount libkrun overlay at /nix")?;
+    profiler.measure_result(PROFILE_MOUNT_OVERLAY, || {
+        command::run(
+            "mount",
+            &["-t", "overlay", "overlay", "-o", &options, "/nix"],
+        )
+        .context("failed to mount libkrun overlay at /nix")
+    })?;
 
-    fs::create_dir_all(Path::new("/nix/var/nix/daemon-socket"))?;
-    let mut child = command::spawn_background("nix-daemon", &["--daemon"])
-        .context("failed to start nix-daemon")?;
-    for _ in 0..100 {
-        if Path::new(SOCKET_PATH).exists() {
-            std::env::set_var("NIX_REMOTE", format!("unix://{SOCKET_PATH}"));
-            return Ok(());
+    profiler.measure_result(PROFILE_CREATE_SOCKET_DIR, || {
+        fs::create_dir_all(Path::new("/nix/var/nix/daemon-socket"))
+    })?;
+    let mut child = profiler.measure_result(PROFILE_START_DAEMON, || {
+        command::spawn_background("nix-daemon", &["--daemon"]).context("failed to start nix-daemon")
+    })?;
+    profiler.measure_result(PROFILE_WAIT_SOCKET, || {
+        for _ in 0..100 {
+            if Path::new(SOCKET_PATH).exists() {
+                std::env::set_var("NIX_REMOTE", format!("unix://{SOCKET_PATH}"));
+                return Ok(());
+            }
+            if let Some(status) = child.try_wait()? {
+                bail!("nix-daemon exited before creating '{SOCKET_PATH}' with status {status}");
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
-        if let Some(status) = child.try_wait()? {
-            bail!("nix-daemon exited before creating '{SOCKET_PATH}' with status {status}");
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    bail!("nix-daemon did not create '{SOCKET_PATH}' before timeout")
+        bail!("nix-daemon did not create '{SOCKET_PATH}' before timeout")
+    })
 }
 
 fn preseed_upper(lower_dir: &Path, upper_dir: &Path, work_dir: &Path) -> Result<()> {

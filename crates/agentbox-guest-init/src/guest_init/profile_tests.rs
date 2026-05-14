@@ -79,6 +79,72 @@ fn enabled_profiler_records_successful_and_failed_measurements() {
 }
 
 #[test]
+fn nested_measurement_records_outer_before_inner_rows() {
+    let mut profiler = GuestProfiler::new(
+        "libkrun enter",
+        ProfileConfig {
+            enabled: true,
+            debug: true,
+        },
+    );
+
+    profiler
+        .measure_result_with_profiler("bootstrap-nix", |profiler| {
+            profiler.measure_result("bootstrap-nix:find-disk", || Ok(()))?;
+            profiler.measure_result("bootstrap-nix:wait-socket", || Ok(()))?;
+            Ok(())
+        })
+        .expect("nested measurement should succeed");
+
+    assert_eq!(profiler.records.len(), 3);
+    assert_eq!(profiler.records[0].label, "bootstrap-nix");
+    assert_eq!(profiler.records[1].label, "bootstrap-nix:find-disk");
+    assert_eq!(profiler.records[2].label, "bootstrap-nix:wait-socket");
+}
+
+#[test]
+fn failed_nested_measurement_records_outer_and_inner_rows() {
+    let mut profiler = GuestProfiler::new(
+        "libkrun enter",
+        ProfileConfig {
+            enabled: true,
+            debug: true,
+        },
+    );
+
+    let err = profiler
+        .measure_result_with_profiler::<()>("bootstrap-nix", |profiler| {
+            profiler.measure_result("bootstrap-nix:wait-socket", || anyhow::bail!("timeout"))?;
+            Ok(())
+        })
+        .expect_err("nested failure should be returned");
+
+    assert_eq!(err.to_string(), "timeout");
+    assert_eq!(profiler.records.len(), 2);
+    assert_eq!(profiler.records[0].label, "bootstrap-nix");
+    assert_eq!(profiler.records[1].label, "bootstrap-nix:wait-socket");
+}
+
+#[test]
+fn disabled_nested_measurement_does_not_record_outer_or_inner_rows() {
+    let mut profiler = GuestProfiler::new(
+        "libkrun enter",
+        ProfileConfig {
+            enabled: false,
+            debug: true,
+        },
+    );
+
+    profiler
+        .measure_result_with_profiler("bootstrap-nix", |profiler| {
+            profiler.measure_result("bootstrap-nix:wait-socket", || Ok(()))
+        })
+        .expect("disabled nested measurement should still run");
+
+    assert!(profiler.records.is_empty());
+}
+
+#[test]
 fn report_format_is_stable_and_uses_milliseconds() {
     let profiler = GuestProfiler {
         config: ProfileConfig {

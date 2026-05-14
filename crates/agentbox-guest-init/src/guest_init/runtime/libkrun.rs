@@ -92,8 +92,8 @@ fn enter(command: Vec<String>) -> Result<()> {
         }
         Ok(())
     })?;
-    profiler.measure_result("bootstrap-nix", || {
-        crate::guest_init::components::nix::root::bootstrap(&env_contract)
+    profiler.measure_result_with_profiler("bootstrap-nix", |profiler| {
+        crate::guest_init::components::nix::root::bootstrap(&env_contract, profiler)
     })?;
     profiler.measure_result("start-podman-prep", || {
         crate::guest_init::components::podman::root::start_background_prep(&identity, &env_contract)

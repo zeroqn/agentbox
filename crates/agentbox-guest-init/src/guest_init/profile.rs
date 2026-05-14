@@ -25,6 +25,12 @@ pub(in crate::guest_init) struct GuestProfiler {
     records: Vec<ProfileRecord>,
 }
 
+pub(in crate::guest_init) trait ProfileRecorder {
+    fn measure_result<T, F>(&mut self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>;
+}
+
 trait EnvSource {
     fn var(&self, name: &str) -> Option<String>;
 }
@@ -100,6 +106,28 @@ impl GuestProfiler {
         result
     }
 
+    pub(in crate::guest_init) fn measure_result_with_profiler<T>(
+        &mut self,
+        label: &'static str,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        if !self.config.enabled {
+            return f(self);
+        }
+
+        let insertion_index = self.records.len();
+        let started_at = Instant::now();
+        let result = f(self);
+        self.records.insert(
+            insertion_index,
+            ProfileRecord {
+                label,
+                duration: started_at.elapsed(),
+            },
+        );
+        result
+    }
+
     pub(in crate::guest_init) fn report_before_exec(&self) -> Result<()> {
         let stderr = io::stderr();
         let mut writer = stderr.lock();
@@ -123,6 +151,15 @@ impl GuestProfiler {
         }
         writeln!(writer, "  total: {}", format_duration(total))?;
         writer.flush()
+    }
+}
+
+impl ProfileRecorder for GuestProfiler {
+    fn measure_result<T, F>(&mut self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        GuestProfiler::measure_result(self, label, f)
     }
 }
 
