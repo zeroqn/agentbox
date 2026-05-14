@@ -117,7 +117,7 @@ pub(in crate::guest_init) fn run_prep(
     if !process::is_root() {
         bail!("libkrun container storage bootstrap must run as root");
     }
-    for tool in ["blkid", "mount", "findmnt", "btrfs", "podman"] {
+    for tool in ["blkid", "mount", "findmnt", "podman"] {
         command::require_on_path(tool)?;
     }
     let tool_paths = PodmanToolPaths::discover()?;

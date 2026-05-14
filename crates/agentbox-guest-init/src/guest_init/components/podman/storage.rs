@@ -34,12 +34,6 @@ pub(in crate::guest_init) fn bootstrap(
         )
         .context("failed to mount libkrun container storage btrfs disk")?;
     }
-    if let Err(err) = command::run("btrfs", &["filesystem", "resize", "max", path_str(mount)?]) {
-        eprintln!(
-            "agentbox-guest-init: warning: btrfs resize max failed for '{}': {err:#}; continuing with existing container storage filesystem size",
-            mount.display()
-        );
-    }
 
     for path in [
         mount,
@@ -83,3 +77,7 @@ fn path_str(path: &Path) -> Result<&str> {
     path.to_str()
         .ok_or_else(|| anyhow!("path is not valid UTF-8: {}", path.display()))
 }
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;

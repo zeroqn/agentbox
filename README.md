@@ -384,20 +384,16 @@ used an existing path such as `--pull-latest` that pulls it before inspection.
 Existing raw images are reused only if `blkid` reports btrfs. Agentbox refuses
 to overwrite invalid existing images.
 
-Manual resize flow for v1:
+Restart-time btrfs auto-grow is not performed. Extending
+`libkrun-nix.raw` or `libkrun-containers.raw` with `truncate` changes the
+apparent raw device size, but agentbox no longer runs
+`btrfs filesystem resize max` during guest initialization. A future explicit
+`agentbox` resize command is expected to own that workflow; it is not
+implemented yet.
 
-```bash
-# Stop any running libkrun VM first.
-truncate -s 128G <state-root>/libkrun-nix.raw
-truncate -s 128G <state-root>/libkrun-containers.raw
-./result/bin/agentbox
-```
-
-Resize only the disk that needs more space. On restart, the guest entrypoint
-attempts `btrfs filesystem resize max` on each mounted data disk so the
-filesystem consumes the larger apparent image size. No live auto-resize, state
-migration/reset UX, snapshot/rollback UX, host-port helper UX, rootful nested
-Podman workflow, or native-mode nested-Podman support is implemented.
+No live auto-resize, state migration/reset UX, snapshot/rollback UX, host-port
+helper UX, rootful nested Podman workflow, or native-mode nested-Podman support
+is implemented.
 
 Manual host smoke checklist for the nested rootless Podman feature:
 

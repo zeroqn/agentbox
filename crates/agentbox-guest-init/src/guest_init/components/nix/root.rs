@@ -15,7 +15,6 @@ const PROFILE_PREPARE_RUN_DIRS: &str = "bootstrap-nix:prepare-run-dirs";
 const PROFILE_BIND_LOWER: &str = "bootstrap-nix:bind-lower";
 const PROFILE_REMOUNT_LOWER_READONLY: &str = "bootstrap-nix:remount-lower-readonly";
 const PROFILE_MOUNT_DISK: &str = "bootstrap-nix:mount-disk";
-const PROFILE_RESIZE_DISK: &str = "bootstrap-nix:resize-disk";
 const PROFILE_PRESEED_UPPER: &str = "bootstrap-nix:preseed-upper";
 const PROFILE_MOUNT_OVERLAY: &str = "bootstrap-nix:mount-overlay";
 const PROFILE_CREATE_SOCKET_DIR: &str = "bootstrap-nix:create-socket-dir";
@@ -29,7 +28,6 @@ pub(in crate::guest_init) enum NixOperation {
     BindLower,
     RemountLowerReadOnly,
     MountDisk,
-    ResizeDisk,
     PreseedUpper,
     MountOverlay,
     StartDaemon,
@@ -43,7 +41,6 @@ pub(in crate::guest_init) fn planned_operations() -> Vec<NixOperation> {
         NixOperation::BindLower,
         NixOperation::RemountLowerReadOnly,
         NixOperation::MountDisk,
-        NixOperation::ResizeDisk,
         NixOperation::PreseedUpper,
         NixOperation::MountOverlay,
         NixOperation::StartDaemon,
@@ -60,7 +57,6 @@ pub(in crate::guest_init) fn planned_profile_labels() -> Vec<&'static str> {
         PROFILE_BIND_LOWER,
         PROFILE_REMOUNT_LOWER_READONLY,
         PROFILE_MOUNT_DISK,
-        PROFILE_RESIZE_DISK,
         PROFILE_PRESEED_UPPER,
         PROFILE_MOUNT_OVERLAY,
         PROFILE_CREATE_SOCKET_DIR,
@@ -80,7 +76,7 @@ pub(in crate::guest_init) fn bootstrap(
         bail!("libkrun /nix overlay bootstrap must run as root");
     }
     profiler.measure_result(PROFILE_REQUIRE_TOOLS, || {
-        for tool in ["blkid", "mount", "findmnt", "btrfs", "nix-daemon"] {
+        for tool in ["blkid", "mount", "findmnt", "nix-daemon"] {
             command::require_on_path(tool)?;
         }
         Ok(())
@@ -129,19 +125,6 @@ pub(in crate::guest_init) fn bootstrap(
                 &["-t", "btrfs", path_str(&disk)?, path_str(&disk_mount)?],
             )
             .context("failed to mount libkrun /nix btrfs disk")?;
-        }
-        Ok(())
-    })?;
-
-    profiler.measure_result(PROFILE_RESIZE_DISK, || {
-        if let Err(err) = command::run(
-            "btrfs",
-            &["filesystem", "resize", "max", path_str(&disk_mount)?],
-        ) {
-            eprintln!(
-            "agentbox-guest-init: warning: btrfs resize max failed for '{}': {err:#}; continuing with existing filesystem size",
-            disk_mount.display()
-        );
         }
         Ok(())
     })?;
