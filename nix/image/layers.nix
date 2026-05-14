@@ -27,6 +27,15 @@ let
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
+    if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
+      export NIX_REMOTE="''${NIX_REMOTE:-unix:///nix/var/nix/daemon-socket/socket}"
+      agentbox_nix_ready_marker="/tmp/agentbox-nix-daemon-ready-$(${pkgs.coreutils}/bin/id -u)"
+      if [ ! -e "$agentbox_nix_ready_marker" ]; then
+        ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun nix wait
+        ${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" >/dev/null
+        : > "$agentbox_nix_ready_marker"
+      fi
+    fi
     exec ${pkgs.nix}/bin/nix "$@"
   '';
   podmanCommandCompat = pkgs.writeShellScriptBin "podman" ''

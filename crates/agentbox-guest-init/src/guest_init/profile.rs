@@ -106,6 +106,7 @@ impl GuestProfiler {
         result
     }
 
+    #[cfg(test)]
     pub(in crate::guest_init) fn measure_result_with_profiler<T>(
         &mut self,
         label: &'static str,

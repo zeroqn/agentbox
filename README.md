@@ -260,10 +260,37 @@ container startup.
 For libkrun runs, `agentbox-guest-init` performs the root-required shell prerequisites before the
 privilege drop: it writes real `/etc/passwd` and `/etc/group` entries for the
 dynamic host UID/GID, creates/chowns `/home/dev` and the XDG home directories,
-normalizes passt DNS when `krun.use_passt=1`, mounts the persistent `/nix`
-overlay, starts `nix-daemon`, and waits for
-`/nix/var/nix/daemon-socket/socket`. Those `/nix` steps remain blocking because
-Nix-backed tools must not race shell startup.
+normalizes passt DNS when `krun.use_passt=1`, then starts persistent `/nix`
+overlay prep and rootless Podman prep in the background before running the
+shell as `dev`. The `/nix` prep no longer waits for daemon socket connectivity
+on the foreground shell path.
+
+Nix overlay setup is lazy. Before dropping to `dev`, the Rust initializer
+spawns root-required `/nix` prep in the background and records progress in:
+
+```text
+/run/agentbox/nix-prep.status
+/run/agentbox/nix-prep.log
+```
+
+The background prep finds and mounts the `/nix` btrfs disk, prepares the
+disk-backed overlay upper/work directories, mounts the kernel overlay at
+`/nix`, creates `/nix/var/nix/daemon-socket`, starts `nix-daemon`, and then
+marks status `ready`. `ready` means prep completed and the daemon process was
+spawned; it does not mean the daemon socket is connectable yet.
+
+The image `nix` command is a compatibility wrapper. In libkrun `/nix` overlay
+mode it first runs `agentbox-guest-init libkrun nix wait`, which waits for
+background prep to become `ready` and verifies that
+`/nix/var/nix/daemon-socket/socket` is a Unix socket. On the first `nix`
+invocation, the wrapper then checks daemon connectivity with the packaged real
+Nix binary via `nix store info --store "$NIX_REMOTE"`, records a per-guest
+marker, and execs the packaged Nix binary. Later wrapper invocations skip that
+connectivity probe. If prep reaches terminal `failed`, the wrapper reports the
+stored error with the status/log paths and does not silently restart prep; start
+a fresh agentbox session or inspect `/run/agentbox/nix-prep.log` and
+`/run/agentbox/nix-prep.status` for recovery. PATH-resolved `nix` is gated by
+this wrapper; absolute calls to the packaged real Nix binary can bypass it.
 
 Rootless Podman setup is lazy. Before dropping to `dev`, the Rust initializer
 spawns root-required Podman prep in the background and records progress in:
@@ -320,11 +347,11 @@ directories. During upperdir bootstrap, agentbox copies the image
 preseed marker; later VM entries skip that copy and only repair the required
 upperdir layout and permissions. Agentbox makes the overlaid `/nix/store`
 directory owned by the `nixbld` group; the store directory mode is `1775`, while
-store entries inherited from the image may remain `root:root`. After the overlay
-is active, it starts an in-guest `nix-daemon`, exports
-`NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
-privilege drop, starts lazy Podman prep, then runs the shell as the host
-UID/GID. The libkrun task also uses
+store entries inherited from the image may remain `root:root`. Overlay setup now
+runs in the background, and the shell environment exports
+`NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket` before the foreground shell
+starts. First PATH-resolved `nix` use waits for the prep status/socket and
+performs the daemon connectivity check described above. The libkrun task also uses
 `--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the host
 user while the entrypoint still starts as root for `/run/agentbox` creation and
 root-only bootstrap. The libkrun task passes the host `/dev/net/tun` through to

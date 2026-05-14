@@ -1,9 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::guest_init::cli::{LibkrunCommand, LibkrunSubcommand, PodmanSubcommand};
+use crate::guest_init::cli::{LibkrunCommand, LibkrunSubcommand, NixSubcommand, PodmanSubcommand};
 use crate::guest_init::components;
-use crate::guest_init::components::env::{LibkrunEnv, DEFAULT_SHELL};
+use crate::guest_init::components::env::{LibkrunEnv, DEFAULT_SHELL, NIX_REMOTE_URI};
 use crate::guest_init::components::home::identity::{validate_host_identity, DevIdentity};
 use crate::guest_init::{command, process, profile};
 
@@ -16,9 +16,9 @@ pub(in crate::guest_init) enum LibkrunEnterOperation {
     ExportShellEnvironment,
     MaterializeHome,
     FixPasstDns,
-    BootstrapNix,
+    StartNixPrep,
     StartPodmanPrep,
-    CheckNixSocket,
+    ExportNixRemote,
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
     DropAndExec,
@@ -33,9 +33,9 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LibkrunEnterOpera
         LibkrunEnterOperation::ExportShellEnvironment,
         LibkrunEnterOperation::MaterializeHome,
         LibkrunEnterOperation::FixPasstDns,
-        LibkrunEnterOperation::BootstrapNix,
+        LibkrunEnterOperation::StartNixPrep,
         LibkrunEnterOperation::StartPodmanPrep,
-        LibkrunEnterOperation::CheckNixSocket,
+        LibkrunEnterOperation::ExportNixRemote,
         LibkrunEnterOperation::ClearProfileEnvBeforeExec,
         LibkrunEnterOperation::ReportProfileBeforeExec,
         LibkrunEnterOperation::DropAndExec,
@@ -50,6 +50,10 @@ pub(in crate::guest_init) fn subcommand_starts_profiler(command: &LibkrunSubcomm
 pub(in crate::guest_init) fn run(command: LibkrunCommand) -> Result<()> {
     match command.command {
         LibkrunSubcommand::Enter(enter_command) => enter(enter_command.resolved_command()),
+        LibkrunSubcommand::Nix(nix) => match nix.command {
+            NixSubcommand::Prep => components::nix::root::run_prep_to_status(),
+            NixSubcommand::Wait => components::nix::user::wait_for_prep(),
+        },
         LibkrunSubcommand::Podman(podman) => match podman.command {
             PodmanSubcommand::Prep => components::podman::root::run_prep_to_status(),
             PodmanSubcommand::Wait => components::podman::user::wait_for_prep(),
@@ -92,19 +96,17 @@ fn enter(command: Vec<String>) -> Result<()> {
         }
         Ok(())
     })?;
-    profiler.measure_result_with_profiler("bootstrap-nix", |profiler| {
-        crate::guest_init::components::nix::root::bootstrap(&env_contract, profiler)
+    profiler.measure_result("start-nix-prep", || {
+        crate::guest_init::components::nix::root::start_background_prep(&env_contract)
     })?;
     profiler.measure_result("start-podman-prep", || {
         crate::guest_init::components::podman::root::start_background_prep(&identity, &env_contract)
     })?;
-
-    profiler.measure_result("check-nix-socket", || {
+    profiler.measure("export-nix-remote", || {
         if env_contract.nix_overlay {
-            ensure_nix_socket_visible()?;
+            std::env::set_var("NIX_REMOTE", NIX_REMOTE_URI);
         }
-        Ok(())
-    })?;
+    });
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
@@ -122,17 +124,6 @@ fn resolve_shell(command: &[String]) -> PathBuf {
     } else {
         command::find_on_path(shell).unwrap_or_else(|| PathBuf::from(shell))
     }
-}
-
-fn ensure_nix_socket_visible() -> Result<()> {
-    let nix_remote = std::env::var("NIX_REMOTE").unwrap_or_default();
-    let Some(socket_path) = nix_remote.strip_prefix("unix://") else {
-        bail!("libkrun in-guest nix-daemon socket is not configured in NIX_REMOTE");
-    };
-    if !Path::new(socket_path).exists() {
-        bail!("libkrun in-guest nix-daemon socket is not accessible before dropping privileges: {socket_path}");
-    }
-    Ok(())
 }
 
 #[cfg(test)]

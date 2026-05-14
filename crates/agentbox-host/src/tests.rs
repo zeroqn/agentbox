@@ -138,6 +138,64 @@ fn podman_wrapper_waits_only_for_libkrun_container_storage() {
 }
 
 #[test]
+fn nix_wrapper_waits_and_probes_only_for_libkrun_nix_overlay() {
+    assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then"#));
+    assert!(LAYERS.contains(
+        r#"export NIX_REMOTE="''${NIX_REMOTE:-unix:///nix/var/nix/daemon-socket/socket}""#
+    ));
+    assert!(LAYERS.contains("agentbox-guest-init libkrun nix wait"));
+    assert!(LAYERS.contains(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#));
+    assert!(LAYERS.contains("agentbox_nix_ready_marker"));
+
+    let gate = LAYERS
+        .find("AGENTBOX_LIBKRUN_NIX_OVERLAY")
+        .expect("libkrun nix overlay gate should exist");
+    let wait = LAYERS
+        .find("agentbox-guest-init libkrun nix wait")
+        .expect("nix wait should exist");
+    let probe = LAYERS
+        .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#)
+        .expect("real nix connectivity probe should exist");
+    let exec = LAYERS
+        .find(r#"exec ${pkgs.nix}/bin/nix "$@""#)
+        .expect("real nix exec should exist");
+    assert!(gate < wait);
+    assert!(wait < probe);
+    assert!(probe < exec);
+}
+
+#[test]
+fn nix_wrapper_uses_real_nix_path_for_probe_and_exec() {
+    for required in [
+        "nixCommandCompat",
+        "pkgs.writeShellScriptBin \"nix\"",
+        "unset LD_PRELOAD",
+        "unset NSS_WRAPPER_PASSWD",
+        "unset NSS_WRAPPER_GROUP",
+        r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#,
+        r#"exec ${pkgs.nix}/bin/nix "$@""#,
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn nix_wrapper_uses_marker_to_probe_connectivity_once_per_guest() {
+    let marker = LAYERS
+        .find("agentbox_nix_ready_marker")
+        .expect("nix ready marker should exist");
+    let probe = LAYERS
+        .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#)
+        .expect("real nix connectivity probe should exist");
+    let marker_write = LAYERS
+        .find(r#": > "$agentbox_nix_ready_marker""#)
+        .expect("marker write should exist");
+
+    assert!(marker < probe);
+    assert!(probe < marker_write);
+}
+
+#[test]
 fn podman_wrapper_unsets_compat_env_before_execing_real_podman() {
     for required in [
         "podmanCommandCompat",

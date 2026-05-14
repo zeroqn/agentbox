@@ -22,6 +22,7 @@ pub(in crate::guest_init) struct LibkrunCommand {
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum LibkrunSubcommand {
     Enter(EnterCommand),
+    Nix(NixCommand),
     Podman(PodmanCommand),
 }
 
@@ -50,6 +51,18 @@ pub(in crate::guest_init) struct PodmanCommand {
 
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum PodmanSubcommand {
+    Prep,
+    Wait,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+pub(in crate::guest_init) struct NixCommand {
+    #[command(subcommand)]
+    pub(in crate::guest_init) command: NixSubcommand,
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub(in crate::guest_init) enum NixSubcommand {
     Prep,
     Wait,
 }

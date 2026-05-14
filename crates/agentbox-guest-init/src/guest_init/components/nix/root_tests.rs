@@ -9,27 +9,28 @@ use crate::guest_init::components::nix::root::{
 };
 
 #[test]
-fn nix_bootstrap_operation_order_keeps_nix_blocking() {
+fn nix_prep_operation_order_marks_ready_without_socket_wait() {
     let ops = planned_operations();
     let pos = |op| ops.iter().position(|candidate| candidate == &op).unwrap();
     assert_eq!(
         ops,
         vec![
+            NixOperation::WriteRunningStatus,
             NixOperation::FindDisk,
             NixOperation::MountDisk,
             NixOperation::PreseedUpper,
             NixOperation::MountOverlay,
             NixOperation::StartDaemon,
-            NixOperation::WaitSocket,
+            NixOperation::WriteReadyStatus,
         ]
     );
     assert!(pos(NixOperation::MountDisk) < pos(NixOperation::PreseedUpper));
     assert!(pos(NixOperation::PreseedUpper) < pos(NixOperation::MountOverlay));
-    assert!(pos(NixOperation::StartDaemon) < pos(NixOperation::WaitSocket));
+    assert!(pos(NixOperation::StartDaemon) < pos(NixOperation::WriteReadyStatus));
 }
 
 #[test]
-fn nix_bootstrap_profile_labels_track_blocking_substeps() {
+fn nix_prep_profile_labels_stop_after_daemon_spawn() {
     let labels = planned_profile_labels();
     let pos = |label| {
         labels
@@ -41,22 +42,21 @@ fn nix_bootstrap_profile_labels_track_blocking_substeps() {
     assert_eq!(
         labels,
         vec![
-            "bootstrap-nix:require-tools",
-            "bootstrap-nix:find-disk",
-            "bootstrap-nix:prepare-run-dirs",
-            "bootstrap-nix:mount-disk",
-            "bootstrap-nix:preseed-upper",
-            "bootstrap-nix:mount-overlay",
-            "bootstrap-nix:create-socket-dir",
-            "bootstrap-nix:start-daemon",
-            "bootstrap-nix:wait-socket",
+            "nix-prep:require-tools",
+            "nix-prep:find-disk",
+            "nix-prep:prepare-run-dirs",
+            "nix-prep:mount-disk",
+            "nix-prep:preseed-upper",
+            "nix-prep:mount-overlay",
+            "nix-prep:create-socket-dir",
+            "nix-prep:start-daemon",
         ]
     );
-    assert_eq!(labels.first(), Some(&"bootstrap-nix:require-tools"));
-    assert!(pos("bootstrap-nix:mount-disk") < pos("bootstrap-nix:preseed-upper"));
-    assert!(pos("bootstrap-nix:preseed-upper") < pos("bootstrap-nix:mount-overlay"));
-    assert!(pos("bootstrap-nix:start-daemon") < pos("bootstrap-nix:wait-socket"));
-    assert!(labels.contains(&"bootstrap-nix:wait-socket"));
+    assert_eq!(labels.first(), Some(&"nix-prep:require-tools"));
+    assert!(pos("nix-prep:mount-disk") < pos("nix-prep:preseed-upper"));
+    assert!(pos("nix-prep:preseed-upper") < pos("nix-prep:mount-overlay"));
+    assert_eq!(labels.last(), Some(&"nix-prep:start-daemon"));
+    assert!(!labels.iter().any(|label| label.contains("wait-socket")));
 }
 
 #[test]

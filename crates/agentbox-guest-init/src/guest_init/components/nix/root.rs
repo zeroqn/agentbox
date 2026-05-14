@@ -1,23 +1,27 @@
 use anyhow::{anyhow, bail, Context, Result};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use crate::guest_init::command;
-use crate::guest_init::components::env::LibkrunEnv;
+use crate::guest_init::components::env::{LibkrunEnv, NIX_LOG_PATH, NIX_STATUS_PATH, RUN_DIR};
+use crate::guest_init::components::nix::status::{self, NixPrepState, NixPrepStatus};
 use crate::guest_init::profile::ProfileRecorder;
 use crate::guest_init::{fs, process};
 
-pub(in crate::guest_init) const SOCKET_PATH: &str = "/nix/var/nix/daemon-socket/socket";
+const WAIT_FOR_STATUS_ENV: &str = "AGENTBOX_NIX_PREP_WAIT_FOR_STATUS";
 
-const PROFILE_REQUIRE_TOOLS: &str = "bootstrap-nix:require-tools";
-const PROFILE_FIND_DISK: &str = "bootstrap-nix:find-disk";
-const PROFILE_PREPARE_RUN_DIRS: &str = "bootstrap-nix:prepare-run-dirs";
-const PROFILE_MOUNT_DISK: &str = "bootstrap-nix:mount-disk";
-const PROFILE_PRESEED_UPPER: &str = "bootstrap-nix:preseed-upper";
-const PROFILE_MOUNT_OVERLAY: &str = "bootstrap-nix:mount-overlay";
-const PROFILE_CREATE_SOCKET_DIR: &str = "bootstrap-nix:create-socket-dir";
-const PROFILE_START_DAEMON: &str = "bootstrap-nix:start-daemon";
-const PROFILE_WAIT_SOCKET: &str = "bootstrap-nix:wait-socket";
+const PROFILE_REQUIRE_TOOLS: &str = "nix-prep:require-tools";
+const PROFILE_FIND_DISK: &str = "nix-prep:find-disk";
+const PROFILE_PREPARE_RUN_DIRS: &str = "nix-prep:prepare-run-dirs";
+const PROFILE_MOUNT_DISK: &str = "nix-prep:mount-disk";
+const PROFILE_PRESEED_UPPER: &str = "nix-prep:preseed-upper";
+const PROFILE_MOUNT_OVERLAY: &str = "nix-prep:mount-overlay";
+const PROFILE_CREATE_SOCKET_DIR: &str = "nix-prep:create-socket-dir";
+const PROFILE_START_DAEMON: &str = "nix-prep:start-daemon";
 
 const PRESEED_COMPLETION_SENTINEL: &str = ".agentbox-nix-preseeded";
 const PRESEED_ATTEMPT_MARKER: &str = ".agentbox-nix-preseed-attempted";
@@ -25,23 +29,25 @@ const PRESEED_ATTEMPT_MARKER: &str = ".agentbox-nix-preseed-attempted";
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) enum NixOperation {
+    WriteRunningStatus,
     FindDisk,
     MountDisk,
     PreseedUpper,
     MountOverlay,
     StartDaemon,
-    WaitSocket,
+    WriteReadyStatus,
 }
 
 #[cfg(test)]
 pub(in crate::guest_init) fn planned_operations() -> Vec<NixOperation> {
     vec![
+        NixOperation::WriteRunningStatus,
         NixOperation::FindDisk,
         NixOperation::MountDisk,
         NixOperation::PreseedUpper,
         NixOperation::MountOverlay,
         NixOperation::StartDaemon,
-        NixOperation::WaitSocket,
+        NixOperation::WriteReadyStatus,
     ]
 }
 
@@ -56,11 +62,79 @@ pub(in crate::guest_init) fn planned_profile_labels() -> Vec<&'static str> {
         PROFILE_MOUNT_OVERLAY,
         PROFILE_CREATE_SOCKET_DIR,
         PROFILE_START_DAEMON,
-        PROFILE_WAIT_SOCKET,
     ]
 }
 
-pub(in crate::guest_init) fn bootstrap(
+pub(in crate::guest_init) fn start_background_prep(env_contract: &LibkrunEnv) -> Result<()> {
+    if !env_contract.nix_overlay {
+        return Ok(());
+    }
+    if !process::is_root() {
+        bail!("libkrun /nix overlay prep must start as root");
+    }
+
+    let status_path = PathBuf::from(NIX_STATUS_PATH);
+    let current = status::read_status(&status_path)?;
+    if matches!(current.state, NixPrepState::Ready | NixPrepState::Failed) {
+        return Ok(());
+    }
+
+    fs::create_dir_all(Path::new(RUN_DIR))?;
+    let log_path = PathBuf::from(NIX_LOG_PATH);
+    let current_exe = std::env::current_exe().context("failed to resolve guest-init executable")?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("failed to open {}", log_path.display()))?;
+    let log_err = log.try_clone()?;
+    let child = unsafe {
+        Command::new(current_exe)
+            .args(["libkrun", "nix", "prep"])
+            .env(WAIT_FOR_STATUS_ENV, "1")
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(log_err))
+            .pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            })
+            .spawn()
+    }
+    .context("failed to spawn libkrun /nix overlay prep worker")?;
+    let running = NixPrepStatus::running(child.id(), log_path);
+    status::write_running_unless_terminal(&status_path, &running).map(|_| ())
+}
+
+pub(in crate::guest_init) fn run_prep_to_status() -> Result<()> {
+    let env_contract = LibkrunEnv::from_process_env()?;
+    if !env_contract.nix_overlay {
+        return Ok(());
+    }
+    let status_path = PathBuf::from(NIX_STATUS_PATH);
+    let log_path = PathBuf::from(NIX_LOG_PATH);
+    let pid = std::process::id();
+    if std::env::var(WAIT_FOR_STATUS_ENV).as_deref() == Ok("1") {
+        wait_for_parent_running_status(&status_path, pid)?;
+    } else {
+        let running = NixPrepStatus::running(pid, log_path);
+        if !status::write_running_unless_terminal(&status_path, &running)? {
+            return Ok(());
+        }
+    }
+
+    let mut profiler =
+        crate::guest_init::profile::GuestProfiler::from_process_env("libkrun nix prep");
+    match run_prep(&env_contract, &mut profiler) {
+        Ok(()) => status::mark_ready_for_pid(&status_path, pid),
+        Err(err) => {
+            let message = format!("{err:#}");
+            let _ = append_log(&message);
+            status::mark_failed_for_pid(&status_path, pid, message)
+        }
+    }
+}
+
+pub(in crate::guest_init) fn run_prep(
     env_contract: &LibkrunEnv,
     profiler: &mut impl ProfileRecorder,
 ) -> Result<()> {
@@ -68,7 +142,7 @@ pub(in crate::guest_init) fn bootstrap(
         return Ok(());
     }
     if !process::is_root() {
-        bail!("libkrun /nix overlay bootstrap must run as root");
+        bail!("libkrun /nix overlay prep must run as root");
     }
     profiler.measure_result(PROFILE_REQUIRE_TOOLS, || {
         for tool in ["blkid", "mount", "findmnt", "nix-daemon"] {
@@ -107,7 +181,7 @@ pub(in crate::guest_init) fn bootstrap(
     })?;
 
     profiler.measure_result(PROFILE_PRESEED_UPPER, || {
-        preseed_upper(&lower_dir, &upper_dir, &work_dir)
+        preseed_upper(lower_dir, &upper_dir, &work_dir)
     })?;
     let options = format!(
         "lowerdir={},upperdir={},workdir={}",
@@ -126,22 +200,33 @@ pub(in crate::guest_init) fn bootstrap(
     profiler.measure_result(PROFILE_CREATE_SOCKET_DIR, || {
         fs::create_dir_all(Path::new("/nix/var/nix/daemon-socket"))
     })?;
-    let mut child = profiler.measure_result(PROFILE_START_DAEMON, || {
+    let _child = profiler.measure_result(PROFILE_START_DAEMON, || {
         command::spawn_background("nix-daemon", &["--daemon"]).context("failed to start nix-daemon")
     })?;
-    profiler.measure_result(PROFILE_WAIT_SOCKET, || {
-        for _ in 0..100 {
-            if Path::new(SOCKET_PATH).exists() {
-                std::env::set_var("NIX_REMOTE", format!("unix://{SOCKET_PATH}"));
-                return Ok(());
-            }
-            if let Some(status) = child.try_wait()? {
-                bail!("nix-daemon exited before creating '{SOCKET_PATH}' with status {status}");
-            }
-            std::thread::sleep(Duration::from_millis(100));
+    Ok(())
+}
+
+fn wait_for_parent_running_status(status_path: &Path, pid: u32) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let current = status::read_status(status_path)?;
+        if current.state == NixPrepState::Running && current.pid == Some(pid) {
+            return Ok(());
         }
-        bail!("nix-daemon did not create '{SOCKET_PATH}' before timeout")
-    })
+        if std::time::Instant::now() >= deadline {
+            bail!("timed out waiting for parent to publish nix prep running status for pid {pid}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn append_log(message: &str) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(NIX_LOG_PATH)?;
+    writeln!(file, "{message}")?;
+    Ok(())
 }
 
 fn preseed_upper(lower_dir: &Path, upper_dir: &Path, work_dir: &Path) -> Result<()> {

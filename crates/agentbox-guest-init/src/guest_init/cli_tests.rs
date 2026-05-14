@@ -1,7 +1,8 @@
 use clap::Parser;
 
 use crate::guest_init::cli::{
-    ContainerSubcommand, GuestInitCli, LibkrunSubcommand, PodmanSubcommand, RuntimeCommand,
+    ContainerSubcommand, GuestInitCli, LibkrunSubcommand, NixSubcommand, PodmanSubcommand,
+    RuntimeCommand,
 };
 
 #[test]
@@ -53,6 +54,21 @@ fn parses_libkrun_podman_prep_and_wait() {
             panic!("expected podman command");
         };
         assert_eq!(podman.command, expected);
+    }
+}
+
+#[test]
+fn parses_libkrun_nix_prep_and_wait() {
+    for (arg, expected) in [("prep", NixSubcommand::Prep), ("wait", NixSubcommand::Wait)] {
+        let cli =
+            GuestInitCli::try_parse_from(["agentbox-guest-init", "libkrun", "nix", arg]).unwrap();
+        let RuntimeCommand::Libkrun(libkrun) = cli.runtime else {
+            panic!("expected libkrun command");
+        };
+        let LibkrunSubcommand::Nix(nix) = libkrun.command else {
+            panic!("expected nix command");
+        };
+        assert_eq!(nix.command, expected);
     }
 }
 
