@@ -1,33 +1,24 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RunArgSource {
-    Core,
-    UserIdentity,
-    WorkspaceVolume,
-    CodexVolume,
-    CargoVolume,
-    SccacheVolume,
-    SidecarNix,
-    GuestDiagnostics,
-    LibkrunOci,
-    LibkrunMemory,
-    LibkrunCpu,
-    LibkrunNixDisk,
-    LibkrunContainersDisk,
-    LibkrunNetwork,
-    LibkrunHostIdentity,
-    LibkrunDebug,
+pub(crate) struct RunArgOwner(&'static str);
+
+impl RunArgOwner {
+    pub(crate) const fn new(name: &'static str) -> Self {
+        Self(name)
+    }
 }
+
+pub(crate) const CORE: RunArgOwner = RunArgOwner::new("podman.core");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunArgs {
     args: Vec<String>,
-    sources: Vec<RunArgSource>,
+    owners: Vec<RunArgOwner>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct RunSpec {
     args: Vec<String>,
-    sources: Vec<RunArgSource>,
+    owners: Vec<RunArgOwner>,
 }
 
 impl RunSpec {
@@ -35,35 +26,35 @@ impl RunSpec {
         Self::default()
     }
 
-    pub(crate) fn arg(&mut self, source: RunArgSource, arg: impl Into<String>) {
+    pub(crate) fn arg(&mut self, owner: RunArgOwner, arg: impl Into<String>) {
         self.args.push(arg.into());
-        self.sources.push(source);
+        self.owners.push(owner);
     }
 
-    pub(crate) fn args<I, S>(&mut self, source: RunArgSource, args: I)
+    pub(crate) fn args<I, S>(&mut self, owner: RunArgOwner, args: I)
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
         for arg in args {
-            self.arg(source, arg);
+            self.arg(owner, arg);
         }
     }
 
     pub(crate) fn option(
         &mut self,
-        source: RunArgSource,
+        owner: RunArgOwner,
         flag: impl Into<String>,
         value: impl Into<String>,
     ) {
-        self.arg(source, flag);
-        self.arg(source, value);
+        self.arg(owner, flag);
+        self.arg(owner, value);
     }
 
     pub(crate) fn render(self) -> RunArgs {
         RunArgs {
             args: self.args,
-            sources: self.sources,
+            owners: self.owners,
         }
     }
 }
@@ -79,48 +70,38 @@ impl RunArgs {
     }
 
     #[cfg(test)]
-    pub(crate) fn contains_arg_from(&self, source: RunArgSource, arg: &str) -> bool {
+    pub(crate) fn contains_arg_from(&self, owner: RunArgOwner, arg: &str) -> bool {
         self.args
             .iter()
-            .zip(self.sources.iter())
-            .any(|(candidate, candidate_source)| candidate == arg && *candidate_source == source)
+            .zip(self.owners.iter())
+            .any(|(candidate, candidate_owner)| candidate == arg && *candidate_owner == owner)
     }
 
     #[cfg(test)]
-    pub(crate) fn contains_option_from(
-        &self,
-        source: RunArgSource,
-        flag: &str,
-        value: &str,
-    ) -> bool {
+    pub(crate) fn contains_option_from(&self, owner: RunArgOwner, flag: &str, value: &str) -> bool {
         self.args
             .windows(2)
-            .zip(self.sources.windows(2))
-            .any(|(args, sources)| {
-                args[0] == flag && args[1] == value && sources[0] == source && sources[1] == source
+            .zip(self.owners.windows(2))
+            .any(|(args, owners)| {
+                args[0] == flag && args[1] == value && owners[0] == owner && owners[1] == owner
             })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::podman::run::{RunArgSource, RunSpec};
+    use crate::podman::run::{RunArgOwner, RunSpec, CORE};
+
+    const TEST_COMPONENT_A_OWNER: RunArgOwner = RunArgOwner::new("test.component_a");
+    const TEST_COMPONENT_B_OWNER: RunArgOwner = RunArgOwner::new("test.component_b");
 
     #[test]
-    fn renderer_preserves_order_and_source_for_values() {
+    fn renderer_preserves_order_and_owner_for_values() {
         let mut spec = RunSpec::new();
-        spec.arg(RunArgSource::Core, "run");
-        spec.option(RunArgSource::Core, "--name", "agentbox");
-        spec.option(
-            RunArgSource::WorkspaceVolume,
-            "--volume",
-            "/repo:/workspace",
-        );
-        spec.option(
-            RunArgSource::GuestDiagnostics,
-            "--env",
-            "AGENTBOX_GUEST_DEBUG=1",
-        );
+        spec.arg(CORE, "run");
+        spec.option(CORE, "--name", "agentbox");
+        spec.option(TEST_COMPONENT_A_OWNER, "--component-a", "alpha");
+        spec.option(TEST_COMPONENT_B_OWNER, "--component-b", "beta");
 
         let rendered = spec.render();
 
@@ -130,23 +111,15 @@ mod tests {
                 "run",
                 "--name",
                 "agentbox",
-                "--volume",
-                "/repo:/workspace",
-                "--env",
-                "AGENTBOX_GUEST_DEBUG=1"
+                "--component-a",
+                "alpha",
+                "--component-b",
+                "beta"
             ]
         );
-        assert!(rendered.contains_arg_from(RunArgSource::Core, "run"));
-        assert!(rendered.contains_option_from(RunArgSource::Core, "--name", "agentbox"));
-        assert!(rendered.contains_option_from(
-            RunArgSource::WorkspaceVolume,
-            "--volume",
-            "/repo:/workspace"
-        ));
-        assert!(rendered.contains_option_from(
-            RunArgSource::GuestDiagnostics,
-            "--env",
-            "AGENTBOX_GUEST_DEBUG=1"
-        ));
+        assert!(rendered.contains_arg_from(CORE, "run"));
+        assert!(rendered.contains_option_from(CORE, "--name", "agentbox"));
+        assert!(rendered.contains_option_from(TEST_COMPONENT_A_OWNER, "--component-a", "alpha"));
+        assert!(rendered.contains_option_from(TEST_COMPONENT_B_OWNER, "--component-b", "beta"));
     }
 }

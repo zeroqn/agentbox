@@ -1,4 +1,17 @@
 use anyhow::{anyhow, Context, Result};
+
+use crate::podman::run::{RunArgOwner, RunSpec};
+
+pub(crate) const MEMORY_OWNER: RunArgOwner = RunArgOwner::new("runtime.libkrun.memory");
+pub(crate) const LIBKRUN_RAM_MIB_ANNOTATION_PREFIX: &str = "krun.ram_mib=";
+
+pub(crate) fn append_ram_annotation(run: &mut RunSpec, ram_mib: u32) {
+    run.option(
+        MEMORY_OWNER,
+        "--annotation",
+        format!("{}{}", LIBKRUN_RAM_MIB_ANNOTATION_PREFIX, ram_mib),
+    );
+}
 use std::fs;
 
 const KIB: u64 = 1024;

@@ -1,4 +1,19 @@
 use anyhow::{Context, Result};
+
+use crate::podman::run::{RunArgOwner, RunSpec};
+
+pub(crate) const CPU_OWNER: RunArgOwner = RunArgOwner::new("runtime.libkrun.cpu");
+pub(crate) const LIBKRUN_CPUS_ANNOTATION_PREFIX: &str = "krun.cpus=";
+
+pub(crate) fn append_cpu_annotation(run: &mut RunSpec, cpu_count: Option<u32>) {
+    if let Some(cpu_count) = cpu_count {
+        run.option(
+            CPU_OWNER,
+            "--annotation",
+            format!("{}{}", LIBKRUN_CPUS_ANNOTATION_PREFIX, cpu_count),
+        );
+    }
+}
 use std::num::NonZero;
 
 const PASS_ALL_CPUS_THRESHOLD: u32 = 6;

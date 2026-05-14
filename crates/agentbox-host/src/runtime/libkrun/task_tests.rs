@@ -1,17 +1,26 @@
-use crate::podman::run::RunArgSource;
+use crate::runtime::components::diagnostics::{
+    GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
+};
+use crate::runtime::components::identity::USER_IDENTITY_OWNER;
+use crate::runtime::components::volumes::{SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER};
+use crate::runtime::libkrun::containers::podman::{
+    CONTAINERS_DISK_OWNER, LIBKRUN_CONTAINERS_STORAGE_ENV,
+};
 use crate::runtime::libkrun::containers::raw_image::{
     RawContainerDisk, RawContainerDiskStatus, RAW_CONTAINER_DISK_LABEL,
     RAW_CONTAINER_DISK_SIZE_BYTES,
 };
+use crate::runtime::libkrun::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
+use crate::runtime::libkrun::debug::DEBUG_OWNER;
+use crate::runtime::libkrun::host_identity::{HOST_IDENTITY_OWNER, LIBKRUN_KVM_DROP_TO_DEV_ENV};
+use crate::runtime::libkrun::memory::MEMORY_OWNER;
 use crate::runtime::libkrun::network;
+use crate::runtime::libkrun::nix::podman::{LIBKRUN_NIX_OVERLAY_ENV, NIX_DISK_OWNER};
 use crate::runtime::libkrun::nix::raw_image::{
     RawNixDisk, RawNixDiskStatus, RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
 };
-use crate::runtime::libkrun::task::{
-    build_libkrun_task_podman_args, build_libkrun_task_run_args, GUEST_DEBUG_ENV,
-    GUEST_PROFILE_ENV, LIBKRUN_CONTAINERS_STORAGE_ENV, LIBKRUN_CPUS_ANNOTATION_PREFIX,
-    LIBKRUN_HANDLER_ANNOTATION, LIBKRUN_KVM_DROP_TO_DEV_ENV, LIBKRUN_NIX_OVERLAY_ENV,
-};
+use crate::runtime::libkrun::oci::{LIBKRUN_HANDLER_ANNOTATION, OCI_OWNER};
+use crate::runtime::libkrun::task::{build_libkrun_task_podman_args, build_libkrun_task_run_args};
 use crate::runtime::libkrun::{DebugEntrypointMount, DebugGuestInitMount};
 use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, INTERACTIVE_SHELL};
 use std::path::PathBuf;
@@ -144,78 +153,67 @@ fn libkrun_task_args_include_krun_disk_annotations_and_guest_overlay_env() {
 }
 
 #[test]
-fn libkrun_task_args_expose_component_source_ownership() {
+fn libkrun_task_args_expose_component_owner_ownership() {
     let disk = raw_disk();
     let container_disk = raw_container_disk();
     let args = build_run_args(&disk, &container_disk);
 
-    assert!(args.contains_option_from(RunArgSource::LibkrunOci, "--runtime", "crun"));
+    assert!(args.contains_option_from(USER_IDENTITY_OWNER, "--userns", "keep-id"));
+    assert!(args.contains_option_from(OCI_OWNER, "--runtime", "crun"));
+    assert!(args.contains_option_from(OCI_OWNER, "--annotation", LIBKRUN_HANDLER_ANNOTATION));
+    assert!(args.contains_option_from(MEMORY_OWNER, "--annotation", "krun.ram_mib=8192"));
+    assert!(args.contains_option_from(CPU_OWNER, "--annotation", "krun.cpus=16"));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunOci,
-        "--annotation",
-        LIBKRUN_HANDLER_ANNOTATION
-    ));
-    assert!(args.contains_option_from(
-        RunArgSource::LibkrunMemory,
-        "--annotation",
-        "krun.ram_mib=8192"
-    ));
-    assert!(args.contains_option_from(RunArgSource::LibkrunCpu, "--annotation", "krun.cpus=16"));
-    assert!(args.contains_option_from(
-        RunArgSource::LibkrunNixDisk,
+        NIX_DISK_OWNER,
         "--annotation",
         "krun.disk.0.id=agentbox-nix"
     ));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunNixDisk,
+        NIX_DISK_OWNER,
         "--env",
         "AGENTBOX_LIBKRUN_NIX_DISK_ID=agentbox-nix"
     ));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunContainersDisk,
+        CONTAINERS_DISK_OWNER,
         "--annotation",
         "krun.disk.1.id=agentbox-containers"
     ));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunContainersDisk,
+        CONTAINERS_DISK_OWNER,
         "--env",
         "AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID=agentbox-containers"
     ));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunNetwork,
+        network::NETWORK_OWNER,
         "--device",
         network::LIBKRUN_TUN_DEVICE
     ));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunNetwork,
+        network::NETWORK_OWNER,
         "--env",
         network::LIBKRUN_USE_PASST_ENV
     ));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunNetwork,
+        network::NETWORK_OWNER,
         "--annotation",
         network::LIBKRUN_USE_PASST_ANNOTATION
     ));
-    assert!(args.contains_option_from(RunArgSource::LibkrunHostIdentity, "--user", "0:0"));
+    assert!(args.contains_option_from(HOST_IDENTITY_OWNER, "--user", "0:0"));
+    assert!(args.contains_option_from(HOST_IDENTITY_OWNER, "--env", "AGENTBOX_HOST_UID=1001"));
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunHostIdentity,
-        "--env",
-        "AGENTBOX_HOST_UID=1001"
-    ));
-    assert!(args.contains_option_from(
-        RunArgSource::WorkspaceVolume,
+        WORKSPACE_VOLUME_OWNER,
         "--volume",
         "/tmp/project:/workspace"
     ));
     assert!(args.contains_option_from(
-        RunArgSource::SccacheVolume,
+        SCCACHE_VOLUME_OWNER,
         "--env",
         &format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")
     ));
 }
 
 #[test]
-fn libkrun_debug_args_are_owned_by_debug_source() {
+fn libkrun_debug_args_are_owned_by_debug_owner() {
     let disk = raw_disk();
     let container_disk = raw_container_disk();
     let debug_entrypoint = debug_entrypoint();
@@ -231,25 +229,13 @@ fn libkrun_debug_args_are_owned_by_debug_source() {
         Some(&debug_guest_init),
     );
 
-    assert!(args.contains_option_from(
-        RunArgSource::LibkrunDebug,
-        "--volume",
-        &debug_entrypoint.mount_arg
-    ));
-    assert!(args.contains_option_from(
-        RunArgSource::LibkrunDebug,
-        "--entrypoint",
-        debug_entrypoint.target
-    ));
-    assert!(args.contains_option_from(
-        RunArgSource::LibkrunDebug,
-        "--volume",
-        &debug_guest_init.mount_arg
-    ));
+    assert!(args.contains_option_from(DEBUG_OWNER, "--volume", &debug_entrypoint.mount_arg));
+    assert!(args.contains_option_from(DEBUG_OWNER, "--entrypoint", debug_entrypoint.target));
+    assert!(args.contains_option_from(DEBUG_OWNER, "--volume", &debug_guest_init.mount_arg));
 }
 
 #[test]
-fn libkrun_tsi_proxy_env_is_owned_by_network_source() {
+fn libkrun_tsi_proxy_env_is_owned_by_network_owner() {
     let disk = raw_disk();
     let container_disk = raw_container_disk();
     let args = build_run_args_with_options(
@@ -264,12 +250,12 @@ fn libkrun_tsi_proxy_env_is_owned_by_network_source() {
     );
 
     assert!(args.contains_option_from(
-        RunArgSource::LibkrunNetwork,
+        network::NETWORK_OWNER,
         "--env",
         network::LIBKRUN_TSI_PROXY_ENV
     ));
     assert!(!args.contains_option_from(
-        RunArgSource::LibkrunNetwork,
+        network::NETWORK_OWNER,
         "--env",
         network::LIBKRUN_USE_PASST_ENV
     ));
@@ -290,8 +276,8 @@ fn libkrun_guest_diagnostics_are_owned_by_guest_diagnostics() {
         None,
     );
 
-    assert!(args.contains_option_from(RunArgSource::GuestDiagnostics, "--env", GUEST_PROFILE_ENV));
-    assert!(args.contains_option_from(RunArgSource::GuestDiagnostics, "--env", GUEST_DEBUG_ENV));
+    assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_PROFILE_ENV));
+    assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_DEBUG_ENV));
 }
 
 #[test]

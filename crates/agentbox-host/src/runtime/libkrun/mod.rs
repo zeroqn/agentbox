@@ -1,8 +1,11 @@
 pub(crate) mod containers;
 mod cpu;
+mod debug;
+mod host_identity;
 mod memory;
 mod network;
 pub(crate) mod nix;
+mod oci;
 mod raw_disk;
 mod task;
 #[cfg(test)]

@@ -1,13 +1,9 @@
 use anyhow::Result;
 
-use crate::mounts::format::format_mount_arg_with_options;
-use crate::podman::run::{RunArgSource, RunArgs, RunSpec};
-use crate::runtime::container::nix_sidecar::SidecarNixRuntime;
-use crate::{
-    CONTAINER_NIX_DIR, CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR,
-    INTERACTIVE_SHELL, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
-    TASK_CONTAINER_SIDECAR_LABEL,
-};
+use crate::podman::run::{RunArgs, RunSpec, CORE};
+use crate::runtime::components::{diagnostics, identity, volumes};
+use crate::runtime::container::nix_sidecar::{append_task_sidecar_nix_args, SidecarNixRuntime};
+use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
 pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) image: &'a str,
@@ -22,9 +18,6 @@ pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) guest_debug: bool,
 }
 
-pub(crate) const GUEST_PROFILE_ENV: &str = "AGENTBOX_GUEST_PROFILE=1";
-pub(crate) const GUEST_DEBUG_ENV: &str = "AGENTBOX_GUEST_DEBUG=1";
-
 pub(crate) fn build_container_task_podman_args(
     spec: ContainerTaskPodmanSpec<'_>,
 ) -> Result<Vec<String>> {
@@ -32,70 +25,39 @@ pub(crate) fn build_container_task_podman_args(
 }
 
 fn build_container_task_run_args(spec: ContainerTaskPodmanSpec<'_>) -> Result<RunArgs> {
-    let sidecar = spec.nix_runtime;
     let mut run = RunSpec::new();
 
-    run.args(RunArgSource::Core, ["run", "--rm", "-it"]);
-    run.option(RunArgSource::Core, "--name", spec.container_name);
-    run.option(RunArgSource::UserIdentity, "--userns", "keep-id");
-    run.option(RunArgSource::Core, "--workdir", CONTAINER_WORKDIR);
-    run.option(RunArgSource::Core, "--hostname", spec.hostname);
-    run.option(
-        RunArgSource::WorkspaceVolume,
-        "--volume",
-        spec.workspace_mount,
-    );
-    run.option(RunArgSource::CodexVolume, "--volume", spec.codex_mount);
-    run.option(RunArgSource::CargoVolume, "--volume", spec.cargo_mount);
-    run.option(RunArgSource::SccacheVolume, "--volume", spec.sccache_mount);
-    run.option(
-        RunArgSource::SccacheVolume,
-        "--env",
-        format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}"),
-    );
-    run.option(RunArgSource::Core, "--tmpfs", CONTAINER_TMP_TMPFS);
-    run.option(
-        RunArgSource::SidecarNix,
-        "--volume",
-        format_mount_arg_with_options(&sidecar.merged_dir, CONTAINER_NIX_DIR, Some("ro"))?,
-    );
-    run.option(
-        RunArgSource::SidecarNix,
-        "--env",
-        format!("NIX_REMOTE={NIX_REMOTE_SOCKET}"),
-    );
-    run.option(
-        RunArgSource::SidecarNix,
-        "--label",
-        format!("{TASK_CONTAINER_ROLE_LABEL}={TASK_CONTAINER_ROLE_VALUE}"),
-    );
-    run.option(
-        RunArgSource::SidecarNix,
-        "--label",
-        format!("{TASK_CONTAINER_SIDECAR_LABEL}={}", sidecar.sidecar_name),
-    );
-
-    if spec.guest_profile {
-        run.option(RunArgSource::GuestDiagnostics, "--env", GUEST_PROFILE_ENV);
-    }
-
-    if spec.guest_debug {
-        run.option(RunArgSource::GuestDiagnostics, "--env", GUEST_DEBUG_ENV);
-    }
-
-    run.arg(RunArgSource::Core, spec.image);
-    run.args(RunArgSource::Core, [INTERACTIVE_SHELL, "-l"]);
+    run.args(CORE, ["run", "--rm", "-it"]);
+    run.option(CORE, "--name", spec.container_name);
+    identity::append_userns_keep_id(&mut run);
+    run.option(CORE, "--workdir", CONTAINER_WORKDIR);
+    run.option(CORE, "--hostname", spec.hostname);
+    volumes::append_workspace(&mut run, spec.workspace_mount);
+    volumes::append_codex(&mut run, spec.codex_mount);
+    volumes::append_cargo(&mut run, spec.cargo_mount);
+    volumes::append_sccache(&mut run, spec.sccache_mount);
+    run.option(CORE, "--tmpfs", CONTAINER_TMP_TMPFS);
+    append_task_sidecar_nix_args(&mut run, spec.nix_runtime)?;
+    diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
+    run.arg(CORE, spec.image);
+    run.args(CORE, [INTERACTIVE_SHELL, "-l"]);
 
     Ok(run.render())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::podman::run::RunArgSource;
+    use crate::runtime::components::diagnostics::{
+        GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
+    };
+    use crate::runtime::components::identity::USER_IDENTITY_OWNER;
+    use crate::runtime::components::volumes::{
+        CARGO_VOLUME_OWNER, CODEX_VOLUME_OWNER, SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER,
+    };
+    use crate::runtime::container::nix_sidecar::SIDECAR_NIX_OWNER;
     use crate::runtime::container::nix_sidecar::{PodmanImageMountMode, SidecarNixRuntime};
     use crate::runtime::container::task::{
         build_container_task_podman_args, build_container_task_run_args, ContainerTaskPodmanSpec,
-        GUEST_DEBUG_ENV, GUEST_PROFILE_ENV,
     };
     use crate::{
         CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, INTERACTIVE_SHELL, NIX_REMOTE_SOCKET,
@@ -158,53 +120,53 @@ mod tests {
     }
 
     #[test]
-    fn container_task_args_expose_component_source_ownership() {
+    fn container_task_args_expose_component_owner_ownership() {
         let runtime = sidecar_runtime();
         let args = build_run_args(&runtime);
 
-        assert!(args.contains_option_from(RunArgSource::UserIdentity, "--userns", "keep-id"));
+        assert!(args.contains_option_from(USER_IDENTITY_OWNER, "--userns", "keep-id"));
         assert!(args.contains_option_from(
-            RunArgSource::WorkspaceVolume,
+            WORKSPACE_VOLUME_OWNER,
             "--volume",
             "/tmp/project:/workspace"
         ));
         assert!(args.contains_option_from(
-            RunArgSource::CodexVolume,
+            CODEX_VOLUME_OWNER,
             "--volume",
             "/home/alice/.codex:/home/dev/.codex"
         ));
         assert!(args.contains_option_from(
-            RunArgSource::CargoVolume,
+            CARGO_VOLUME_OWNER,
             "--volume",
             "/tmp/state/agentbox/project/cargo:/home/dev/.cargo"
         ));
         assert!(args.contains_option_from(
-            RunArgSource::SccacheVolume,
+            SCCACHE_VOLUME_OWNER,
             "--volume",
             "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache"
         ));
         assert!(args.contains_option_from(
-            RunArgSource::SccacheVolume,
+            SCCACHE_VOLUME_OWNER,
             "--env",
             &format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")
         ));
         assert!(args.contains_option_from(
-            RunArgSource::SidecarNix,
+            SIDECAR_NIX_OWNER,
             "--volume",
             "/tmp/state/agentbox/project/nix-merged:/nix:ro"
         ));
         assert!(args.contains_option_from(
-            RunArgSource::SidecarNix,
+            SIDECAR_NIX_OWNER,
             "--env",
             &format!("NIX_REMOTE={NIX_REMOTE_SOCKET}")
         ));
         assert!(args.contains_option_from(
-            RunArgSource::SidecarNix,
+            SIDECAR_NIX_OWNER,
             "--label",
             &format!("{TASK_CONTAINER_ROLE_LABEL}={TASK_CONTAINER_ROLE_VALUE}")
         ));
         assert!(args.contains_option_from(
-            RunArgSource::SidecarNix,
+            SIDECAR_NIX_OWNER,
             "--label",
             &format!("{TASK_CONTAINER_SIDECAR_LABEL}=agentbox-nix-sidecar-abc")
         ));
@@ -250,16 +212,8 @@ mod tests {
         })
         .expect("container task args should build");
 
-        assert!(args.contains_option_from(
-            RunArgSource::GuestDiagnostics,
-            "--env",
-            GUEST_PROFILE_ENV
-        ));
-        assert!(args.contains_option_from(
-            RunArgSource::GuestDiagnostics,
-            "--env",
-            GUEST_DEBUG_ENV
-        ));
+        assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_PROFILE_ENV));
+        assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_DEBUG_ENV));
     }
 
     fn sidecar_runtime() -> SidecarNixRuntime {
