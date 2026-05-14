@@ -10,8 +10,6 @@ fn nix_bootstrap_operation_order_keeps_nix_blocking() {
         ops,
         vec![
             NixOperation::FindDisk,
-            NixOperation::BindLower,
-            NixOperation::RemountLowerReadOnly,
             NixOperation::MountDisk,
             NixOperation::PreseedUpper,
             NixOperation::MountOverlay,
@@ -19,7 +17,6 @@ fn nix_bootstrap_operation_order_keeps_nix_blocking() {
             NixOperation::WaitSocket,
         ]
     );
-    assert!(pos(NixOperation::BindLower) < pos(NixOperation::MountOverlay));
     assert!(pos(NixOperation::MountDisk) < pos(NixOperation::PreseedUpper));
     assert!(pos(NixOperation::PreseedUpper) < pos(NixOperation::MountOverlay));
     assert!(pos(NixOperation::StartDaemon) < pos(NixOperation::WaitSocket));
@@ -41,8 +38,6 @@ fn nix_bootstrap_profile_labels_track_blocking_substeps() {
             "bootstrap-nix:require-tools",
             "bootstrap-nix:find-disk",
             "bootstrap-nix:prepare-run-dirs",
-            "bootstrap-nix:bind-lower",
-            "bootstrap-nix:remount-lower-readonly",
             "bootstrap-nix:mount-disk",
             "bootstrap-nix:preseed-upper",
             "bootstrap-nix:mount-overlay",
@@ -52,7 +47,6 @@ fn nix_bootstrap_profile_labels_track_blocking_substeps() {
         ]
     );
     assert_eq!(labels.first(), Some(&"bootstrap-nix:require-tools"));
-    assert!(pos("bootstrap-nix:bind-lower") < pos("bootstrap-nix:remount-lower-readonly"));
     assert!(pos("bootstrap-nix:mount-disk") < pos("bootstrap-nix:preseed-upper"));
     assert!(pos("bootstrap-nix:preseed-upper") < pos("bootstrap-nix:mount-overlay"));
     assert!(pos("bootstrap-nix:start-daemon") < pos("bootstrap-nix:wait-socket"));

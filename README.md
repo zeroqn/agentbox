@@ -313,9 +313,9 @@ distro-specific sysctl exists. First `podman` use fails clearly if the kernel
 does not expose user namespace support or refuses those writes.
 
 The Rust guest initializer finds the `/nix` btrfs disk by label (`AGENTBOX_NIX`),
-mounts it under `/run/agentbox/nix-disk`, bind-mounts the image-provided `/nix`
-as a read-only lowerdir, and mounts a kernel overlay at `/nix` using disk-backed
-upper/work directories. During upperdir bootstrap, agentbox makes the overlaid
+mounts it under `/run/agentbox/nix-disk`, and mounts a kernel overlay directly
+at `/nix` using the image-provided `/nix` as lowerdir plus disk-backed upper/work
+directories. During upperdir bootstrap, agentbox makes the overlaid
 `/nix/store` directory owned by the `nixbld` group; the store directory mode is
 `1775`, while store entries inherited from the image may remain `root:root`.
 After the overlay is active, it starts an in-guest `nix-daemon`, exports

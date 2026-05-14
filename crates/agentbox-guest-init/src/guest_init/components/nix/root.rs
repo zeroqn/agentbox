@@ -12,8 +12,6 @@ pub(in crate::guest_init) const SOCKET_PATH: &str = "/nix/var/nix/daemon-socket/
 const PROFILE_REQUIRE_TOOLS: &str = "bootstrap-nix:require-tools";
 const PROFILE_FIND_DISK: &str = "bootstrap-nix:find-disk";
 const PROFILE_PREPARE_RUN_DIRS: &str = "bootstrap-nix:prepare-run-dirs";
-const PROFILE_BIND_LOWER: &str = "bootstrap-nix:bind-lower";
-const PROFILE_REMOUNT_LOWER_READONLY: &str = "bootstrap-nix:remount-lower-readonly";
 const PROFILE_MOUNT_DISK: &str = "bootstrap-nix:mount-disk";
 const PROFILE_PRESEED_UPPER: &str = "bootstrap-nix:preseed-upper";
 const PROFILE_MOUNT_OVERLAY: &str = "bootstrap-nix:mount-overlay";
@@ -25,8 +23,6 @@ const PROFILE_WAIT_SOCKET: &str = "bootstrap-nix:wait-socket";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) enum NixOperation {
     FindDisk,
-    BindLower,
-    RemountLowerReadOnly,
     MountDisk,
     PreseedUpper,
     MountOverlay,
@@ -38,8 +34,6 @@ pub(in crate::guest_init) enum NixOperation {
 pub(in crate::guest_init) fn planned_operations() -> Vec<NixOperation> {
     vec![
         NixOperation::FindDisk,
-        NixOperation::BindLower,
-        NixOperation::RemountLowerReadOnly,
         NixOperation::MountDisk,
         NixOperation::PreseedUpper,
         NixOperation::MountOverlay,
@@ -54,8 +48,6 @@ pub(in crate::guest_init) fn planned_profile_labels() -> Vec<&'static str> {
         PROFILE_REQUIRE_TOOLS,
         PROFILE_FIND_DISK,
         PROFILE_PREPARE_RUN_DIRS,
-        PROFILE_BIND_LOWER,
-        PROFILE_REMOUNT_LOWER_READONLY,
         PROFILE_MOUNT_DISK,
         PROFILE_PRESEED_UPPER,
         PROFILE_MOUNT_OVERLAY,
@@ -88,33 +80,15 @@ pub(in crate::guest_init) fn bootstrap(
             &env_contract.nix_disk_id,
         )
     })?;
+    let lower_dir = Path::new("/nix");
     let run_dir = Path::new("/run/agentbox");
     let disk_mount = run_dir.join("nix-disk");
-    let lower_dir = run_dir.join("nix-lower");
     let upper_dir = disk_mount.join("upper");
     let work_dir = disk_mount.join("work");
 
     profiler.measure_result(PROFILE_PREPARE_RUN_DIRS, || {
         fs::create_dir_all(run_dir)?;
         fs::create_dir_all(&disk_mount)?;
-        fs::create_dir_all(&lower_dir)?;
-        Ok(())
-    })?;
-
-    let lower_was_bound = profiler.measure_result(PROFILE_BIND_LOWER, || {
-        if findmnt(&lower_dir)? {
-            return Ok(false);
-        }
-        command::run("mount", &["--bind", "/nix", path_str(&lower_dir)?])
-            .context("failed to preserve image /nix lowerdir")?;
-        Ok(true)
-    })?;
-    profiler.measure_result(PROFILE_REMOUNT_LOWER_READONLY, || {
-        if !lower_was_bound {
-            return Ok(());
-        }
-        command::run("mount", &["-o", "remount,bind,ro", path_str(&lower_dir)?])
-            .context("failed to make image /nix lowerdir read-only")?;
         Ok(())
     })?;
 
