@@ -6,17 +6,15 @@ pins_file="$repo_root/nix/pins.nix"
 owner="zeroqn"
 repo="libkrunfw"
 system="x86_64-linux"
-release_tag=""
 
 usage() {
   cat <<'USAGE_EOF'
-Usage: update-libkrunfw.sh [--tag <release-tag>] [--system <system>]
+Usage: update-libkrunfw.sh [--system <system>]
 
 Refresh the pinned zeroqn/libkrunfw release metadata in nix/pins.nix by querying
 GitHub Releases and recomputing the selected release-asset SRI hash.
 
-Defaults:
-  --tag     latest GitHub release
+Default:
   --system  x86_64-linux
 
 Supported systems:
@@ -26,10 +24,6 @@ USAGE_EOF
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --tag)
-      release_tag="${2:?missing value for --tag}"
-      shift 2
-      ;;
     --system)
       system="${2:?missing value for --system}"
       shift 2
@@ -55,7 +49,7 @@ done
 
 case "$system" in
   x86_64-linux)
-    asset_name="libkrunfw-x86_64.tgz"
+    asset_name="libkrunfw-x86_64-lto.tgz"
     ;;
   aarch64-linux)
     asset_name="libkrunfw-aarch64.tgz"
@@ -69,15 +63,25 @@ case "$system" in
     ;;
 esac
 
-if [ -z "$release_tag" ]; then
-  release_tag="$(
-    curl -fsSL "https://api.github.com/repos/$owner/$repo/releases/latest" |
-      jq -r '.tag_name // empty'
-  )"
-fi
+# GitHub's /releases/latest endpoint ignores prereleases. The agentbox
+# libkrunfw builds are prereleases, so choose the newest matching asset from
+# the releases list instead.
+release_tag="$(
+  curl -fsSL "https://api.github.com/repos/$owner/$repo/releases?per_page=100" |
+    jq -r --arg asset_name "$asset_name" '
+      [
+        .[]
+        | select(.tag_name | startswith("agentbox-"))
+        | select(any(.assets[]?; .name == $asset_name))
+      ]
+      | sort_by(.published_at // .created_at)
+      | last
+      | .tag_name // empty
+    '
+)"
 
 if [ -z "$release_tag" ]; then
-  echo "failed to determine latest libkrunfw release tag; pass --tag explicitly" >&2
+  echo "failed to determine latest libkrunfw release tag containing $asset_name" >&2
   exit 1
 fi
 

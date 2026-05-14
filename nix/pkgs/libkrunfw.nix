@@ -28,7 +28,11 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
 
     mkdir -p $out/lib
-    cp -a lib64/. $out/lib/
+    if [ -d lib64 ]; then
+      cp -a lib64/. $out/lib/
+    else
+      cp -a libkrunfw.so* $out/lib/
+    fi
 
     runHook postInstall
   '';
