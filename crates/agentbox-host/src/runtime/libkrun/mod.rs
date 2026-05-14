@@ -15,7 +15,7 @@ use crate::mounts::format::{format_mount_arg, format_mount_arg_with_options};
 use crate::mounts::{
     prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount,
 };
-use crate::podman::command::run_podman;
+use crate::podman::command::{run_podman, run_podman_output};
 use crate::state::resolve_state_layout;
 use crate::{derive_task_container_name, derive_task_hostname, CONTAINER_WORKDIR};
 
@@ -39,7 +39,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     let debug_guest_init = cli
         .libkrun_debug_guest_init
         .as_deref()
-        .map(resolve_debug_guest_init_mount)
+        .map(|path| resolve_debug_guest_init_mount(path, &image))
         .transpose()?;
     let raw_nix_disk = nix::raw_image::prepare(state_layout.root_dir())?;
     let raw_container_disk = containers::raw_image::prepare(state_layout.root_dir())?;
@@ -89,7 +89,7 @@ fn current_host_ids() -> (u32, u32) {
 }
 
 const LIBKRUN_DEBUG_ENTRYPOINT_TARGET: &str = "/bin/agentbox-debug-entrypoint";
-const LIBKRUN_GUEST_INIT_TARGET_ENV: &str = "AGENTBOX_LIBKRUN_GUEST_INIT_TARGET";
+const LIBKRUN_GUEST_INIT_BASENAME: &str = "agentbox-guest-init";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DebugEntrypointMount {
@@ -129,8 +129,8 @@ fn resolve_debug_entrypoint_mount(path: &Path) -> Result<DebugEntrypointMount> {
     })
 }
 
-fn resolve_debug_guest_init_mount(path: &Path) -> Result<DebugGuestInitMount> {
-    let target = libkrun_guest_init_target()?;
+fn resolve_debug_guest_init_mount(path: &Path, image: &str) -> Result<DebugGuestInitMount> {
+    let target = inspect_libkrun_guest_init_target(image)?;
     resolve_debug_guest_init_mount_to(path, &target)
 }
 
@@ -157,21 +157,64 @@ fn resolve_debug_guest_init_mount_to(path: &Path, target: &str) -> Result<DebugG
     })
 }
 
-fn libkrun_guest_init_target() -> Result<String> {
-    if let Ok(target) = env::var(LIBKRUN_GUEST_INIT_TARGET_ENV) {
-        if !target.is_empty() {
-            return Ok(target);
-        }
+fn inspect_libkrun_guest_init_target(image: &str) -> Result<String> {
+    let args = vec![
+        "image".to_owned(),
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{index .Config.Entrypoint 0}}".to_owned(),
+        image.to_owned(),
+    ];
+    let output = run_podman_output(
+        args,
+        "failed to inspect selected image entrypoint for libkrun debug guest-init",
+    )
+    .with_context(|| {
+        format!(
+            "selected image '{image}' must be local and inspectable for --libkrun-debug-guest-init"
+        )
+    })?;
+
+    validate_libkrun_guest_init_target(image, output.trim())
+}
+
+fn validate_libkrun_guest_init_target(image: &str, target: &str) -> Result<String> {
+    if target.is_empty() || target == "<no value>" {
+        anyhow::bail!(
+            concat!(
+                "selected image '{}' does not define a first entrypoint element; ",
+                "--libkrun-debug-guest-init requires an absolute agentbox-guest-init path"
+            ),
+            image
+        );
     }
 
-    option_env!("AGENTBOX_LIBKRUN_GUEST_INIT_TARGET")
-        .filter(|target| !target.is_empty())
-        .map(ToOwned::to_owned)
-        .with_context(|| {
-            format!(
-                "--libkrun-debug-guest-init requires {LIBKRUN_GUEST_INIT_TARGET_ENV}; use the Nix-built agentbox binary or set the image guest-init path explicitly"
-            )
-        })
+    let target_path = Path::new(target);
+    if !target_path.is_absolute() {
+        anyhow::bail!(
+            concat!(
+                "selected image '{}' first entrypoint element '{}' is not absolute; ",
+                "--libkrun-debug-guest-init requires an absolute agentbox-guest-init path"
+            ),
+            image,
+            target
+        );
+    }
+
+    if target_path.file_name().and_then(|name| name.to_str()) != Some(LIBKRUN_GUEST_INIT_BASENAME) {
+        anyhow::bail!(
+            concat!(
+                "selected image '{}' first entrypoint element '{}' does not point to {}; ",
+                "--libkrun-debug-guest-init can only override ",
+                "the image agentbox-guest-init binary"
+            ),
+            image,
+            target,
+            LIBKRUN_GUEST_INIT_BASENAME
+        );
+    }
+
+    Ok(target.to_owned())
 }
 
 mod task {
@@ -698,6 +741,51 @@ mod tests {
     #[test]
     fn current_host_ids_are_available_for_kvm_drop_contract() {
         let (_uid, _gid) = current_host_ids();
+    }
+
+    #[test]
+    fn validate_libkrun_guest_init_target_accepts_absolute_guest_init_path() {
+        let target = validate_libkrun_guest_init_target(
+            "localhost/agentbox:latest",
+            "/nix/store/hash-agentbox/bin/agentbox-guest-init",
+        )
+        .expect("absolute guest-init target should be accepted");
+
+        assert_eq!(target, "/nix/store/hash-agentbox/bin/agentbox-guest-init");
+    }
+
+    #[test]
+    fn validate_libkrun_guest_init_target_rejects_empty_target() {
+        assert_invalid_guest_init_target("");
+        assert_invalid_guest_init_target("<no value>");
+    }
+
+    #[test]
+    fn validate_libkrun_guest_init_target_rejects_relative_target() {
+        assert_invalid_guest_init_target("agentbox-guest-init");
+        assert_invalid_guest_init_target("sh");
+        assert_invalid_guest_init_target("sh -c /nix/store/hash/bin/agentbox-guest-init");
+    }
+
+    #[test]
+    fn validate_libkrun_guest_init_target_rejects_shell_entrypoints() {
+        assert_invalid_guest_init_target("/bin/sh");
+        assert_invalid_guest_init_target("/usr/bin/env");
+    }
+
+    #[test]
+    fn validate_libkrun_guest_init_target_rejects_wrong_binary() {
+        assert_invalid_guest_init_target("/nix/store/hash-agentbox/bin/not-agentbox-guest-init");
+    }
+
+    fn assert_invalid_guest_init_target(target: &str) {
+        let err = validate_libkrun_guest_init_target("localhost/agentbox:latest", target)
+            .expect_err("target should be rejected")
+            .to_string();
+        assert!(
+            err.contains("--libkrun-debug-guest-init") || err.contains("agentbox-guest-init"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

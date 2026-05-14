@@ -374,11 +374,12 @@ nix build .#agentbox-musl -o result-musl
 ```
 
 This keeps the normal image entrypoint and shell arguments intact, but the
-entrypoint executes the host-provided `agentbox-guest-init` binary. The host
-`agentbox` binary must know the image guest-init path; the Nix-built
-`./result/bin/agentbox` wires this automatically. If you are running a
-non-Nix-built `agentbox` binary, set `AGENTBOX_LIBKRUN_GUEST_INIT_TARGET` to the
-image path printed by the Nix build before using `--libkrun-debug-guest-init`.
+entrypoint executes the host-provided `agentbox-guest-init` binary. `agentbox`
+derives the in-image mount target from the selected image's first entrypoint
+element with `podman image inspect`, so this works with the default image,
+`--image`, and `AGENTBOX_IMAGE` without a separate target-path environment
+variable. The selected image must already be local and inspectable unless you
+used an existing path such as `--pull-latest` that pulls it before inspection.
 
 Existing raw images are reused only if `blkid` reports btrfs. Agentbox refuses
 to overwrite invalid existing images.

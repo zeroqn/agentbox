@@ -99,10 +99,10 @@ fn container_guest_init_dispatches_libkrun_before_normal_setup() {
 }
 
 #[test]
-fn nix_agentbox_binary_knows_libkrun_guest_init_image_path() {
-    assert!(AGENTBOX_RUST_NIX.contains(
-        r#"AGENTBOX_LIBKRUN_GUEST_INIT_TARGET = "${agentboxMuslPackage}/bin/agentbox-guest-init";"#
-    ));
+fn nix_agentbox_binary_does_not_embed_libkrun_guest_init_image_path() {
+    let removed_env = ["AGENTBOX", "LIBKRUN", "GUEST_INIT", "TARGET"].join("_");
+
+    assert!(!AGENTBOX_RUST_NIX.contains(&removed_env));
 }
 
 #[test]
