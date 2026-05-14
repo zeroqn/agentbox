@@ -315,10 +315,13 @@ does not expose user namespace support or refuses those writes.
 The Rust guest initializer finds the `/nix` btrfs disk by label (`AGENTBOX_NIX`),
 mounts it under `/run/agentbox/nix-disk`, and mounts a kernel overlay directly
 at `/nix` using the image-provided `/nix` as lowerdir plus disk-backed upper/work
-directories. During upperdir bootstrap, agentbox makes the overlaid
-`/nix/store` directory owned by the `nixbld` group; the store directory mode is
-`1775`, while store entries inherited from the image may remain `root:root`.
-After the overlay is active, it starts an in-guest `nix-daemon`, exports
+directories. During upperdir bootstrap, agentbox copies the image
+`/nix/var` into the disk-backed upperdir only until the upperdir has a persistent
+preseed marker; later VM entries skip that copy and only repair the required
+upperdir layout and permissions. Agentbox makes the overlaid `/nix/store`
+directory owned by the `nixbld` group; the store directory mode is `1775`, while
+store entries inherited from the image may remain `root:root`. After the overlay
+is active, it starts an in-guest `nix-daemon`, exports
 `NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket`, verifies the socket before
 privilege drop, starts lazy Podman prep, then runs the shell as the host
 UID/GID. The libkrun task also uses

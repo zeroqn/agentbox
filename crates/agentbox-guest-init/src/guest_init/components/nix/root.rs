@@ -19,6 +19,9 @@ const PROFILE_CREATE_SOCKET_DIR: &str = "bootstrap-nix:create-socket-dir";
 const PROFILE_START_DAEMON: &str = "bootstrap-nix:start-daemon";
 const PROFILE_WAIT_SOCKET: &str = "bootstrap-nix:wait-socket";
 
+const PRESEED_COMPLETION_SENTINEL: &str = ".agentbox-nix-preseeded";
+const PRESEED_ATTEMPT_MARKER: &str = ".agentbox-nix-preseed-attempted";
+
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) enum NixOperation {
@@ -142,29 +145,119 @@ pub(in crate::guest_init) fn bootstrap(
 }
 
 fn preseed_upper(lower_dir: &Path, upper_dir: &Path, work_dir: &Path) -> Result<()> {
+    preseed_upper_with(lower_dir, upper_dir, work_dir, copy_lower_var, repair_upper)
+}
+
+fn preseed_upper_with(
+    lower_dir: &Path,
+    upper_dir: &Path,
+    work_dir: &Path,
+    mut copy_var: impl FnMut(&Path, &Path) -> Result<()>,
+    mut repair: impl FnMut(&Path) -> Result<()>,
+) -> Result<()> {
+    let state = classify_preseed_state(upper_dir);
+    prepare_upper_dirs(upper_dir, work_dir)?;
+
+    match state {
+        PreseedState::Completed => {
+            repair(upper_dir)?;
+            remove_file_if_exists(&attempt_marker(upper_dir));
+        }
+        PreseedState::LegacySeeded => {
+            repair(upper_dir)?;
+            write_completion_sentinel(upper_dir)?;
+        }
+        PreseedState::FreshOrRetry => {
+            let copied = if lower_dir.join("var").is_dir() {
+                write_attempt_marker(upper_dir)?;
+                copy_var(&lower_dir.join("var"), &upper_dir.join("var"))?;
+                true
+            } else {
+                false
+            };
+            repair(upper_dir)?;
+            if copied {
+                write_completion_sentinel(upper_dir)?;
+                remove_file_if_exists(&attempt_marker(upper_dir));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreseedState {
+    Completed,
+    LegacySeeded,
+    FreshOrRetry,
+}
+
+fn classify_preseed_state(upper_dir: &Path) -> PreseedState {
+    if completion_sentinel(upper_dir).exists() {
+        return PreseedState::Completed;
+    }
+    if !attempt_marker(upper_dir).exists() && legacy_nix_state_exists(upper_dir) {
+        return PreseedState::LegacySeeded;
+    }
+    PreseedState::FreshOrRetry
+}
+
+fn legacy_nix_state_exists(upper_dir: &Path) -> bool {
+    let nix_var = upper_dir.join("var/nix");
+    nix_var.join("db").exists() || nix_var.join("profiles").exists()
+}
+
+fn prepare_upper_dirs(upper_dir: &Path, work_dir: &Path) -> Result<()> {
     fs::create_dir_all(upper_dir)?;
     fs::create_dir_all(work_dir)?;
     fs::create_dir_all(&upper_dir.join("store"))?;
     fs::create_dir_all(&upper_dir.join("var"))?;
-    if lower_dir.join("var").is_dir() {
-        let source = format!("{}/.", lower_dir.join("var").display());
-        command::run(
-            "cp",
-            &[
-                "-a",
-                "--no-clobber",
-                &source,
-                path_str(&upper_dir.join("var"))?,
-            ],
-        )
-        .context("failed to preseed libkrun upperdir /nix/var from image lowerdir")?;
-    }
+    Ok(())
+}
+
+fn copy_lower_var(lower_var: &Path, upper_var: &Path) -> Result<()> {
+    let source = format!("{}/.", lower_var.display());
+    command::run("cp", &["-a", "--no-clobber", &source, path_str(upper_var)?])
+        .context("failed to preseed libkrun upperdir /nix/var from image lowerdir")
+}
+
+fn repair_upper(upper_dir: &Path) -> Result<()> {
     fs::create_dir_all(&upper_dir.join("var/nix"))?;
     command::run("chown", &[":nixbld", path_str(&upper_dir.join("store"))?])?;
     fs::chmod(&upper_dir.join("store"), 0o1775)?;
     fs::chmod(&upper_dir.join("var"), 0o755)?;
     fs::chmod(&upper_dir.join("var/nix"), 0o755)?;
     Ok(())
+}
+
+fn write_attempt_marker(upper_dir: &Path) -> Result<()> {
+    fs::write_file(&attempt_marker(upper_dir), "attempted\n", 0o644)
+}
+
+fn write_completion_sentinel(upper_dir: &Path) -> Result<()> {
+    fs::write_file(&completion_sentinel(upper_dir), "preseeded\n", 0o644)
+}
+
+fn remove_file_if_exists(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            eprintln!(
+                "agentbox-guest-init: warning: failed to remove {}: {err}",
+                path.display()
+            );
+        }
+    }
+}
+
+fn completion_sentinel(upper_dir: &Path) -> std::path::PathBuf {
+    upper_dir.join(PRESEED_COMPLETION_SENTINEL)
+}
+
+fn attempt_marker(upper_dir: &Path) -> std::path::PathBuf {
+    upper_dir.join(PRESEED_ATTEMPT_MARKER)
 }
 
 fn findmnt(path: &Path) -> Result<bool> {
