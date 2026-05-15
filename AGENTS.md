@@ -84,6 +84,21 @@ If behavior touches container runtime or FUSE integration, also verify manually:
 - Treat Podman, FUSE, and host `/nix/store` assumptions as environment-dependent
   and verify them when changing overlay behavior.
 
+## Edit Gate
+
+Before editing, creating, deleting, moving, formatting, or otherwise modifying
+any file outside `.omx/`, the agent must first discuss the intended change with
+bob and receive explicit approval.
+
+The discussion should establish the intended outcome, scope, affected files or
+areas, and validation approach before any non-`.omx/` file changes occur.
+
+Files under `.omx/` may be created or updated for planning, state, notes, logs,
+or workflow coordination without prior approval.
+
+Read-only inspection, searching, builds, tests, and diagnostics may proceed
+without approval as long as they do not modify files outside `.omx/`.
+
 ## Communication
 
 - Before changing repo-tracked files, create a plan file in `.omx/plans/`
