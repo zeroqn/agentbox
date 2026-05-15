@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage }:
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   entrypoint = import ./entrypoint.nix {
@@ -7,7 +7,7 @@ let
     starshipConfig = configPayloads.starshipConfig;
   };
   layers = import ./layers.nix {
-    inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent rtkPrebuilt libkrun podman crun agentboxMuslPackage entrypoint;
+    inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent symposium rtkPrebuilt libkrun podman crun agentboxMuslPackage entrypoint;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
   };

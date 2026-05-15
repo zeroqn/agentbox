@@ -474,9 +474,10 @@ The container provides:
 
 - interactive `fish` + `starship`
 - Codex CLI, bubblewrap (`bwrap`), OpenCode (`opencode`), Pi (`pi`), and `oh-my-codex` (`omx`)
+- cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)
 - prebuilt `omx-explore-harness` with `OMX_EXPLORE_BIN` preset to the bundled binary
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
-- Rust toolchain (`cargo`, `cargo-deny`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
+- Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
 - GrapheneOS `hardened_malloc` enabled for Nix-linked dynamic binaries through `/etc/ld-nix.so.preload`, plus `hardening-run` for per-command foreign/FHS `LD_PRELOAD` opt-in
 - RTK (`rtk`)

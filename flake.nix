@@ -31,6 +31,9 @@
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
+          symposium = import ./nix/pkgs/symposium.nix {
+            inherit pkgs;
+          };
           rustPackages = import ./nix/pkgs/agentbox-rust.nix {
             inherit self pkgs pins;
           };
@@ -59,6 +62,7 @@
               ohMyCodex
               opencode
               piCodingAgent
+              symposium
               rtkPrebuilt
               libkrun
               podman
@@ -72,6 +76,7 @@
           oh-my-codex = ohMyCodex;
           opencode = opencode;
           pi-coding-agent = piCodingAgent;
+          symposium = symposium;
           agentbox = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;

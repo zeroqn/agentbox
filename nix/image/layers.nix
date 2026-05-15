@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, podman ? pkgs.podman, docker ? pkgs.docker, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, libkrun, podman ? pkgs.podman, docker ? pkgs.docker, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -189,7 +189,6 @@ let
 
   stableRustToolchainPackages = [
     pkgs.cargo
-    pkgs.cargo-deny
     clangMoldWrapper
     pkgs.clippy
     pkgs.mold
@@ -232,9 +231,11 @@ let
 
   toolingImagePackages = [
     pkgs.bun
+    pkgs.cargo-deny
     pkgs.fzf
     pkgs.gh
     pkgs.neovim
+    symposium
   ]
   ++ pkgs.lib.optional (rtkPrebuilt != null) rtkPrebuilt
   ++ [

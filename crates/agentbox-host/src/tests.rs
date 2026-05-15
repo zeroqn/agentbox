@@ -1,4 +1,5 @@
 const ENTRYPOINT: &str = include_str!("../../../nix/image/entrypoint.nix");
+const FLAKE_NIX: &str = include_str!("../../../flake.nix");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
@@ -6,6 +7,14 @@ const GUEST_DEFAULT_RUNTIME: &str =
     include_str!("../../agentbox-guest-init/src/guest_init/runtime/default.rs");
 const GUEST_CONTAINER_RUNTIME: &str =
     include_str!("../../agentbox-guest-init/src/guest_init/runtime/container.rs");
+
+fn nix_list_body<'a>(source: &'a str, list_name: &str) -> &'a str {
+    source
+        .split(&format!("{list_name} = ["))
+        .nth(1)
+        .and_then(|tail| tail.split("];").next())
+        .unwrap_or_else(|| panic!("{list_name} list should exist"))
+}
 
 #[test]
 fn image_entrypoint_invokes_guest_init_default_enter_directly() {
@@ -279,14 +288,29 @@ fn docker_wrapper_unsets_compat_env_before_execing_real_docker() {
 }
 
 #[test]
-fn image_includes_cargo_deny_in_rust_toolchain() {
-    let rust_toolchain = LAYERS
-        .split("stableRustToolchainPackages = [")
-        .nth(1)
-        .and_then(|tail| tail.split("];").next())
-        .expect("stable Rust toolchain package list should exist");
+fn image_places_cargo_deny_and_symposium_in_tooling_layer() {
+    let rust_toolchain = nix_list_body(LAYERS, "stableRustToolchainPackages");
+    let tooling = nix_list_body(LAYERS, "toolingImagePackages");
 
-    assert!(rust_toolchain.contains("pkgs.cargo-deny"));
+    assert!(!rust_toolchain.contains("pkgs.cargo-deny"));
+    assert!(!rust_toolchain.contains("symposium"));
+    assert!(tooling.contains("pkgs.cargo-deny"));
+    assert!(tooling.contains("symposium"));
+}
+
+#[test]
+fn image_wires_symposium_package_into_tooling_layer() {
+    for required in [
+        "symposium = import ./nix/pkgs/symposium.nix",
+        "symposium = symposium;",
+        "\n              symposium\n",
+    ] {
+        assert!(FLAKE_NIX.contains(required), "missing {required}");
+    }
+
+    assert!(CONTAINER_NIX.contains("piCodingAgent, symposium, rtkPrebuilt"));
+    assert!(CONTAINER_NIX.contains("piCodingAgent symposium rtkPrebuilt"));
+    assert!(LAYERS.contains("piCodingAgent, symposium, rtkPrebuilt"));
 }
 
 #[test]
