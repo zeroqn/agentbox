@@ -15,8 +15,8 @@ use crate::state::resolve_state_layout;
 use crate::{derive_task_container_name, derive_task_hostname};
 
 use components::cpu::resolve_libkrun_cpu_count;
-use components::debug::resolve_debug_guest_init_mount;
 use components::disk::{containers, nix};
+use components::guest_init::resolve_guest_init_override_mount;
 use components::memory::resolve_libkrun_ram_mib;
 use task::{build_libkrun_task_podman_args, LibkrunTaskPodmanSpec};
 
@@ -28,10 +28,10 @@ pub(crate) fn run(common: CommonOptions, options: LibkrunOptions) -> Result<Exit
     let image = resolve_image(common.image.as_deref(), common.pull_latest)?;
     let state_layout = resolve_state_layout(&cwd)?;
 
-    let debug_guest_init = options
+    let guest_init_override = options
         .guest_init
         .as_deref()
-        .map(|path| resolve_debug_guest_init_mount(path, &image))
+        .map(|path| resolve_guest_init_override_mount(path, &image))
         .transpose()?;
     let raw_nix_disk = nix::raw_image::prepare(state_layout.root_dir())?;
     let raw_container_disk = containers::raw_image::prepare(state_layout.root_dir())?;
@@ -57,7 +57,7 @@ pub(crate) fn run(common: CommonOptions, options: LibkrunOptions) -> Result<Exit
             tsi: options.tsi,
             guest_profile: common.profile,
             guest_debug: common.debug,
-            debug_guest_init: debug_guest_init.as_ref(),
+            guest_init_override: guest_init_override.as_ref(),
         })?,
         Stdio::inherit(),
         Stdio::inherit(),

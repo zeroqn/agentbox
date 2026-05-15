@@ -1,6 +1,6 @@
 pub mod cpu;
-pub mod debug;
 pub mod disk;
+pub mod guest_init;
 pub mod host_identity;
 pub mod memory;
 pub mod network;

@@ -5,32 +5,43 @@ use crate::podman::command::run_podman_output;
 use crate::podman::run::{RunArgOwner, RunSpec};
 use crate::podman::volume::format_mount_arg_with_options;
 
-pub(crate) const DEBUG_OWNER: RunArgOwner = RunArgOwner::new("runtime.libkrun.debug");
+pub(crate) const GUEST_INIT_OVERRIDE_OWNER: RunArgOwner =
+    RunArgOwner::new("runtime.libkrun.guest_init_override");
 
-pub(crate) fn append_debug_args(run: &mut RunSpec, debug_guest_init: Option<&DebugGuestInitMount>) {
-    if let Some(debug_guest_init) = debug_guest_init {
-        run.option(DEBUG_OWNER, "--volume", debug_guest_init.mount_arg.clone());
+pub(crate) fn append_guest_init_override_args(
+    run: &mut RunSpec,
+    guest_init_override: Option<&GuestInitOverrideMount>,
+) {
+    if let Some(guest_init_override) = guest_init_override {
+        run.option(
+            GUEST_INIT_OVERRIDE_OWNER,
+            "--volume",
+            guest_init_override.mount_arg.clone(),
+        );
     }
 }
 
 const LIBKRUN_GUEST_INIT_BASENAME: &str = "agentbox-guest-init";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DebugGuestInitMount {
+pub(crate) struct GuestInitOverrideMount {
     pub(crate) source: PathBuf,
     pub(crate) mount_arg: String,
     pub(crate) target: String,
 }
 
-pub(crate) fn resolve_debug_guest_init_mount(
+pub(crate) fn resolve_guest_init_override_mount(
     path: &Path,
     image: &str,
-) -> Result<DebugGuestInitMount> {
+) -> Result<GuestInitOverrideMount> {
     let target = inspect_libkrun_guest_init_target(image)?;
-    resolve_debug_guest_init_mount_to(path, &target)
+    resolve_guest_init_override_mount_to(path, &target)
 }
 
-fn resolve_debug_guest_init_mount_to(path: &Path, target: &str) -> Result<DebugGuestInitMount> {
+fn resolve_guest_init_override_mount_to(
+    path: &Path,
+    target: &str,
+) -> Result<GuestInitOverrideMount> {
     let source = path.canonicalize().with_context(|| {
         format!(
             "failed to resolve libkrun guest-init override '{}'",
@@ -46,7 +57,7 @@ fn resolve_debug_guest_init_mount_to(path: &Path, target: &str) -> Result<DebugG
 
     let mount_arg = format_mount_arg_with_options(&source, target, Some("ro"))?;
 
-    Ok(DebugGuestInitMount {
+    Ok(GuestInitOverrideMount {
         source,
         mount_arg,
         target: target.to_owned(),
@@ -112,8 +123,8 @@ fn validate_libkrun_guest_init_target(image: &str, target: &str) -> Result<Strin
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::libkrun::components::debug::{
-        resolve_debug_guest_init_mount_to, validate_libkrun_guest_init_target,
+    use crate::runtime::libkrun::components::guest_init::{
+        resolve_guest_init_override_mount_to, validate_libkrun_guest_init_target,
     };
 
     #[test]
@@ -162,12 +173,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_debug_guest_init_mount_targets_image_guest_init_path() {
+    fn resolve_guest_init_override_mount_targets_image_guest_init_path() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
         let source = dir.path().join("agentbox-guest-init");
         std::fs::write(&source, "#!/bin/sh\n").expect("guest-init override should be written");
 
-        let mount = resolve_debug_guest_init_mount_to(
+        let mount = resolve_guest_init_override_mount_to(
             &source,
             "/nix/store/hash-agentbox/bin/agentbox-guest-init",
         )

@@ -8,7 +8,6 @@ use crate::runtime::components::volumes::{
     TaskVolumeMounts, SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER,
 };
 use crate::runtime::libkrun::components::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
-use crate::runtime::libkrun::components::debug::{DebugGuestInitMount, DEBUG_OWNER};
 use crate::runtime::libkrun::components::disk::containers::podman::{
     CONTAINERS_DISK_OWNER, LIBKRUN_CONTAINERS_STORAGE_ENV,
 };
@@ -21,6 +20,9 @@ use crate::runtime::libkrun::components::disk::nix::podman::{
 };
 use crate::runtime::libkrun::components::disk::nix::raw_image::{
     RawNixDisk, RawNixDiskStatus, RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
+};
+use crate::runtime::libkrun::components::guest_init::{
+    GuestInitOverrideMount, GUEST_INIT_OVERRIDE_OWNER,
 };
 use crate::runtime::libkrun::components::host_identity::{
     HOST_IDENTITY_OWNER, LIBKRUN_KVM_DROP_TO_DEV_ENV,
@@ -158,14 +160,18 @@ fn libkrun_task_args_expose_component_owner_ownership() {
 }
 
 #[test]
-fn libkrun_guest_init_override_is_owned_by_debug_owner() {
+fn libkrun_guest_init_override_is_owned_by_guest_init_override_owner() {
     let guest_init = guest_init_override();
     let args = build_run_args(TaskOptions {
         guest_init: Some(guest_init.clone()),
         ..Default::default()
     });
 
-    assert!(args.contains_option_from(DEBUG_OWNER, "--volume", &guest_init.mount_arg));
+    assert!(args.contains_option_from(
+        GUEST_INIT_OVERRIDE_OWNER,
+        "--volume",
+        &guest_init.mount_arg
+    ));
 }
 
 #[test]
@@ -292,7 +298,7 @@ struct TaskOptions {
     cpu_count: Option<u32>,
     guest_profile: bool,
     guest_debug: bool,
-    guest_init: Option<DebugGuestInitMount>,
+    guest_init: Option<GuestInitOverrideMount>,
 }
 
 impl Default for TaskOptions {
@@ -433,9 +439,9 @@ fn task_spec(
     let task_volumes = Box::leak(Box::new(default_task_volumes()));
     let raw_nix_disk = Box::leak(Box::new(raw_disk()));
     let raw_container_disk = Box::leak(Box::new(raw_container_disk()));
-    let debug_guest_init = options
+    let guest_init_override = options
         .guest_init
-        .map(|mount| Box::leak(Box::new(mount)) as &'static DebugGuestInitMount);
+        .map(|mount| Box::leak(Box::new(mount)) as &'static GuestInitOverrideMount);
 
     crate::runtime::libkrun::task::LibkrunTaskPodmanSpec {
         image: crate::DEFAULT_IMAGE,
@@ -451,7 +457,7 @@ fn task_spec(
         tsi: options.tsi,
         guest_profile: options.guest_profile,
         guest_debug: options.guest_debug,
-        debug_guest_init,
+        guest_init_override,
     }
 }
 
@@ -484,8 +490,8 @@ fn raw_container_disk() -> RawContainerDisk {
     }
 }
 
-fn guest_init_override() -> DebugGuestInitMount {
-    DebugGuestInitMount {
+fn guest_init_override() -> GuestInitOverrideMount {
+    GuestInitOverrideMount {
         source: PathBuf::from("/tmp/agentbox-guest-init"),
         mount_arg: "/tmp/agentbox-guest-init:/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"
             .to_owned(),
