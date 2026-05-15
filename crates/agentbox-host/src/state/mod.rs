@@ -3,7 +3,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::config;
-use crate::derive_workspace_slug;
+use crate::naming::derive_workspace_slug;
 
 const APP_DIR_NAME: &str = "agentbox";
 

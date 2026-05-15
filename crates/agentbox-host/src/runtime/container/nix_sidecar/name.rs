@@ -2,7 +2,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use crate::{derive_workspace_slug, SIDECAR_NAME_PREFIX};
+use crate::naming::derive_workspace_slug;
+
+const SIDECAR_NAME_PREFIX: &str = "agentbox-nix-sidecar";
 
 pub fn derive_sidecar_name(cwd: &Path, image_id: &str) -> String {
     let workspace_slug = derive_workspace_slug(cwd);

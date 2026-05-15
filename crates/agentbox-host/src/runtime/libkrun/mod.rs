@@ -9,10 +9,10 @@ use std::env;
 use std::process::{ExitCode, Stdio};
 
 use crate::cli::{resolve_image, CommonOptions, LibkrunOptions};
+use crate::naming::{derive_task_container_name, derive_task_hostname};
 use crate::podman::command::run_podman;
 use crate::runtime::components::volumes::prepare_task_volumes;
 use crate::state::resolve_state_layout;
-use crate::{derive_task_container_name, derive_task_hostname};
 
 use components::cpu::resolve_libkrun_cpu_count;
 use components::disk::{containers, nix};

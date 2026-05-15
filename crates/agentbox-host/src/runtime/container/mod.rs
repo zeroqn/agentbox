@@ -6,6 +6,7 @@ use std::env;
 use std::process::{ExitCode, Stdio};
 
 use crate::cli::{resolve_image, CommonOptions, ContainerMode, ContainerOptions};
+use crate::naming::{derive_task_container_name, derive_task_hostname};
 use crate::podman::command::run_podman;
 use crate::runtime::components::volumes::prepare_task_volumes;
 use crate::runtime::container::nix_sidecar::{
@@ -13,7 +14,6 @@ use crate::runtime::container::nix_sidecar::{
     SidecarSocketHealthProbe,
 };
 use crate::state::resolve_state_layout;
-use crate::{derive_task_container_name, derive_task_hostname};
 
 use task::{build_container_task_podman_args, ContainerTaskPodmanSpec};
 
