@@ -315,7 +315,6 @@ let
     nixCommandCompat
     podmanCommandCompat
     dockerCommandCompat
-    dockerdRootlessCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
