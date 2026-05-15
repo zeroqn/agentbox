@@ -495,7 +495,9 @@ The container provides:
 - narrow hardcoded-interpreter compatibility for `/bin/sh`, `/bin/bash`,
   `/bin/python`, and `/bin/python3`; `/bin/python` resolves to Python 3
   (not broad FHS compatibility)
-- common tools (`curl`, `jq`, `tmux`, etc.)
+- common tools (`curl`, `jq`, `tmux`, etc.); tmux includes system-wide pane
+  split bindings for `Ctrl-b |` and `Ctrl-b -` plus Vim-style pane focus
+  movement on `Ctrl-b h/j/k/l`
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
 setting `RUSTFLAGS`, so existing Cargo config can still layer on top normally.

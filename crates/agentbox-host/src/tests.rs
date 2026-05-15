@@ -148,6 +148,22 @@ fn image_materializes_graphene_hardened_malloc_as_nix_loader_preload() {
 }
 
 #[test]
+fn image_materializes_system_tmux_defaults() {
+    for required in [
+        "cat > ./etc/tmux.conf <<'EOF_TMUX'",
+        "bind-key | split-window -h",
+        "bind-key - split-window -v",
+        "bind-key h select-pane -L",
+        "bind-key l select-pane -R",
+        "bind-key j select-pane -D",
+        "bind-key k select-pane -U",
+        "chmod 0644 ./etc/tmux.conf",
+    ] {
+        assert!(CONTAINER_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn image_includes_hardening_run_for_foreign_binary_allocator_opt_in() {
     for required in [
         r#"pkgs.writeShellScriptBin "hardening-run""#,

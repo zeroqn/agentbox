@@ -39,6 +39,15 @@ pkgs.dockerTools.buildLayeredImage {
     fi
     printf '%s\n' '${layers.hardenedMallocLib}' > ./etc/ld-nix.so.preload
     chmod 0644 ./etc/ld-nix.so.preload
+    cat > ./etc/tmux.conf <<'EOF_TMUX'
+    bind-key | split-window -h
+    bind-key - split-window -v
+    bind-key h select-pane -L
+    bind-key l select-pane -R
+    bind-key j select-pane -D
+    bind-key k select-pane -U
+    EOF_TMUX
+    chmod 0644 ./etc/tmux.conf
     if ! grep -q '^nixbld:' ./etc/group; then
       printf 'nixbld:x:${toString layers.nixBuilderGroupId}:${layers.nixBuilderGroupMembers}\n' >> ./etc/group
     fi
