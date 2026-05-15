@@ -6,20 +6,14 @@ use std::env;
 use std::process::{ExitCode, Stdio};
 
 use crate::cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
-use crate::mounts::format::format_mount_arg;
-use crate::mounts::{
-    prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount,
-};
 use crate::podman::command::run_podman;
+use crate::runtime::components::volumes::prepare_task_volumes;
 use crate::runtime::container::nix_sidecar::{
     cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec,
     SidecarSocketHealthProbe,
 };
 use crate::state::resolve_state_layout;
-use crate::{
-    derive_task_container_name, derive_task_hostname, CONTAINER_WORKDIR,
-    DEFAULT_NIX_SIDECAR_ENABLED,
-};
+use crate::{derive_task_container_name, derive_task_hostname, DEFAULT_NIX_SIDECAR_ENABLED};
 
 use task::{build_container_task_podman_args, ContainerTaskPodmanSpec};
 
@@ -55,10 +49,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
 
     let task_container_name = derive_task_container_name(&cwd);
     let task_hostname = derive_task_hostname(&cwd);
-    let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
-    let codex_mount = prepare_host_codex_mount()?;
-    let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
-    let sccache_mount = prepare_shared_sccache_mount(&state_layout.sccache_dir())?;
+    let task_volumes = prepare_task_volumes(&cwd, &state_layout)?;
 
     let nix_runtime = prepare_sidecar_nix_runtime(
         &cwd,
@@ -74,10 +65,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             image: &image,
             container_name: &task_container_name,
             hostname: &task_hostname,
-            workspace_mount: &workspace_mount,
-            codex_mount: &codex_mount,
-            cargo_mount: &cargo_mount,
-            sccache_mount: &sccache_mount,
+            task_volumes: &task_volumes,
             nix_runtime: &nix_runtime,
             guest_profile: cli.profile,
             guest_debug: cli.debug,

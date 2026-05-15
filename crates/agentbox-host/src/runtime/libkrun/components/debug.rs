@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::mounts::format::format_mount_arg_with_options;
 use crate::podman::command::run_podman_output;
 use crate::podman::run::{RunArgOwner, RunSpec};
+use crate::podman::volume::format_mount_arg_with_options;
 
 pub(crate) const DEBUG_OWNER: RunArgOwner = RunArgOwner::new("runtime.libkrun.debug");
 

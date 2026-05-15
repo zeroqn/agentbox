@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::podman::run::{RunArgs, RunSpec, CORE};
+use crate::runtime::components::volumes::TaskVolumeMounts;
 use crate::runtime::components::{diagnostics, identity, volumes};
 use crate::runtime::container::nix_sidecar::{append_task_sidecar_nix_args, SidecarNixRuntime};
 use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
@@ -9,10 +10,7 @@ pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) image: &'a str,
     pub(crate) container_name: &'a str,
     pub(crate) hostname: &'a str,
-    pub(crate) workspace_mount: &'a str,
-    pub(crate) codex_mount: &'a str,
-    pub(crate) cargo_mount: &'a str,
-    pub(crate) sccache_mount: &'a str,
+    pub(crate) task_volumes: &'a TaskVolumeMounts,
     pub(crate) nix_runtime: &'a SidecarNixRuntime,
     pub(crate) guest_profile: bool,
     pub(crate) guest_debug: bool,
@@ -32,10 +30,7 @@ fn build_container_task_run_args(spec: ContainerTaskPodmanSpec<'_>) -> Result<Ru
     identity::append_userns_keep_id(&mut run);
     run.option(CORE, "--workdir", CONTAINER_WORKDIR);
     run.option(CORE, "--hostname", spec.hostname);
-    volumes::append_workspace(&mut run, spec.workspace_mount);
-    volumes::append_codex(&mut run, spec.codex_mount);
-    volumes::append_cargo(&mut run, spec.cargo_mount);
-    volumes::append_sccache(&mut run, spec.sccache_mount);
+    volumes::append_task_volumes(&mut run, spec.task_volumes);
     run.option(CORE, "--tmpfs", CONTAINER_TMP_TMPFS);
     append_task_sidecar_nix_args(&mut run, spec.nix_runtime)?;
     diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
@@ -52,7 +47,8 @@ mod tests {
     };
     use crate::runtime::components::identity::USER_IDENTITY_OWNER;
     use crate::runtime::components::volumes::{
-        CARGO_VOLUME_OWNER, CODEX_VOLUME_OWNER, SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER,
+        TaskVolumeMounts, CARGO_VOLUME_OWNER, CODEX_VOLUME_OWNER, SCCACHE_VOLUME_OWNER,
+        WORKSPACE_VOLUME_OWNER,
     };
     use crate::runtime::container::nix_sidecar::SIDECAR_NIX_OWNER;
     use crate::runtime::container::nix_sidecar::{PodmanImageMountMode, SidecarNixRuntime};
@@ -175,14 +171,12 @@ mod tests {
     #[test]
     fn container_task_args_include_guest_profile_and_debug_env_when_requested() {
         let runtime = sidecar_runtime();
+        let task_volumes = default_task_volumes();
         let args = build_container_task_podman_args(ContainerTaskPodmanSpec {
             image: crate::DEFAULT_IMAGE,
             container_name: "project-random",
             hostname: "project-agentbox",
-            workspace_mount: "/tmp/project:/workspace",
-            codex_mount: "/home/alice/.codex:/home/dev/.codex",
-            cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
-            sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+            task_volumes: &task_volumes,
             nix_runtime: &runtime,
             guest_profile: true,
             guest_debug: true,
@@ -198,14 +192,12 @@ mod tests {
     #[test]
     fn guest_diagnostics_envs_are_owned_by_guest_diagnostics() {
         let runtime = sidecar_runtime();
+        let task_volumes = default_task_volumes();
         let args = build_container_task_run_args(ContainerTaskPodmanSpec {
             image: crate::DEFAULT_IMAGE,
             container_name: "project-random",
             hostname: "project-agentbox",
-            workspace_mount: "/tmp/project:/workspace",
-            codex_mount: "/home/alice/.codex:/home/dev/.codex",
-            cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
-            sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+            task_volumes: &task_volumes,
             nix_runtime: &runtime,
             guest_profile: true,
             guest_debug: true,
@@ -226,27 +218,38 @@ mod tests {
     }
 
     fn build_args(nix_runtime: &SidecarNixRuntime) -> Vec<String> {
-        build_container_task_podman_args(default_spec(nix_runtime))
+        let task_volumes = default_task_volumes();
+        build_container_task_podman_args(default_spec(nix_runtime, &task_volumes))
             .expect("container task args should build")
     }
 
     fn build_run_args(nix_runtime: &SidecarNixRuntime) -> crate::podman::run::RunArgs {
-        build_container_task_run_args(default_spec(nix_runtime))
+        let task_volumes = default_task_volumes();
+        build_container_task_run_args(default_spec(nix_runtime, &task_volumes))
             .expect("container task args should build")
     }
 
-    fn default_spec(nix_runtime: &SidecarNixRuntime) -> ContainerTaskPodmanSpec<'_> {
+    fn default_spec<'a>(
+        nix_runtime: &'a SidecarNixRuntime,
+        task_volumes: &'a TaskVolumeMounts,
+    ) -> ContainerTaskPodmanSpec<'a> {
         ContainerTaskPodmanSpec {
             image: crate::DEFAULT_IMAGE,
             container_name: "project-random",
             hostname: "project-agentbox",
-            workspace_mount: "/tmp/project:/workspace",
-            codex_mount: "/home/alice/.codex:/home/dev/.codex",
-            cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
-            sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+            task_volumes,
             nix_runtime,
             guest_profile: false,
             guest_debug: false,
+        }
+    }
+
+    fn default_task_volumes() -> TaskVolumeMounts {
+        TaskVolumeMounts {
+            workspace: "/tmp/project:/workspace".to_owned(),
+            codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+            cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
+            sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
         }
     }
 

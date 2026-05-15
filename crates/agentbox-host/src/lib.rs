@@ -7,7 +7,7 @@ use std::process::{self, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cli;
-mod mounts;
+mod config;
 mod podman;
 mod runtime;
 mod state;

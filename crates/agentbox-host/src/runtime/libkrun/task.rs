@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::podman::run::{RunArgs, RunSpec, CORE};
+use crate::runtime::components::volumes::TaskVolumeMounts;
 use crate::runtime::components::{diagnostics, identity, volumes};
 use crate::runtime::libkrun::components::debug::{DebugEntrypointMount, DebugGuestInitMount};
 use crate::runtime::libkrun::components::disk::containers::podman as containers_podman;
@@ -14,10 +15,7 @@ pub(crate) struct LibkrunTaskPodmanSpec<'a> {
     pub(crate) image: &'a str,
     pub(crate) container_name: &'a str,
     pub(crate) hostname: &'a str,
-    pub(crate) workspace_mount: &'a str,
-    pub(crate) codex_mount: &'a str,
-    pub(crate) cargo_mount: &'a str,
-    pub(crate) sccache_mount: &'a str,
+    pub(crate) task_volumes: &'a TaskVolumeMounts,
     pub(crate) raw_nix_disk: &'a RawNixDisk,
     pub(crate) raw_container_disk: &'a RawContainerDisk,
     pub(crate) host_uid: u32,
@@ -51,10 +49,7 @@ pub(crate) fn build_libkrun_task_run_args(spec: LibkrunTaskPodmanSpec<'_>) -> Re
     network::append_tun_device(&mut run);
     run.option(CORE, "--workdir", CONTAINER_WORKDIR);
     run.option(CORE, "--hostname", spec.hostname);
-    volumes::append_workspace(&mut run, spec.workspace_mount);
-    volumes::append_codex(&mut run, spec.codex_mount);
-    volumes::append_cargo(&mut run, spec.cargo_mount);
-    volumes::append_sccache(&mut run, spec.sccache_mount);
+    volumes::append_task_volumes(&mut run, spec.task_volumes);
     nix_podman::append_disk_env(&mut run, spec.raw_nix_disk);
     containers_podman::append_disk_env(&mut run, spec.raw_container_disk);
     host_identity::append_host_env(&mut run, spec.host_uid, spec.host_gid);

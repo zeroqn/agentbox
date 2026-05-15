@@ -9,13 +9,10 @@ use std::env;
 use std::process::{ExitCode, Stdio};
 
 use crate::cli::{resolve_image, Cli};
-use crate::mounts::format::format_mount_arg;
-use crate::mounts::{
-    prepare_host_codex_mount, prepare_project_cargo_mount, prepare_shared_sccache_mount,
-};
 use crate::podman::command::run_podman;
+use crate::runtime::components::volumes::prepare_task_volumes;
 use crate::state::resolve_state_layout;
-use crate::{derive_task_container_name, derive_task_hostname, CONTAINER_WORKDIR};
+use crate::{derive_task_container_name, derive_task_hostname};
 
 use components::cpu::resolve_libkrun_cpu_count;
 use components::debug::{resolve_debug_entrypoint_mount, resolve_debug_guest_init_mount};
@@ -45,10 +42,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     let raw_container_disk = containers::raw_image::prepare(state_layout.root_dir())?;
     let task_container_name = derive_task_container_name(&cwd);
     let task_hostname = derive_task_hostname(&cwd);
-    let workspace_mount = format_mount_arg(&cwd, CONTAINER_WORKDIR)?;
-    let codex_mount = prepare_host_codex_mount()?;
-    let cargo_mount = prepare_project_cargo_mount(state_layout.root_dir())?;
-    let sccache_mount = prepare_shared_sccache_mount(&state_layout.sccache_dir())?;
+    let task_volumes = prepare_task_volumes(&cwd, &state_layout)?;
     let (host_uid, host_gid) = current_host_ids();
     let ram_mib = resolve_libkrun_ram_mib(cli.mem_gib)?;
     let cpu_count = resolve_libkrun_cpu_count()?;
@@ -58,10 +52,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             image: &image,
             container_name: &task_container_name,
             hostname: &task_hostname,
-            workspace_mount: &workspace_mount,
-            codex_mount: &codex_mount,
-            cargo_mount: &cargo_mount,
-            sccache_mount: &sccache_mount,
+            task_volumes: &task_volumes,
             raw_nix_disk: &raw_nix_disk,
             raw_container_disk: &raw_container_disk,
             host_uid,

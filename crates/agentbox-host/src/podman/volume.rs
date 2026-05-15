@@ -27,3 +27,29 @@ pub fn format_mount_arg_with_options(
 
     Ok(mount)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn mount_arg_uses_workspace_path() {
+        let mount = crate::podman::volume::format_mount_arg(
+            Path::new("/tmp/project"),
+            crate::CONTAINER_WORKDIR,
+        )
+        .expect("mount formatting should succeed");
+        assert_eq!(mount, "/tmp/project:/workspace");
+    }
+
+    #[test]
+    fn mount_arg_supports_options_suffix() {
+        let mount = crate::podman::volume::format_mount_arg_with_options(
+            Path::new("/tmp/project"),
+            "/nix",
+            Some("ro"),
+        )
+        .expect("mount formatting should succeed");
+        assert_eq!(mount, "/tmp/project:/nix:ro");
+    }
+}

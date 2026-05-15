@@ -2,7 +2,9 @@ use crate::runtime::components::diagnostics::{
     GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
 };
 use crate::runtime::components::identity::USER_IDENTITY_OWNER;
-use crate::runtime::components::volumes::{SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER};
+use crate::runtime::components::volumes::{
+    TaskVolumeMounts, SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER,
+};
 use crate::runtime::libkrun::components::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
 use crate::runtime::libkrun::components::debug::DEBUG_OWNER;
 use crate::runtime::libkrun::components::debug::{DebugEntrypointMount, DebugGuestInitMount};
@@ -415,6 +417,15 @@ impl Default for ExpectedOptions {
     }
 }
 
+fn default_task_volumes() -> TaskVolumeMounts {
+    TaskVolumeMounts {
+        workspace: "/tmp/project:/workspace".to_owned(),
+        codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+        cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
+        sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
+    }
+}
+
 fn expected_args(options: ExpectedOptions) -> Vec<String> {
     let mut args = [
         "run",
@@ -685,14 +696,12 @@ fn build_run_args_with_options(
     debug_entrypoint: Option<&DebugEntrypointMount>,
     debug_guest_init: Option<&DebugGuestInitMount>,
 ) -> crate::podman::run::RunArgs {
+    let task_volumes = default_task_volumes();
     build_libkrun_task_run_args(crate::runtime::libkrun::task::LibkrunTaskPodmanSpec {
         image: crate::DEFAULT_IMAGE,
         container_name: "project-random",
         hostname: "project-agentbox",
-        workspace_mount: "/tmp/project:/workspace",
-        codex_mount: "/home/alice/.codex:/home/dev/.codex",
-        cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
-        sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+        task_volumes: &task_volumes,
         raw_nix_disk,
         raw_container_disk,
         host_uid: 1001,
@@ -718,14 +727,12 @@ fn build_args_with_full_options(
     debug_entrypoint: Option<&DebugEntrypointMount>,
     debug_guest_init: Option<&DebugGuestInitMount>,
 ) -> Vec<String> {
+    let task_volumes = default_task_volumes();
     build_libkrun_task_podman_args(crate::runtime::libkrun::task::LibkrunTaskPodmanSpec {
         image: crate::DEFAULT_IMAGE,
         container_name: "project-random",
         hostname: "project-agentbox",
-        workspace_mount: "/tmp/project:/workspace",
-        codex_mount: "/home/alice/.codex:/home/dev/.codex",
-        cargo_mount: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
-        sccache_mount: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
+        task_volumes: &task_volumes,
         raw_nix_disk,
         raw_container_disk,
         host_uid: 1001,

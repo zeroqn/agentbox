@@ -2,8 +2,8 @@ use anyhow::Result;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::mounts::format::format_mount_arg;
 use crate::podman::command::run_podman;
+use crate::podman::volume::format_mount_arg;
 use crate::runtime::container::nix_sidecar::sidecar_podman::proxy::SIDECAR_PROXY_CONTAINER_PORT;
 use crate::CONTAINER_NIX_DIR;
 

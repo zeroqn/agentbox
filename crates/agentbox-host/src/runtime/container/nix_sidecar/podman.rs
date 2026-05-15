@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::mounts::format::format_mount_arg_with_options;
 use crate::podman::run::{RunArgOwner, RunSpec};
+use crate::podman::volume::format_mount_arg_with_options;
 use crate::{
     CONTAINER_NIX_DIR, NIX_REMOTE_SOCKET, TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE,
     TASK_CONTAINER_SIDECAR_LABEL,

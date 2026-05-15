@@ -1,4 +1,4 @@
-use super::*;
+use crate::state::{default_state_location_root, resolve_state_layout_from_env};
 use std::fs;
 use std::path::Path;
 
@@ -19,42 +19,6 @@ fn default_state_location_root_falls_back_to_home_local_state() {
         .expect("fallback should work");
 
     assert_eq!(path, Path::new("/tmp/home/.local/state"));
-}
-
-#[test]
-fn default_config_path_prefers_xdg_config_home() {
-    let path = default_config_path(
-        Some(Path::new("/tmp/xdg-config")),
-        Some(Path::new("/tmp/home")),
-    )
-    .expect("xdg config path should resolve");
-
-    assert_eq!(path, Path::new("/tmp/xdg-config/agentbox/agentbox.toml"));
-}
-
-#[test]
-fn default_config_path_falls_back_to_home_config() {
-    let path =
-        default_config_path(None, Some(Path::new("/tmp/home"))).expect("fallback should work");
-
-    assert_eq!(path, Path::new("/tmp/home/.config/agentbox/agentbox.toml"));
-}
-
-#[test]
-fn parse_state_location_override_accepts_absolute_path() {
-    let path = parse_state_location_override("[state]\nlocation = \"/tmp/custom/\"\n")
-        .expect("config should parse")
-        .expect("location should exist");
-
-    assert_eq!(path, Path::new("/tmp/custom/"));
-}
-
-#[test]
-fn parse_state_location_override_rejects_relative_path() {
-    let err = parse_state_location_override("[state]\nlocation = \"relative/path\"\n")
-        .expect_err("relative path should fail");
-
-    assert!(err.to_string().contains("absolute path"));
 }
 
 #[test]
