@@ -4,6 +4,7 @@ pkgs.mkShell {
   packages = [
     pkgs.btrfs-progs
     pkgs.cargo
+    pkgs.cargo-deny
     pkgs.clippy
     pkgs.curl
     pkgs.fish

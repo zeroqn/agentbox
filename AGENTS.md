@@ -66,8 +66,14 @@ AGENTBOX_HOST_NIX_OVERLAY=1 ./result/bin/agentbox
 For code changes, prefer this validation sequence:
 
 ```bash
+nix develop --command cargo fmt --check
+nix develop --command cargo clippy --all-targets --all-features -- -D warnings
+nix develop --command cargo deny check
 nix develop --command cargo test
 ```
+
+Before committing code changes, make sure formatting, Clippy, cargo-deny, and
+tests pass.
 
 If behavior touches container runtime or FUSE integration, also verify manually:
 
