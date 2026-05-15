@@ -280,6 +280,7 @@ let
     dockerdRootlessCompat
     pkgs.rootlesskit
     pkgs.slirp4netns
+    pkgs.nftables
   ];
 
   baseImagePackages = [

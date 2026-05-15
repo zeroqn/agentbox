@@ -404,6 +404,7 @@ fn image_includes_rootless_container_stacks_without_fuse_overlayfs() {
         "docker",
         "pkgs.rootlesskit",
         "pkgs.slirp4netns",
+        "pkgs.nftables",
         "dockerdRootlessCompat",
         "pkgs.writeShellScriptBin \"dockerd-rootless.sh\"",
     ] {
