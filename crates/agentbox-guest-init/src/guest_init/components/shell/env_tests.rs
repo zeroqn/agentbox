@@ -29,7 +29,7 @@ fn libkrun_runtime_derives_parent_shell_environment_before_podman_prep() {
     );
     assert!(shell_env.vars.contains(&(
         "DOCKER_HOST".to_owned(),
-        "unix:///run/user/1234/docker/docker.sock".to_owned()
+        "unix:///run/user/1234/docker.sock".to_owned()
     )));
     assert_eq!(shell_env.tmpdir, PathBuf::from("/home/dev/.cache/tmp"));
 }

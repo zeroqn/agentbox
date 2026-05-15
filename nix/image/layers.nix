@@ -55,7 +55,7 @@ let
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
       ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun docker wait
       ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun docker daemon
-      export DOCKER_HOST="''${DOCKER_HOST:-unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker/docker.sock}"
+      export DOCKER_HOST="''${DOCKER_HOST:-unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker.sock}"
     fi
     exec ${docker}/bin/docker "$@"
   '';

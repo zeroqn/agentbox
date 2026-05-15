@@ -106,6 +106,10 @@ fn docker_wrapper_waits_and_starts_daemon_only_for_libkrun_container_storage() {
     assert!(LAYERS.contains("agentbox-guest-init libkrun docker wait"));
     assert!(LAYERS.contains("agentbox-guest-init libkrun docker daemon"));
     assert!(LAYERS.contains("DOCKER_HOST"));
+    assert!(LAYERS.contains(r#"unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker.sock"#));
+    assert!(
+        !LAYERS.contains(r#"unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker/docker.sock"#)
+    );
     let gate = LAYERS
         .find("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE")
         .expect("libkrun container storage gate should exist");

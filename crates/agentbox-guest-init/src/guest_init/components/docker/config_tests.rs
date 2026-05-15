@@ -19,7 +19,7 @@ fn docker_paths_keep_persistent_state_on_containers_disk() {
         paths.state_root.to_str().unwrap(),
         "/home/dev/.local/share/containers/docker/state"
     );
-    assert_eq!(paths.host_uri(), "unix:///run/user/1000/docker/docker.sock");
+    assert_eq!(paths.host_uri(), "unix:///run/user/1000/docker.sock");
     assert_eq!(
         paths.daemon_status_path.to_str().unwrap(),
         "/run/user/1000/docker/daemon.status"

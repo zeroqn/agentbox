@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::guest_init::command;
 use crate::guest_init::components::home::identity::DevIdentity;
@@ -52,10 +54,10 @@ fn install_helper(name: &str) -> Result<()> {
     fs::create_dir_all(helper_dir)?;
     let dst = helper_dir.join(name);
     let src = source_helper_on_path(name, helper_dir)?;
-    if src == dst {
+    if src == dst || installed_helper_is_ready(&dst) {
         return Ok(());
     }
-    command::run(
+    let install_result = command::run(
         "install",
         &[
             "-m",
@@ -67,9 +69,48 @@ fn install_helper(name: &str) -> Result<()> {
             path_str(&src)?,
             path_str(&dst)?,
         ],
-    )
-    .with_context(|| format!("failed to install root-owned setuid {name} helper"))?;
-    Ok(())
+    );
+    match install_result {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            if wait_for_installed_helper_ready(&dst) {
+                Ok(())
+            } else {
+                Err(err)
+                    .with_context(|| format!("failed to install root-owned setuid {name} helper"))
+            }
+        }
+    }
+}
+
+fn wait_for_installed_helper_ready(path: &Path) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if installed_helper_is_ready(path) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn installed_helper_is_ready(path: &Path) -> bool {
+    path.metadata()
+        .map(|metadata| {
+            helper_metadata_is_ready(
+                metadata.is_file(),
+                metadata.permissions().mode(),
+                metadata.uid(),
+                metadata.gid(),
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn helper_metadata_is_ready(is_file: bool, mode: u32, uid: u32, gid: u32) -> bool {
+    is_file && uid == 0 && gid == 0 && mode & 0o111 != 0 && mode & 0o4000 != 0
 }
 
 fn source_helper_on_path(name: &str, helper_dir: &Path) -> Result<PathBuf> {
@@ -80,7 +121,7 @@ fn source_helper_on_path(name: &str, helper_dir: &Path) -> Result<PathBuf> {
         .find(|candidate| command::is_executable(candidate))
         .or_else(|| {
             let existing = helper_dir.join(name);
-            command::is_executable(&existing).then_some(existing)
+            installed_helper_is_ready(&existing).then_some(existing)
         })
         .ok_or_else(|| anyhow!("required tool '{name}' is not available on PATH"))
 }

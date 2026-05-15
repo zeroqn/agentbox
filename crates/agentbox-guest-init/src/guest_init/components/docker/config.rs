@@ -21,14 +21,15 @@ pub(in crate::guest_init) struct DockerPaths {
 impl DockerPaths {
     pub(in crate::guest_init) fn for_identity(identity: &DevIdentity) -> Self {
         let container_root = PathBuf::from(DEV_HOME).join(".local/share/containers/docker");
-        let runtime_dir = PathBuf::from(format!("/run/user/{}/docker", identity.uid));
+        let user_runtime_dir = PathBuf::from(format!("/run/user/{}", identity.uid));
+        let runtime_dir = user_runtime_dir.join("docker");
         Self {
             config_dir: PathBuf::from(DEV_HOME).join(".config/docker"),
             daemon_config: PathBuf::from(DEV_HOME).join(".config/docker/daemon.json"),
             data_root: container_root.join("data"),
             exec_root: container_root.join("exec"),
             state_root: container_root.join("state"),
-            socket_path: runtime_dir.join("docker.sock"),
+            socket_path: user_runtime_dir.join("docker.sock"),
             pid_path: runtime_dir.join("dockerd-rootless.pid"),
             daemon_status_path: runtime_dir.join("daemon.status"),
             daemon_log_path: runtime_dir.join("daemon.log"),
