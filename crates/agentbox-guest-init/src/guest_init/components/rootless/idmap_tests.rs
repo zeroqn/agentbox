@@ -79,9 +79,17 @@ fn idmap_installed_helper_readiness_rejects_non_root_owned_test_file() {
     let helper = temp.path().join("newuidmap");
 
     assert!(!installed_helper_is_ready(&helper));
-    make_setuid_executable(&helper);
-    if unsafe { libc::geteuid() } != 0 {
-        assert!(!installed_helper_is_ready(&helper));
+    if unsafe { libc::geteuid() } == 0 {
+        // This test relies on the temp file being owned by the non-root test
+        // user; root-owned readiness is covered by the PATH fallback test.
+        return;
+    }
+    match try_make_setuid_executable(&helper) {
+        Ok(()) => assert!(!installed_helper_is_ready(&helper)),
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            // Some CI sandboxes deny setting the setuid bit on temp files.
+        }
+        Err(err) => panic!("failed to create setuid helper fixture: {err}"),
     }
 }
 
@@ -91,18 +99,22 @@ fn idmap_helper_dir_stays_agentbox_run_path() {
 }
 
 fn make_executable(path: &std::path::Path) {
-    write_helper_with_mode(path, 0o755);
+    write_helper_with_mode(path, 0o755).unwrap();
 }
 
 fn make_setuid_executable(path: &std::path::Path) {
-    write_helper_with_mode(path, 0o4755);
+    try_make_setuid_executable(path).unwrap();
 }
 
-fn write_helper_with_mode(path: &std::path::Path, mode: u32) {
-    fs::write(path, "#!/bin/sh\n").unwrap();
-    let mut perms = fs::metadata(path).unwrap().permissions();
+fn try_make_setuid_executable(path: &std::path::Path) -> std::io::Result<()> {
+    write_helper_with_mode(path, 0o4755)
+}
+
+fn write_helper_with_mode(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
+    fs::write(path, "#!/bin/sh\n")?;
+    let mut perms = fs::metadata(path)?.permissions();
     perms.set_mode(mode);
-    fs::set_permissions(path, perms).unwrap();
+    fs::set_permissions(path, perms)
 }
 
 fn restore_path(old_path: Option<std::ffi::OsString>) {
