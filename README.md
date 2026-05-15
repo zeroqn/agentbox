@@ -197,6 +197,12 @@ Run:
 `agentbox` with no subcommand defaults to libkrun. Runtime-specific libkrun
 options are accepted under the `libkrun` subcommand.
 
+Inside the image, the configured entrypoint is `agentbox-guest-init default enter --`.
+That default guest entrypoint selects the explicit `libkrun` guest
+runtime when agentbox passes `AGENTBOX_LIBKRUN_*` environment flags; otherwise
+it falls back to the explicit `container` guest runtime. The explicit
+`agentbox-guest-init container enter` path does not switch to libkrun.
+
 On first run, agentbox creates two sparse btrfs raw images:
 
 ```text

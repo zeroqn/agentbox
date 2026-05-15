@@ -47,7 +47,7 @@ pkgs.dockerTools.buildLayeredImage {
   '';
 
   config = {
-    Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "container" "enter" "--" ];
+    Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "default" "enter" "--" ];
     WorkingDir = "/workspace";
     Env = [
       "HOME=/home/dev"

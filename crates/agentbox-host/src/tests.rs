@@ -2,13 +2,15 @@ const ENTRYPOINT: &str = include_str!("../../../nix/image/entrypoint.nix");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
+const GUEST_DEFAULT_RUNTIME: &str =
+    include_str!("../../agentbox-guest-init/src/guest_init/runtime/default.rs");
 const GUEST_CONTAINER_RUNTIME: &str =
     include_str!("../../agentbox-guest-init/src/guest_init/runtime/container.rs");
 
 #[test]
-fn image_entrypoint_invokes_guest_init_container_enter_directly() {
+fn image_entrypoint_invokes_guest_init_default_enter_directly() {
     assert!(CONTAINER_NIX.contains(
-        r#"Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "container" "enter" "--" ];"#
+        r#"Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "default" "enter" "--" ];"#
     ));
     let config_start = CONTAINER_NIX
         .find("config = {")
@@ -29,28 +31,34 @@ fn image_env_exposes_guest_init_runtime_payloads() {
 }
 
 #[test]
-fn container_guest_init_dispatches_libkrun_before_normal_setup() {
+fn default_guest_init_dispatches_libkrun_before_container_fallback() {
     for required in [
         "const LIBKRUN_NIX_OVERLAY_ENV",
         "const LIBKRUN_CONTAINERS_STORAGE_ENV",
         "fn should_dispatch_libkrun_from_env()",
-        r#""libkrun".to_owned()"#,
+        r#"runtime_dispatch_argv_for_exe(exe, "libkrun", command)"#,
+        r#"runtime_dispatch_argv_for_exe(exe, "container", command)"#,
         r#""enter".to_owned()"#,
         r#""--".to_owned()"#,
     ] {
         assert!(
-            GUEST_CONTAINER_RUNTIME.contains(required),
+            GUEST_DEFAULT_RUNTIME.contains(required),
             "missing {required}"
         );
     }
 
-    let dispatch = GUEST_CONTAINER_RUNTIME
+    let dispatch = GUEST_DEFAULT_RUNTIME
         .find("should_dispatch_libkrun_from_env()")
         .expect("libkrun dispatch gate should exist");
-    let identity = GUEST_CONTAINER_RUNTIME
-        .find("derive_identity_plan")
-        .expect("normal identity setup should exist");
-    assert!(dispatch < identity);
+    let fallback = GUEST_DEFAULT_RUNTIME
+        .find("container_dispatch_argv")
+        .expect("container fallback should exist");
+    assert!(dispatch < fallback);
+
+    assert!(
+        !GUEST_CONTAINER_RUNTIME.contains("should_dispatch_libkrun_from_env()"),
+        "explicit container runtime should not dispatch to libkrun"
+    );
 }
 
 #[test]

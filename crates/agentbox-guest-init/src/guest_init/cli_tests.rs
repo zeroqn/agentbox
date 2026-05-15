@@ -1,9 +1,40 @@
 use clap::Parser;
 
 use crate::guest_init::cli::{
-    ContainerSubcommand, GuestInitCli, LibkrunSubcommand, NixSubcommand, PodmanSubcommand,
-    RuntimeCommand,
+    ContainerSubcommand, DefaultSubcommand, GuestInitCli, LibkrunSubcommand, NixSubcommand,
+    PodmanSubcommand, RuntimeCommand,
 };
+
+#[test]
+fn parses_default_enter_command_for_image_entrypoint() {
+    let cli = GuestInitCli::try_parse_from([
+        "agentbox-guest-init",
+        "default",
+        "enter",
+        "--",
+        "bash",
+        "-lc",
+        "true",
+    ])
+    .unwrap();
+
+    let RuntimeCommand::Default(default) = cli.runtime else {
+        panic!("expected default command");
+    };
+    let DefaultSubcommand::Enter(enter) = default.command;
+    assert_eq!(enter.command, ["bash", "-lc", "true"]);
+}
+
+#[test]
+fn parses_default_enter_command_defaulting_to_login_shell() {
+    let cli = GuestInitCli::try_parse_from(["agentbox-guest-init", "default", "enter"]).unwrap();
+
+    let RuntimeCommand::Default(default) = cli.runtime else {
+        panic!("expected default command");
+    };
+    let DefaultSubcommand::Enter(enter) = default.command;
+    assert_eq!(enter.resolved_command(), ["fish", "-l"]);
+}
 
 #[test]
 fn parses_libkrun_enter_command_after_separator() {
@@ -73,7 +104,7 @@ fn parses_libkrun_nix_prep_and_wait() {
 }
 
 #[test]
-fn parses_container_enter_command_for_image_entrypoint() {
+fn parses_container_enter_command() {
     let cli = GuestInitCli::try_parse_from([
         "agentbox-guest-init",
         "container",

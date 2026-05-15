@@ -9,8 +9,20 @@ pub(in crate::guest_init) struct GuestInitCli {
 
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum RuntimeCommand {
+    Default(DefaultCommand),
     Libkrun(LibkrunCommand),
     Container(ContainerCommand),
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+pub(in crate::guest_init) struct DefaultCommand {
+    #[command(subcommand)]
+    pub(in crate::guest_init) command: DefaultSubcommand,
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub(in crate::guest_init) enum DefaultSubcommand {
+    Enter(EnterCommand),
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]

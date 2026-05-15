@@ -13,15 +13,10 @@ const NSS_WRAPPER_LIB_ENV: &str = "AGENTBOX_NSS_WRAPPER_LIB";
 const HOST_UID_ENV: &str = "AGENTBOX_HOST_UID";
 const HOST_GID_ENV: &str = "AGENTBOX_HOST_GID";
 const DROP_TO_DEV_ENV: &str = "AGENTBOX_KVM_DROP_TO_DEV";
-const LIBKRUN_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY";
-const LIBKRUN_CONTAINERS_STORAGE_ENV: &str = "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE";
-
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) enum ContainerEnterOperation {
     ResolveCommand,
-    DispatchLibkrunIfRequested,
-    StartProfilerAfterLibkrunDispatch,
     DeriveIdentity,
     ExportShellEnvironment,
     MaterializeNssWrapper,
@@ -35,8 +30,6 @@ pub(in crate::guest_init) enum ContainerEnterOperation {
 pub(in crate::guest_init) fn planned_enter_operations() -> Vec<ContainerEnterOperation> {
     vec![
         ContainerEnterOperation::ResolveCommand,
-        ContainerEnterOperation::DispatchLibkrunIfRequested,
-        ContainerEnterOperation::StartProfilerAfterLibkrunDispatch,
         ContainerEnterOperation::DeriveIdentity,
         ContainerEnterOperation::ExportShellEnvironment,
         ContainerEnterOperation::MaterializeNssWrapper,
@@ -68,9 +61,6 @@ pub(in crate::guest_init) fn run(command: ContainerCommand) -> Result<()> {
 
 fn enter(command: EnterCommand) -> Result<()> {
     let command = command.resolved_command();
-    if should_dispatch_libkrun_from_env() {
-        return process::exec_command(&libkrun_dispatch_argv(&command)?);
-    }
 
     let mut profiler = profile::GuestProfiler::from_process_env("container enter");
     let identity_plan = profiler.measure_result("derive-identity", || {
@@ -122,37 +112,6 @@ fn enter(command: EnterCommand) -> Result<()> {
     } else {
         process::exec_command(&command)
     }
-}
-
-fn should_dispatch_libkrun_from_env() -> bool {
-    should_dispatch_libkrun(&ProcessEnv)
-}
-
-fn should_dispatch_libkrun(env: &impl EnvSource) -> bool {
-    env.var(LIBKRUN_NIX_OVERLAY_ENV).as_deref() == Some("1")
-        || env.var(LIBKRUN_CONTAINERS_STORAGE_ENV).as_deref() == Some("1")
-}
-
-fn libkrun_dispatch_argv(command: &[String]) -> Result<Vec<String>> {
-    let current_exe = std::env::current_exe()
-        .context("failed to resolve current agentbox-guest-init executable")?
-        .display()
-        .to_string();
-    Ok(libkrun_dispatch_argv_for_exe(&current_exe, command))
-}
-
-pub(in crate::guest_init) fn libkrun_dispatch_argv_for_exe(
-    exe: &str,
-    command: &[String],
-) -> Vec<String> {
-    let mut argv = vec![
-        exe.to_owned(),
-        "libkrun".to_owned(),
-        "enter".to_owned(),
-        "--".to_owned(),
-    ];
-    argv.extend(command.iter().cloned());
-    argv
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

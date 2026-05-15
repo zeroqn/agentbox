@@ -4,10 +4,9 @@ use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
 use super::{
-    build_nss_wrapper_plan, derive_identity_plan, libkrun_dispatch_argv_for_exe,
-    materialize_writable_dir, normal_shell_environment, planned_enter_operations,
-    should_dispatch_libkrun, ContainerEnterOperation, ProcessIds, HOST_GID_ENV, HOST_UID_ENV,
-    LIBKRUN_CONTAINERS_STORAGE_ENV, LIBKRUN_NIX_OVERLAY_ENV,
+    build_nss_wrapper_plan, derive_identity_plan, materialize_writable_dir,
+    normal_shell_environment, planned_enter_operations, ContainerEnterOperation, ProcessIds,
+    HOST_GID_ENV, HOST_UID_ENV,
 };
 use crate::guest_init::cli::EnterCommand;
 
@@ -43,51 +42,6 @@ fn explicit_container_enter_command_is_preserved() {
     };
 
     assert_eq!(enter.resolved_command(), ["bash", "-lc", "true"]);
-}
-
-#[test]
-fn libkrun_dispatch_preserves_resolved_command_after_separator() {
-    let argv = libkrun_dispatch_argv_for_exe(
-        "/nix/store/guest/bin/agentbox-guest-init",
-        &["fish".to_owned(), "-l".to_owned()],
-    );
-
-    assert_eq!(
-        argv,
-        [
-            "/nix/store/guest/bin/agentbox-guest-init",
-            "libkrun",
-            "enter",
-            "--",
-            "fish",
-            "-l"
-        ]
-    );
-}
-
-#[test]
-fn libkrun_dispatch_is_enabled_by_nix_overlay_flag() {
-    assert!(should_dispatch_libkrun(&TestEnv::new(&[(
-        LIBKRUN_NIX_OVERLAY_ENV,
-        "1",
-    )])));
-}
-
-#[test]
-fn libkrun_dispatch_is_enabled_by_containers_storage_flag() {
-    assert!(should_dispatch_libkrun(&TestEnv::new(&[(
-        LIBKRUN_CONTAINERS_STORAGE_ENV,
-        "1",
-    )])));
-}
-
-#[test]
-fn libkrun_dispatch_ignores_unset_or_non_one_flags() {
-    assert!(!should_dispatch_libkrun(&TestEnv::new(&[])));
-    assert!(!should_dispatch_libkrun(&TestEnv::new(&[(
-        LIBKRUN_NIX_OVERLAY_ENV,
-        "0",
-    )])));
 }
 
 #[test]
@@ -273,21 +227,12 @@ fn writable_dir_shadowing_follows_symlink_contents_like_cp_rl() {
 }
 
 #[test]
-fn container_enter_operation_order_dispatches_libkrun_before_normal_setup() {
+fn container_enter_operation_order_keeps_normal_setup_before_exec() {
     let ops = planned_enter_operations();
     let pos = |op| ops.iter().position(|candidate| candidate == &op).unwrap();
 
     assert!(
-        pos(ContainerEnterOperation::DispatchLibkrunIfRequested)
-            < pos(ContainerEnterOperation::DeriveIdentity)
-    );
-    assert!(
-        pos(ContainerEnterOperation::DispatchLibkrunIfRequested)
-            < pos(ContainerEnterOperation::StartProfilerAfterLibkrunDispatch)
-    );
-    assert!(
-        pos(ContainerEnterOperation::StartProfilerAfterLibkrunDispatch)
-            < pos(ContainerEnterOperation::DeriveIdentity)
+        pos(ContainerEnterOperation::ResolveCommand) < pos(ContainerEnterOperation::DeriveIdentity)
     );
     assert!(
         pos(ContainerEnterOperation::ExportShellEnvironment)
