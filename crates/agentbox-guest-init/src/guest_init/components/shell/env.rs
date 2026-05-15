@@ -48,7 +48,9 @@ pub(in crate::guest_init) fn derive(
 
 pub(in crate::guest_init) fn export(env_contract: &ShellEnvironment) {
     for (key, value) in &env_contract.vars {
-        env::set_var(key, value);
+        // SAFETY: guest-init builds and exports the shell environment during
+        // single-threaded bootstrap immediately before replacing the process.
+        unsafe { env::set_var(key, value) };
     }
 }
 

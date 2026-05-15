@@ -247,7 +247,9 @@ fn normal_shell_environment(identity: &DevIdentity) -> Vec<(String, String)> {
 
 fn export_vars(vars: &[(String, String)]) {
     for (key, value) in vars {
-        std::env::set_var(key, value);
+        // SAFETY: container entry exports the derived login environment during
+        // single-threaded bootstrap immediately before replacing the process.
+        unsafe { std::env::set_var(key, value) };
     }
 }
 

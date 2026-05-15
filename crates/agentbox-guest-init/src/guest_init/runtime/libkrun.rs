@@ -104,7 +104,9 @@ fn enter(command: Vec<String>) -> Result<()> {
     })?;
     profiler.measure("export-nix-remote", || {
         if env_contract.nix_overlay {
-            std::env::set_var("NIX_REMOTE", NIX_REMOTE_URI);
+            // SAFETY: libkrun entry mutates the process environment during
+            // single-threaded bootstrap before exec so the shell sees NIX_REMOTE.
+            unsafe { std::env::set_var("NIX_REMOTE", NIX_REMOTE_URI) };
         }
     });
 

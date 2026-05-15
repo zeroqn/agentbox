@@ -165,8 +165,12 @@ impl ProfileRecorder for GuestProfiler {
 }
 
 pub(in crate::guest_init) fn clear_guest_profile_env() {
-    env::remove_var(GUEST_PROFILE_ENV);
-    env::remove_var(GUEST_DEBUG_ENV);
+    // SAFETY: guest-init clears one-shot profiling flags during single-threaded
+    // bootstrap before exec so child commands do not inherit them.
+    unsafe {
+        env::remove_var(GUEST_PROFILE_ENV);
+        env::remove_var(GUEST_DEBUG_ENV);
+    }
 }
 
 fn format_duration(duration: Duration) -> String {
