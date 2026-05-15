@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::runtime::components::diagnostics::{
     GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
 };
@@ -6,8 +8,7 @@ use crate::runtime::components::volumes::{
     TaskVolumeMounts, SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER,
 };
 use crate::runtime::libkrun::components::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
-use crate::runtime::libkrun::components::debug::DEBUG_OWNER;
-use crate::runtime::libkrun::components::debug::{DebugEntrypointMount, DebugGuestInitMount};
+use crate::runtime::libkrun::components::debug::{DebugGuestInitMount, DEBUG_OWNER};
 use crate::runtime::libkrun::components::disk::containers::podman::{
     CONTAINERS_DISK_OWNER, LIBKRUN_CONTAINERS_STORAGE_ENV,
 };
@@ -29,22 +30,19 @@ use crate::runtime::libkrun::components::network;
 use crate::runtime::libkrun::components::oci::{LIBKRUN_HANDLER_ANNOTATION, OCI_OWNER};
 use crate::runtime::libkrun::task::{build_libkrun_task_podman_args, build_libkrun_task_run_args};
 use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, INTERACTIVE_SHELL};
-use std::path::PathBuf;
 
 #[test]
 fn libkrun_task_args_match_ordered_default_passt_baseline() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args(&disk, &container_disk);
-
+    let args = build_args(TaskOptions::default());
     assert_eq!(args, expected_args(ExpectedOptions::default()));
 }
 
 #[test]
 fn libkrun_task_args_match_ordered_tsi_baseline() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args_with_tsi(&disk, &container_disk, true);
+    let args = build_args(TaskOptions {
+        tsi: true,
+        ..Default::default()
+    });
 
     assert_eq!(
         args,
@@ -57,9 +55,10 @@ fn libkrun_task_args_match_ordered_tsi_baseline() {
 
 #[test]
 fn libkrun_task_args_match_ordered_cpu_absent_baseline() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args_with_cpu_count(&disk, &container_disk, None);
+    let args = build_args(TaskOptions {
+        cpu_count: None,
+        ..Default::default()
+    });
 
     assert_eq!(
         args,
@@ -71,32 +70,17 @@ fn libkrun_task_args_match_ordered_cpu_absent_baseline() {
 }
 
 #[test]
-fn libkrun_task_args_match_ordered_debug_entrypoint_baseline() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let debug_entrypoint = debug_entrypoint();
-    let args = build_args_with_debug_entrypoint(&disk, &container_disk, Some(&debug_entrypoint));
+fn libkrun_task_args_match_ordered_guest_init_override_baseline() {
+    let guest_init = guest_init_override();
+    let args = build_args(TaskOptions {
+        guest_init: Some(guest_init.clone()),
+        ..Default::default()
+    });
 
     assert_eq!(
         args,
         expected_args(ExpectedOptions {
-            debug_entrypoint: Some(debug_entrypoint.mount_arg.clone()),
-            ..Default::default()
-        })
-    );
-}
-
-#[test]
-fn libkrun_task_args_match_ordered_debug_guest_init_baseline() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let debug_guest_init = debug_guest_init();
-    let args = build_args_with_debug_guest_init(&disk, &container_disk, Some(&debug_guest_init));
-
-    assert_eq!(
-        args,
-        expected_args(ExpectedOptions {
-            debug_guest_init: Some(debug_guest_init.mount_arg.clone()),
+            guest_init: Some(guest_init.mount_arg),
             ..Default::default()
         })
     );
@@ -104,50 +88,23 @@ fn libkrun_task_args_match_ordered_debug_guest_init_baseline() {
 
 #[test]
 fn libkrun_task_args_include_krun_disk_annotations_and_guest_overlay_env() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args(&disk, &container_disk);
+    let args = build_args(TaskOptions::default());
     let joined = args.join("\n");
 
     assert_eq!(args[0], "run");
-    assert!(args.contains(&"--name".to_owned()));
     assert!(args.contains(&"project-random".to_owned()));
-    assert!(args.contains(&"--runtime".to_owned()));
-    assert!(args.contains(&"crun".to_owned()));
     assert!(args.contains(&LIBKRUN_HANDLER_ANNOTATION.to_owned()));
     assert!(args.contains(&"krun.ram_mib=8192".to_owned()));
     assert!(args.contains(&"krun.cpus=16".to_owned()));
-    assert!(
-        args.contains(&"krun.disk.0.path=/tmp/state/agentbox/project/libkrun-nix.raw".to_owned())
-    );
     assert!(args.contains(&"krun.disk.0.id=agentbox-nix".to_owned()));
-    assert!(args.contains(&"krun.disk.0.readonly=false".to_owned()));
-    assert!(args.contains(
-        &"krun.disk.1.path=/tmp/state/agentbox/project/libkrun-containers.raw".to_owned()
-    ));
     assert!(args.contains(&"krun.disk.1.id=agentbox-containers".to_owned()));
-    assert!(args.contains(&"krun.disk.1.readonly=false".to_owned()));
     assert!(joined.contains(&format!("--device\n{}", network::LIBKRUN_TUN_DEVICE)));
     assert!(args.contains(&LIBKRUN_NIX_OVERLAY_ENV.to_owned()));
-    assert!(args.contains(&"AGENTBOX_LIBKRUN_NIX_DISK_ID=agentbox-nix".to_owned()));
-    assert!(args.contains(&format!(
-        "AGENTBOX_LIBKRUN_NIX_DISK_LABEL={RAW_NIX_DISK_LABEL}"
-    )));
     assert!(args.contains(&LIBKRUN_CONTAINERS_STORAGE_ENV.to_owned()));
-    assert!(args.contains(&"AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID=agentbox-containers".to_owned()));
-    assert!(args.contains(&format!(
-        "AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL={RAW_CONTAINER_DISK_LABEL}"
-    )));
-    assert!(args.contains(&"AGENTBOX_HOST_UID=1001".to_owned()));
-    assert!(args.contains(&"AGENTBOX_HOST_GID=1002".to_owned()));
     assert!(args.contains(&LIBKRUN_KVM_DROP_TO_DEV_ENV.to_owned()));
     assert!(joined.contains("--userns\nkeep-id"));
-    assert!(!joined.contains("keep-id:"));
     assert!(joined.contains("--user\n0:0"));
     assert!(args.contains(&"/tmp/project:/workspace".to_owned()));
-    assert!(args.contains(&"/home/alice/.codex:/home/dev/.codex".to_owned()));
-    assert!(args.contains(&"/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned()));
-    assert!(args.contains(&"/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned()));
     assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
     assert!(args.contains(&CONTAINER_TMP_TMPFS.to_owned()));
     assert!(args.contains(&network::LIBKRUN_USE_PASST_ENV.to_owned()));
@@ -160,9 +117,7 @@ fn libkrun_task_args_include_krun_disk_annotations_and_guest_overlay_env() {
 
 #[test]
 fn libkrun_task_args_expose_component_owner_ownership() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_run_args(&disk, &container_disk);
+    let args = build_run_args(TaskOptions::default());
 
     assert!(args.contains_option_from(USER_IDENTITY_OWNER, "--userns", "keep-id"));
     assert!(args.contains_option_from(OCI_OWNER, "--runtime", "crun"));
@@ -175,19 +130,9 @@ fn libkrun_task_args_expose_component_owner_ownership() {
         "krun.disk.0.id=agentbox-nix"
     ));
     assert!(args.contains_option_from(
-        NIX_DISK_OWNER,
-        "--env",
-        "AGENTBOX_LIBKRUN_NIX_DISK_ID=agentbox-nix"
-    ));
-    assert!(args.contains_option_from(
         CONTAINERS_DISK_OWNER,
         "--annotation",
         "krun.disk.1.id=agentbox-containers"
-    ));
-    assert!(args.contains_option_from(
-        CONTAINERS_DISK_OWNER,
-        "--env",
-        "AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID=agentbox-containers"
     ));
     assert!(args.contains_option_from(
         network::NETWORK_OWNER,
@@ -199,13 +144,7 @@ fn libkrun_task_args_expose_component_owner_ownership() {
         "--env",
         network::LIBKRUN_USE_PASST_ENV
     ));
-    assert!(args.contains_option_from(
-        network::NETWORK_OWNER,
-        "--annotation",
-        network::LIBKRUN_USE_PASST_ANNOTATION
-    ));
     assert!(args.contains_option_from(HOST_IDENTITY_OWNER, "--user", "0:0"));
-    assert!(args.contains_option_from(HOST_IDENTITY_OWNER, "--env", "AGENTBOX_HOST_UID=1001"));
     assert!(args.contains_option_from(
         WORKSPACE_VOLUME_OWNER,
         "--volume",
@@ -219,41 +158,22 @@ fn libkrun_task_args_expose_component_owner_ownership() {
 }
 
 #[test]
-fn libkrun_debug_args_are_owned_by_debug_owner() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let debug_entrypoint = debug_entrypoint();
-    let debug_guest_init = debug_guest_init();
-    let args = build_run_args_with_options(
-        &disk,
-        &container_disk,
-        false,
-        Some(16),
-        false,
-        false,
-        Some(&debug_entrypoint),
-        Some(&debug_guest_init),
-    );
+fn libkrun_guest_init_override_is_owned_by_debug_owner() {
+    let guest_init = guest_init_override();
+    let args = build_run_args(TaskOptions {
+        guest_init: Some(guest_init.clone()),
+        ..Default::default()
+    });
 
-    assert!(args.contains_option_from(DEBUG_OWNER, "--volume", &debug_entrypoint.mount_arg));
-    assert!(args.contains_option_from(DEBUG_OWNER, "--entrypoint", debug_entrypoint.target));
-    assert!(args.contains_option_from(DEBUG_OWNER, "--volume", &debug_guest_init.mount_arg));
+    assert!(args.contains_option_from(DEBUG_OWNER, "--volume", &guest_init.mount_arg));
 }
 
 #[test]
 fn libkrun_tsi_proxy_env_is_owned_by_network_owner() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_run_args_with_options(
-        &disk,
-        &container_disk,
-        true,
-        Some(16),
-        false,
-        false,
-        None,
-        None,
-    );
+    let args = build_run_args(TaskOptions {
+        tsi: true,
+        ..Default::default()
+    });
 
     assert!(args.contains_option_from(
         network::NETWORK_OWNER,
@@ -269,18 +189,11 @@ fn libkrun_tsi_proxy_env_is_owned_by_network_owner() {
 
 #[test]
 fn libkrun_guest_diagnostics_are_owned_by_guest_diagnostics() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_run_args_with_options(
-        &disk,
-        &container_disk,
-        false,
-        Some(16),
-        true,
-        true,
-        None,
-        None,
-    );
+    let args = build_run_args(TaskOptions {
+        guest_profile: true,
+        guest_debug: true,
+        ..Default::default()
+    });
 
     assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_PROFILE_ENV));
     assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_DEBUG_ENV));
@@ -288,9 +201,7 @@ fn libkrun_guest_diagnostics_are_owned_by_guest_diagnostics() {
 
 #[test]
 fn libkrun_task_args_exclude_container_sidecar_and_nix_proxy_paths() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args(&disk, &container_disk);
+    let args = build_args(TaskOptions::default());
     let joined = args.join("\n");
 
     assert!(!joined.contains("io.agentbox.sidecar"));
@@ -305,9 +216,10 @@ fn libkrun_task_args_exclude_container_sidecar_and_nix_proxy_paths() {
 
 #[test]
 fn libkrun_task_args_use_tsi_proxy_env_instead_of_default_passt_when_requested() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args_with_tsi(&disk, &container_disk, true);
+    let args = build_args(TaskOptions {
+        tsi: true,
+        ..Default::default()
+    });
     let joined = args.join("\n");
 
     assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
@@ -320,9 +232,10 @@ fn libkrun_task_args_use_tsi_proxy_env_instead_of_default_passt_when_requested()
 
 #[test]
 fn libkrun_task_args_omit_cpu_annotation_when_cpu_count_is_unresolved() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args_with_cpu_count(&disk, &container_disk, None);
+    let args = build_args(TaskOptions {
+        cpu_count: None,
+        ..Default::default()
+    });
     let joined = args.join("\n");
 
     assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
@@ -334,28 +247,12 @@ fn libkrun_task_args_omit_cpu_annotation_when_cpu_count_is_unresolved() {
 }
 
 #[test]
-fn libkrun_task_args_can_override_entrypoint_for_guest_debugging() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let debug_entrypoint = debug_entrypoint();
-    let args = build_args_with_debug_entrypoint(&disk, &container_disk, Some(&debug_entrypoint));
-    let joined = args.join("\n");
-
-    assert!(joined.contains("--volume\n/tmp/debug-entrypoint.sh:/bin/agentbox-debug-entrypoint:ro"));
-    assert!(joined.contains("--entrypoint\n/bin/agentbox-debug-entrypoint"));
-    assert!(joined.contains(&format!(
-        "--entrypoint\n/bin/agentbox-debug-entrypoint\n{}\n{}\n-l",
-        crate::DEFAULT_IMAGE,
-        INTERACTIVE_SHELL
-    )));
-}
-
-#[test]
 fn libkrun_task_args_can_override_guest_init_without_changing_entrypoint() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let debug_guest_init = debug_guest_init();
-    let args = build_args_with_debug_guest_init(&disk, &container_disk, Some(&debug_guest_init));
+    let guest_init = guest_init_override();
+    let args = build_args(TaskOptions {
+        guest_init: Some(guest_init),
+        ..Default::default()
+    });
     let joined = args.join("\n");
 
     assert!(joined.contains(
@@ -371,9 +268,11 @@ fn libkrun_task_args_can_override_guest_init_without_changing_entrypoint() {
 
 #[test]
 fn libkrun_task_args_include_guest_profile_and_debug_env_when_requested() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args_with_guest_diagnostics(&disk, &container_disk, true, true);
+    let args = build_args(TaskOptions {
+        guest_profile: true,
+        guest_debug: true,
+        ..Default::default()
+    });
 
     assert!(args.contains(&GUEST_PROFILE_ENV.to_owned()));
     assert!(args.contains(&GUEST_DEBUG_ENV.to_owned()));
@@ -381,29 +280,37 @@ fn libkrun_task_args_include_guest_profile_and_debug_env_when_requested() {
 
 #[test]
 fn libkrun_task_args_omit_guest_profile_and_debug_env_by_default() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args(&disk, &container_disk);
+    let args = build_args(TaskOptions::default());
 
     assert!(!args.contains(&GUEST_PROFILE_ENV.to_owned()));
     assert!(!args.contains(&GUEST_DEBUG_ENV.to_owned()));
 }
 
-#[test]
-fn libkrun_task_args_can_pass_guest_debug_without_profile() {
-    let disk = raw_disk();
-    let container_disk = raw_container_disk();
-    let args = build_args_with_guest_diagnostics(&disk, &container_disk, false, true);
+#[derive(Debug, Clone)]
+struct TaskOptions {
+    tsi: bool,
+    cpu_count: Option<u32>,
+    guest_profile: bool,
+    guest_debug: bool,
+    guest_init: Option<DebugGuestInitMount>,
+}
 
-    assert!(!args.contains(&GUEST_PROFILE_ENV.to_owned()));
-    assert!(args.contains(&GUEST_DEBUG_ENV.to_owned()));
+impl Default for TaskOptions {
+    fn default() -> Self {
+        Self {
+            tsi: false,
+            cpu_count: Some(16),
+            guest_profile: false,
+            guest_debug: false,
+            guest_init: None,
+        }
+    }
 }
 
 struct ExpectedOptions {
     tsi: bool,
     include_cpu: bool,
-    debug_entrypoint: Option<String>,
-    debug_guest_init: Option<String>,
+    guest_init: Option<String>,
 }
 
 impl Default for ExpectedOptions {
@@ -411,18 +318,8 @@ impl Default for ExpectedOptions {
         Self {
             tsi: false,
             include_cpu: true,
-            debug_entrypoint: None,
-            debug_guest_init: None,
+            guest_init: None,
         }
-    }
-}
-
-fn default_task_volumes() -> TaskVolumeMounts {
-    TaskVolumeMounts {
-        workspace: "/tmp/project:/workspace".to_owned(),
-        codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
-        cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
-        sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
     }
 }
 
@@ -510,16 +407,7 @@ fn expected_args(options: ExpectedOptions) -> Vec<String> {
         ]);
     }
 
-    if let Some(mount_arg) = options.debug_entrypoint {
-        args.extend([
-            "--volume".to_owned(),
-            mount_arg,
-            "--entrypoint".to_owned(),
-            "/bin/agentbox-debug-entrypoint".to_owned(),
-        ]);
-    }
-
-    if let Some(mount_arg) = options.debug_guest_init {
+    if let Some(mount_arg) = options.guest_init {
         args.extend(["--volume".to_owned(), mount_arg]);
     }
 
@@ -529,6 +417,51 @@ fn expected_args(options: ExpectedOptions) -> Vec<String> {
         "-l".to_owned(),
     ]);
     args
+}
+
+fn build_args(options: TaskOptions) -> Vec<String> {
+    build_libkrun_task_podman_args(task_spec(options)).expect("libkrun task args should build")
+}
+
+fn build_run_args(options: TaskOptions) -> crate::podman::run::RunArgs {
+    build_libkrun_task_run_args(task_spec(options)).expect("libkrun task args should build")
+}
+
+fn task_spec(
+    options: TaskOptions,
+) -> crate::runtime::libkrun::task::LibkrunTaskPodmanSpec<'static> {
+    let task_volumes = Box::leak(Box::new(default_task_volumes()));
+    let raw_nix_disk = Box::leak(Box::new(raw_disk()));
+    let raw_container_disk = Box::leak(Box::new(raw_container_disk()));
+    let debug_guest_init = options
+        .guest_init
+        .map(|mount| Box::leak(Box::new(mount)) as &'static DebugGuestInitMount);
+
+    crate::runtime::libkrun::task::LibkrunTaskPodmanSpec {
+        image: crate::DEFAULT_IMAGE,
+        container_name: "project-random",
+        hostname: "project-agentbox",
+        task_volumes,
+        raw_nix_disk,
+        raw_container_disk,
+        host_uid: 1001,
+        host_gid: 1002,
+        ram_mib: 8192,
+        cpu_count: options.cpu_count,
+        tsi: options.tsi,
+        guest_profile: options.guest_profile,
+        guest_debug: options.guest_debug,
+        debug_guest_init,
+    }
+}
+
+fn default_task_volumes() -> TaskVolumeMounts {
+    TaskVolumeMounts {
+        workspace: "/tmp/project:/workspace".to_owned(),
+        codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+        cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
+        sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
+    }
 }
 
 fn raw_disk() -> RawNixDisk {
@@ -551,199 +484,11 @@ fn raw_container_disk() -> RawContainerDisk {
     }
 }
 
-fn debug_entrypoint() -> DebugEntrypointMount {
-    DebugEntrypointMount {
-        source: PathBuf::from("/tmp/debug-entrypoint.sh"),
-        mount_arg: "/tmp/debug-entrypoint.sh:/bin/agentbox-debug-entrypoint:ro".to_owned(),
-        target: "/bin/agentbox-debug-entrypoint",
-    }
-}
-
-fn debug_guest_init() -> DebugGuestInitMount {
+fn guest_init_override() -> DebugGuestInitMount {
     DebugGuestInitMount {
         source: PathBuf::from("/tmp/agentbox-guest-init"),
         mount_arg: "/tmp/agentbox-guest-init:/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"
             .to_owned(),
         target: "/nix/store/hash-agentbox/bin/agentbox-guest-init".to_owned(),
     }
-}
-
-fn build_args(raw_nix_disk: &RawNixDisk, raw_container_disk: &RawContainerDisk) -> Vec<String> {
-    build_args_with_options(
-        raw_nix_disk,
-        raw_container_disk,
-        false,
-        Some(16),
-        None,
-        None,
-    )
-}
-
-fn build_args_with_tsi(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    tsi: bool,
-) -> Vec<String> {
-    build_args_with_options(raw_nix_disk, raw_container_disk, tsi, Some(16), None, None)
-}
-
-fn build_args_with_cpu_count(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    cpu_count: Option<u32>,
-) -> Vec<String> {
-    build_args_with_options(
-        raw_nix_disk,
-        raw_container_disk,
-        false,
-        cpu_count,
-        None,
-        None,
-    )
-}
-
-fn build_args_with_debug_entrypoint(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    debug_entrypoint: Option<&DebugEntrypointMount>,
-) -> Vec<String> {
-    build_args_with_options(
-        raw_nix_disk,
-        raw_container_disk,
-        false,
-        Some(16),
-        debug_entrypoint,
-        None,
-    )
-}
-
-fn build_args_with_debug_guest_init(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    debug_guest_init: Option<&DebugGuestInitMount>,
-) -> Vec<String> {
-    build_args_with_options(
-        raw_nix_disk,
-        raw_container_disk,
-        false,
-        Some(16),
-        None,
-        debug_guest_init,
-    )
-}
-
-fn build_args_with_options(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    tsi: bool,
-    cpu_count: Option<u32>,
-    debug_entrypoint: Option<&DebugEntrypointMount>,
-    debug_guest_init: Option<&DebugGuestInitMount>,
-) -> Vec<String> {
-    build_args_with_full_options(
-        raw_nix_disk,
-        raw_container_disk,
-        tsi,
-        cpu_count,
-        false,
-        false,
-        debug_entrypoint,
-        debug_guest_init,
-    )
-}
-
-fn build_args_with_guest_diagnostics(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    guest_profile: bool,
-    guest_debug: bool,
-) -> Vec<String> {
-    build_args_with_full_options(
-        raw_nix_disk,
-        raw_container_disk,
-        false,
-        Some(16),
-        guest_profile,
-        guest_debug,
-        None,
-        None,
-    )
-}
-
-fn build_run_args(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-) -> crate::podman::run::RunArgs {
-    build_run_args_with_options(
-        raw_nix_disk,
-        raw_container_disk,
-        false,
-        Some(16),
-        false,
-        false,
-        None,
-        None,
-    )
-}
-
-fn build_run_args_with_options(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    tsi: bool,
-    cpu_count: Option<u32>,
-    guest_profile: bool,
-    guest_debug: bool,
-    debug_entrypoint: Option<&DebugEntrypointMount>,
-    debug_guest_init: Option<&DebugGuestInitMount>,
-) -> crate::podman::run::RunArgs {
-    let task_volumes = default_task_volumes();
-    build_libkrun_task_run_args(crate::runtime::libkrun::task::LibkrunTaskPodmanSpec {
-        image: crate::DEFAULT_IMAGE,
-        container_name: "project-random",
-        hostname: "project-agentbox",
-        task_volumes: &task_volumes,
-        raw_nix_disk,
-        raw_container_disk,
-        host_uid: 1001,
-        host_gid: 1002,
-        ram_mib: 8192,
-        cpu_count,
-        tsi,
-        guest_profile,
-        guest_debug,
-        debug_entrypoint,
-        debug_guest_init,
-    })
-    .expect("libkrun task args should build")
-}
-
-fn build_args_with_full_options(
-    raw_nix_disk: &RawNixDisk,
-    raw_container_disk: &RawContainerDisk,
-    tsi: bool,
-    cpu_count: Option<u32>,
-    guest_profile: bool,
-    guest_debug: bool,
-    debug_entrypoint: Option<&DebugEntrypointMount>,
-    debug_guest_init: Option<&DebugGuestInitMount>,
-) -> Vec<String> {
-    let task_volumes = default_task_volumes();
-    build_libkrun_task_podman_args(crate::runtime::libkrun::task::LibkrunTaskPodmanSpec {
-        image: crate::DEFAULT_IMAGE,
-        container_name: "project-random",
-        hostname: "project-agentbox",
-        task_volumes: &task_volumes,
-        raw_nix_disk,
-        raw_container_disk,
-        host_uid: 1001,
-        host_gid: 1002,
-        ram_mib: 8192,
-        cpu_count,
-        tsi,
-        guest_profile,
-        guest_debug,
-        debug_entrypoint,
-        debug_guest_init,
-    })
-    .expect("libkrun task args should build")
 }

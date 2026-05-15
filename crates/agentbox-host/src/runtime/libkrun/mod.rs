@@ -8,33 +8,28 @@ use anyhow::{Context, Result};
 use std::env;
 use std::process::{ExitCode, Stdio};
 
-use crate::cli::{resolve_image, Cli};
+use crate::cli::{resolve_image, CommonOptions, LibkrunOptions};
 use crate::podman::command::run_podman;
 use crate::runtime::components::volumes::prepare_task_volumes;
 use crate::state::resolve_state_layout;
 use crate::{derive_task_container_name, derive_task_hostname};
 
 use components::cpu::resolve_libkrun_cpu_count;
-use components::debug::{resolve_debug_entrypoint_mount, resolve_debug_guest_init_mount};
+use components::debug::resolve_debug_guest_init_mount;
 use components::disk::{containers, nix};
 use components::memory::resolve_libkrun_ram_mib;
 use task::{build_libkrun_task_podman_args, LibkrunTaskPodmanSpec};
 
-pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
+pub(crate) fn run(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> {
     let cwd = env::current_dir()
         .context("failed to resolve current directory")?
         .canonicalize()
         .context("failed to canonicalize current directory")?;
-    let image = resolve_image(cli.image.as_deref(), cli.pull_latest)?;
+    let image = resolve_image(common.image.as_deref(), common.pull_latest)?;
     let state_layout = resolve_state_layout(&cwd)?;
 
-    let debug_entrypoint = cli
-        .libkrun_debug_entrypoint
-        .as_deref()
-        .map(resolve_debug_entrypoint_mount)
-        .transpose()?;
-    let debug_guest_init = cli
-        .libkrun_debug_guest_init
+    let debug_guest_init = options
+        .guest_init
         .as_deref()
         .map(|path| resolve_debug_guest_init_mount(path, &image))
         .transpose()?;
@@ -44,7 +39,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     let task_hostname = derive_task_hostname(&cwd);
     let task_volumes = prepare_task_volumes(&cwd, &state_layout)?;
     let (host_uid, host_gid) = current_host_ids();
-    let ram_mib = resolve_libkrun_ram_mib(cli.mem_gib)?;
+    let ram_mib = resolve_libkrun_ram_mib(options.mem_gib)?;
     let cpu_count = resolve_libkrun_cpu_count()?;
 
     let status = run_podman(
@@ -59,10 +54,9 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             host_gid,
             ram_mib,
             cpu_count,
-            tsi: cli.tsi,
-            guest_profile: cli.profile,
-            guest_debug: cli.debug,
-            debug_entrypoint: debug_entrypoint.as_ref(),
+            tsi: options.tsi,
+            guest_profile: common.profile,
+            guest_debug: common.debug,
             debug_guest_init: debug_guest_init.as_ref(),
         })?,
         Stdio::inherit(),

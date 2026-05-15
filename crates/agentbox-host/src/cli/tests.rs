@@ -1,28 +1,25 @@
-use super::*;
+use crate::cli::{
+    resolve_image_strategy, select_default_image, Cli, ContainerMode, ImageResolutionStrategy,
+    LibkrunOptions, RuntimeCommand,
+};
+use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 use clap::error::ErrorKind;
 use clap::CommandFactory;
+use clap::Parser;
+use std::path::Path;
 
 #[test]
-fn cli_accepts_no_arguments() {
+fn cli_accepts_no_arguments_as_default_libkrun() {
     let cli = Cli::try_parse_from(["agentbox"]).expect("no-arg invocation should parse");
-    assert_eq!(cli.image, None);
-    assert!(!cli.pull_latest);
-    assert!(!cli.disable_nix_sidecar);
-    assert!(!cli.sidecar_only);
-    assert!(!cli.debug);
-    assert!(!cli.profile);
-    assert!(!cli.native);
-    assert!(!cli.libkrun);
-    assert!(!cli.tsi);
-    assert_eq!(cli.mem_gib, None);
-    assert_eq!(cli.libkrun_debug_entrypoint, None);
-    assert_eq!(cli.libkrun_debug_guest_init, None);
-}
 
-#[test]
-fn default_runtime_enables_sidecar_when_no_flags_are_set() {
-    let cli = Cli::try_parse_from(["agentbox"]).expect("no-arg invocation should parse");
-    assert!(resolve_nix_sidecar_enabled(&cli, true));
+    assert_eq!(cli.common_options().image, None);
+    assert!(!cli.common_options().pull_latest);
+    assert!(!cli.debug());
+    assert!(!cli.common_options().profile);
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Libkrun(LibkrunOptions::default())
+    );
 }
 
 #[test]
@@ -45,168 +42,178 @@ fn cli_supports_version() {
 }
 
 #[test]
-fn cli_accepts_image_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--image", "ghcr.io/example/agentbox:dev"])
-        .expect("--image should parse");
-    assert_eq!(cli.image.as_deref(), Some("ghcr.io/example/agentbox:dev"));
-}
-
-#[test]
-fn cli_accepts_pull_latest_flag() {
-    let cli =
-        Cli::try_parse_from(["agentbox", "--pull-latest"]).expect("--pull-latest should parse");
-    assert!(cli.pull_latest);
-}
-
-#[test]
-fn cli_accepts_disable_nix_sidecar_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--disable-nix-sidecar"])
-        .expect("--disable-nix-sidecar should parse");
-    assert!(cli.disable_nix_sidecar);
-}
-
-#[test]
-fn cli_accepts_sidecar_only_flag() {
-    let cli =
-        Cli::try_parse_from(["agentbox", "--sidecar-only"]).expect("--sidecar-only should parse");
-    assert!(cli.sidecar_only);
-}
-
-#[test]
-fn cli_accepts_native_sidecar_only_flags() {
-    let cli = Cli::try_parse_from(["agentbox", "--native", "--sidecar-only"])
-        .expect("--native --sidecar-only should parse");
-    assert!(cli.native);
-    assert!(cli.sidecar_only);
-}
-
-#[test]
-fn cli_accepts_debug_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--debug"]).expect("--debug should parse");
-    assert!(cli.debug);
-}
-
-#[test]
-fn cli_accepts_profile_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--profile"]).expect("--profile should parse");
-    assert!(cli.profile);
-}
-
-#[test]
-fn cli_accepts_profile_with_debug_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--profile", "--debug"])
-        .expect("--profile --debug should parse");
-    assert!(cli.profile);
-    assert!(cli.debug);
-}
-
-#[test]
-fn cli_accepts_debug_with_sidecar_only_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--sidecar-only", "--debug"])
-        .expect("--sidecar-only --debug should parse");
-    assert!(cli.sidecar_only);
-    assert!(cli.debug);
-}
-
-#[test]
-fn cli_accepts_native_flag_as_container_selector() {
-    let cli = Cli::try_parse_from(["agentbox", "--native"]).expect("--native should parse");
-    assert!(cli.native);
-    assert!(!cli.libkrun);
-}
-
-#[test]
-fn cli_accepts_libkrun_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--libkrun"]).expect("--libkrun should parse");
-    assert!(cli.libkrun);
-    assert!(!cli.native);
-}
-
-#[test]
-fn cli_rejects_removed_task_native_flag() {
-    let err = Cli::try_parse_from(["agentbox", "--task-native"])
-        .expect_err("--task-native should be rejected");
-    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
-}
-
-#[test]
-fn cli_accepts_tsi_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--tsi"]).expect("--tsi should parse");
-    assert!(cli.tsi);
-    assert!(
-        !cli.native,
-        "--tsi is parsed independently and does not imply native mode"
-    );
-    assert!(
-        !cli.libkrun,
-        "--tsi is parsed independently; runtime validation resolves default libkrun mode"
-    );
-}
-
-#[test]
-fn cli_rejects_removed_use_passt_flag() {
-    let err = Cli::try_parse_from(["agentbox", "--use-passt"])
-        .expect_err("--use-passt should no longer parse");
-    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
-}
-
-#[test]
-fn cli_accepts_mem_flag() {
-    let cli = Cli::try_parse_from(["agentbox", "--mem", "8"]).expect("--mem should parse");
-    assert_eq!(cli.mem_gib, Some(8));
-}
-
-#[test]
-fn cli_accepts_libkrun_debug_entrypoint_flag() {
+fn cli_accepts_common_flags_at_top_level() {
     let cli = Cli::try_parse_from([
         "agentbox",
-        "--libkrun",
-        "--libkrun-debug-entrypoint",
-        "./debug-entrypoint.sh",
+        "--image",
+        "ghcr.io/example/agentbox:dev",
+        "--pull-latest",
+        "--profile",
+        "--debug",
     ])
-    .expect("--libkrun-debug-entrypoint should parse");
-    assert!(cli.libkrun);
+    .expect("common top-level flags should parse");
+    let common = cli.common_options();
+
     assert_eq!(
-        cli.libkrun_debug_entrypoint.as_deref(),
-        Some(std::path::Path::new("./debug-entrypoint.sh"))
+        common.image.as_deref(),
+        Some("ghcr.io/example/agentbox:dev")
+    );
+    assert!(common.pull_latest);
+    assert!(common.profile);
+    assert!(common.debug);
+}
+
+#[test]
+fn cli_accepts_libkrun_subcommand_defaults() {
+    let cli = Cli::try_parse_from(["agentbox", "libkrun"]).expect("libkrun should parse");
+
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Libkrun(LibkrunOptions::default())
     );
 }
 
 #[test]
-fn cli_accepts_libkrun_debug_guest_init_flag() {
+fn cli_accepts_libkrun_options_under_libkrun_subcommand() {
     let cli = Cli::try_parse_from([
         "agentbox",
-        "--libkrun",
-        "--libkrun-debug-guest-init",
+        "libkrun",
+        "--tsi",
+        "--mem",
+        "8",
+        "--guest-init",
         "./agentbox-guest-init",
     ])
-    .expect("--libkrun-debug-guest-init should parse");
-    assert!(cli.libkrun);
+    .expect("libkrun options should parse under libkrun subcommand");
+
     assert_eq!(
-        cli.libkrun_debug_guest_init.as_deref(),
-        Some(std::path::Path::new("./agentbox-guest-init"))
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Libkrun(LibkrunOptions {
+            tsi: true,
+            mem_gib: Some(8),
+            guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
+        })
     );
 }
 
 #[test]
-fn cli_rejects_zero_mem_flag() {
-    let err =
-        Cli::try_parse_from(["agentbox", "--mem", "0"]).expect_err("zero --mem should be rejected");
-    assert_eq!(err.kind(), ErrorKind::ValueValidation);
+fn cli_accepts_container_subcommand_as_task_mode() {
+    let cli = Cli::try_parse_from(["agentbox", "container"]).expect("container should parse");
+
+    match cli.runtime_command_or_default() {
+        RuntimeCommand::Container(options) => assert_eq!(options.mode(), ContainerMode::Task),
+        other => panic!("expected container command, got {other:?}"),
+    }
 }
 
 #[test]
-fn cli_rejects_non_integer_mem_flag() {
-    let err = Cli::try_parse_from(["agentbox", "--mem", "8g"])
+fn cli_accepts_container_sidecar_subcommand() {
+    let cli = Cli::try_parse_from(["agentbox", "container", "sidecar"])
+        .expect("container sidecar should parse");
+
+    match cli.runtime_command_or_default() {
+        RuntimeCommand::Container(options) => assert_eq!(options.mode(), ContainerMode::Sidecar),
+        other => panic!("expected container command, got {other:?}"),
+    }
+}
+
+#[test]
+fn cli_accepts_global_flags_before_and_after_container_subcommands() {
+    let cases: &[&[&str]] = &[
+        &["agentbox", "--debug", "container"],
+        &["agentbox", "container", "--debug"],
+        &["agentbox", "container", "sidecar", "--debug"],
+        &[
+            "agentbox",
+            "--image",
+            "ghcr.io/example/agentbox:dev",
+            "container",
+            "sidecar",
+        ],
+        &[
+            "agentbox",
+            "container",
+            "--image",
+            "ghcr.io/example/agentbox:dev",
+            "sidecar",
+        ],
+    ];
+
+    for case in cases {
+        Cli::try_parse_from(*case).unwrap_or_else(|err| panic!("{case:?} should parse: {err}"));
+    }
+}
+
+#[test]
+fn cli_accepts_global_flags_around_libkrun_subcommand() {
+    let before = Cli::try_parse_from(["agentbox", "--profile", "libkrun", "--mem", "4"])
+        .expect("global flag before libkrun should parse");
+    let after = Cli::try_parse_from(["agentbox", "libkrun", "--profile", "--mem", "4"])
+        .expect("global flag after libkrun should parse");
+
+    assert!(before.common_options().profile);
+    assert!(after.common_options().profile);
+}
+
+fn removed_runtime_flags() -> [&'static str; 6] {
+    [
+        concat!("--", "native"),
+        concat!("--", "libkrun"),
+        concat!("--", "sidecar", "-", "only"),
+        concat!("--", "disable", "-", "nix", "-", "sidecar"),
+        concat!("--", "libkrun", "-", "debug", "-", "entrypoint"),
+        concat!("--", "libkrun", "-", "debug", "-", "guest", "-", "init"),
+    ]
+}
+
+#[test]
+fn cli_rejects_removed_runtime_selector_and_control_flags() {
+    for flag in removed_runtime_flags() {
+        let err = Cli::try_parse_from(["agentbox", flag])
+            .expect_err(&format!("{flag} should be rejected"));
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument, "{flag}");
+    }
+}
+
+#[test]
+fn cli_rejects_runtime_owned_libkrun_args_at_top_level() {
+    let cases: &[&[&str]] = &[
+        &["agentbox", "--mem", "8"],
+        &["agentbox", "--tsi"],
+        &["agentbox", "--guest-init", "./agentbox-guest-init"],
+    ];
+
+    for case in cases {
+        let err = Cli::try_parse_from(*case).expect_err("top-level libkrun option should fail");
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument, "{case:?}");
+    }
+}
+
+#[test]
+fn cli_rejects_invalid_mem_under_libkrun_subcommand() {
+    let zero = Cli::try_parse_from(["agentbox", "libkrun", "--mem", "0"])
+        .expect_err("zero --mem should be rejected");
+    assert_eq!(zero.kind(), ErrorKind::ValueValidation);
+
+    let suffix = Cli::try_parse_from(["agentbox", "libkrun", "--mem", "8g"])
         .expect_err("suffix --mem should be rejected");
-    assert_eq!(err.kind(), ErrorKind::ValueValidation);
+    assert_eq!(suffix.kind(), ErrorKind::ValueValidation);
 }
 
 #[test]
-fn disable_sidecar_flag_overrides_true_environment_value() {
-    let cli = Cli::try_parse_from(["agentbox", "--disable-nix-sidecar"])
-        .expect("--disable-nix-sidecar should parse");
-    assert!(!resolve_nix_sidecar_enabled(&cli, true));
+fn cli_rejects_previous_removed_flags() {
+    for flag in [
+        "--task-native",
+        "--use-passt",
+        "--host-nix-overlay",
+        "--sync-nix-root",
+        "--nix-sidecar",
+        "--task-kvm",
+    ] {
+        let err = Cli::try_parse_from(["agentbox", flag])
+            .expect_err(&format!("{flag} should be rejected"));
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument, "{flag}");
+    }
 }
 
 #[test]
@@ -238,49 +245,6 @@ fn resolve_image_strategy_uses_pull_latest_when_requested() {
 fn resolve_image_strategy_defaults_to_local_preference() {
     let strategy = resolve_image_strategy(None, false);
     assert_eq!(strategy, ImageResolutionStrategy::PreferLocalhostFallback);
-}
-
-#[test]
-fn env_sidecar_flag_accepts_numeric_truthy_values() {
-    assert!(parse_env_flag_value("AGENTBOX_NIX_SIDECAR", "1").expect("1 should parse"));
-    assert!(!parse_env_flag_value("AGENTBOX_NIX_SIDECAR", "0").expect("0 should parse"));
-}
-
-#[test]
-fn env_sidecar_flag_rejects_unknown_value() {
-    let err = parse_env_flag_value("AGENTBOX_NIX_SIDECAR", "maybe")
-        .expect_err("unknown env value should fail");
-    assert!(err
-        .to_string()
-        .contains("environment variable 'AGENTBOX_NIX_SIDECAR' must be one of"));
-}
-
-#[test]
-fn cli_rejects_removed_host_nix_overlay_flag() {
-    let err = Cli::try_parse_from(["agentbox", "--host-nix-overlay"])
-        .expect_err("--host-nix-overlay should be rejected");
-    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
-}
-
-#[test]
-fn cli_rejects_removed_sync_nix_root_flag() {
-    let err = Cli::try_parse_from(["agentbox", "--sync-nix-root"])
-        .expect_err("--sync-nix-root should be rejected");
-    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
-}
-
-#[test]
-fn cli_rejects_removed_nix_sidecar_flag() {
-    let err = Cli::try_parse_from(["agentbox", "--nix-sidecar"])
-        .expect_err("--nix-sidecar should be rejected");
-    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
-}
-
-#[test]
-fn cli_rejects_removed_task_kvm_flag() {
-    let err =
-        Cli::try_parse_from(["agentbox", "--task-kvm"]).expect_err("--task-kvm should be rejected");
-    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
 }
 
 #[test]

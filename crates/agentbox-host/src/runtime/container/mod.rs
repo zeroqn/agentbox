@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::process::{ExitCode, Stdio};
 
-use crate::cli::{env_flag_enabled, resolve_image, resolve_nix_sidecar_enabled, Cli};
+use crate::cli::{resolve_image, CommonOptions, ContainerMode, ContainerOptions};
 use crate::podman::command::run_podman;
 use crate::runtime::components::volumes::prepare_task_volumes;
 use crate::runtime::container::nix_sidecar::{
@@ -13,30 +13,26 @@ use crate::runtime::container::nix_sidecar::{
     SidecarSocketHealthProbe,
 };
 use crate::state::resolve_state_layout;
-use crate::{derive_task_container_name, derive_task_hostname, DEFAULT_NIX_SIDECAR_ENABLED};
+use crate::{derive_task_container_name, derive_task_hostname};
 
 use task::{build_container_task_podman_args, ContainerTaskPodmanSpec};
 
-pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
-    let env_sidecar_enabled =
-        env_flag_enabled("AGENTBOX_NIX_SIDECAR", DEFAULT_NIX_SIDECAR_ENABLED)?;
-    let nix_sidecar_enabled = resolve_nix_sidecar_enabled(&cli, env_sidecar_enabled);
-    validate_sidecar_mode(cli.sidecar_only, nix_sidecar_enabled)?;
-
+pub(crate) fn run(common: CommonOptions, options: ContainerOptions) -> Result<ExitCode> {
+    let mode = options.mode();
     let cwd = env::current_dir()
         .context("failed to resolve current directory")?
         .canonicalize()
         .context("failed to canonicalize current directory")?;
-    let image = resolve_image(cli.image.as_deref(), cli.pull_latest)?;
+    let image = resolve_image(common.image.as_deref(), common.pull_latest)?;
     let state_layout = resolve_state_layout(&cwd)?;
 
-    if !should_launch_task_container(cli.sidecar_only) {
+    if !should_launch_task_container(mode) {
         let sidecar = prepare_sidecar_nix_runtime(
             &cwd,
             state_layout.root_dir(),
             &image,
             SidecarDaemonRuntimeSpec {
-                socket_health_probe: sidecar_socket_health_probe(cli.sidecar_only),
+                socket_health_probe: sidecar_socket_health_probe(mode),
             },
         )?;
 
@@ -56,7 +52,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
         state_layout.root_dir(),
         &image,
         SidecarDaemonRuntimeSpec {
-            socket_health_probe: sidecar_socket_health_probe(cli.sidecar_only),
+            socket_health_probe: sidecar_socket_health_probe(mode),
         },
     )?;
 
@@ -67,8 +63,8 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
             hostname: &task_hostname,
             task_volumes: &task_volumes,
             nix_runtime: &nix_runtime,
-            guest_profile: cli.profile,
-            guest_debug: cli.debug,
+            guest_profile: common.profile,
+            guest_debug: common.debug,
         })?,
         Stdio::inherit(),
         Stdio::inherit(),
@@ -76,7 +72,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
         "failed to start podman",
     )?;
 
-    if should_cleanup_idle_sidecar_after_run(cli.sidecar_only) {
+    if should_cleanup_idle_sidecar_after_run(mode) {
         if let Err(err) = cleanup_idle_sidecar(&nix_runtime) {
             eprintln!(
                 "agentbox: warning: failed to cleanup idle sidecar '{}': {err:#}",
@@ -89,85 +85,48 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }
 
-fn validate_sidecar_mode(sidecar_only: bool, nix_sidecar_enabled: bool) -> Result<()> {
-    if nix_sidecar_enabled {
-        return Ok(());
-    }
-
-    if sidecar_only {
-        anyhow::bail!(
-            "--sidecar-only requires nix sidecar mode; remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
-        );
-    }
-
-    anyhow::bail!(
-        "nix sidecar mode is required; seeded nix fallback has been removed, so remove --disable-nix-sidecar and do not set AGENTBOX_NIX_SIDECAR=0"
-    );
+fn should_launch_task_container(mode: ContainerMode) -> bool {
+    mode == ContainerMode::Task
 }
 
-fn should_launch_task_container(sidecar_only: bool) -> bool {
-    !sidecar_only
+fn should_cleanup_idle_sidecar_after_run(mode: ContainerMode) -> bool {
+    mode == ContainerMode::Task
 }
 
-fn should_cleanup_idle_sidecar_after_run(sidecar_only: bool) -> bool {
-    !sidecar_only
-}
-
-fn sidecar_socket_health_probe(sidecar_only: bool) -> SidecarSocketHealthProbe {
-    if sidecar_only {
-        SidecarSocketHealthProbe::Disabled
-    } else {
-        SidecarSocketHealthProbe::Enabled
+fn sidecar_socket_health_probe(mode: ContainerMode) -> SidecarSocketHealthProbe {
+    match mode {
+        ContainerMode::Task => SidecarSocketHealthProbe::Enabled,
+        ContainerMode::Sidecar => SidecarSocketHealthProbe::Disabled,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::cli::ContainerMode;
+    use crate::runtime::container::nix_sidecar::SidecarSocketHealthProbe;
+    use crate::runtime::container::{
+        should_cleanup_idle_sidecar_after_run, should_launch_task_container,
+        sidecar_socket_health_probe,
+    };
 
     #[test]
-    fn sidecar_only_mode_requires_sidecar_nix_runtime() {
-        let err = validate_sidecar_mode(true, false)
-            .expect_err("sidecar-only without sidecar should fail");
-
-        let message = err.to_string();
-        assert!(message.contains("--sidecar-only requires nix sidecar mode"));
-        assert!(message.contains("--disable-nix-sidecar"));
-        assert!(message.contains("AGENTBOX_NIX_SIDECAR=0"));
+    fn sidecar_branch_skips_task_launch_and_idle_cleanup() {
+        assert!(!should_launch_task_container(ContainerMode::Sidecar));
+        assert!(!should_cleanup_idle_sidecar_after_run(
+            ContainerMode::Sidecar
+        ));
+        assert!(should_launch_task_container(ContainerMode::Task));
+        assert!(should_cleanup_idle_sidecar_after_run(ContainerMode::Task));
     }
 
     #[test]
-    fn normal_container_mode_rejects_disabled_sidecar_without_seeded_fallback() {
-        let err = validate_sidecar_mode(false, false)
-            .expect_err("disabled sidecar should fail because seeded was removed");
-
-        let message = err.to_string();
-        assert!(message.contains("nix sidecar mode is required"));
-        assert!(message.contains("seeded nix fallback has been removed"));
-    }
-
-    #[test]
-    fn sidecar_mode_accepts_enabled_sidecar() {
-        validate_sidecar_mode(true, true).expect("sidecar-only with sidecar should be valid");
-        validate_sidecar_mode(false, true).expect("normal run with sidecar should be valid");
-    }
-
-    #[test]
-    fn sidecar_only_branch_skips_task_launch_and_idle_cleanup() {
-        assert!(!should_launch_task_container(true));
-        assert!(!should_cleanup_idle_sidecar_after_run(true));
-        assert!(should_launch_task_container(false));
-        assert!(should_cleanup_idle_sidecar_after_run(false));
-    }
-
-    #[test]
-    fn sidecar_only_branch_disables_socket_health_probe() {
+    fn sidecar_branch_disables_socket_health_probe() {
         assert_eq!(
-            sidecar_socket_health_probe(true),
+            sidecar_socket_health_probe(ContainerMode::Sidecar),
             SidecarSocketHealthProbe::Disabled
         );
         assert_eq!(
-            sidecar_socket_health_probe(false),
+            sidecar_socket_health_probe(ContainerMode::Task),
             SidecarSocketHealthProbe::Enabled
         );
     }

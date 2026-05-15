@@ -1,10 +1,13 @@
-use anyhow::{anyhow, Result};
-use clap::Parser;
-use std::env;
-use std::path::PathBuf;
+mod container;
+mod libkrun;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+
+pub use container::{ContainerMode, ContainerOptions};
+pub use libkrun::LibkrunOptions;
 
 use crate::podman::image::{podman_image_exists, pull_image};
-use crate::runtime::parse_mem_gib_arg;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
 #[derive(Debug, Parser)]
@@ -14,107 +17,123 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     about = "Launch a Podman shell with the current directory mounted at /workspace",
     after_help = "Examples:
   agentbox
-  agentbox --pull-latest
-  agentbox --native
-  agentbox --sidecar-only
-  agentbox --sidecar-only --debug
+  agentbox libkrun
+  agentbox libkrun --mem 8
+  agentbox libkrun --guest-init ./agentbox-guest-init
+  agentbox container
+  agentbox container sidecar
+  agentbox --debug container sidecar
+  agentbox container --debug sidecar
   agentbox --profile --debug
-  agentbox --libkrun
-  agentbox --mem 8
-  agentbox --libkrun-debug-entrypoint ./debug-entrypoint.sh
-  agentbox --libkrun-debug-guest-init ./agentbox-guest-init
-  agentbox --image ghcr.io/example/agentbox:dev
+  agentbox --image ghcr.io/example/agentbox:dev container
   AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
         long,
         env = "AGENTBOX_IMAGE",
+        global = true,
         help = "Container image to run",
         long_help = "Container image to run. If omitted, agentbox prefers localhost/agentbox:latest and falls back to ghcr.io/zeroqn/agentbox:latest. Can also be set with AGENTBOX_IMAGE."
     )]
-    pub image: Option<String>,
+    image: Option<String>,
 
     #[arg(
         long,
+        global = true,
         help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run",
         long_help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run when --image is not set."
     )]
-    pub pull_latest: bool,
+    pull_latest: bool,
 
     #[arg(
         long,
-        help = "Disable sidecar mode (unsupported; seeded fallback has been removed)",
-        long_help = "Disable rootless container sidecar mode for this run. This is currently unsupported because the seeded nix fallback has been removed; container mode requires the sidecar. Libkrun mode is the default and does not use this sidecar."
-    )]
-    pub disable_nix_sidecar: bool,
-
-    #[arg(
-        long,
-        help = "Start or reuse only the container nix-daemon sidecar stack, then exit",
-        long_help = "Start or reuse only the container-mode nix-daemon sidecar stack, skip the nix-daemon socket health probe, print inspection details, and exit without launching the interactive task container. This implicitly selects container mode and leaves the sidecar running for debugging."
-    )]
-    pub sidecar_only: bool,
-
-    #[arg(
-        long,
+        global = true,
         help = "Enable Podman debug logging for agentbox-managed Podman commands",
         long_help = "Enable Podman debug logging by passing --log-level=debug to agentbox-managed Podman commands. This is intended for troubleshooting task, sidecar, image, mount, health, and cleanup operations."
     )]
-    pub debug: bool,
+    debug: bool,
 
     #[arg(
         long,
+        global = true,
         help = "Enable guest-init component timing collection",
         long_help = "Enable agentbox-guest-init component timing collection for the task container. Timing is reported to stderr only when --debug is also set, so normal command stdout remains reserved for command output."
     )]
+    profile: bool,
+
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+impl Cli {
+    pub fn debug(&self) -> bool {
+        self.debug
+    }
+
+    #[cfg(test)]
+    pub fn common_options(&self) -> CommonOptions {
+        CommonOptions {
+            image: self.image.clone(),
+            pull_latest: self.pull_latest,
+            debug: self.debug,
+            profile: self.profile,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn runtime_command_or_default(&self) -> RuntimeCommand {
+        self.command
+            .clone()
+            .map(RuntimeCommand::from)
+            .unwrap_or_else(|| RuntimeCommand::Libkrun(LibkrunOptions::default()))
+    }
+
+    pub fn into_runtime_parts(self) -> (CommonOptions, RuntimeCommand) {
+        let common = CommonOptions {
+            image: self.image,
+            pull_latest: self.pull_latest,
+            debug: self.debug,
+            profile: self.profile,
+        };
+        let command = self
+            .command
+            .map(RuntimeCommand::from)
+            .unwrap_or_else(|| RuntimeCommand::Libkrun(LibkrunOptions::default()));
+
+        (common, command)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommonOptions {
+    pub image: Option<String>,
+    pub pull_latest: bool,
+    pub debug: bool,
     pub profile: bool,
+}
 
-    #[arg(
-        long,
-        help = "Use native Podman container mode instead of the default libkrun mode",
-        long_help = "Use native Podman container mode with the host-side nix-daemon sidecar instead of the default libkrun mode. This cannot be combined with --libkrun."
-    )]
-    pub native: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeCommand {
+    Libkrun(LibkrunOptions),
+    Container(ContainerOptions),
+}
 
-    #[arg(
-        long,
-        help = "Use default libkrun mode with persistent raw-image /nix overlay",
-        long_help = "Use Podman/libkrun mode explicitly. This is the default runtime mode; it creates or reuses a sparse btrfs raw image under agentbox state, attaches it through crun krun.disk annotations, and uses it for a persistent /nix overlay inside the guest."
-    )]
-    pub libkrun: bool,
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+enum CliCommand {
+    #[command(about = "Run the default Podman/libkrun VM-backed container shell")]
+    Libkrun(LibkrunOptions),
+    #[command(about = "Run native Podman container mode with the managed nix-daemon sidecar")]
+    Container(ContainerOptions),
+}
 
-    #[arg(
-        long,
-        help = "Use libkrun TSI/proxy networking instead of default passt",
-        long_help = "Libkrun-only networking option. By default libkrun mode enables passt with krun.use_passt=1; --tsi switches to the TSI/proxy environment path. This flag is valid in default libkrun mode and rejected with container mode selectors such as --native or --sidecar-only."
-    )]
-    pub tsi: bool,
-
-    #[arg(
-        long = "mem",
-        value_name = "GiB",
-        value_parser = parse_mem_gib_arg,
-        help = "Set libkrun VM memory in GiB",
-        long_help = "Libkrun-only memory option in integer GiB, emitted as a krun.ram_mib annotation. If omitted, agentbox derives a default from host memory. This flag is valid in default libkrun mode and rejected with container mode selectors such as --native or --sidecar-only."
-    )]
-    pub mem_gib: Option<u32>,
-
-    #[arg(
-        long = "libkrun-debug-entrypoint",
-        value_name = "PATH",
-        help = "Override the image entrypoint in libkrun mode for guest debugging",
-        long_help = "Libkrun-only debug option. Bind-mount the host script read-only and use it as the container entrypoint, bypassing the image entrypoint so guest state such as /sys/class/block can be inspected before /nix disk bootstrap."
-    )]
-    pub libkrun_debug_entrypoint: Option<PathBuf>,
-
-    #[arg(
-        long = "libkrun-debug-guest-init",
-        value_name = "PATH",
-        help = "Override agentbox-guest-init in libkrun mode for guest debugging",
-        long_help = "Libkrun-only debug option. Bind-mount the host agentbox-guest-init binary read-only over the in-image guest-init path while preserving the normal image entrypoint and arguments. This lets guest-init fixes be tested without rebuilding the container image."
-    )]
-    pub libkrun_debug_guest_init: Option<PathBuf>,
+impl From<CliCommand> for RuntimeCommand {
+    fn from(command: CliCommand) -> Self {
+        match command {
+            CliCommand::Libkrun(options) => RuntimeCommand::Libkrun(options),
+            CliCommand::Container(options) => RuntimeCommand::Container(options),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,40 +154,6 @@ pub fn resolve_image(cli_image: Option<&str>, pull_latest: bool) -> Result<Strin
             let localhost_available = podman_image_exists(DEFAULT_IMAGE)?;
             Ok(select_default_image(localhost_available).to_owned())
         }
-    }
-}
-
-pub fn resolve_nix_sidecar_enabled(cli: &Cli, env_sidecar_enabled: bool) -> bool {
-    if cli.disable_nix_sidecar {
-        return false;
-    }
-    env_sidecar_enabled
-}
-
-pub fn env_flag_enabled(name: &str, default: bool) -> Result<bool> {
-    match env::var(name) {
-        Ok(value) => parse_env_flag_value(name, &value),
-        Err(env::VarError::NotPresent) => Ok(default),
-        Err(env::VarError::NotUnicode(_)) => Err(anyhow!(
-            "environment variable '{}' contains non-UTF-8 data",
-            name
-        )),
-    }
-}
-
-fn parse_env_flag_value(name: &str, value: &str) -> Result<bool> {
-    let normalized = value.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return Ok(true);
-    }
-
-    match normalized.as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(anyhow!(
-            "environment variable '{}' must be one of: 1,0,true,false,yes,no,on,off",
-            name
-        )),
     }
 }
 

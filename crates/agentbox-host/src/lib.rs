@@ -41,7 +41,6 @@ const SIDECAR_LOG_TAIL_LINES: u32 = 120;
 const TASK_CONTAINER_ROLE_LABEL: &str = "io.agentbox.role";
 const TASK_CONTAINER_ROLE_VALUE: &str = "task";
 const TASK_CONTAINER_SIDECAR_LABEL: &str = "io.agentbox.sidecar";
-const DEFAULT_NIX_SIDECAR_ENABLED: bool = true;
 
 pub fn entrypoint() -> ExitCode {
     let cli = Cli::parse();
@@ -56,7 +55,7 @@ pub fn entrypoint() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
-    set_podman_debug(cli.debug);
+    set_podman_debug(cli.debug());
     runtime::run(cli)
 }
 

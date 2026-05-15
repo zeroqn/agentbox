@@ -7,60 +7,19 @@ use crate::podman::volume::format_mount_arg_with_options;
 
 pub(crate) const DEBUG_OWNER: RunArgOwner = RunArgOwner::new("runtime.libkrun.debug");
 
-pub(crate) fn append_debug_args(
-    run: &mut RunSpec,
-    debug_entrypoint: Option<&DebugEntrypointMount>,
-    debug_guest_init: Option<&DebugGuestInitMount>,
-) {
-    if let Some(debug_entrypoint) = debug_entrypoint {
-        run.option(DEBUG_OWNER, "--volume", debug_entrypoint.mount_arg.clone());
-        run.option(DEBUG_OWNER, "--entrypoint", debug_entrypoint.target);
-    }
-
+pub(crate) fn append_debug_args(run: &mut RunSpec, debug_guest_init: Option<&DebugGuestInitMount>) {
     if let Some(debug_guest_init) = debug_guest_init {
         run.option(DEBUG_OWNER, "--volume", debug_guest_init.mount_arg.clone());
     }
 }
 
-const LIBKRUN_DEBUG_ENTRYPOINT_TARGET: &str = "/bin/agentbox-debug-entrypoint";
 const LIBKRUN_GUEST_INIT_BASENAME: &str = "agentbox-guest-init";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DebugEntrypointMount {
-    pub(crate) source: PathBuf,
-    pub(crate) mount_arg: String,
-    pub(crate) target: &'static str,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DebugGuestInitMount {
     pub(crate) source: PathBuf,
     pub(crate) mount_arg: String,
     pub(crate) target: String,
-}
-
-pub(crate) fn resolve_debug_entrypoint_mount(path: &Path) -> Result<DebugEntrypointMount> {
-    let source = path.canonicalize().with_context(|| {
-        format!(
-            "failed to resolve libkrun debug entrypoint '{}'",
-            path.display()
-        )
-    })?;
-    if !source.is_file() {
-        anyhow::bail!(
-            "libkrun debug entrypoint '{}' is not a regular file",
-            source.display()
-        );
-    }
-
-    let mount_arg =
-        format_mount_arg_with_options(&source, LIBKRUN_DEBUG_ENTRYPOINT_TARGET, Some("ro"))?;
-
-    Ok(DebugEntrypointMount {
-        source,
-        mount_arg,
-        target: LIBKRUN_DEBUG_ENTRYPOINT_TARGET,
-    })
 }
 
 pub(crate) fn resolve_debug_guest_init_mount(
@@ -74,13 +33,13 @@ pub(crate) fn resolve_debug_guest_init_mount(
 fn resolve_debug_guest_init_mount_to(path: &Path, target: &str) -> Result<DebugGuestInitMount> {
     let source = path.canonicalize().with_context(|| {
         format!(
-            "failed to resolve libkrun debug guest-init '{}'",
+            "failed to resolve libkrun guest-init override '{}'",
             path.display()
         )
     })?;
     if !source.is_file() {
         anyhow::bail!(
-            "libkrun debug guest-init '{}' is not a regular file",
+            "libkrun guest-init override '{}' is not a regular file",
             source.display()
         );
     }
@@ -104,12 +63,10 @@ fn inspect_libkrun_guest_init_target(image: &str) -> Result<String> {
     ];
     let output = run_podman_output(
         args,
-        "failed to inspect selected image entrypoint for libkrun debug guest-init",
+        "failed to inspect selected image entrypoint for libkrun guest-init override",
     )
     .with_context(|| {
-        format!(
-            "selected image '{image}' must be local and inspectable for --libkrun-debug-guest-init"
-        )
+        format!("selected image '{image}' must be local and inspectable for --guest-init")
     })?;
 
     validate_libkrun_guest_init_target(image, output.trim())
@@ -120,7 +77,7 @@ fn validate_libkrun_guest_init_target(image: &str, target: &str) -> Result<Strin
         anyhow::bail!(
             concat!(
                 "selected image '{}' does not define a first entrypoint element; ",
-                "--libkrun-debug-guest-init requires an absolute agentbox-guest-init path"
+                "--guest-init requires an absolute agentbox-guest-init path"
             ),
             image
         );
@@ -131,7 +88,7 @@ fn validate_libkrun_guest_init_target(image: &str, target: &str) -> Result<Strin
         anyhow::bail!(
             concat!(
                 "selected image '{}' first entrypoint element '{}' is not absolute; ",
-                "--libkrun-debug-guest-init requires an absolute agentbox-guest-init path"
+                "--guest-init requires an absolute agentbox-guest-init path"
             ),
             image,
             target
@@ -142,8 +99,7 @@ fn validate_libkrun_guest_init_target(image: &str, target: &str) -> Result<Strin
         anyhow::bail!(
             concat!(
                 "selected image '{}' first entrypoint element '{}' does not point to {}; ",
-                "--libkrun-debug-guest-init can only override ",
-                "the image agentbox-guest-init binary"
+                "--guest-init can only override the image agentbox-guest-init binary"
             ),
             image,
             target,
@@ -200,7 +156,7 @@ mod tests {
             .expect_err("target should be rejected")
             .to_string();
         assert!(
-            err.contains("--libkrun-debug-guest-init") || err.contains("agentbox-guest-init"),
+            err.contains("--guest-init") || err.contains("agentbox-guest-init"),
             "unexpected error: {err}"
         );
     }
@@ -209,13 +165,13 @@ mod tests {
     fn resolve_debug_guest_init_mount_targets_image_guest_init_path() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
         let source = dir.path().join("agentbox-guest-init");
-        std::fs::write(&source, "#!/bin/sh\n").expect("debug guest-init should be written");
+        std::fs::write(&source, "#!/bin/sh\n").expect("guest-init override should be written");
 
         let mount = resolve_debug_guest_init_mount_to(
             &source,
             "/nix/store/hash-agentbox/bin/agentbox-guest-init",
         )
-        .expect("debug guest-init mount should resolve");
+        .expect("guest-init override mount should resolve");
 
         assert_eq!(mount.source, source.canonicalize().unwrap());
         assert_eq!(

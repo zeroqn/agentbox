@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::podman::run::{RunArgs, RunSpec, CORE};
 use crate::runtime::components::volumes::TaskVolumeMounts;
 use crate::runtime::components::{diagnostics, identity, volumes};
-use crate::runtime::libkrun::components::debug::{DebugEntrypointMount, DebugGuestInitMount};
+use crate::runtime::libkrun::components::debug::DebugGuestInitMount;
 use crate::runtime::libkrun::components::disk::containers::podman as containers_podman;
 use crate::runtime::libkrun::components::disk::containers::raw_image::RawContainerDisk;
 use crate::runtime::libkrun::components::disk::nix::podman as nix_podman;
@@ -25,7 +25,6 @@ pub(crate) struct LibkrunTaskPodmanSpec<'a> {
     pub(crate) tsi: bool,
     pub(crate) guest_profile: bool,
     pub(crate) guest_debug: bool,
-    pub(crate) debug_entrypoint: Option<&'a DebugEntrypointMount>,
     pub(crate) debug_guest_init: Option<&'a DebugGuestInitMount>,
 }
 
@@ -57,7 +56,7 @@ pub(crate) fn build_libkrun_task_run_args(spec: LibkrunTaskPodmanSpec<'_>) -> Re
     cpu::append_cpu_annotation(&mut run, spec.cpu_count);
     network::append_mode_args(&mut run, spec.tsi);
     diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
-    debug::append_debug_args(&mut run, spec.debug_entrypoint, spec.debug_guest_init);
+    debug::append_debug_args(&mut run, spec.debug_guest_init);
     run.arg(CORE, spec.image);
     run.args(CORE, [INTERACTIVE_SHELL, "-l"]);
 

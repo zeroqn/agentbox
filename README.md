@@ -19,12 +19,13 @@ Current runtime split:
   rootless Podman storage as `dev` with the Podman `btrfs` storage driver.
   The `/workspace` bind mount uses `--userns=keep-id` so ownership matches the
   host user after the guest drops privileges.
-- **Container mode (`--native`):** native Podman task container plus host
-  `fuse-overlayfs` and a reusable `nix-daemon` sidecar. `--sidecar-only` also
-  selects this mode for sidecar debugging.
+- **Container mode (`agentbox container`):** native Podman task container plus
+  host `fuse-overlayfs` and a reusable `nix-daemon` sidecar.
+  `agentbox container sidecar` starts or reuses only the sidecar stack for
+  debugging.
 
-Seeded `/nix` copy fallback has been removed. Disabling the sidecar now fails
-instead of copying `/nix/store` into agentbox state.
+Seeded `/nix` copy fallback has been removed. Container mode always uses the
+managed sidecar.
 
 ---
 
@@ -33,7 +34,7 @@ instead of copying `/nix/store` into agentbox state.
 - Linux
 - `podman`
 - `nix` (for building via flake)
-- `fuse-overlayfs` (required for `--native` container sidecar mode; included
+- `fuse-overlayfs` (required for `agentbox container` sidecar mode; included
   by the `.#agentbox-prebuilt` package runtime environment)
 - `mkfs.btrfs` and `blkid` on the host for first-time libkrun raw-image
   creation and reuse validation (`btrfs-progs` + `util-linux`; included in
@@ -91,7 +92,7 @@ nix build .#container
 - `.#agentbox`: compile from source.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
-  `fuse-overlayfs` into the runtime environment for `--native` container
+  `fuse-overlayfs` into the runtime environment for `agentbox container`
   sidecar mode.
 - `.#agentbox-musl`: static host binary.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
@@ -149,7 +150,7 @@ Enable debug logging for troubleshooting agentbox-managed Podman commands:
 
 ```bash
 ./result/bin/agentbox --debug
-./result/bin/agentbox --sidecar-only --debug
+./result/bin/agentbox container sidecar --debug
 ```
 
 `--debug` passes `--log-level=debug` to Podman commands that agentbox runs,
@@ -160,17 +161,16 @@ Collect `agentbox-guest-init` component timings for the task container:
 
 ```bash
 ./result/bin/agentbox --profile --debug
-./result/bin/agentbox --native --profile --debug
+./result/bin/agentbox container --profile --debug
 ```
 
 `--profile` enables guest-init timing collection. Timings are printed only when
 `--debug` is also set, and the report is written to stderr so stdout remains
 reserved for command output. `--profile` without `--debug` enables measurement
 but suppresses the report; `--debug` without `--profile` does not print a timing
-report. Libkrun background Podman prep/wait workers and sidecar-only runs do
-not emit guest-init profile reports. `--profile --debug` cannot be combined
-with `--libkrun-debug-entrypoint` because that debug path bypasses
-`agentbox-guest-init`. When libkrun `/nix` overlay bootstrap runs, nested
+report. Libkrun background Podman prep/wait workers and sidecar debug runs do
+not emit guest-init profile reports. When libkrun `/nix` overlay bootstrap runs,
+nested
 `bootstrap-nix:*` rows break down disk discovery, mount/preseed work, daemon
 startup, and the `bootstrap-nix:wait-socket` polling loop.
 
@@ -189,14 +189,13 @@ Run:
 
 ```bash
 ./result/bin/agentbox
-./result/bin/agentbox --libkrun
-./result/bin/agentbox --mem 8
-./result/bin/agentbox --tsi
+./result/bin/agentbox libkrun
+./result/bin/agentbox libkrun --mem 8
+./result/bin/agentbox libkrun --tsi
 ```
 
-`--libkrun` remains accepted as an explicit selector for the default runtime.
-Libkrun-only options such as `--mem`, `--tsi`, and
-`--libkrun-debug-entrypoint` are valid without adding `--libkrun`.
+`agentbox` with no subcommand defaults to libkrun. Runtime-specific libkrun
+options are accepted under the `libkrun` subcommand.
 
 On first run, agentbox creates two sparse btrfs raw images:
 
@@ -226,181 +225,21 @@ krun.use_passt=1
 ```
 
 By default, agentbox sizes libkrun memory to 80% of host memory, rounded down to
-whole GiB, and emits that value with `krun.ram_mib=<MiB>`. Pass `--mem <GiB>` to
-override it. On Linux, agentbox also emits `krun.cpus=<n>`: hosts with up to 6
-available CPUs pass all CPUs through, while larger hosts reserve 2 CPUs for the
-host. On non-Linux hosts or when CPU count is unavailable, `krun.cpus` is
-omitted.
+whole GiB, and emits that value with `krun.ram_mib=<MiB>`. Pass
+`agentbox libkrun --mem <GiB>` to override it. On Linux, agentbox also emits
+`krun.cpus=<n>`: hosts with up to 6 CPUs pass all available CPUs through;
+larger hosts reserve 2 CPUs for the host.
 
-Libkrun mode enables passt networking by default with `krun.use_passt=1`. In
-that default passt path, `agentbox-guest-init libkrun enter` ensures the guest
-resolver starts with `nameserver 169.254.1.1`, matching passt's DNS forwarder,
-while preserving any existing resolver lines after it. When `--tsi` is passed,
-agentbox switches to the TSI/proxy environment path instead: it omits
-`krun.use_passt=1`, skips the passt resolver injection, and passes `no_proxy=1`
-into the guest.
+By default, libkrun mode uses passt networking through `krun.use_passt=1`. Pass
+`agentbox libkrun --tsi` to switch to the older TSI/proxy environment path.
 
-The generated image entrypoint directly invokes the Rust guest initializer for
-normal container startup:
-
-```bash
-agentbox-guest-init container enter -- fish -l
-```
-
-If the libkrun environment flags are present, `container enter` routes the run
-to the existing libkrun initializer before doing normal container setup:
-
-```bash
-agentbox-guest-init libkrun enter -- fish -l
-```
-
-There is no supported `AGENTBOX_GUEST_INIT_DISABLE=1` fallback for normal
-container startup.
-
-For libkrun runs, `agentbox-guest-init` performs the root-required shell prerequisites before the
-privilege drop: it writes real `/etc/passwd` and `/etc/group` entries for the
-dynamic host UID/GID, creates/chowns `/home/dev` and the XDG home directories,
-normalizes passt DNS when `krun.use_passt=1`, then starts persistent `/nix`
-overlay prep and rootless Podman prep in the background before running the
-shell as `dev`. The `/nix` prep no longer waits for daemon socket connectivity
-on the foreground shell path.
-
-Nix overlay setup is lazy. Before dropping to `dev`, the Rust initializer
-spawns root-required `/nix` prep in the background and records progress in:
-
-```text
-/run/agentbox/nix-prep.status
-/run/agentbox/nix-prep.log
-```
-
-The background prep finds and mounts the `/nix` btrfs disk, prepares the
-disk-backed overlay upper/work directories, mounts the kernel overlay at
-`/nix`, creates `/nix/var/nix/daemon-socket`, starts `nix-daemon`, and then
-marks status `ready`. `ready` means prep completed and the daemon process was
-spawned; it does not mean the daemon socket is connectable yet.
-
-The image `nix` command is a compatibility wrapper. In libkrun `/nix` overlay
-mode it first runs `agentbox-guest-init libkrun nix wait`, which waits for
-background prep to become `ready` and verifies that
-`/nix/var/nix/daemon-socket/socket` is a Unix socket. On the first `nix`
-invocation, the wrapper then checks daemon connectivity with the packaged real
-Nix binary via `nix store info --store "$NIX_REMOTE"`, records a per-guest
-marker, and execs the packaged Nix binary. Later wrapper invocations skip that
-connectivity probe. If prep reaches terminal `failed`, the wrapper reports the
-stored error with the status/log paths and does not silently restart prep; start
-a fresh agentbox session or inspect `/run/agentbox/nix-prep.log` and
-`/run/agentbox/nix-prep.status` for recovery. PATH-resolved `nix` is gated by
-this wrapper; absolute calls to the packaged real Nix binary can bypass it.
-
-Rootless Podman setup is lazy. Before dropping to `dev`, the Rust initializer
-spawns root-required Podman prep in the background and records progress in:
-
-```text
-/run/agentbox/podman-prep.status
-/run/agentbox/podman-prep.log
-```
-
-The background prep owns `/etc/subuid`, `/etc/subgid`, setuid
-`newuidmap`/`newgidmap` helpers in `/run/agentbox/idmap-bin`, rootless user
-namespace sysctls, `/dev/net/tun` permissions, the container btrfs disk mount at
-`/home/dev/.local/share/containers`, and the rootless Podman config files:
-
-```text
-/home/dev/.config/containers/storage.conf
-/home/dev/.config/containers/containers.conf
-/home/dev/.config/containers/registries.conf
-/home/dev/.config/containers/policy.json
-```
-
-The image `podman` command is a compatibility wrapper. In libkrun mode it first
-runs `agentbox-guest-init libkrun podman wait`, which waits for the background
-prep to become `ready` or reports a failed/stale/timeout status with the log
-path, then execs the packaged Podman binary. Non-libkrun Podman wrapper behavior
-is unchanged.
-
-`storage.conf` is generated with `driver = "btrfs"`, graphroot
-`/home/dev/.local/share/containers/storage`, and runroot
-`/run/user/<dev-uid>/containers`. It intentionally has no `mount_program`, no
-`overlay` driver fallback, and no `vfs` driver fallback. `containers.conf`
-pins crun, conmon, cgroupfs, file events, and netavark/pasta helper paths for
-this non-systemd guest, while setting `cgroups = "disabled"` so rootless nested
-containers do not require systemd cgroup delegation or write access under
-`/sys/fs/cgroup`. This means v1 nested guest containers do not provide
-cgroup-based resource-limit enforcement. `registries.conf` leaves blocked and
-insecure registry lists empty and sets the unqualified image search registry to
-`docker.io` so commands such as `podman pull alpine` work inside the guest.
-`policy.json` sets the default and `docker-daemon` transports to
-`insecureAcceptAnything` so the guest has a local image signature policy for
-development pulls.
-
-The background prep also enables the guest kernel's rootless user namespace
-knobs required by Podman: it raises `/proc/sys/user/max_user_namespaces` to at
-least `28633`, and sets `/proc/sys/kernel/unprivileged_userns_clone=1` when that
-distro-specific sysctl exists. First `podman` use fails clearly if the kernel
-does not expose user namespace support or refuses those writes.
-
-The Rust guest initializer finds the `/nix` btrfs disk by label (`AGENTBOX_NIX`),
-mounts it under `/run/agentbox/nix-disk`, and mounts a kernel overlay directly
-at `/nix` using the image-provided `/nix` as lowerdir plus disk-backed upper/work
-directories. During upperdir bootstrap, agentbox copies the image
-`/nix/var` into the disk-backed upperdir only until the upperdir has a persistent
-preseed marker; later VM entries skip that copy and only repair the required
-upperdir layout and permissions. Agentbox makes the overlaid `/nix/store`
-directory owned by the `nixbld` group; the store directory mode is `1775`, while
-store entries inherited from the image may remain `root:root`. Overlay setup now
-runs in the background, and the shell environment exports
-`NIX_REMOTE=unix:///nix/var/nix/daemon-socket/socket` before the foreground shell
-starts. First PATH-resolved `nix` use waits for the prep status/socket and
-performs the daemon connectivity check described above. The libkrun task also uses
-`--userns=keep-id` plus `--user=0:0`, so `/workspace` ownership matches the host
-user while the entrypoint still starts as root for `/run/agentbox` creation and
-root-only bootstrap. The libkrun task passes the host `/dev/net/tun` through to
-the guest at the same path, and the entrypoint makes the guest device node
-world-readable/writable before dropping privileges, so nested rootless Podman can
-bring up container networking. The daemon is tied to the VM/container lifecycle
-and is not separately supervised in v1.
-
-For guest-side debugging, pass a temporary entrypoint script to bypass the normal
-image entrypoint and run custom diagnostics before handing off to the requested
-command:
-
-```bash
-cat > /tmp/agentbox-libkrun-debug-entrypoint <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-echo "== agentbox libkrun debug entrypoint =="
-id
-printf 'working directory: %s\n' "$PWD"
-printf 'command:'
-printf ' %q' "$@"
-printf '\n'
-
-# Add temporary diagnostics here, for example:
-# mount
-# ls -la /workspace /nix /run/agentbox || true
-
-exec "$@"
-EOF
-chmod +x /tmp/agentbox-libkrun-debug-entrypoint
-./result/bin/agentbox --libkrun-debug-entrypoint /tmp/agentbox-libkrun-debug-entrypoint
-```
-
-The script is bind-mounted read-only at `/bin/agentbox-debug-entrypoint` and used
-as the container entrypoint. The usual interactive shell (`fish -l`) is still
-passed as arguments, so `exec "$@"` opens the shell after printing diagnostics.
-This debug path runs as root and intentionally skips the normal `/nix` bootstrap
-and host UID/GID privilege drop. It also skips normal entrypoint conveniences
-such as the passt `/etc/resolv.conf` check, so add those diagnostics or setup
-steps manually if the debug script needs them.
-
-To test a modified `agentbox-guest-init` without rebuilding the container image,
-build only the static guest-init binary and bind-mount it over the in-image
-guest-init path:
+For guest-side debugging, test a modified `agentbox-guest-init` without
+rebuilding the container image by building only the static guest-init binary and
+bind-mounting it over the in-image guest-init path:
 
 ```bash
 nix build .#agentbox-musl -o result-musl
-./result/bin/agentbox --libkrun-debug-guest-init ./result-musl/bin/agentbox-guest-init
+./result/bin/agentbox libkrun --guest-init ./result-musl/bin/agentbox-guest-init
 ```
 
 This keeps the normal image entrypoint and shell arguments intact, but the
@@ -422,7 +261,7 @@ apparent raw device size, but agentbox no longer runs
 implemented yet.
 
 No live auto-resize, state migration/reset UX, snapshot/rollback UX, host-port
-helper UX, rootful nested Podman workflow, or native-mode nested-Podman support
+helper UX, rootful nested Podman workflow, or container-mode nested-Podman support
 is implemented.
 
 Manual host smoke checklist for the nested rootless Podman feature:
@@ -438,23 +277,18 @@ Manual host smoke checklist for the nested rootless Podman feature:
 5. Confirm no fuse-overlayfs path/config/binary is required by the rootless
    Podman setup.
 
-`--native --libkrun` is rejected as conflicting mode selection. Container
-sidecar controls such as `--sidecar-only`, `--disable-nix-sidecar`, and
-`AGENTBOX_NIX_SIDECAR=0` are rejected with `--libkrun` because libkrun does not
-use the container sidecar/overlay bridge.
-
 Libkrun mode intentionally does **not** use the container sidecar/overlay bridge,
 does **not** set `AGENTBOX_NIX_PROXY_HOST`, does **not** fall back to seeded Nix
 state, and does **not** use fuse-overlayfs for nested rootless Podman storage.
 
 ---
 
-### 2) Container mode (`--native`)
+### 2) Container mode
 
 Run:
 
 ```bash
-./result/bin/agentbox --native
+./result/bin/agentbox container
 ```
 
 What container mode does (high level):
@@ -483,38 +317,23 @@ sidecar experiments is tolerated for safe cleanup/recreate decisions, but it is
 not reused as the current native sidecar configuration while matching legacy task
 containers are still active.
 
-#### Sidecar requirement
+Container mode always requires the managed sidecar. No direct/no-sidecar
+container mode is currently implemented.
 
-Container mode requires the sidecar. Seeded fallback has been removed, so these
-fail clearly through container validation:
-
-```bash
-./result/bin/agentbox --native --disable-nix-sidecar
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --native
-./result/bin/agentbox --sidecar-only --disable-nix-sidecar
-AGENTBOX_NIX_SIDECAR=0 ./result/bin/agentbox --sidecar-only
-```
-
-Without `--native` or `--sidecar-only`, `--disable-nix-sidecar` and
-`AGENTBOX_NIX_SIDECAR=0` are rejected before launch because libkrun is the
-default and does not use the container sidecar. Pass `--native` if you intended
-container mode.
-
-#### Sidecar-only debugging
+#### Sidecar debugging
 
 Start or reuse just the container nix-daemon sidecar stack, print the sidecar
 name and host proxy port, and exit without launching the interactive task
 container:
 
 ```bash
-./result/bin/agentbox --sidecar-only
+./result/bin/agentbox container sidecar
 ```
 
-`--sidecar-only` implicitly selects container mode. It intentionally leaves the
-sidecar container and merged nix overlay running after exit so they can be
-inspected. It skips the nix-daemon socket health probe so a broken daemon can
-still be debugged after container startup. `--libkrun --sidecar-only` is rejected
-as conflicting mode selection.
+`agentbox container sidecar` intentionally leaves the sidecar container and
+merged nix overlay running after exit so they can be inspected. It skips the
+nix-daemon socket health probe so a broken daemon can still be debugged after
+container startup.
 
 Use the printed sidecar name for inspection and cleanup, for example:
 
