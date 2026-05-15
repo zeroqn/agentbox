@@ -263,6 +263,17 @@ fn docker_wrapper_unsets_compat_env_before_execing_real_docker() {
 }
 
 #[test]
+fn image_includes_cargo_deny_in_rust_toolchain() {
+    let rust_toolchain = LAYERS
+        .split("stableRustToolchainPackages = [")
+        .nth(1)
+        .and_then(|tail| tail.split("];").next())
+        .expect("stable Rust toolchain package list should exist");
+
+    assert!(rust_toolchain.contains("pkgs.cargo-deny"));
+}
+
+#[test]
 fn image_includes_btrfs_progs_for_guest_bootstrap() {
     assert!(LAYERS.contains("pkgs.btrfs-progs"));
 }

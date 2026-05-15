@@ -189,6 +189,7 @@ let
 
   stableRustToolchainPackages = [
     pkgs.cargo
+    pkgs.cargo-deny
     clangMoldWrapper
     pkgs.clippy
     pkgs.mold
