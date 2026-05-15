@@ -1,5 +1,5 @@
 use crate::podman::run::{RunArgOwner, RunSpec};
-use crate::runtime::libkrun::nix::raw_image::RawNixDisk;
+use crate::runtime::libkrun::components::disk::nix::raw_image::RawNixDisk;
 
 pub(crate) const NIX_DISK_OWNER: RunArgOwner = RunArgOwner::new("runtime.libkrun.disk.nix");
 pub(crate) const LIBKRUN_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY=1";

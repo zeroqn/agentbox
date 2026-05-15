@@ -2,12 +2,12 @@ use anyhow::Result;
 
 use crate::podman::run::{RunArgs, RunSpec, CORE};
 use crate::runtime::components::{diagnostics, identity, volumes};
-use crate::runtime::libkrun::containers::podman as containers_podman;
-use crate::runtime::libkrun::containers::raw_image::RawContainerDisk;
-use crate::runtime::libkrun::nix::podman as nix_podman;
-use crate::runtime::libkrun::nix::raw_image::RawNixDisk;
-use crate::runtime::libkrun::{cpu, debug, host_identity, memory, network, oci};
-use crate::runtime::libkrun::{DebugEntrypointMount, DebugGuestInitMount};
+use crate::runtime::libkrun::components::debug::{DebugEntrypointMount, DebugGuestInitMount};
+use crate::runtime::libkrun::components::disk::containers::podman as containers_podman;
+use crate::runtime::libkrun::components::disk::containers::raw_image::RawContainerDisk;
+use crate::runtime::libkrun::components::disk::nix::podman as nix_podman;
+use crate::runtime::libkrun::components::disk::nix::raw_image::RawNixDisk;
+use crate::runtime::libkrun::components::{cpu, debug, host_identity, memory, network, oci};
 use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
 pub(crate) struct LibkrunTaskPodmanSpec<'a> {

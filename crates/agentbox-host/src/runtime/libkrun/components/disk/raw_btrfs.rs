@@ -208,9 +208,13 @@ fn disk(path: PathBuf, spec: &RawDiskSpec, status: RawBtrfsDiskStatus) -> RawBtr
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::*;
+    use crate::runtime::libkrun::components::disk::raw_btrfs::{
+        RawDiskSpec, RawImageCommandRunner,
+    };
+    use anyhow::{anyhow, Result};
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::path::{Path, PathBuf};
 
     #[derive(Default)]
     pub(crate) struct FakeRunner {

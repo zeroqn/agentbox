@@ -3,25 +3,29 @@ use crate::runtime::components::diagnostics::{
 };
 use crate::runtime::components::identity::USER_IDENTITY_OWNER;
 use crate::runtime::components::volumes::{SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER};
-use crate::runtime::libkrun::containers::podman::{
+use crate::runtime::libkrun::components::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
+use crate::runtime::libkrun::components::debug::DEBUG_OWNER;
+use crate::runtime::libkrun::components::debug::{DebugEntrypointMount, DebugGuestInitMount};
+use crate::runtime::libkrun::components::disk::containers::podman::{
     CONTAINERS_DISK_OWNER, LIBKRUN_CONTAINERS_STORAGE_ENV,
 };
-use crate::runtime::libkrun::containers::raw_image::{
+use crate::runtime::libkrun::components::disk::containers::raw_image::{
     RawContainerDisk, RawContainerDiskStatus, RAW_CONTAINER_DISK_LABEL,
     RAW_CONTAINER_DISK_SIZE_BYTES,
 };
-use crate::runtime::libkrun::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
-use crate::runtime::libkrun::debug::DEBUG_OWNER;
-use crate::runtime::libkrun::host_identity::{HOST_IDENTITY_OWNER, LIBKRUN_KVM_DROP_TO_DEV_ENV};
-use crate::runtime::libkrun::memory::MEMORY_OWNER;
-use crate::runtime::libkrun::network;
-use crate::runtime::libkrun::nix::podman::{LIBKRUN_NIX_OVERLAY_ENV, NIX_DISK_OWNER};
-use crate::runtime::libkrun::nix::raw_image::{
+use crate::runtime::libkrun::components::disk::nix::podman::{
+    LIBKRUN_NIX_OVERLAY_ENV, NIX_DISK_OWNER,
+};
+use crate::runtime::libkrun::components::disk::nix::raw_image::{
     RawNixDisk, RawNixDiskStatus, RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
 };
-use crate::runtime::libkrun::oci::{LIBKRUN_HANDLER_ANNOTATION, OCI_OWNER};
+use crate::runtime::libkrun::components::host_identity::{
+    HOST_IDENTITY_OWNER, LIBKRUN_KVM_DROP_TO_DEV_ENV,
+};
+use crate::runtime::libkrun::components::memory::MEMORY_OWNER;
+use crate::runtime::libkrun::components::network;
+use crate::runtime::libkrun::components::oci::{LIBKRUN_HANDLER_ANNOTATION, OCI_OWNER};
 use crate::runtime::libkrun::task::{build_libkrun_task_podman_args, build_libkrun_task_run_args};
-use crate::runtime::libkrun::{DebugEntrypointMount, DebugGuestInitMount};
 use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, INTERACTIVE_SHELL};
 use std::path::PathBuf;
 

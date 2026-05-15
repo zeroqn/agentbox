@@ -47,7 +47,8 @@ fn resolve_libkrun_cpu_count_from_available(available: NonZero<usize>) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::runtime::libkrun::components::cpu::resolve_libkrun_cpu_count_from_available;
+    use std::num::NonZero;
 
     fn available(count: usize) -> NonZero<usize> {
         NonZero::new(count).expect("test CPU count should be non-zero")

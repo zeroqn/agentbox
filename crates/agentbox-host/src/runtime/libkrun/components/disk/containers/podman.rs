@@ -1,5 +1,5 @@
 use crate::podman::run::{RunArgOwner, RunSpec};
-use crate::runtime::libkrun::containers::raw_image::RawContainerDisk;
+use crate::runtime::libkrun::components::disk::containers::raw_image::RawContainerDisk;
 
 pub(crate) const CONTAINERS_DISK_OWNER: RunArgOwner =
     RunArgOwner::new("runtime.libkrun.disk.containers");

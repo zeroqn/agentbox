@@ -1,10 +1,10 @@
 use anyhow::Result;
 use std::path::Path;
 
-pub(crate) use crate::runtime::libkrun::raw_disk::RawBtrfsDisk as RawNixDisk;
-use crate::runtime::libkrun::raw_disk::{self, RawDiskSpec};
+pub(crate) use crate::runtime::libkrun::components::disk::raw_btrfs::RawBtrfsDisk as RawNixDisk;
+use crate::runtime::libkrun::components::disk::raw_btrfs::{self, RawDiskSpec};
 #[cfg(test)]
-pub(crate) use crate::runtime::libkrun::raw_disk::{
+pub(crate) use crate::runtime::libkrun::components::disk::raw_btrfs::{
     RawBtrfsDiskStatus as RawNixDiskStatus, RawImageCommandRunner,
 };
 
@@ -23,7 +23,7 @@ const RAW_NIX_DISK_SPEC: RawDiskSpec = RawDiskSpec {
 };
 
 pub(crate) fn prepare(state_root: &Path) -> Result<RawNixDisk> {
-    raw_disk::prepare(state_root, &RAW_NIX_DISK_SPEC)
+    raw_btrfs::prepare(state_root, &RAW_NIX_DISK_SPEC)
 }
 
 #[cfg(test)]
@@ -31,13 +31,16 @@ pub(crate) fn prepare_with_runner(
     state_root: &Path,
     runner: &impl RawImageCommandRunner,
 ) -> Result<RawNixDisk> {
-    raw_disk::prepare_with_runner(state_root, &RAW_NIX_DISK_SPEC, runner)
+    raw_btrfs::prepare_with_runner(state_root, &RAW_NIX_DISK_SPEC, runner)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::runtime::libkrun::raw_disk::test_support::FakeRunner;
+    use crate::runtime::libkrun::components::disk::nix::raw_image::{
+        prepare_with_runner, RawNixDiskStatus, RAW_NIX_DISK_FILE_NAME, RAW_NIX_DISK_ID,
+        RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
+    };
+    use crate::runtime::libkrun::components::disk::raw_btrfs::test_support::FakeRunner;
     use std::fs::{self, File};
     use tempfile::tempdir;
 
