@@ -38,6 +38,12 @@ pub(in crate::guest_init) fn derive(
     if containers_storage {
         let path = env::var("PATH").unwrap_or_default();
         vars.push(("PATH".to_owned(), format!("/run/agentbox/idmap-bin:{path}")));
+        if let Some(runtime_dir) = &runtime_dir {
+            vars.push((
+                "DOCKER_HOST".to_owned(),
+                format!("unix://{}/docker/docker.sock", runtime_dir.display()),
+            ));
+        }
     }
     ShellEnvironment {
         vars,

@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, libkrun, podman ? pkgs.podman, docker ? pkgs.docker, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -47,6 +47,19 @@ let
     fi
     exec ${podman}/bin/podman "$@"
   '';
+
+  dockerCommandCompat = pkgs.writeShellScriptBin "docker" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun docker wait
+      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun docker daemon
+      export DOCKER_HOST="''${DOCKER_HOST:-unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker/docker.sock}"
+    fi
+    exec ${docker}/bin/docker "$@"
+  '';
+
   sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''
     LISTEN_PORT="$1"
     SOCKET_PATH="$2"
@@ -219,6 +232,17 @@ let
     pkgs.shadow
   ];
 
+  dockerdRootlessCompat = pkgs.writeShellScriptBin "dockerd-rootless.sh" ''
+    exec ${docker}/bin/dockerd-rootless "$@"
+  '';
+
+  rootlessDockerImagePackages = [
+    docker
+    dockerdRootlessCompat
+    pkgs.rootlesskit
+    pkgs.slirp4netns
+  ];
+
   baseImagePackages = [
     pkgs.bashInteractive
     pkgs.btrfs-progs
@@ -266,6 +290,7 @@ let
   imagePackages =
     baseImagePackages
     ++ rootlessPodmanImagePackages
+    ++ rootlessDockerImagePackages
     ++ cToolchainImagePackages
     ++ [
       rustToolchainImageLayer
@@ -273,7 +298,7 @@ let
       toolingImageLayer
       agentImageLayer
     ];
-  imagePath = pkgs.lib.makeBinPath ([ nixCommandCompat podmanCommandCompat ] ++ imagePackages);
+  imagePath = pkgs.lib.makeBinPath ([ nixCommandCompat podmanCommandCompat dockerCommandCompat dockerdRootlessCompat ] ++ imagePackages);
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
   imageContents = imagePackages ++ [
@@ -289,6 +314,8 @@ let
     agentboxMuslPackage
     nixCommandCompat
     podmanCommandCompat
+    dockerCommandCompat
+    dockerdRootlessCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
@@ -399,6 +426,8 @@ in
     clangMoldWrapper
     nixCommandCompat
     podmanCommandCompat
+    dockerCommandCompat
+    dockerdRootlessCompat
     nixBuilderGroupId
     nixBuilderGroupMembers
     nixBuilderPasswdEntries

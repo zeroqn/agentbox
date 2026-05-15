@@ -101,6 +101,29 @@ fn podman_wrapper_waits_only_for_libkrun_container_storage() {
 }
 
 #[test]
+fn docker_wrapper_waits_and_starts_daemon_only_for_libkrun_container_storage() {
+    assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
+    assert!(LAYERS.contains("agentbox-guest-init libkrun docker wait"));
+    assert!(LAYERS.contains("agentbox-guest-init libkrun docker daemon"));
+    assert!(LAYERS.contains("DOCKER_HOST"));
+    let gate = LAYERS
+        .find("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE")
+        .expect("libkrun container storage gate should exist");
+    let wait = LAYERS
+        .find("agentbox-guest-init libkrun docker wait")
+        .expect("docker wait should exist");
+    let daemon = LAYERS
+        .find("agentbox-guest-init libkrun docker daemon")
+        .expect("docker daemon ensure should exist");
+    let exec = LAYERS
+        .find(r#"exec ${docker}/bin/docker "$@""#)
+        .expect("real docker exec should exist");
+    assert!(gate < wait);
+    assert!(wait < daemon);
+    assert!(daemon < exec);
+}
+
+#[test]
 fn nix_wrapper_waits_and_probes_only_for_libkrun_nix_overlay() {
     assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then"#));
     assert!(LAYERS.contains(
@@ -173,12 +196,26 @@ fn podman_wrapper_unsets_compat_env_before_execing_real_podman() {
 }
 
 #[test]
+fn docker_wrapper_unsets_compat_env_before_execing_real_docker() {
+    for required in [
+        "dockerCommandCompat",
+        "pkgs.writeShellScriptBin \"docker\"",
+        "unset LD_PRELOAD",
+        "unset NSS_WRAPPER_PASSWD",
+        "unset NSS_WRAPPER_GROUP",
+        r#"exec ${docker}/bin/docker "$@""#,
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn image_includes_btrfs_progs_for_guest_bootstrap() {
     assert!(LAYERS.contains("pkgs.btrfs-progs"));
 }
 
 #[test]
-fn image_includes_rootless_podman_stack_without_fuse_overlayfs() {
+fn image_includes_rootless_container_stacks_without_fuse_overlayfs() {
     for required in [
         "rootlessPodmanImagePackages",
         "podmanCommandCompat",
@@ -189,6 +226,17 @@ fn image_includes_rootless_podman_stack_without_fuse_overlayfs() {
         "pkgs.aardvark-dns",
         "pkgs.passt",
         "pkgs.shadow",
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
+    for required in [
+        "rootlessDockerImagePackages",
+        "dockerCommandCompat",
+        "docker",
+        "pkgs.rootlesskit",
+        "pkgs.slirp4netns",
+        "dockerdRootlessCompat",
+        "pkgs.writeShellScriptBin \"dockerd-rootless.sh\"",
     ] {
         assert!(LAYERS.contains(required), "missing {required}");
     }

@@ -1,8 +1,8 @@
 use clap::Parser;
 
 use crate::guest_init::cli::{
-    ContainerSubcommand, DefaultSubcommand, GuestInitCli, LibkrunSubcommand, NixSubcommand,
-    PodmanSubcommand, RuntimeCommand,
+    ContainerSubcommand, DefaultSubcommand, DockerSubcommand, GuestInitCli, LibkrunSubcommand,
+    NixSubcommand, PodmanSubcommand, RuntimeCommand,
 };
 
 #[test]
@@ -85,6 +85,25 @@ fn parses_libkrun_podman_prep_and_wait() {
             panic!("expected podman command");
         };
         assert_eq!(podman.command, expected);
+    }
+}
+
+#[test]
+fn parses_libkrun_docker_prep_wait_and_daemon() {
+    for (arg, expected) in [
+        ("prep", DockerSubcommand::Prep),
+        ("wait", DockerSubcommand::Wait),
+        ("daemon", DockerSubcommand::Daemon),
+    ] {
+        let cli = GuestInitCli::try_parse_from(["agentbox-guest-init", "libkrun", "docker", arg])
+            .unwrap();
+        let RuntimeCommand::Libkrun(libkrun) = cli.runtime else {
+            panic!("expected libkrun command");
+        };
+        let LibkrunSubcommand::Docker(docker) = libkrun.command else {
+            panic!("expected docker command");
+        };
+        assert_eq!(docker.command, expected);
     }
 }
 

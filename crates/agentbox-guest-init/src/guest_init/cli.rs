@@ -36,6 +36,7 @@ pub(in crate::guest_init) enum LibkrunSubcommand {
     Enter(EnterCommand),
     Nix(NixCommand),
     Podman(PodmanCommand),
+    Docker(DockerCommand),
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
@@ -65,6 +66,19 @@ pub(in crate::guest_init) struct PodmanCommand {
 pub(in crate::guest_init) enum PodmanSubcommand {
     Prep,
     Wait,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+pub(in crate::guest_init) struct DockerCommand {
+    #[command(subcommand)]
+    pub(in crate::guest_init) command: DockerSubcommand,
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub(in crate::guest_init) enum DockerSubcommand {
+    Prep,
+    Wait,
+    Daemon,
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]

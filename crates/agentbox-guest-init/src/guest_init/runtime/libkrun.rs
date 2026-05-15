@@ -1,7 +1,9 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::guest_init::cli::{LibkrunCommand, LibkrunSubcommand, NixSubcommand, PodmanSubcommand};
+use crate::guest_init::cli::{
+    DockerSubcommand, LibkrunCommand, LibkrunSubcommand, NixSubcommand, PodmanSubcommand,
+};
 use crate::guest_init::components;
 use crate::guest_init::components::env::{LibkrunEnv, DEFAULT_SHELL, NIX_REMOTE_URI};
 use crate::guest_init::components::home::identity::{validate_host_identity, DevIdentity};
@@ -18,6 +20,7 @@ pub(in crate::guest_init) enum LibkrunEnterOperation {
     FixPasstDns,
     StartNixPrep,
     StartPodmanPrep,
+    StartDockerPrep,
     ExportNixRemote,
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
@@ -35,6 +38,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LibkrunEnterOpera
         LibkrunEnterOperation::FixPasstDns,
         LibkrunEnterOperation::StartNixPrep,
         LibkrunEnterOperation::StartPodmanPrep,
+        LibkrunEnterOperation::StartDockerPrep,
         LibkrunEnterOperation::ExportNixRemote,
         LibkrunEnterOperation::ClearProfileEnvBeforeExec,
         LibkrunEnterOperation::ReportProfileBeforeExec,
@@ -57,6 +61,11 @@ pub(in crate::guest_init) fn run(command: LibkrunCommand) -> Result<()> {
         LibkrunSubcommand::Podman(podman) => match podman.command {
             PodmanSubcommand::Prep => components::podman::root::run_prep_to_status(),
             PodmanSubcommand::Wait => components::podman::user::wait_for_prep(),
+        },
+        LibkrunSubcommand::Docker(docker) => match docker.command {
+            DockerSubcommand::Prep => components::docker::root::run_prep_to_status(),
+            DockerSubcommand::Wait => components::docker::user::wait_for_prep(),
+            DockerSubcommand::Daemon => components::docker::user::ensure_daemon(),
         },
     }
 }
@@ -101,6 +110,9 @@ fn enter(command: Vec<String>) -> Result<()> {
     })?;
     profiler.measure_result("start-podman-prep", || {
         crate::guest_init::components::podman::root::start_background_prep(&identity, &env_contract)
+    })?;
+    profiler.measure_result("start-docker-prep", || {
+        crate::guest_init::components::docker::root::start_background_prep(&env_contract)
     })?;
     profiler.measure("export-nix-remote", || {
         if env_contract.nix_overlay {
