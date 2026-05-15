@@ -18,6 +18,7 @@ pub(in crate::guest_init) enum LibkrunEnterOperation {
     ExportShellEnvironment,
     MaterializeHome,
     FixPasstDns,
+    RestrictDmesg,
     StartNixPrep,
     StartPodmanPrep,
     StartDockerPrep,
@@ -36,6 +37,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LibkrunEnterOpera
         LibkrunEnterOperation::ExportShellEnvironment,
         LibkrunEnterOperation::MaterializeHome,
         LibkrunEnterOperation::FixPasstDns,
+        LibkrunEnterOperation::RestrictDmesg,
         LibkrunEnterOperation::StartNixPrep,
         LibkrunEnterOperation::StartPodmanPrep,
         LibkrunEnterOperation::StartDockerPrep,
@@ -102,6 +104,12 @@ fn enter(command: Vec<String>) -> Result<()> {
             crate::guest_init::components::net::dns::ensure_passt_resolv_conf(Path::new(
                 "/etc/resolv.conf",
             ))?;
+        }
+        Ok(())
+    })?;
+    profiler.measure_result("restrict-dmesg", || {
+        if process::is_root() {
+            crate::guest_init::components::hardening::dmesg::restrict()?;
         }
         Ok(())
     })?;

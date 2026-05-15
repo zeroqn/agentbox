@@ -18,6 +18,14 @@ fn libkrun_enter_operation_order_keeps_components_before_exec() {
         pos(LibkrunEnterOperation::ExportShellEnvironment)
             < pos(LibkrunEnterOperation::MaterializeHome)
     );
+    assert!(pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::StartNixPrep));
+    assert!(
+        pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::StartPodmanPrep)
+    );
+    assert!(
+        pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::StartDockerPrep)
+    );
+    assert!(pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(pos(LibkrunEnterOperation::StartNixPrep) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(pos(LibkrunEnterOperation::StartPodmanPrep) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(pos(LibkrunEnterOperation::StartDockerPrep) < pos(LibkrunEnterOperation::DropAndExec));

@@ -240,6 +240,10 @@ larger hosts reserve 2 CPUs for the host.
 By default, libkrun mode uses passt networking through `krun.use_passt=1`. Pass
 `agentbox libkrun --tsi` to switch to the older TSI/proxy environment path.
 
+During libkrun guest bootstrap, `agentbox-guest-init` sets
+`kernel.dmesg_restrict=1` so kernel logs are root-only inside the guest; the
+default `dev` shell cannot read `dmesg`.
+
 For guest-side debugging, test a modified `agentbox-guest-init` without
 rebuilding the container image by building only the static guest-init binary and
 bind-mounting it over the in-image guest-init path:
