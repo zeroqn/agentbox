@@ -18,11 +18,11 @@ pub fn format_mount_arg_with_options(
     })?;
 
     let mut mount = format!("{path}:{destination}");
-    if let Some(options) = options {
-        if !options.is_empty() {
-            mount.push(':');
-            mount.push_str(options);
-        }
+    if let Some(options) = options
+        && !options.is_empty()
+    {
+        mount.push(':');
+        mount.push_str(options);
     }
 
     Ok(mount)

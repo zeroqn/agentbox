@@ -3,7 +3,8 @@ use crate::guest_init::cli::{
     PodmanCommand, PodmanSubcommand,
 };
 use crate::guest_init::runtime::libkrun::{
-    planned_enter_operations, subcommand_starts_profiler, LibkrunEnterOperation,
+    LibkrunEnterOperation, planned_enter_operations, should_drop_to_identity,
+    subcommand_starts_profiler,
 };
 
 #[test]
@@ -59,6 +60,14 @@ fn libkrun_podman_subcommands_are_not_profiled_entrypoints() {
     assert!(subcommand_starts_profiler(&enter));
     assert!(!subcommand_starts_profiler(&prep));
     assert!(!subcommand_starts_profiler(&wait));
+}
+
+#[test]
+fn libkrun_root_mode_skips_only_final_identity_drop() {
+    assert!(should_drop_to_identity(true, false));
+    assert!(!should_drop_to_identity(true, true));
+    assert!(!should_drop_to_identity(false, false));
+    assert!(!should_drop_to_identity(false, true));
 }
 
 #[test]

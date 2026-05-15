@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use tempfile::tempdir;
 
-use crate::guest_init::components::rootless::idmap::{source_helper_on_path, HELPER_DIR};
+use crate::guest_init::components::rootless::idmap::{HELPER_DIR, source_helper_on_path};
 
 #[test]
 fn idmap_source_lookup_skips_installed_helper_dir_when_alternate_exists() {

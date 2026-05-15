@@ -4,11 +4,12 @@ use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
 use super::{
-    build_nss_wrapper_plan, derive_identity_plan, materialize_writable_dir,
-    normal_shell_environment, planned_enter_operations, ContainerEnterOperation, ProcessIds,
-    HOST_GID_ENV, HOST_UID_ENV,
+    ContainerEnterOperation, HOST_GID_ENV, HOST_UID_ENV, ProcessIds, build_nss_wrapper_plan,
+    derive_identity_plan, materialize_writable_dir, normal_shell_environment,
+    planned_enter_operations,
 };
 use crate::guest_init::cli::EnterCommand;
+use crate::guest_init::components::env::ENTER_AS_ROOT_ENV;
 
 struct TestEnv(BTreeMap<String, String>);
 
@@ -66,6 +67,50 @@ fn identity_plan_requires_host_identity_when_root_must_drop() {
     let command = vec!["fish".to_owned(), "-l".to_owned()];
     let err = derive_identity_plan(&command, ProcessIds { uid: 0, gid: 0 }, &TestEnv::new(&[]))
         .expect_err("root fish login shell should require host uid/gid before dropping");
+
+    assert!(
+        format!("{err:#}").contains("AGENTBOX_HOST_UID and AGENTBOX_HOST_GID are required"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn identity_plan_keeps_root_for_interactive_fish_when_root_mode_is_requested() {
+    let command = vec!["fish".to_owned(), "-l".to_owned()];
+    let plan = derive_identity_plan(
+        &command,
+        ProcessIds { uid: 0, gid: 0 },
+        &TestEnv::new(&[(ENTER_AS_ROOT_ENV, "1")]),
+    )
+    .expect("root mode should not require host identity when no drop is selected");
+
+    assert!(!plan.drop_to_dev);
+    assert_eq!(plan.identity.uid, 1000);
+    assert_eq!(plan.identity.gid, 1000);
+}
+
+#[test]
+fn identity_plan_root_mode_overrides_kvm_drop_for_final_exec_only() {
+    let command = vec!["fish".to_owned(), "-l".to_owned()];
+    let plan = derive_identity_plan(
+        &command,
+        ProcessIds { uid: 0, gid: 0 },
+        &TestEnv::new(&[(ENTER_AS_ROOT_ENV, "1"), ("AGENTBOX_KVM_DROP_TO_DEV", "1")]),
+    )
+    .expect("root mode should override final drop decision");
+
+    assert!(!plan.drop_to_dev);
+}
+
+#[test]
+fn identity_plan_ignores_malformed_root_mode_env() {
+    let command = vec!["fish".to_owned(), "-l".to_owned()];
+    let err = derive_identity_plan(
+        &command,
+        ProcessIds { uid: 0, gid: 0 },
+        &TestEnv::new(&[(ENTER_AS_ROOT_ENV, "true")]),
+    )
+    .expect_err("non-1 root mode value should not suppress required host identity");
 
     assert!(
         format!("{err:#}").contains("AGENTBOX_HOST_UID and AGENTBOX_HOST_GID are required"),

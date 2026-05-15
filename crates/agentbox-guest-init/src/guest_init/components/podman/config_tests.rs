@@ -1,6 +1,6 @@
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::podman::config::{
-    containers_conf, policy_json, registries_conf, storage_conf, PodmanToolPaths,
+    PodmanToolPaths, containers_conf, policy_json, registries_conf, storage_conf,
 };
 use std::path::PathBuf;
 

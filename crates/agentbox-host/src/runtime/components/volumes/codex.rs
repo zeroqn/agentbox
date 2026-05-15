@@ -3,8 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::podman::volume::format_mount_arg;
 use crate::CONTAINER_CODEX_DIR;
+use crate::podman::volume::format_mount_arg;
 
 pub fn prepare() -> Result<String> {
     let home_dir = env::var_os("HOME").context("HOME is not set; cannot locate '~/.codex'")?;

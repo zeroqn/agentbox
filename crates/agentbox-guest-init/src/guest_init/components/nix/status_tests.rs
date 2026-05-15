@@ -1,6 +1,6 @@
 use crate::guest_init::components::nix::status::{
-    format_wait_timeout, mark_ready_for_pid, read_status, write_running_unless_terminal,
-    write_status, NixPrepState, NixPrepStatus,
+    NixPrepState, NixPrepStatus, format_wait_timeout, mark_ready_for_pid, read_status,
+    write_running_unless_terminal, write_status,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -40,9 +40,10 @@ fn nix_status_rejects_ready_to_running() {
         error: None,
     };
     let err = ready.ensure_transition(NixPrepState::Running).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("illegal nix prep status transition"));
+    assert!(
+        err.to_string()
+            .contains("illegal nix prep status transition")
+    );
 }
 
 #[test]

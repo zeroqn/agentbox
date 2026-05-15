@@ -1,11 +1,11 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::guest_init::cli::{ContainerCommand, ContainerSubcommand, EnterCommand};
-use crate::guest_init::components::env::DEV_USER;
+use crate::guest_init::components::env::{DEV_USER, ENTER_AS_ROOT_ENV};
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::{command, fs as guest_fs, process, profile};
 
@@ -159,8 +159,10 @@ fn derive_identity_plan(
 
     let interactive_fish_task = command_basename(command).as_deref() == Some("fish")
         && command.get(1).map(String::as_str) == Some("-l");
-    let drop_to_dev =
-        ids.uid == 0 && (env.var(DROP_TO_DEV_ENV).as_deref() == Some("1") || interactive_fish_task);
+    let enter_as_root = env.var(ENTER_AS_ROOT_ENV).as_deref() == Some("1");
+    let drop_to_dev = ids.uid == 0
+        && !enter_as_root
+        && (env.var(DROP_TO_DEV_ENV).as_deref() == Some("1") || interactive_fish_task);
     if drop_to_dev && (env.var(HOST_UID_ENV).is_none() || env.var(HOST_GID_ENV).is_none()) {
         bail!(
             "agentbox-guest-init container enter: AGENTBOX_HOST_UID and AGENTBOX_HOST_GID are required for KVM task mode"
@@ -332,13 +334,13 @@ fn materialize_writable_dir(path: &Path, shadow: &Path) -> Result<()> {
         guest_fs::create_dir_all(path)?;
         return Ok(());
     }
-    if is_symlink(path) || !is_writable(path) {
-        if let Err(err) = shadow_writable_dir(path, shadow) {
-            eprintln!(
-                "agentbox-guest-init container enter: warning: cannot shadow '{}' to writable layer: {err:#}",
-                path.display()
-            );
-        }
+    if (is_symlink(path) || !is_writable(path))
+        && let Err(err) = shadow_writable_dir(path, shadow)
+    {
+        eprintln!(
+            "agentbox-guest-init container enter: warning: cannot shadow '{}' to writable layer: {err:#}",
+            path.display()
+        );
     }
     Ok(())
 }

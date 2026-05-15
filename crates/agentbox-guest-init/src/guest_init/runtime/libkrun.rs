@@ -5,8 +5,8 @@ use crate::guest_init::cli::{
     DockerSubcommand, LibkrunCommand, LibkrunSubcommand, NixSubcommand, PodmanSubcommand,
 };
 use crate::guest_init::components;
-use crate::guest_init::components::env::{LibkrunEnv, DEFAULT_SHELL, NIX_REMOTE_URI};
-use crate::guest_init::components::home::identity::{validate_host_identity, DevIdentity};
+use crate::guest_init::components::env::{DEFAULT_SHELL, LibkrunEnv, NIX_REMOTE_URI};
+use crate::guest_init::components::home::identity::{DevIdentity, validate_host_identity};
 use crate::guest_init::{command, process, profile};
 
 #[cfg(test)]
@@ -132,11 +132,15 @@ fn enter(command: Vec<String>) -> Result<()> {
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
-    if process::is_root() {
+    if should_drop_to_identity(process::is_root(), env_contract.enter_as_root) {
         process::drop_to_identity_and_exec(&identity, &command)
     } else {
         process::exec_command(&command)
     }
+}
+
+pub(in crate::guest_init) fn should_drop_to_identity(is_root: bool, enter_as_root: bool) -> bool {
+    is_root && !enter_as_root
 }
 
 fn resolve_shell(command: &[String]) -> PathBuf {

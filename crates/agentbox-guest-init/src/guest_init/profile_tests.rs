@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use super::{
-    EnvSource, GuestProfiler, ProfileConfig, ProfileRecord, GUEST_DEBUG_ENV, GUEST_PROFILE_ENV,
+    EnvSource, GUEST_DEBUG_ENV, GUEST_PROFILE_ENV, GuestProfiler, ProfileConfig, ProfileRecord,
 };
 
 struct TestEnv(BTreeMap<String, String>);
@@ -34,11 +34,13 @@ fn profile_config_requires_explicit_profile_env_to_enable_measurement() {
 fn profile_config_reports_only_when_profile_and_debug_are_enabled() {
     assert!(!ProfileConfig::from_env(&TestEnv::new(&[(GUEST_PROFILE_ENV, "1")])).should_report());
     assert!(!ProfileConfig::from_env(&TestEnv::new(&[(GUEST_DEBUG_ENV, "1")])).should_report());
-    assert!(ProfileConfig::from_env(&TestEnv::new(&[
-        (GUEST_PROFILE_ENV, "1"),
-        (GUEST_DEBUG_ENV, "1"),
-    ]))
-    .should_report());
+    assert!(
+        ProfileConfig::from_env(&TestEnv::new(&[
+            (GUEST_PROFILE_ENV, "1"),
+            (GUEST_DEBUG_ENV, "1"),
+        ]))
+        .should_report()
+    );
 }
 
 #[test]

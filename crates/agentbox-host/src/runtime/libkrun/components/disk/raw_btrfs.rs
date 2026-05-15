@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -189,7 +189,11 @@ fn validate_existing(
             "existing {} '{}' has filesystem type '{}', expected btrfs; refusing to reformat automatically",
             spec.diagnostic_name,
             path.display(),
-            if fs_type.is_empty() { "unknown" } else { &fs_type }
+            if fs_type.is_empty() {
+                "unknown"
+            } else {
+                &fs_type
+            }
         );
     }
 
@@ -211,7 +215,7 @@ pub(crate) mod test_support {
     use crate::runtime::libkrun::components::disk::raw_btrfs::{
         RawDiskSpec, RawImageCommandRunner,
     };
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::path::{Path, PathBuf};

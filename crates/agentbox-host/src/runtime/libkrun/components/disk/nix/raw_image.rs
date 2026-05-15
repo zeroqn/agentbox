@@ -37,8 +37,8 @@ pub(crate) fn prepare_with_runner(
 #[cfg(test)]
 mod tests {
     use crate::runtime::libkrun::components::disk::nix::raw_image::{
-        prepare_with_runner, RawNixDiskStatus, RAW_NIX_DISK_FILE_NAME, RAW_NIX_DISK_ID,
-        RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
+        RAW_NIX_DISK_FILE_NAME, RAW_NIX_DISK_ID, RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
+        RawNixDiskStatus, prepare_with_runner,
     };
     use crate::runtime::libkrun::components::disk::raw_btrfs::test_support::FakeRunner;
     use std::fs::{self, File};

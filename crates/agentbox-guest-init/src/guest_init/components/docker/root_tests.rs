@@ -1,4 +1,4 @@
-use crate::guest_init::components::docker::root::{planned_operations, DockerPrepOperation};
+use crate::guest_init::components::docker::root::{DockerPrepOperation, planned_operations};
 
 #[test]
 fn docker_prep_operation_order_keeps_root_setup_before_daemon_config() {

@@ -1,4 +1,4 @@
-use crate::guest_init::components::podman::root::{planned_operations, PodmanPrepOperation};
+use crate::guest_init::components::podman::root::{PodmanPrepOperation, planned_operations};
 
 #[test]
 fn podman_prep_operation_order_keeps_root_setup_before_configs() {

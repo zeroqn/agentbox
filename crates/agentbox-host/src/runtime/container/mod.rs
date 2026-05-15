@@ -5,17 +5,17 @@ use anyhow::{Context, Result};
 use std::env;
 use std::process::{ExitCode, Stdio};
 
-use crate::cli::{resolve_image, CommonOptions, ContainerMode, ContainerOptions};
+use crate::cli::{CommonOptions, ContainerMode, ContainerOptions, resolve_image};
 use crate::naming::{derive_task_container_name, derive_task_hostname};
 use crate::podman::command::run_podman;
 use crate::runtime::components::volumes::prepare_task_volumes;
 use crate::runtime::container::nix_sidecar::{
-    cleanup_idle_sidecar, prepare_sidecar_nix_runtime, SidecarDaemonRuntimeSpec,
-    SidecarSocketHealthProbe,
+    SidecarDaemonRuntimeSpec, SidecarSocketHealthProbe, cleanup_idle_sidecar,
+    prepare_sidecar_nix_runtime,
 };
 use crate::state::resolve_state_layout;
 
-use task::{build_container_task_podman_args, ContainerTaskPodmanSpec};
+use task::{ContainerTaskPodmanSpec, build_container_task_podman_args};
 
 pub(crate) fn run(common: CommonOptions, options: ContainerOptions) -> Result<ExitCode> {
     let mode = options.mode();
@@ -65,6 +65,7 @@ pub(crate) fn run(common: CommonOptions, options: ContainerOptions) -> Result<Ex
             nix_runtime: &nix_runtime,
             guest_profile: common.profile,
             guest_debug: common.debug,
+            enter_as_root: common.root,
         })?,
         Stdio::inherit(),
         Stdio::inherit(),
@@ -72,13 +73,13 @@ pub(crate) fn run(common: CommonOptions, options: ContainerOptions) -> Result<Ex
         "failed to start podman",
     )?;
 
-    if should_cleanup_idle_sidecar_after_run(mode) {
-        if let Err(err) = cleanup_idle_sidecar(&nix_runtime) {
-            eprintln!(
-                "agentbox: warning: failed to cleanup idle sidecar '{}': {err:#}",
-                nix_runtime.sidecar_name
-            );
-        }
+    if should_cleanup_idle_sidecar_after_run(mode)
+        && let Err(err) = cleanup_idle_sidecar(&nix_runtime)
+    {
+        eprintln!(
+            "agentbox: warning: failed to cleanup idle sidecar '{}': {err:#}",
+            nix_runtime.sidecar_name
+        );
     }
 
     let code = status.code().unwrap_or(1);

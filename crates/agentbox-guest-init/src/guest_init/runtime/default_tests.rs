@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use super::{
+    DefaultEnterOperation, LIBKRUN_CONTAINERS_STORAGE_ENV, LIBKRUN_NIX_OVERLAY_ENV,
     container_dispatch_argv_for_exe, libkrun_dispatch_argv_for_exe, planned_enter_operations,
-    should_dispatch_libkrun, DefaultEnterOperation, LIBKRUN_CONTAINERS_STORAGE_ENV,
-    LIBKRUN_NIX_OVERLAY_ENV,
+    should_dispatch_libkrun,
 };
 
 struct TestEnv(BTreeMap<String, String>);

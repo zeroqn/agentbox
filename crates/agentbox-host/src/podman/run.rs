@@ -90,7 +90,7 @@ impl RunArgs {
 
 #[cfg(test)]
 mod tests {
-    use crate::podman::run::{RunArgOwner, RunSpec, CORE};
+    use crate::podman::run::{CORE, RunArgOwner, RunSpec};
 
     const TEST_COMPONENT_A_OWNER: RunArgOwner = RunArgOwner::new("test.component_a");
     const TEST_COMPONENT_B_OWNER: RunArgOwner = RunArgOwner::new("test.component_b");

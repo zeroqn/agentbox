@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
-use crate::podman::volume::format_mount_arg;
 use crate::CONTAINER_CARGO_DIR;
+use crate::podman::volume::format_mount_arg;
 
 pub fn prepare(state_root: &Path) -> Result<String> {
     let cargo_dir = state_root.join("cargo");

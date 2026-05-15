@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::guest_init::command;
-use crate::guest_init::components::docker::config::{daemon_json, DockerPaths};
+use crate::guest_init::components::docker::config::{DockerPaths, daemon_json};
 use crate::guest_init::components::docker::status::{self, DockerState, DockerStatus};
 use crate::guest_init::components::env::{
-    LibkrunEnv, DOCKER_PREP_LOG_PATH, DOCKER_PREP_STATUS_PATH, RUN_DIR,
+    DOCKER_PREP_LOG_PATH, DOCKER_PREP_STATUS_PATH, LibkrunEnv, RUN_DIR,
 };
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::{fs, process};

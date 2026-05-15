@@ -1,9 +1,9 @@
 use anyhow::Result;
 
-use crate::podman::run::{RunArgs, RunSpec, CORE};
+use crate::podman::run::{CORE, RunArgs, RunSpec};
 use crate::runtime::components::volumes::TaskVolumeMounts;
 use crate::runtime::components::{diagnostics, identity, volumes};
-use crate::runtime::container::nix_sidecar::{append_task_sidecar_nix_args, SidecarNixRuntime};
+use crate::runtime::container::nix_sidecar::{SidecarNixRuntime, append_task_sidecar_nix_args};
 use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
 pub(crate) struct ContainerTaskPodmanSpec<'a> {
@@ -14,6 +14,7 @@ pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) nix_runtime: &'a SidecarNixRuntime,
     pub(crate) guest_profile: bool,
     pub(crate) guest_debug: bool,
+    pub(crate) enter_as_root: bool,
 }
 
 pub(crate) fn build_container_task_podman_args(
@@ -28,6 +29,10 @@ fn build_container_task_run_args(spec: ContainerTaskPodmanSpec<'_>) -> Result<Ru
     run.args(CORE, ["run", "--rm", "-it"]);
     run.option(CORE, "--name", spec.container_name);
     identity::append_userns_keep_id(&mut run);
+    if spec.enter_as_root {
+        identity::append_root_user(&mut run);
+        identity::append_enter_as_root_env(&mut run);
+    }
     run.option(CORE, "--workdir", CONTAINER_WORKDIR);
     run.option(CORE, "--hostname", spec.hostname);
     volumes::append_task_volumes(&mut run, spec.task_volumes);
@@ -45,15 +50,17 @@ mod tests {
     use crate::runtime::components::diagnostics::{
         GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
     };
-    use crate::runtime::components::identity::USER_IDENTITY_OWNER;
+    use crate::runtime::components::identity::{
+        ENTER_AS_ROOT_ENV, ENTER_AS_ROOT_OWNER, USER_IDENTITY_OWNER,
+    };
     use crate::runtime::components::volumes::{
-        TaskVolumeMounts, CARGO_VOLUME_OWNER, CODEX_VOLUME_OWNER, SCCACHE_VOLUME_OWNER,
+        CARGO_VOLUME_OWNER, CODEX_VOLUME_OWNER, SCCACHE_VOLUME_OWNER, TaskVolumeMounts,
         WORKSPACE_VOLUME_OWNER,
     };
     use crate::runtime::container::nix_sidecar::SIDECAR_NIX_OWNER;
     use crate::runtime::container::nix_sidecar::{PodmanImageMountMode, SidecarNixRuntime};
     use crate::runtime::container::task::{
-        build_container_task_podman_args, build_container_task_run_args, ContainerTaskPodmanSpec,
+        ContainerTaskPodmanSpec, build_container_task_podman_args, build_container_task_run_args,
     };
     use crate::{
         CONTAINER_SCCACHE_DIR, CONTAINER_TMP_TMPFS, INTERACTIVE_SHELL, NIX_REMOTE_SOCKET,
@@ -106,6 +113,7 @@ mod tests {
         assert!(!joined.contains("/nix/store:/nix/store"));
         assert!(!joined.contains("/nix/var/nix:/nix/var/nix"));
         assert!(!joined.contains("AGENTBOX_KVM_DROP_TO_DEV"));
+        assert!(!joined.contains("AGENTBOX_ENTER_AS_ROOT"));
         assert!(!joined.contains("AGENTBOX_HOST_UID"));
         assert!(!joined.contains("AGENTBOX_HOST_GID"));
         assert!(!joined.contains("NIX_PROXY"));
@@ -169,6 +177,57 @@ mod tests {
     }
 
     #[test]
+    fn container_task_args_enter_as_root_only_when_requested() {
+        let runtime = sidecar_runtime();
+        let task_volumes = default_task_volumes();
+        let default_args = build_args(&runtime);
+        let root_args = build_container_task_podman_args(ContainerTaskPodmanSpec {
+            image: crate::DEFAULT_IMAGE,
+            container_name: "project-random",
+            hostname: "project-agentbox",
+            task_volumes: &task_volumes,
+            nix_runtime: &runtime,
+            guest_profile: false,
+            guest_debug: false,
+            enter_as_root: true,
+        })
+        .expect("container task args should build");
+
+        assert!(!default_args.contains(&ENTER_AS_ROOT_ENV.to_owned()));
+        assert!(
+            !default_args
+                .windows(2)
+                .any(|window| window[0] == "--user" && window[1] == "0:0")
+        );
+        assert!(root_args.contains(&ENTER_AS_ROOT_ENV.to_owned()));
+        assert!(
+            root_args
+                .windows(2)
+                .any(|window| window[0] == "--user" && window[1] == "0:0")
+        );
+    }
+
+    #[test]
+    fn container_task_root_args_are_owned_by_enter_as_root_owner() {
+        let runtime = sidecar_runtime();
+        let task_volumes = default_task_volumes();
+        let args = build_container_task_run_args(ContainerTaskPodmanSpec {
+            image: crate::DEFAULT_IMAGE,
+            container_name: "project-random",
+            hostname: "project-agentbox",
+            task_volumes: &task_volumes,
+            nix_runtime: &runtime,
+            guest_profile: false,
+            guest_debug: false,
+            enter_as_root: true,
+        })
+        .expect("container task args should build");
+
+        assert!(args.contains_option_from(ENTER_AS_ROOT_OWNER, "--user", "0:0"));
+        assert!(args.contains_option_from(ENTER_AS_ROOT_OWNER, "--env", ENTER_AS_ROOT_ENV));
+    }
+
+    #[test]
     fn container_task_args_include_guest_profile_and_debug_env_when_requested() {
         let runtime = sidecar_runtime();
         let task_volumes = default_task_volumes();
@@ -180,6 +239,7 @@ mod tests {
             nix_runtime: &runtime,
             guest_profile: true,
             guest_debug: true,
+            enter_as_root: false,
         })
         .expect("container task args should build");
 
@@ -201,6 +261,7 @@ mod tests {
             nix_runtime: &runtime,
             guest_profile: true,
             guest_debug: true,
+            enter_as_root: false,
         })
         .expect("container task args should build");
 
@@ -241,6 +302,7 @@ mod tests {
             nix_runtime,
             guest_profile: false,
             guest_debug: false,
+            enter_as_root: false,
         }
     }
 

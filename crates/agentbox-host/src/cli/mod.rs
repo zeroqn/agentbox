@@ -25,6 +25,8 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox --debug container sidecar
   agentbox container --debug sidecar
   agentbox --profile --debug
+  agentbox --root
+  agentbox --root container
   agentbox --image ghcr.io/example/agentbox:dev container
   AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
 )]
@@ -62,6 +64,14 @@ pub struct Cli {
     )]
     profile: bool,
 
+    #[arg(
+        long,
+        global = true,
+        help = "Enter the task shell as root",
+        long_help = "Enter the task shell as root instead of dropping to the host/dev identity. By default, agentbox drops privileges for the interactive shell."
+    )]
+    root: bool,
+
     #[command(subcommand)]
     command: Option<CliCommand>,
 }
@@ -78,6 +88,7 @@ impl Cli {
             pull_latest: self.pull_latest,
             debug: self.debug,
             profile: self.profile,
+            root: self.root,
         }
     }
 
@@ -95,6 +106,7 @@ impl Cli {
             pull_latest: self.pull_latest,
             debug: self.debug,
             profile: self.profile,
+            root: self.root,
         };
         let command = self
             .command
@@ -111,6 +123,7 @@ pub struct CommonOptions {
     pub pull_latest: bool,
     pub debug: bool,
     pub profile: bool,
+    pub root: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -37,7 +37,7 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::Cli;
-    use crate::runtime::{resolve_runtime_mode, RuntimeMode};
+    use crate::runtime::{RuntimeMode, resolve_runtime_mode};
 
     fn parse(args: &[&str]) -> Cli {
         let mut argv = vec!["agentbox"];

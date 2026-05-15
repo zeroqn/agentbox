@@ -1,5 +1,5 @@
 use crate::guest_init::components::home::identity::DevIdentity;
-use crate::guest_init::components::shell::fish::{materialize_config_files, ShellConfigSources};
+use crate::guest_init::components::shell::fish::{ShellConfigSources, materialize_config_files};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;

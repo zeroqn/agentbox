@@ -49,17 +49,21 @@ fn docker_info_validation_requires_btrfs_data_root_and_no_cgroups() {
     )
     .unwrap();
 
-    assert!(validate_info_line(
-        "overlay2|/home/dev/.local/share/containers/docker/data|none\n",
-        &paths,
-    )
-    .is_err());
+    assert!(
+        validate_info_line(
+            "overlay2|/home/dev/.local/share/containers/docker/data|none\n",
+            &paths,
+        )
+        .is_err()
+    );
     assert!(validate_info_line("btrfs|/home/dev/.local/share/docker|none\n", &paths).is_err());
-    assert!(validate_info_line(
-        "btrfs|/home/dev/.local/share/containers/docker/data|systemd\n",
-        &paths,
-    )
-    .is_err());
+    assert!(
+        validate_info_line(
+            "btrfs|/home/dev/.local/share/containers/docker/data|systemd\n",
+            &paths,
+        )
+        .is_err()
+    );
 }
 
 #[test]

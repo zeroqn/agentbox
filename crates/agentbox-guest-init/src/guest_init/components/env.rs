@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::env;
 
 pub(in crate::guest_init) const DEV_USER: &str = "dev";
@@ -21,12 +21,14 @@ pub(in crate::guest_init) const RAW_NIX_DISK_ID: &str = "agentbox-nix";
 pub(in crate::guest_init) const RAW_NIX_DISK_LABEL: &str = "AGENTBOX_NIX";
 pub(in crate::guest_init) const RAW_CONTAINER_DISK_ID: &str = "agentbox-containers";
 pub(in crate::guest_init) const RAW_CONTAINER_DISK_LABEL: &str = "AGENTBOX_CONTAINERS";
+pub(in crate::guest_init) const ENTER_AS_ROOT_ENV: &str = "AGENTBOX_ENTER_AS_ROOT";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct LibkrunEnv {
     pub(in crate::guest_init) nix_overlay: bool,
     pub(in crate::guest_init) containers_storage: bool,
     pub(in crate::guest_init) use_passt: bool,
+    pub(in crate::guest_init) enter_as_root: bool,
     pub(in crate::guest_init) host_uid: Option<u32>,
     pub(in crate::guest_init) host_gid: Option<u32>,
     pub(in crate::guest_init) nix_disk_id: String,
@@ -41,6 +43,7 @@ impl LibkrunEnv {
             nix_overlay: env_flag("AGENTBOX_LIBKRUN_NIX_OVERLAY"),
             containers_storage: env_flag("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE"),
             use_passt: env_flag("AGENTBOX_LIBKRUN_USE_PASST"),
+            enter_as_root: env_flag(ENTER_AS_ROOT_ENV),
             host_uid: parse_optional_u32("AGENTBOX_HOST_UID")?,
             host_gid: parse_optional_u32("AGENTBOX_HOST_GID")?,
             nix_disk_id: env::var("AGENTBOX_LIBKRUN_NIX_DISK_ID")

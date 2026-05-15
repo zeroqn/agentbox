@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::process::{ExitCode, Stdio};
 
-use crate::cli::{resolve_image, CommonOptions, LibkrunOptions};
+use crate::cli::{CommonOptions, LibkrunOptions, resolve_image};
 use crate::naming::{derive_task_container_name, derive_task_hostname};
 use crate::podman::command::run_podman;
 use crate::runtime::components::volumes::prepare_task_volumes;
@@ -18,7 +18,7 @@ use components::cpu::resolve_libkrun_cpu_count;
 use components::disk::{containers, nix};
 use components::guest_init::resolve_guest_init_override_mount;
 use components::memory::resolve_libkrun_ram_mib;
-use task::{build_libkrun_task_podman_args, LibkrunTaskPodmanSpec};
+use task::{LibkrunTaskPodmanSpec, build_libkrun_task_podman_args};
 
 pub(crate) fn run(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> {
     let cwd = env::current_dir()
@@ -57,6 +57,7 @@ pub(crate) fn run(common: CommonOptions, options: LibkrunOptions) -> Result<Exit
             tsi: options.tsi,
             guest_profile: common.profile,
             guest_debug: common.debug,
+            enter_as_root: common.root,
             guest_init_override: guest_init_override.as_ref(),
         })?,
         Stdio::inherit(),

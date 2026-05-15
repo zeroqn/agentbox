@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::podman::run::{RunArgs, RunSpec, CORE};
+use crate::podman::run::{CORE, RunArgs, RunSpec};
 use crate::runtime::components::volumes::TaskVolumeMounts;
 use crate::runtime::components::{diagnostics, identity, volumes};
 use crate::runtime::libkrun::components::disk::containers::podman as containers_podman;
@@ -25,6 +25,7 @@ pub(crate) struct LibkrunTaskPodmanSpec<'a> {
     pub(crate) tsi: bool,
     pub(crate) guest_profile: bool,
     pub(crate) guest_debug: bool,
+    pub(crate) enter_as_root: bool,
     pub(crate) guest_init_override: Option<&'a GuestInitOverrideMount>,
 }
 
@@ -52,6 +53,9 @@ pub(crate) fn build_libkrun_task_run_args(spec: LibkrunTaskPodmanSpec<'_>) -> Re
     nix_podman::append_disk_env(&mut run, spec.raw_nix_disk);
     containers_podman::append_disk_env(&mut run, spec.raw_container_disk);
     host_identity::append_host_env(&mut run, spec.host_uid, spec.host_gid);
+    if spec.enter_as_root {
+        identity::append_enter_as_root_env(&mut run);
+    }
     run.option(CORE, "--tmpfs", CONTAINER_TMP_TMPFS);
     cpu::append_cpu_annotation(&mut run, spec.cpu_count);
     network::append_mode_args(&mut run, spec.tsi);

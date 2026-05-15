@@ -4,8 +4,8 @@ use std::time::Duration;
 use tempfile::tempdir;
 
 use crate::guest_init::components::docker::status::{
-    format_wait_timeout, mark_ready_for_pid, read_status, write_running_unless_terminal,
-    write_status, DockerState, DockerStatus,
+    DockerState, DockerStatus, format_wait_timeout, mark_ready_for_pid, read_status,
+    write_running_unless_terminal, write_status,
 };
 
 #[test]

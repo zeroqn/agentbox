@@ -1,9 +1,9 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 
+use crate::NIX_STORE_DIR;
 use crate::podman::command::run_podman_output;
 use crate::runtime::container::nix_sidecar::types::PodmanImageMountMode;
-use crate::NIX_STORE_DIR;
 
 pub fn resolve_sidecar_lowerdir(image_mount_path: &Path) -> Result<PathBuf> {
     let nested_nix = image_mount_path.join("nix");

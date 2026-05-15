@@ -1,6 +1,6 @@
-use crate::guest_init::components::nix::root::{planned_operations as nix_ops, NixOperation};
+use crate::guest_init::components::nix::root::{NixOperation, planned_operations as nix_ops};
 use crate::guest_init::components::podman::root::{
-    planned_operations as podman_ops, PodmanPrepOperation,
+    PodmanPrepOperation, planned_operations as podman_ops,
 };
 
 #[test]

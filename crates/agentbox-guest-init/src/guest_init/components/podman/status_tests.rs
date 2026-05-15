@@ -1,6 +1,6 @@
 use crate::guest_init::components::podman::status::{
-    format_wait_timeout, mark_ready_for_pid, read_status, write_running_unless_terminal,
-    write_status, PodmanPrepState, PodmanPrepStatus,
+    PodmanPrepState, PodmanPrepStatus, format_wait_timeout, mark_ready_for_pid, read_status,
+    write_running_unless_terminal, write_status,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -44,9 +44,10 @@ fn podman_status_rejects_ready_to_running() {
     let err = ready
         .ensure_transition(PodmanPrepState::Running)
         .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("illegal podman prep status transition"));
+    assert!(
+        err.to_string()
+            .contains("illegal podman prep status transition")
+    );
 }
 
 #[test]

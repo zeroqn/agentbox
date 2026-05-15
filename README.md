@@ -175,6 +175,21 @@ nested
 `bootstrap-nix:*` rows break down disk discovery, mount/preseed work, daemon
 startup, and the `bootstrap-nix:wait-socket` polling loop.
 
+Enter the final task shell as root when root-only operations are needed:
+
+```bash
+./result/bin/agentbox --root
+./result/bin/agentbox --root libkrun
+./result/bin/agentbox --root container
+```
+
+By default, agentbox drops the interactive shell to the host/dev identity.
+`--root` is an explicit opt-in that keeps only the final task shell/command as
+root inside the guest/container; it does not install or require `sudo`.
+Because `--root` is global, `agentbox --root container sidecar` parses, but
+sidecar-only mode starts no final task shell so the flag is a harmless no-op
+there.
+
 Task containers, including libkrun-backed tasks, are named with the current
 repo/workspace slug followed by a unique suffix. For example, a checkout named
 `my-repo` appears in `podman ps` as `my-repo-<suffix>`, making active tasks easy
@@ -466,7 +481,8 @@ is to pin `mold` explicitly inside the wrapper and update this document to
 match.
 
 Both container and libkrun task containers run with `--userns=keep-id` so
-`/workspace` ownership matches host mapping.
+`/workspace` ownership matches host mapping. The `--root` flag keeps the final
+shell as root, but does not otherwise change the persistent host mount layout.
 
 ---
 

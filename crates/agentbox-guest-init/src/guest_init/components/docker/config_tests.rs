@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::guest_init::components::docker::config::{daemon_json, DockerPaths};
+use crate::guest_init::components::docker::config::{DockerPaths, daemon_json};
 use crate::guest_init::components::home::identity::DevIdentity;
 
 #[test]

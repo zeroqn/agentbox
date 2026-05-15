@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use crate::podman::run::{RunArgOwner, RunSpec};
 
@@ -113,9 +113,9 @@ fn parse_meminfo_total_bytes(meminfo: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use crate::runtime::libkrun::components::memory::{
-        default_libkrun_mem_gib_from_host_bytes, default_libkrun_ram_mib_from_meminfo,
-        mem_gib_to_mib, parse_mem_gib_arg, parse_meminfo_total_bytes, resolve_libkrun_ram_mib,
-        BYTES_PER_GIB,
+        BYTES_PER_GIB, default_libkrun_mem_gib_from_host_bytes,
+        default_libkrun_ram_mib_from_meminfo, mem_gib_to_mib, parse_mem_gib_arg,
+        parse_meminfo_total_bytes, resolve_libkrun_ram_mib,
     };
 
     #[test]

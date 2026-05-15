@@ -85,10 +85,12 @@ fn resolve_sidecar_lowerdir_fails_when_nix_paths_are_missing() {
     let mount = dir.path();
 
     let err = super::super::resolve_sidecar_lowerdir(mount).expect_err("lowerdir should fail");
-    assert!(err
-        .to_string()
-        .contains(&mount.join("nix").display().to_string()));
-    assert!(err
-        .to_string()
-        .contains(&mount.join("store").display().to_string()));
+    assert!(
+        err.to_string()
+            .contains(&mount.join("nix").display().to_string())
+    );
+    assert!(
+        err.to_string()
+            .contains(&mount.join("store").display().to_string())
+    );
 }

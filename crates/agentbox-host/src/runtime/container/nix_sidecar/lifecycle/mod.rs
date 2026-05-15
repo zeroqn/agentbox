@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::Path;
 use std::process::Stdio;
@@ -17,8 +17,8 @@ use crate::runtime::container::nix_sidecar::reuse::{
 };
 use crate::runtime::container::nix_sidecar::runtime::SidecarNixRuntime;
 use crate::runtime::container::nix_sidecar::sidecar_podman::container::{
-    build_merged_mount_arg, build_sidecar_podman_args, cleanup_sidecar_container,
-    SIDECAR_ENTRYPOINT,
+    SIDECAR_ENTRYPOINT, build_merged_mount_arg, build_sidecar_podman_args,
+    cleanup_sidecar_container,
 };
 use crate::runtime::container::nix_sidecar::sidecar_podman::proxy::{
     resolve_runtime_proxy_port_or_default, resolve_sidecar_proxy_port,

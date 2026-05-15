@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::process::Stdio;
 
 use crate::podman::command::{run_podman, run_podman_capture};

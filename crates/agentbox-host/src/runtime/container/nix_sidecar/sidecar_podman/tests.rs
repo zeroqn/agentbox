@@ -1,4 +1,4 @@
-use super::container::{build_sidecar_podman_args, SIDECAR_ENTRYPOINT};
+use super::container::{SIDECAR_ENTRYPOINT, build_sidecar_podman_args};
 use super::proxy::resolve_runtime_proxy_port_or_default;
 use super::task_probe::build_sidecar_task_probe_args;
 use crate::{TASK_CONTAINER_ROLE_LABEL, TASK_CONTAINER_ROLE_VALUE, TASK_CONTAINER_SIDECAR_LABEL};
@@ -55,9 +55,10 @@ fn runtime_proxy_port_falls_back_to_legacy_default_on_resolution_error() {
 }
 
 fn assert_uses_embedded_sidecar_entrypoint(args: &[String]) {
-    assert!(args
-        .windows(2)
-        .any(|w| { w[0] == "--entrypoint" && w[1] == SIDECAR_ENTRYPOINT }));
+    assert!(
+        args.windows(2)
+            .any(|w| { w[0] == "--entrypoint" && w[1] == SIDECAR_ENTRYPOINT })
+    );
     assert_eq!(args.last().map(String::as_str), Some(crate::DEFAULT_IMAGE));
     assert!(!args.windows(2).any(|w| w[0] == "bash" && w[1] == "-lc"));
     assert!(!args.iter().any(|arg| arg.contains("nix-daemon --daemon")));

@@ -3,26 +3,28 @@ use std::path::PathBuf;
 use crate::runtime::components::diagnostics::{
     GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
 };
-use crate::runtime::components::identity::USER_IDENTITY_OWNER;
+use crate::runtime::components::identity::{
+    ENTER_AS_ROOT_ENV, ENTER_AS_ROOT_OWNER, USER_IDENTITY_OWNER,
+};
 use crate::runtime::components::volumes::{
-    TaskVolumeMounts, SCCACHE_VOLUME_OWNER, WORKSPACE_VOLUME_OWNER,
+    SCCACHE_VOLUME_OWNER, TaskVolumeMounts, WORKSPACE_VOLUME_OWNER,
 };
 use crate::runtime::libkrun::components::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
 use crate::runtime::libkrun::components::disk::containers::podman::{
     CONTAINERS_DISK_OWNER, LIBKRUN_CONTAINERS_STORAGE_ENV,
 };
 use crate::runtime::libkrun::components::disk::containers::raw_image::{
-    RawContainerDisk, RawContainerDiskStatus, RAW_CONTAINER_DISK_LABEL,
-    RAW_CONTAINER_DISK_SIZE_BYTES,
+    RAW_CONTAINER_DISK_LABEL, RAW_CONTAINER_DISK_SIZE_BYTES, RawContainerDisk,
+    RawContainerDiskStatus,
 };
 use crate::runtime::libkrun::components::disk::nix::podman::{
     LIBKRUN_NIX_OVERLAY_ENV, NIX_DISK_OWNER,
 };
 use crate::runtime::libkrun::components::disk::nix::raw_image::{
-    RawNixDisk, RawNixDiskStatus, RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES,
+    RAW_NIX_DISK_LABEL, RAW_NIX_DISK_SIZE_BYTES, RawNixDisk, RawNixDiskStatus,
 };
 use crate::runtime::libkrun::components::guest_init::{
-    GuestInitOverrideMount, GUEST_INIT_OVERRIDE_OWNER,
+    GUEST_INIT_OVERRIDE_OWNER, GuestInitOverrideMount,
 };
 use crate::runtime::libkrun::components::host_identity::{
     HOST_IDENTITY_OWNER, LIBKRUN_KVM_DROP_TO_DEV_ENV,
@@ -160,6 +162,28 @@ fn libkrun_task_args_expose_component_owner_ownership() {
 }
 
 #[test]
+fn libkrun_task_args_enter_as_root_only_when_requested() {
+    let default_args = build_args(TaskOptions::default());
+    let root_args = build_args(TaskOptions {
+        enter_as_root: true,
+        ..Default::default()
+    });
+
+    assert!(!default_args.contains(&ENTER_AS_ROOT_ENV.to_owned()));
+    assert!(root_args.contains(&ENTER_AS_ROOT_ENV.to_owned()));
+}
+
+#[test]
+fn libkrun_task_enter_as_root_env_is_owned_by_enter_as_root_owner() {
+    let args = build_run_args(TaskOptions {
+        enter_as_root: true,
+        ..Default::default()
+    });
+
+    assert!(args.contains_option_from(ENTER_AS_ROOT_OWNER, "--env", ENTER_AS_ROOT_ENV));
+}
+
+#[test]
 fn libkrun_guest_init_override_is_owned_by_guest_init_override_owner() {
     let guest_init = guest_init_override();
     let args = build_run_args(TaskOptions {
@@ -245,9 +269,11 @@ fn libkrun_task_args_omit_cpu_annotation_when_cpu_count_is_unresolved() {
     let joined = args.join("\n");
 
     assert!(joined.contains("--annotation\nkrun.ram_mib=8192"));
-    assert!(!args
-        .iter()
-        .any(|arg| arg.starts_with(LIBKRUN_CPUS_ANNOTATION_PREFIX)));
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg.starts_with(LIBKRUN_CPUS_ANNOTATION_PREFIX))
+    );
     assert!(args.contains(&network::LIBKRUN_USE_PASST_ANNOTATION.to_owned()));
     assert!(!joined.contains("--memory"));
 }
@@ -298,6 +324,7 @@ struct TaskOptions {
     cpu_count: Option<u32>,
     guest_profile: bool,
     guest_debug: bool,
+    enter_as_root: bool,
     guest_init: Option<GuestInitOverrideMount>,
 }
 
@@ -308,6 +335,7 @@ impl Default for TaskOptions {
             cpu_count: Some(16),
             guest_profile: false,
             guest_debug: false,
+            enter_as_root: false,
             guest_init: None,
         }
     }
@@ -457,6 +485,7 @@ fn task_spec(
         tsi: options.tsi,
         guest_profile: options.guest_profile,
         guest_debug: options.guest_debug,
+        enter_as_root: options.enter_as_root,
         guest_init_override,
     }
 }

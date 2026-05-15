@@ -1,11 +1,11 @@
 use crate::cli::{
-    resolve_image_strategy, select_default_image, Cli, ContainerMode, ImageResolutionStrategy,
-    LibkrunOptions, RuntimeCommand,
+    Cli, ContainerMode, ImageResolutionStrategy, LibkrunOptions, RuntimeCommand,
+    resolve_image_strategy, select_default_image,
 };
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
-use clap::error::ErrorKind;
 use clap::CommandFactory;
 use clap::Parser;
+use clap::error::ErrorKind;
 use std::path::Path;
 
 #[test]
@@ -16,6 +16,7 @@ fn cli_accepts_no_arguments_as_default_libkrun() {
     assert!(!cli.common_options().pull_latest);
     assert!(!cli.debug());
     assert!(!cli.common_options().profile);
+    assert!(!cli.common_options().root);
     assert_eq!(
         cli.runtime_command_or_default(),
         RuntimeCommand::Libkrun(LibkrunOptions::default())
@@ -50,6 +51,7 @@ fn cli_accepts_common_flags_at_top_level() {
         "--pull-latest",
         "--profile",
         "--debug",
+        "--root",
     ])
     .expect("common top-level flags should parse");
     let common = cli.common_options();
@@ -61,6 +63,7 @@ fn cli_accepts_common_flags_at_top_level() {
     assert!(common.pull_latest);
     assert!(common.profile);
     assert!(common.debug);
+    assert!(common.root);
 }
 
 #[test]
@@ -121,8 +124,11 @@ fn cli_accepts_container_sidecar_subcommand() {
 fn cli_accepts_global_flags_before_and_after_container_subcommands() {
     let cases: &[&[&str]] = &[
         &["agentbox", "--debug", "container"],
+        &["agentbox", "--root", "container"],
         &["agentbox", "container", "--debug"],
+        &["agentbox", "container", "--root"],
         &["agentbox", "container", "sidecar", "--debug"],
+        &["agentbox", "container", "sidecar", "--root"],
         &[
             "agentbox",
             "--image",
@@ -150,9 +156,15 @@ fn cli_accepts_global_flags_around_libkrun_subcommand() {
         .expect("global flag before libkrun should parse");
     let after = Cli::try_parse_from(["agentbox", "libkrun", "--profile", "--mem", "4"])
         .expect("global flag after libkrun should parse");
+    let root_before = Cli::try_parse_from(["agentbox", "--root", "libkrun", "--mem", "4"])
+        .expect("global root flag before libkrun should parse");
+    let root_after = Cli::try_parse_from(["agentbox", "libkrun", "--root", "--mem", "4"])
+        .expect("global root flag after libkrun should parse");
 
     assert!(before.common_options().profile);
     assert!(after.common_options().profile);
+    assert!(root_before.common_options().root);
+    assert!(root_after.common_options().root);
 }
 
 fn removed_runtime_flags() -> [&'static str; 6] {

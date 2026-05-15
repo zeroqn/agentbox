@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::guest_init::components::nix::root::{
-    attempt_marker, classify_preseed_state, completion_sentinel, planned_operations,
-    planned_profile_labels, preseed_upper_with, NixOperation, PreseedState,
+    NixOperation, PreseedState, attempt_marker, classify_preseed_state, completion_sentinel,
+    planned_operations, planned_profile_labels, preseed_upper_with,
 };
 
 #[test]

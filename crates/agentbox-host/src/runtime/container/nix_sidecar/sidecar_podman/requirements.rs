@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::process::Stdio;
 
 pub(in crate::runtime::container::nix_sidecar) fn ensure_command_available(

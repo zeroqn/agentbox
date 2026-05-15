@@ -189,8 +189,10 @@ mod tests {
             mount.target,
             "/nix/store/hash-agentbox/bin/agentbox-guest-init"
         );
-        assert!(mount
-            .mount_arg
-            .ends_with(":/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"));
+        assert!(
+            mount
+                .mount_arg
+                .ends_with(":/nix/store/hash-agentbox/bin/agentbox-guest-init:ro")
+        );
     }
 }
