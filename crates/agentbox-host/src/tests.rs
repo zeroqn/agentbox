@@ -2,6 +2,9 @@ const ENTRYPOINT: &str = include_str!("../../../nix/image/entrypoint.nix");
 const FLAKE_NIX: &str = include_str!("../../../flake.nix");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
+const PINS_NIX: &str = include_str!("../../../nix/pins.nix");
+const SECCOMP_JSON_NIX: &str =
+    include_str!("../../../nix/pkgs/container-lib-policy-seccomp-json.nix");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
 const GUEST_DEFAULT_RUNTIME: &str =
     include_str!("../../agentbox-guest-init/src/guest_init/runtime/default.rs");
@@ -14,6 +17,68 @@ fn nix_list_body<'a>(source: &'a str, list_name: &str) -> &'a str {
         .nth(1)
         .and_then(|tail| tail.split("];").next())
         .unwrap_or_else(|| panic!("{list_name} list should exist"))
+}
+
+#[test]
+fn flake_exposes_container_lib_seccomp_policy_package() {
+    for required in [
+        "containerLibPolicySeccompJson = import ./nix/pkgs/container-lib-policy-seccomp-json.nix",
+        "container-lib-policy-seccomp-json = containerLibPolicySeccompJson;",
+        "containerLibPolicySeccompJson",
+    ] {
+        assert!(FLAKE_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn seccomp_policy_package_fetches_pinned_raw_container_libs_file() {
+    for required in [
+        "containerLibPolicySeccompJson = {",
+        "owner = \"containers\";",
+        "repo = \"container-libs\";",
+        "path = \"common/pkg/seccomp/seccomp.json\";",
+        "hash = \"sha256-m3VSAlFq7ktF2dQRq4AMIP5PevlxZqk7fwfVsWwaTs0=\";",
+    ] {
+        assert!(PINS_NIX.contains(required), "missing {required}");
+    }
+
+    for required in [
+        "pkgs.fetchurl",
+        "raw.githubusercontent.com/${pin.owner}/${pin.repo}/${pin.rev}/${pin.path}",
+        "$out/share/containers/seccomp.json",
+    ] {
+        assert!(SECCOMP_JSON_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn image_writes_global_seccomp_profile_config() {
+    for required in [
+        "./etc/containers",
+        "cat > ./etc/containers/containers.conf <<'EOF_CONTAINERS_CONF'",
+        "[containers]",
+        "seccomp_profile = \"${containerLibPolicySeccompJson}/share/containers/seccomp.json\"",
+        "chmod 0644 ./etc/containers/containers.conf",
+    ] {
+        assert!(CONTAINER_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn image_includes_seccomp_policy_data_without_adding_it_to_path() {
+    let image_contents = LAYERS
+        .split("imageContents = imagePackages ++ [")
+        .nth(1)
+        .and_then(|tail| tail.split("];").next())
+        .expect("imageContents should exist");
+    assert!(image_contents.contains("containerLibPolicySeccompJson"));
+
+    let image_path_start = LAYERS.find("imagePath =").expect("imagePath should exist");
+    let image_path_end = LAYERS[image_path_start..]
+        .find("agentboxImageMaxLayers")
+        .map(|offset| image_path_start + offset)
+        .expect("imagePath section should end before maxLayers");
+    assert!(!LAYERS[image_path_start..image_path_end].contains("containerLibPolicySeccompJson"));
 }
 
 #[test]

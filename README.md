@@ -105,6 +105,7 @@ nix build .#libkrunfw
 nix build .#libkrun
 nix build .#crun
 nix build .#podman
+nix build .#container-lib-policy-seccomp-json
 nix build .#container
 ```
 
@@ -127,6 +128,9 @@ nix build .#container
   on crun's runtime `PATH`.
 - `.#podman`: build Podman against the custom crun for libkrun/raw-image
   development.
+- `.#container-lib-policy-seccomp-json`: install the pinned
+  `containers/container-libs` `common/pkg/seccomp/seccomp.json` policy at
+  `share/containers/seccomp.json` for downstream flakes or image reuse.
 - `.#container`: Podman image archive.
 
 ---
@@ -152,6 +156,21 @@ Image selection behavior:
 
 - default: `localhost/agentbox:latest`
 - fallback: `ghcr.io/zeroqn/agentbox:latest`
+
+### Packaged seccomp policy
+
+The image includes the pinned `containers/container-libs` seccomp policy package
+and writes global `/etc/containers/containers.conf` with:
+
+```toml
+[containers]
+seccomp_profile = "/nix/store/...-container-lib-policy-seccomp-json-.../share/containers/seccomp.json"
+```
+
+This makes inner Podman use the packaged policy by default while still allowing
+per-user containers config to override it. To refresh the policy, update the
+`containerLibPolicySeccompJson` revision/hash in `nix/pins.nix`, then rebuild
+`.#container-lib-policy-seccomp-json` and `.#container`.
 
 Force GHCR latest:
 
@@ -602,4 +621,10 @@ For a source-build fallback, use:
 
 ```nix
 agentbox.packages.${pkgs.system}.agentbox
+```
+
+Downstream flakes can also depend on the packaged seccomp policy via:
+
+```nix
+agentbox.packages.${pkgs.system}.container-lib-policy-seccomp-json
 ```

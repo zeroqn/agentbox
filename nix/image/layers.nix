@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, libkrun, podman ? pkgs.podman, docker ? pkgs.docker, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, docker ? pkgs.docker, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -358,6 +358,7 @@ let
     entrypoint
     fishConfig
     starshipConfig
+    containerLibPolicySeccompJson
     agentboxMuslPackage
     nixCommandCompat
     podmanCommandCompat

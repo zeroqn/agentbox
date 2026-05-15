@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage }:
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   entrypoint = import ./entrypoint.nix {
@@ -7,7 +7,7 @@ let
     starshipConfig = configPayloads.starshipConfig;
   };
   layers = import ./layers.nix {
-    inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent symposium rtkPrebuilt libkrun podman crun agentboxMuslPackage entrypoint;
+    inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent symposium rtkPrebuilt containerLibPolicySeccompJson libkrun podman crun agentboxMuslPackage entrypoint;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
   };
@@ -22,6 +22,7 @@ pkgs.dockerTools.buildLayeredImage {
   fakeRootCommands = ''
     mkdir -p \
       ./etc \
+      ./etc/containers \
       ./home/dev/.cache \
       ./home/dev/.codex \
       ./root \
@@ -39,6 +40,11 @@ pkgs.dockerTools.buildLayeredImage {
     fi
     printf '%s\n' '${layers.hardenedMallocLib}' > ./etc/ld-nix.so.preload
     chmod 0644 ./etc/ld-nix.so.preload
+    cat > ./etc/containers/containers.conf <<'EOF_CONTAINERS_CONF'
+    [containers]
+    seccomp_profile = "${containerLibPolicySeccompJson}/share/containers/seccomp.json"
+    EOF_CONTAINERS_CONF
+    chmod 0644 ./etc/containers/containers.conf
     cat > ./etc/tmux.conf <<'EOF_TMUX'
     bind-key | split-window -h
     bind-key - split-window -v

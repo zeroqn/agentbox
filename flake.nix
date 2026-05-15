@@ -43,6 +43,9 @@
           rtkPrebuilt = import ./nix/pkgs/rtk-prebuilt.nix {
             inherit pkgs pins;
           };
+          containerLibPolicySeccompJson = import ./nix/pkgs/container-lib-policy-seccomp-json.nix {
+            inherit pkgs pins;
+          };
           libkrunfw = pkgs.callPackage ./nix/pkgs/libkrunfw.nix {
             inherit pins;
           };
@@ -64,6 +67,7 @@
               piCodingAgent
               symposium
               rtkPrebuilt
+              containerLibPolicySeccompJson
               libkrun
               podman
               crun
@@ -85,6 +89,7 @@
           crun = crun;
           podman = podman;
           container = agentboxImage;
+          container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
         }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {
           rtk-prebuilt = rtkPrebuilt;

@@ -29,6 +29,14 @@
     npmDepsHash = "sha256-oYPxb8RmyprZwmBzzvlke7p3b18Ja5atnpzJW7emK5A=";
   };
 
+  containerLibPolicySeccompJson = {
+    owner = "containers";
+    repo = "container-libs";
+    rev = "8840603a8795210e1cc80aac1b81eb7acfa9dbee";
+    path = "common/pkg/seccomp/seccomp.json";
+    hash = "sha256-m3VSAlFq7ktF2dQRq4AMIP5PevlxZqk7fwfVsWwaTs0=";
+  };
+
   libkrunfwRelease = {
     owner = "zeroqn";
     repo = "libkrunfw";
