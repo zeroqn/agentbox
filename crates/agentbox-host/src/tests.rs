@@ -128,6 +128,55 @@ fn docker_wrapper_waits_and_starts_daemon_only_for_libkrun_container_storage() {
 }
 
 #[test]
+fn image_materializes_graphene_hardened_malloc_as_nix_loader_preload() {
+    for required in [
+        "grapheneHardenedMalloc = pkgs.graphene-hardened-malloc.overrideAttrs",
+        r#"version = "14";"#,
+        r#"tag = "14";"#,
+        r#"hash = "sha256-QUGDJyTnD5MuBUMlc4PZOZSAfevVUB6QbncVyXIAgb8=";"#,
+        r#"hardenedMallocLib = "${grapheneHardenedMalloc}/lib/libhardened_malloc.so""#,
+        r#"printf '%s\n' '${layers.hardenedMallocLib}' > ./etc/ld-nix.so.preload"#,
+        "chmod 0644 ./etc/ld-nix.so.preload",
+        r#"AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"#,
+    ] {
+        assert!(
+            LAYERS.contains(required) || CONTAINER_NIX.contains(required),
+            "missing {required}"
+        );
+    }
+    assert!(!CONTAINER_NIX.contains("LD_PRELOAD=${layers.hardenedMallocLib}"));
+}
+
+#[test]
+fn image_includes_hardening_run_for_foreign_binary_allocator_opt_in() {
+    for required in [
+        r#"pkgs.writeShellScriptBin "hardening-run""#,
+        "allocator_lib=${hardenedMallocLib}",
+        r#"export LD_PRELOAD="$allocator_lib""#,
+        r#"export LD_PRELOAD="$allocator_lib:$LD_PRELOAD""#,
+        r#"exec "$@""#,
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn rust_analyzer_wrapper_masks_nix_loader_preload() {
+    for required in [
+        "rustAnalyzerCommandCompat",
+        r#"pkgs.writeShellScriptBin "rust-analyzer""#,
+        "agentbox-empty-ld-nix-so-preload",
+        "--ro-bind ${emptyLdNixSoPreload} /etc/ld-nix.so.preload",
+        "--unsetenv LD_PRELOAD",
+        "--unsetenv NSS_WRAPPER_PASSWD",
+        "--unsetenv NSS_WRAPPER_GROUP",
+        r#"${pkgs.rust-analyzer}/bin/rust-analyzer "$@""#,
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn nix_wrapper_waits_and_probes_only_for_libkrun_nix_overlay() {
     assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then"#));
     assert!(LAYERS.contains(

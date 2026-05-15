@@ -19,6 +19,14 @@ fn libkrun_enter_operation_order_keeps_components_before_exec() {
         pos(LibkrunEnterOperation::ExportShellEnvironment)
             < pos(LibkrunEnterOperation::MaterializeHome)
     );
+    assert!(
+        pos(LibkrunEnterOperation::FixPasstDns)
+            < pos(LibkrunEnterOperation::MaterializeAllocatorPreload)
+    );
+    assert!(
+        pos(LibkrunEnterOperation::MaterializeAllocatorPreload)
+            < pos(LibkrunEnterOperation::RestrictDmesg)
+    );
     assert!(pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::StartNixPrep));
     assert!(
         pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::StartPodmanPrep)

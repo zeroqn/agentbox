@@ -285,6 +285,10 @@ fn container_enter_operation_order_keeps_normal_setup_before_exec() {
     );
     assert!(
         pos(ContainerEnterOperation::MaterializeHomeConfig)
+            < pos(ContainerEnterOperation::MaterializeAllocatorPreload)
+    );
+    assert!(
+        pos(ContainerEnterOperation::MaterializeAllocatorPreload)
             < pos(ContainerEnterOperation::DropAndExec)
     );
     assert!(

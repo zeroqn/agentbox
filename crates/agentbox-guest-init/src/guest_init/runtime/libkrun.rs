@@ -18,6 +18,7 @@ pub(in crate::guest_init) enum LibkrunEnterOperation {
     ExportShellEnvironment,
     MaterializeHome,
     FixPasstDns,
+    MaterializeAllocatorPreload,
     RestrictDmesg,
     StartNixPrep,
     StartPodmanPrep,
@@ -37,6 +38,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LibkrunEnterOpera
         LibkrunEnterOperation::ExportShellEnvironment,
         LibkrunEnterOperation::MaterializeHome,
         LibkrunEnterOperation::FixPasstDns,
+        LibkrunEnterOperation::MaterializeAllocatorPreload,
         LibkrunEnterOperation::RestrictDmesg,
         LibkrunEnterOperation::StartNixPrep,
         LibkrunEnterOperation::StartPodmanPrep,
@@ -106,6 +108,11 @@ fn enter(command: Vec<String>) -> Result<()> {
             ))?;
         }
         Ok(())
+    })?;
+    profiler.measure_result("materialize-allocator-preload", || {
+        crate::guest_init::components::hardening::allocator::ensure_from_env_if_root(
+            process::is_root(),
+        )
     })?;
     profiler.measure_result("restrict-dmesg", || {
         if process::is_root() {

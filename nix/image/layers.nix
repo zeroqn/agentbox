@@ -23,6 +23,43 @@ let
   clangMoldWrapper = pkgs.writeShellScriptBin "clang_mold_wrapper" ''
     exec ${pkgs.clang}/bin/clang -fuse-ld=mold "$@"
   '';
+  grapheneHardenedMalloc = pkgs.graphene-hardened-malloc.overrideAttrs (_old: {
+    version = "14";
+    src = pkgs.fetchFromGitHub {
+      owner = "GrapheneOS";
+      repo = "hardened_malloc";
+      tag = "14";
+      hash = "sha256-QUGDJyTnD5MuBUMlc4PZOZSAfevVUB6QbncVyXIAgb8=";
+    };
+  });
+  emptyLdNixSoPreload = pkgs.writeText "agentbox-empty-ld-nix-so-preload" "";
+  hardenedMallocLib = "${grapheneHardenedMalloc}/lib/libhardened_malloc.so";
+  hardeningRun = pkgs.writeShellScriptBin "hardening-run" ''
+    if [ "$#" -eq 0 ]; then
+      echo "usage: hardening-run COMMAND [ARG ...]" >&2
+      exit 64
+    fi
+
+    allocator_lib=${hardenedMallocLib}
+    case ":''${LD_PRELOAD-}:" in
+      *":$allocator_lib:"*) ;;
+      "::") export LD_PRELOAD="$allocator_lib" ;;
+      *) export LD_PRELOAD="$allocator_lib:$LD_PRELOAD" ;;
+    esac
+
+    exec "$@"
+  '';
+  rustAnalyzerCommandCompat = pkgs.writeShellScriptBin "rust-analyzer" ''
+    unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
+    exec ${pkgs.bubblewrap}/bin/bwrap \
+      --dev-bind / / \
+      --ro-bind ${emptyLdNixSoPreload} /etc/ld-nix.so.preload \
+      --unsetenv LD_PRELOAD \
+      --unsetenv NSS_WRAPPER_PASSWD \
+      --unsetenv NSS_WRAPPER_GROUP \
+      -- \
+      ${pkgs.rust-analyzer}/bin/rust-analyzer "$@"
+  '';
   nixCommandCompat = pkgs.writeShellScriptBin "nix" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
@@ -244,6 +281,8 @@ let
   ];
 
   baseImagePackages = [
+    grapheneHardenedMalloc
+    hardeningRun
     pkgs.bashInteractive
     pkgs.btrfs-progs
     pkgs.cacert
@@ -298,7 +337,13 @@ let
       toolingImageLayer
       agentImageLayer
     ];
-  imagePath = pkgs.lib.makeBinPath ([ nixCommandCompat podmanCommandCompat dockerCommandCompat dockerdRootlessCompat ] ++ imagePackages);
+  imagePath = pkgs.lib.makeBinPath ([
+    rustAnalyzerCommandCompat
+    nixCommandCompat
+    podmanCommandCompat
+    dockerCommandCompat
+    dockerdRootlessCompat
+  ] ++ imagePackages);
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
   imageContents = imagePackages ++ [
@@ -315,6 +360,7 @@ let
     nixCommandCompat
     podmanCommandCompat
     dockerCommandCompat
+    rustAnalyzerCommandCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
@@ -426,7 +472,11 @@ in
     nixCommandCompat
     podmanCommandCompat
     dockerCommandCompat
+    rustAnalyzerCommandCompat
     dockerdRootlessCompat
+    grapheneHardenedMalloc
+    hardeningRun
+    hardenedMallocLib
     nixBuilderGroupId
     nixBuilderGroupMembers
     nixBuilderPasswdEntries

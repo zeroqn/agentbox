@@ -21,6 +21,7 @@ pub(in crate::guest_init) enum ContainerEnterOperation {
     ExportShellEnvironment,
     MaterializeNssWrapper,
     MaterializeHomeConfig,
+    MaterializeAllocatorPreload,
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
     DropAndExec,
@@ -34,6 +35,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<ContainerEnterOpe
         ContainerEnterOperation::ExportShellEnvironment,
         ContainerEnterOperation::MaterializeNssWrapper,
         ContainerEnterOperation::MaterializeHomeConfig,
+        ContainerEnterOperation::MaterializeAllocatorPreload,
         ContainerEnterOperation::ClearProfileEnvBeforeExec,
         ContainerEnterOperation::ReportProfileBeforeExec,
         ContainerEnterOperation::DropAndExec,
@@ -97,6 +99,11 @@ fn enter(command: EnterCommand) -> Result<()> {
     });
     profiler.measure_result("materialize-home-config", || {
         materialize_home_config(&identity_plan.identity, identity_plan.drop_to_dev)
+    })?;
+    profiler.measure_result("materialize-allocator-preload", || {
+        crate::guest_init::components::hardening::allocator::ensure_from_env_if_root(
+            process::is_root(),
+        )
     })?;
 
     if identity_plan.drop_to_dev {

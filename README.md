@@ -64,12 +64,32 @@ AGENTBOX_DISABLE_AUTO_FISH=1 nix develop
 
 Inside the agentbox container, `nix` is invoked through a small compatibility
 wrapper that clears the entrypoint's NSS wrapper preload before running the real
-Nix binary. This prevents nested dev shells from mixing the container preload
+Nix binary. This prevents nested dev shells from mixing the container NSS preload
 with a different glibc from the shell's realized dependencies. If you are using
 an older image without that wrapper, use this temporary workaround:
 
 ```bash
 env -u LD_PRELOAD -u NSS_WRAPPER_PASSWD -u NSS_WRAPPER_GROUP nix develop
+```
+
+The container also enables GrapheneOS `hardened_malloc` for Nix-linked dynamic
+binaries through `/etc/ld-nix.so.preload`, matching NixOS' allocator preload
+mechanism rather than setting a global allocator `LD_PRELOAD`. `rust-analyzer` is
+started through a wrapper that masks `/etc/ld-nix.so.preload` for that process so
+it keeps the default allocator. Foreign/FHS glibc binaries usually read
+`/etc/ld.so.preload` instead of `/etc/ld-nix.so.preload`, while static or musl
+binaries generally ignore both files. For a specific foreign/FHS command, opt in
+with:
+
+```bash
+hardening-run some-foreign-binary --flag
+```
+
+`hardening-run` sets `LD_PRELOAD` only for the wrapped command, so the usual
+opt-out remains:
+
+```bash
+env -u LD_PRELOAD some-foreign-binary --flag
 ```
 
 ---
@@ -458,10 +478,13 @@ The container provides:
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
+- GrapheneOS `hardened_malloc` enabled for Nix-linked dynamic binaries through `/etc/ld-nix.so.preload`, plus `hardening-run` for per-command foreign/FHS `LD_PRELOAD` opt-in
 - RTK (`rtk`)
 - libkrun 1.18.0 (`libkrun.so`) plus pinned `libkrunfw.so` for nested KVM support inside the container
 - `nix` wrapper that clears the container NSS wrapper preload before invoking
   the real Nix binary, avoiding glibc-version mismatches in nested dev shells
+- `rust-analyzer` wrapper that masks `/etc/ld-nix.so.preload` so rust-analyzer
+  keeps the default allocator
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled
   `clang_mold_wrapper` helper for the `x86_64-unknown-linux-gnu` target
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory
