@@ -20,6 +20,12 @@ jobs:
         run: nix build .#agentbox-musl
       - name: Build agentbox container archive
         run: nix build .#container --print-out-paths > container-path.txt
+      - name: Free runner disk before loading image
+        run: |
+          df -h
+          nix-collect-garbage -d
+          docker system prune -af || true
+          df -h
       - name: Load container archive
         run: docker load --input "$(cat container-path.txt)"
       - name: Verify agentbox binary in image
