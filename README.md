@@ -16,8 +16,9 @@ Current runtime split:
 - **Libkrun mode (default):** Podman + crun/libkrun VM mode with two sparse
   raw btrfs data images attached through `krun.disk.*` annotations. The guest
   uses disk 0 for a persistent kernel overlay at `/nix` and disk 1 for
-  rootless Podman plus rootless Docker storage as `dev` with `btrfs` storage
-  drivers.
+  rootless Podman storage as `dev` with the `btrfs` storage driver. The image
+  also provides `docker` and `docker-compose` compatibility commands backed by
+  Podman rather than a Docker daemon.
   The `/workspace` bind mount uses `--userns=keep-id` so ownership matches the
   host user after the guest drops privileges.
 - **Container mode (`agentbox container`):** native Podman task container plus
@@ -41,7 +42,7 @@ managed sidecar.
   creation and reuse validation (`btrfs-progs` + `util-linux`; included in
   `nix develop`)
 - `/dev/net/tun` on the host for libkrun mode, passed through to the guest so
-  nested rootless Podman/Docker can set up TUN-backed networking.
+  nested rootless Podman can set up TUN-backed networking.
 - default libkrun mode requires Podman using the custom crun/libkrun stack that
   supports `krun_add_disk` annotations plus guest kernel overlay and btrfs
   support.
@@ -329,37 +330,29 @@ No live auto-resize, state migration/reset UX, snapshot/rollback UX, host-port
 helper UX, rootful nested Podman workflow, or container-mode nested-Podman support
 is implemented.
 
-Manual host smoke checklist for nested rootless container runtimes:
+Manual host smoke checklist for the nested rootless Podman runtime:
 
 1. Build and load `.#container`, then start default libkrun mode on the host.
 2. Inside the guest, confirm the shell is `dev` and run `podman info`; verify
    rootless mode and storage driver `btrfs`.
-3. Run `docker info`; verify `Storage Driver: btrfs`, Docker root dir
-   `/home/dev/.local/share/containers/docker/data`, rootless security options,
-   and `Cgroup Driver: none`. Docker starts without systemd through the
-   agentbox wrapper and `dockerd-rootless.sh`.
+3. Run `docker info`; it should use the Podman compatibility wrapper and report
+   the same rootless Podman storage instead of starting `dockerd`.
 4. Confirm `/dev/net/tun` exists inside the guest, then run both:
 
    ```bash
    podman run --rm docker.io/library/alpine:latest echo hello
    docker run --rm docker.io/library/alpine:latest echo hello
+   docker-compose version
    ```
 
-5. Exit and restart agentbox; verify pulled Podman and Docker image/storage
-   persists via `<state-root>/libkrun-containers.raw`. Docker persistent state
-   should live under `/home/dev/.local/share/containers/docker`; `/var/lib/docker`,
-   `/var/lib/containerd`, and `/home/dev/.local/share/docker` should be absent,
-   empty, or symlink/bind-mounted into that Docker subtree.
-6. For Docker troubleshooting, inspect `/run/agentbox/docker-prep.status`,
-   `/run/agentbox/docker-prep.log`, `/run/user/$(id -u)/docker/daemon.status`, and
-   `/run/user/$(id -u)/docker/daemon.log`.
-7. Confirm no fuse-overlayfs path/config/binary is required by either rootless
-   runtime setup.
-
-Rootless Docker runs in this libkrun guest without a systemd user service or
-delegated cgroup v2 controller. The expected Docker cgroup driver is therefore
-`none`; Docker resource-limit flags that require cgroup delegation are not
-supported in this environment.
+5. Exit and restart agentbox; verify pulled Podman image/storage persists via
+   `<state-root>/libkrun-containers.raw`. Runtime state should live under
+   `/home/dev/.local/share/containers/storage`; `/var/lib/docker`,
+   `/var/lib/containerd`, and `/home/dev/.local/share/docker` should be absent.
+6. For Podman troubleshooting, inspect `/run/agentbox/podman-prep.status` and
+   `/run/agentbox/podman-prep.log`.
+7. Confirm no fuse-overlayfs path/config/binary is required by rootless Podman
+   setup.
 
 Libkrun mode intentionally does **not** use the container sidecar/overlay bridge,
 does **not** set `AGENTBOX_NIX_PROXY_HOST`, does **not** fall back to seeded Nix

@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, docker ? pkgs.docker, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, symposium, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, entrypoint, fishConfig, starshipConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -90,11 +90,19 @@ let
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun docker wait
-      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun docker daemon
-      export DOCKER_HOST="''${DOCKER_HOST:-unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker.sock}"
+      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman wait
     fi
-    exec ${docker}/bin/docker "$@"
+    exec ${podman}/bin/podman "$@"
+  '';
+
+  dockerComposeCommandCompat = pkgs.writeShellScriptBin "docker-compose" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
+      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman wait
+    fi
+    exec ${pkgs.docker-compose}/bin/docker-compose "$@"
   '';
 
   sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''
@@ -269,19 +277,9 @@ let
     pkgs.aardvark-dns
     pkgs.passt
     pkgs.shadow
+    pkgs.docker-compose
   ];
 
-  dockerdRootlessCompat = pkgs.writeShellScriptBin "dockerd-rootless.sh" ''
-    exec ${docker}/bin/dockerd-rootless "$@"
-  '';
-
-  rootlessDockerImagePackages = [
-    docker
-    dockerdRootlessCompat
-    pkgs.rootlesskit
-    pkgs.slirp4netns
-    pkgs.nftables
-  ];
 
   baseImagePackages = [
     grapheneHardenedMalloc
@@ -332,7 +330,6 @@ let
   imagePackages =
     baseImagePackages
     ++ rootlessPodmanImagePackages
-    ++ rootlessDockerImagePackages
     ++ cToolchainImagePackages
     ++ [
       rustToolchainImageLayer
@@ -345,7 +342,7 @@ let
     nixCommandCompat
     podmanCommandCompat
     dockerCommandCompat
-    dockerdRootlessCompat
+    dockerComposeCommandCompat
   ] ++ imagePackages);
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
@@ -364,6 +361,7 @@ let
     nixCommandCompat
     podmanCommandCompat
     dockerCommandCompat
+    dockerComposeCommandCompat
     rustAnalyzerCommandCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
@@ -476,8 +474,8 @@ in
     nixCommandCompat
     podmanCommandCompat
     dockerCommandCompat
+    dockerComposeCommandCompat
     rustAnalyzerCommandCompat
-    dockerdRootlessCompat
     grapheneHardenedMalloc
     hardeningRun
     hardenedMallocLib

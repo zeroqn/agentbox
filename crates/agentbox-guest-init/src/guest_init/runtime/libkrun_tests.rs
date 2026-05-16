@@ -1,6 +1,5 @@
 use crate::guest_init::cli::{
-    DockerCommand, DockerSubcommand, EnterCommand, LibkrunSubcommand, NixCommand, NixSubcommand,
-    PodmanCommand, PodmanSubcommand,
+    EnterCommand, LibkrunSubcommand, NixCommand, NixSubcommand, PodmanCommand, PodmanSubcommand,
 };
 use crate::guest_init::runtime::libkrun::{
     LibkrunEnterOperation, planned_enter_operations, should_drop_to_identity,
@@ -31,16 +30,9 @@ fn libkrun_enter_operation_order_keeps_components_before_exec() {
     assert!(
         pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::StartPodmanPrep)
     );
-    assert!(
-        pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::StartDockerPrep)
-    );
     assert!(pos(LibkrunEnterOperation::RestrictDmesg) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(pos(LibkrunEnterOperation::StartNixPrep) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(pos(LibkrunEnterOperation::StartPodmanPrep) < pos(LibkrunEnterOperation::DropAndExec));
-    assert!(pos(LibkrunEnterOperation::StartDockerPrep) < pos(LibkrunEnterOperation::DropAndExec));
-    assert!(
-        pos(LibkrunEnterOperation::StartPodmanPrep) < pos(LibkrunEnterOperation::StartDockerPrep)
-    );
     assert!(pos(LibkrunEnterOperation::StartNixPrep) < pos(LibkrunEnterOperation::StartPodmanPrep));
     assert!(pos(LibkrunEnterOperation::ExportNixRemote) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(
@@ -76,23 +68,6 @@ fn libkrun_root_mode_skips_only_final_identity_drop() {
     assert!(!should_drop_to_identity(true, true));
     assert!(!should_drop_to_identity(false, false));
     assert!(!should_drop_to_identity(false, true));
-}
-
-#[test]
-fn libkrun_docker_subcommands_are_not_profiled_entrypoints() {
-    let prep = LibkrunSubcommand::Docker(DockerCommand {
-        command: DockerSubcommand::Prep,
-    });
-    let wait = LibkrunSubcommand::Docker(DockerCommand {
-        command: DockerSubcommand::Wait,
-    });
-    let daemon = LibkrunSubcommand::Docker(DockerCommand {
-        command: DockerSubcommand::Daemon,
-    });
-
-    assert!(!subcommand_starts_profiler(&prep));
-    assert!(!subcommand_starts_profiler(&wait));
-    assert!(!subcommand_starts_profiler(&daemon));
 }
 
 #[test]

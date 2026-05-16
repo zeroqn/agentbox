@@ -27,9 +27,6 @@ fn libkrun_runtime_derives_parent_shell_environment_before_podman_prep() {
             .iter()
             .any(|(key, value)| key == "PATH" && value.starts_with("/run/agentbox/idmap-bin:"))
     );
-    assert!(shell_env.vars.contains(&(
-        "DOCKER_HOST".to_owned(),
-        "unix:///run/user/1234/docker.sock".to_owned()
-    )));
+    assert!(!shell_env.vars.iter().any(|(key, _)| key == "DOCKER_HOST"));
     assert_eq!(shell_env.tmpdir, PathBuf::from("/home/dev/.cache/tmp"));
 }

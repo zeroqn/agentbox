@@ -175,30 +175,40 @@ fn podman_wrapper_waits_only_for_libkrun_container_storage() {
 }
 
 #[test]
-fn docker_wrapper_waits_and_starts_daemon_only_for_libkrun_container_storage() {
-    assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
-    assert!(LAYERS.contains("agentbox-guest-init libkrun docker wait"));
-    assert!(LAYERS.contains("agentbox-guest-init libkrun docker daemon"));
-    assert!(LAYERS.contains("DOCKER_HOST"));
-    assert!(LAYERS.contains(r#"unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker.sock"#));
-    assert!(
-        !LAYERS.contains(r#"unix:///run/user/$(${pkgs.coreutils}/bin/id -u)/docker/docker.sock"#)
-    );
-    let gate = LAYERS
-        .find("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE")
-        .expect("libkrun container storage gate should exist");
-    let wait = LAYERS
-        .find("agentbox-guest-init libkrun docker wait")
-        .expect("docker wait should exist");
-    let daemon = LAYERS
-        .find("agentbox-guest-init libkrun docker daemon")
-        .expect("docker daemon ensure should exist");
-    let exec = LAYERS
-        .find(r#"exec ${docker}/bin/docker "$@""#)
-        .expect("real docker exec should exist");
-    assert!(gate < wait);
-    assert!(wait < daemon);
-    assert!(daemon < exec);
+fn docker_wrapper_waits_for_podman_and_execs_podman_compat() {
+    let start = LAYERS
+        .find("dockerCommandCompat =")
+        .expect("docker wrapper should exist");
+    let end = LAYERS[start..]
+        .find("dockerComposeCommandCompat =")
+        .map(|offset| start + offset)
+        .expect("docker wrapper should end before compose wrapper");
+    let wrapper = &LAYERS[start..end];
+
+    assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker""#));
+    assert!(wrapper.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
+    assert!(wrapper.contains("agentbox-guest-init libkrun podman wait"));
+    assert!(wrapper.contains(r#"exec ${podman}/bin/podman "$@""#));
+    assert!(!wrapper.contains("agentbox-guest-init libkrun docker"));
+    assert!(!wrapper.contains("DOCKER_HOST"));
+    assert!(!wrapper.contains(r#"exec ${docker}/bin/docker "$@""#));
+}
+
+#[test]
+fn docker_compose_wrapper_waits_for_podman_and_uses_docker_compose() {
+    let start = LAYERS
+        .find("dockerComposeCommandCompat =")
+        .expect("docker-compose wrapper should exist");
+    let end = LAYERS[start..]
+        .find("sidecarProxyWrapper =")
+        .map(|offset| start + offset)
+        .expect("docker-compose wrapper should end before sidecar wrapper");
+    let wrapper = &LAYERS[start..end];
+
+    assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker-compose""#));
+    assert!(wrapper.contains("agentbox-guest-init libkrun podman wait"));
+    assert!(wrapper.contains(r#"exec ${pkgs.docker-compose}/bin/docker-compose "$@""#));
+    assert!(!wrapper.contains("agentbox-guest-init libkrun docker"));
 }
 
 #[test]
@@ -339,14 +349,14 @@ fn podman_wrapper_unsets_compat_env_before_execing_real_podman() {
 }
 
 #[test]
-fn docker_wrapper_unsets_compat_env_before_execing_real_docker() {
+fn docker_wrapper_unsets_compat_env_before_execing_podman() {
     for required in [
         "dockerCommandCompat",
         "pkgs.writeShellScriptBin \"docker\"",
         "unset LD_PRELOAD",
         "unset NSS_WRAPPER_PASSWD",
         "unset NSS_WRAPPER_GROUP",
-        r#"exec ${docker}/bin/docker "$@""#,
+        r#"exec ${podman}/bin/podman "$@""#,
     ] {
         assert!(LAYERS.contains(required), "missing {required}");
     }
@@ -395,20 +405,24 @@ fn image_includes_rootless_container_stacks_without_fuse_overlayfs() {
         "pkgs.aardvark-dns",
         "pkgs.passt",
         "pkgs.shadow",
+        "dockerCommandCompat",
+        "dockerComposeCommandCompat",
+        "pkgs.docker-compose",
     ] {
         assert!(LAYERS.contains(required), "missing {required}");
     }
-    for required in [
+    for forbidden in [
         "rootlessDockerImagePackages",
-        "dockerCommandCompat",
-        "docker",
+        "docker ? pkgs.docker",
         "pkgs.rootlesskit",
         "pkgs.slirp4netns",
         "pkgs.nftables",
         "dockerdRootlessCompat",
         "pkgs.writeShellScriptBin \"dockerd-rootless.sh\"",
+        "agentbox-guest-init libkrun docker",
+        r#"exec ${docker}/bin/docker "$@""#,
     ] {
-        assert!(LAYERS.contains(required), "missing {required}");
+        assert!(!LAYERS.contains(forbidden), "unexpected {forbidden}");
     }
     assert!(!LAYERS.contains("fuse-overlayfs"));
 }
