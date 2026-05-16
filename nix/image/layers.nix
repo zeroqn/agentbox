@@ -69,7 +69,7 @@ let
       agentbox_nix_ready_marker="/tmp/agentbox-nix-daemon-ready-$(${pkgs.coreutils}/bin/id -u)"
       if [ ! -e "$agentbox_nix_ready_marker" ]; then
         ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun nix wait
-        ${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" >/dev/null
+        ${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json >/dev/null
         : > "$agentbox_nix_ready_marker"
       fi
     fi

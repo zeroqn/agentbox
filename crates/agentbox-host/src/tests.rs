@@ -283,7 +283,7 @@ fn nix_wrapper_waits_and_probes_only_for_libkrun_nix_overlay() {
         r#"export NIX_REMOTE="''${NIX_REMOTE:-unix:///nix/var/nix/daemon-socket/socket}""#
     ));
     assert!(LAYERS.contains("agentbox-guest-init libkrun nix wait"));
-    assert!(LAYERS.contains(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#));
+    assert!(LAYERS.contains(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json"#));
     assert!(LAYERS.contains("agentbox_nix_ready_marker"));
 
     let gate = LAYERS
@@ -293,7 +293,7 @@ fn nix_wrapper_waits_and_probes_only_for_libkrun_nix_overlay() {
         .find("agentbox-guest-init libkrun nix wait")
         .expect("nix wait should exist");
     let probe = LAYERS
-        .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#)
+        .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json"#)
         .expect("real nix connectivity probe should exist");
     let exec = LAYERS
         .find(r#"exec ${pkgs.nix}/bin/nix "$@""#)
@@ -311,7 +311,7 @@ fn nix_wrapper_uses_real_nix_path_for_probe_and_exec() {
         "unset LD_PRELOAD",
         "unset NSS_WRAPPER_PASSWD",
         "unset NSS_WRAPPER_GROUP",
-        r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#,
+        r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json"#,
         r#"exec ${pkgs.nix}/bin/nix "$@""#,
     ] {
         assert!(LAYERS.contains(required), "missing {required}");
@@ -324,7 +324,7 @@ fn nix_wrapper_uses_marker_to_probe_connectivity_once_per_guest() {
         .find("agentbox_nix_ready_marker")
         .expect("nix ready marker should exist");
     let probe = LAYERS
-        .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE""#)
+        .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json"#)
         .expect("real nix connectivity probe should exist");
     let marker_write = LAYERS
         .find(r#": > "$agentbox_nix_ready_marker""#)
