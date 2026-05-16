@@ -23,6 +23,7 @@ fn podman_prep_generates_containers_config_for_rootless_libkrun() {
     for required in [
         "cgroups = \"disabled\"",
         "cgroup_manager = \"cgroupfs\"",
+        "compose_warning_logs = false",
         "events_logger = \"file\"",
         "runtime = \"crun\"",
         "conmon_path = [\"/nix/store/conmon/bin/conmon\"]",

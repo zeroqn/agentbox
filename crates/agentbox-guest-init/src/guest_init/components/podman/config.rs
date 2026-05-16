@@ -55,6 +55,7 @@ cgroups = "disabled"
 
 [engine]
 cgroup_manager = "cgroupfs"
+compose_warning_logs = false
 events_logger = "file"
 runtime = "crun"
 conmon_path = ["{}"]
