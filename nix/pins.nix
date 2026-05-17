@@ -21,12 +21,12 @@
   };
 
   piCodingAgent = {
-    version = "0.74.0";
+    version = "0.74.1";
     owner = "earendil-works";
     repo = "pi";
-    rev = "v0.74.0";
-    srcHash = "sha256-wEiqOezD8w08vyuenh3Kk+YCYBbQoEq67wATDEKy5XM=";
-    npmDepsHash = "sha256-oYPxb8RmyprZwmBzzvlke7p3b18Ja5atnpzJW7emK5A=";
+    rev = "v0.74.1";
+    srcHash = "sha256-RU6xLz9uF1zTrvWtj7MNNmlavD1t/IVxiWCW90mN8QE=";
+    npmDepsHash = "sha256-1P0++7wKZXCq/SLk/9F9ITdIDketdbt+fxSlFKYovfM=";
   };
 
   containerLibPolicySeccompJson = {
