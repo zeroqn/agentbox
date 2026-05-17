@@ -427,9 +427,10 @@ podman rm -f <sidecar-name>
 Each run ensures and mounts:
 
 - `~/.codex` -> `/home/dev/.codex`
+- `~/.pi` -> `/home/dev/.pi`
 - `<state-root>/cargo` -> `/home/dev/.cargo`
 
-This keeps Codex + Cargo state outside the repo.
+This keeps Codex, Pi, and Cargo state outside the repo.
 
 ---
 

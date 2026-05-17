@@ -54,8 +54,8 @@ mod tests {
         ENTER_AS_ROOT_ENV, ENTER_AS_ROOT_OWNER, USER_IDENTITY_OWNER,
     };
     use crate::runtime::components::volumes::{
-        CARGO_VOLUME_OWNER, CODEX_VOLUME_OWNER, SCCACHE_VOLUME_OWNER, TaskVolumeMounts,
-        WORKSPACE_VOLUME_OWNER,
+        CARGO_VOLUME_OWNER, CODEX_VOLUME_OWNER, PI_VOLUME_OWNER, SCCACHE_VOLUME_OWNER,
+        TaskVolumeMounts, WORKSPACE_VOLUME_OWNER,
     };
     use crate::runtime::container::nix_sidecar::SIDECAR_NIX_OWNER;
     use crate::runtime::container::nix_sidecar::{PodmanImageMountMode, SidecarNixRuntime};
@@ -88,6 +88,7 @@ mod tests {
         assert_eq!(args[6], "keep-id");
         assert!(args.contains(&"/tmp/project:/workspace".to_owned()));
         assert!(args.contains(&"/home/alice/.codex:/home/dev/.codex".to_owned()));
+        assert!(args.contains(&"/home/alice/.pi:/home/dev/.pi".to_owned()));
         assert!(args.contains(&"/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned()));
         assert!(args.contains(&"/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned()));
         assert!(args.contains(&"/tmp/state/agentbox/project/nix-merged:/nix:ro".to_owned()));
@@ -138,6 +139,11 @@ mod tests {
             CODEX_VOLUME_OWNER,
             "--volume",
             "/home/alice/.codex:/home/dev/.codex"
+        ));
+        assert!(args.contains_option_from(
+            PI_VOLUME_OWNER,
+            "--volume",
+            "/home/alice/.pi:/home/dev/.pi"
         ));
         assert!(args.contains_option_from(
             CARGO_VOLUME_OWNER,
@@ -310,6 +316,7 @@ mod tests {
         TaskVolumeMounts {
             workspace: "/tmp/project:/workspace".to_owned(),
             codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+            pi: "/home/alice/.pi:/home/dev/.pi".to_owned(),
             cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
             sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
         }
@@ -332,6 +339,8 @@ mod tests {
             "/tmp/project:/workspace",
             "--volume",
             "/home/alice/.codex:/home/dev/.codex",
+            "--volume",
+            "/home/alice/.pi:/home/dev/.pi",
             "--volume",
             "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
             "--volume",

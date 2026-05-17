@@ -1,5 +1,6 @@
 mod cargo;
 mod codex;
+mod pi;
 mod sccache;
 
 use anyhow::Result;
@@ -12,6 +13,7 @@ use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_WORKDIR};
 
 pub(crate) const WORKSPACE_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.workspace");
 pub(crate) const CODEX_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.codex");
+pub(crate) const PI_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.pi");
 pub(crate) const CARGO_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.cargo");
 pub(crate) const SCCACHE_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.sccache");
 
@@ -19,6 +21,7 @@ pub(crate) const SCCACHE_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.v
 pub struct TaskVolumeMounts {
     pub workspace: String,
     pub codex: String,
+    pub pi: String,
     pub cargo: String,
     pub sccache: String,
 }
@@ -27,6 +30,7 @@ pub fn prepare_task_volumes(cwd: &Path, state_layout: &StateLayout) -> Result<Ta
     Ok(TaskVolumeMounts {
         workspace: format_mount_arg(cwd, CONTAINER_WORKDIR)?,
         codex: codex::prepare()?,
+        pi: pi::prepare()?,
         cargo: cargo::prepare(state_layout.root_dir())?,
         sccache: sccache::prepare(&state_layout.sccache_dir())?,
     })
@@ -35,6 +39,7 @@ pub fn prepare_task_volumes(cwd: &Path, state_layout: &StateLayout) -> Result<Ta
 pub fn append_task_volumes(run: &mut RunSpec, mounts: &TaskVolumeMounts) {
     append_workspace(run, &mounts.workspace);
     append_codex(run, &mounts.codex);
+    append_pi(run, &mounts.pi);
     append_cargo(run, &mounts.cargo);
     append_sccache(run, &mounts.sccache);
 }
@@ -45,6 +50,10 @@ fn append_workspace(run: &mut RunSpec, mount: &str) {
 
 fn append_codex(run: &mut RunSpec, mount: &str) {
     run.option(CODEX_VOLUME_OWNER, "--volume", mount);
+}
+
+fn append_pi(run: &mut RunSpec, mount: &str) {
+    run.option(PI_VOLUME_OWNER, "--volume", mount);
 }
 
 fn append_cargo(run: &mut RunSpec, mount: &str) {
@@ -80,6 +89,24 @@ mod tests {
             )
         );
         assert!(dir.path().join(".codex").is_dir());
+    }
+
+    #[test]
+    fn prepare_pi_volume_creates_dot_pi_under_home() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+
+        let mount = crate::runtime::components::volumes::pi::prepare_at(dir.path())
+            .expect("pi mount should be prepared");
+
+        assert_eq!(
+            mount,
+            format!(
+                "{}:{}",
+                dir.path().join(".pi").display(),
+                crate::CONTAINER_PI_DIR
+            )
+        );
+        assert!(dir.path().join(".pi").is_dir());
     }
 
     #[test]
@@ -122,17 +149,53 @@ mod tests {
         let mounts = crate::runtime::components::volumes::TaskVolumeMounts {
             workspace: "/tmp/project:/workspace".to_owned(),
             codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+            pi: "/home/alice/.pi:/home/dev/.pi".to_owned(),
             cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
             sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
         };
 
         crate::runtime::components::volumes::append_task_volumes(&mut run, &mounts);
         let args = run.render();
+        let expected_args = vec![
+            "--volume".to_owned(),
+            "/tmp/project:/workspace".to_owned(),
+            "--volume".to_owned(),
+            "/home/alice/.codex:/home/dev/.codex".to_owned(),
+            "--volume".to_owned(),
+            "/home/alice/.pi:/home/dev/.pi".to_owned(),
+            "--volume".to_owned(),
+            "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
+            "--volume".to_owned(),
+            "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
+            "--env".to_owned(),
+            format!("SCCACHE_DIR={}", crate::CONTAINER_SCCACHE_DIR),
+        ];
 
+        assert_eq!(args.as_slice(), expected_args.as_slice());
         assert!(args.contains_option_from(
             crate::runtime::components::volumes::WORKSPACE_VOLUME_OWNER,
             "--volume",
             "/tmp/project:/workspace"
+        ));
+        assert!(args.contains_option_from(
+            crate::runtime::components::volumes::CODEX_VOLUME_OWNER,
+            "--volume",
+            "/home/alice/.codex:/home/dev/.codex"
+        ));
+        assert!(args.contains_option_from(
+            crate::runtime::components::volumes::PI_VOLUME_OWNER,
+            "--volume",
+            "/home/alice/.pi:/home/dev/.pi"
+        ));
+        assert!(args.contains_option_from(
+            crate::runtime::components::volumes::CARGO_VOLUME_OWNER,
+            "--volume",
+            "/tmp/state/agentbox/project/cargo:/home/dev/.cargo"
+        ));
+        assert!(args.contains_option_from(
+            crate::runtime::components::volumes::SCCACHE_VOLUME_OWNER,
+            "--volume",
+            "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache"
         ));
         assert!(args.contains_option_from(
             crate::runtime::components::volumes::SCCACHE_VOLUME_OWNER,
@@ -150,6 +213,7 @@ mod tests {
             )
             .expect("workspace mount should format"),
             codex: String::new(),
+            pi: String::new(),
             cargo: String::new(),
             sccache: String::new(),
         };

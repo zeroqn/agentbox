@@ -7,7 +7,8 @@ use crate::runtime::components::identity::{
     ENTER_AS_ROOT_ENV, ENTER_AS_ROOT_OWNER, USER_IDENTITY_OWNER,
 };
 use crate::runtime::components::volumes::{
-    SCCACHE_VOLUME_OWNER, TaskVolumeMounts, WORKSPACE_VOLUME_OWNER,
+    CODEX_VOLUME_OWNER, PI_VOLUME_OWNER, SCCACHE_VOLUME_OWNER, TaskVolumeMounts,
+    WORKSPACE_VOLUME_OWNER,
 };
 use crate::runtime::libkrun::components::cpu::{CPU_OWNER, LIBKRUN_CPUS_ANNOTATION_PREFIX};
 use crate::runtime::libkrun::components::disk::containers::podman::{
@@ -109,6 +110,8 @@ fn libkrun_task_args_include_krun_disk_annotations_and_guest_overlay_env() {
     assert!(joined.contains("--userns\nkeep-id"));
     assert!(joined.contains("--user\n0:0"));
     assert!(args.contains(&"/tmp/project:/workspace".to_owned()));
+    assert!(args.contains(&"/home/alice/.codex:/home/dev/.codex".to_owned()));
+    assert!(args.contains(&"/home/alice/.pi:/home/dev/.pi".to_owned()));
     assert!(args.contains(&format!("SCCACHE_DIR={CONTAINER_SCCACHE_DIR}")));
     assert!(args.contains(&CONTAINER_TMP_TMPFS.to_owned()));
     assert!(args.contains(&network::LIBKRUN_USE_PASST_ENV.to_owned()));
@@ -153,6 +156,16 @@ fn libkrun_task_args_expose_component_owner_ownership() {
         WORKSPACE_VOLUME_OWNER,
         "--volume",
         "/tmp/project:/workspace"
+    ));
+    assert!(args.contains_option_from(
+        CODEX_VOLUME_OWNER,
+        "--volume",
+        "/home/alice/.codex:/home/dev/.codex"
+    ));
+    assert!(args.contains_option_from(
+        PI_VOLUME_OWNER,
+        "--volume",
+        "/home/alice/.pi:/home/dev/.pi"
     ));
     assert!(args.contains_option_from(
         SCCACHE_VOLUME_OWNER,
@@ -397,6 +410,8 @@ fn expected_args(options: ExpectedOptions) -> Vec<String> {
         "--volume",
         "/home/alice/.codex:/home/dev/.codex",
         "--volume",
+        "/home/alice/.pi:/home/dev/.pi",
+        "--volume",
         "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
         "--volume",
         "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache",
@@ -494,6 +509,7 @@ fn default_task_volumes() -> TaskVolumeMounts {
     TaskVolumeMounts {
         workspace: "/tmp/project:/workspace".to_owned(),
         codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+        pi: "/home/alice/.pi:/home/dev/.pi".to_owned(),
         cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
         sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
     }
