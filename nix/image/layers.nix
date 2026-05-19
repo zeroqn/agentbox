@@ -289,6 +289,7 @@ let
     pkgs.cacert
     pkgs.coreutils
     pkgs.curl
+    pkgs.fd
     pkgs.file
     pkgs.fish
     pkgs.ripgrep
