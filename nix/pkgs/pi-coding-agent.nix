@@ -20,7 +20,7 @@ pkgs.buildNpmPackage {
     cp ${./pi-coding-agent-package.json} package.json
     cp ${./pi-coding-agent-package-lock.json} package-lock.json
     substituteInPlace packages/ai/package.json \
-      --replace-fail 'npm run generate-models && tsgo -p tsconfig.build.json' \
+      --replace-fail 'npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json' \
                      'tsgo -p tsconfig.build.json'
   '';
 
