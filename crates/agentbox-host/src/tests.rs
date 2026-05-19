@@ -1,4 +1,3 @@
-const ENTRYPOINT: &str = include_str!("../../../nix/image/entrypoint.nix");
 const FLAKE_NIX: &str = include_str!("../../../flake.nix");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
@@ -140,14 +139,6 @@ fn nix_agentbox_binary_does_not_embed_libkrun_guest_init_image_path() {
     let removed_env = ["AGENTBOX", "LIBKRUN", "GUEST_INIT", "TARGET"].join("_");
 
     assert!(!AGENTBOX_RUST_NIX.contains(&removed_env));
-}
-
-#[test]
-fn legacy_bash_entrypoint_is_not_the_image_config_entrypoint() {
-    assert!(ENTRYPOINT.contains("export USER=dev"));
-    assert!(ENTRYPOINT.contains("materialize_writable_dir()"));
-    assert!(ENTRYPOINT.contains("exec \"$@\""));
-    assert!(!CONTAINER_NIX.contains("${entrypoint}/bin/agentbox-entrypoint"));
 }
 
 #[test]
