@@ -1,4 +1,6 @@
+mod active_disks;
 mod components;
+mod reset;
 mod resize;
 mod task;
 #[cfg(test)]
@@ -27,6 +29,7 @@ pub(crate) fn run(common: CommonOptions, command: LibkrunCommand) -> Result<Exit
         Some(LibkrunSubcommand::Resize(resize_options)) => {
             resize::run(common, command.run_options, resize_options)
         }
+        Some(LibkrunSubcommand::ResetNix(reset_options)) => reset::run(reset_options),
         None => run_task(common, command.run_options),
     }
 }

@@ -6,7 +6,8 @@ use clap::{Parser, Subcommand};
 
 pub use container::{ContainerMode, ContainerOptions};
 pub use libkrun::{
-    LibkrunCommand, LibkrunOptions, LibkrunResizeOptions, LibkrunResizeTarget, LibkrunSubcommand,
+    LibkrunCommand, LibkrunOptions, LibkrunResetNixOptions, LibkrunResizeOptions,
+    LibkrunResizeTarget, LibkrunSubcommand,
 };
 
 use crate::podman::image::{podman_image_exists, pull_image};
@@ -22,6 +23,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox libkrun
   agentbox libkrun --mem 8
   agentbox libkrun resize --target nix --size 128G
+  agentbox libkrun reset-nix --force
   agentbox libkrun --guest-init ./agentbox-guest-init
   agentbox container
   agentbox container sidecar

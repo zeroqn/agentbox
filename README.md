@@ -359,9 +359,25 @@ raw image automatically. Full end-to-end verification requires a real libkrun
 guest with the raw disk mounted, so this path should be manually smoke-tested in
 addition to the host and guest unit tests.
 
-No live auto-resize, state migration/reset UX, snapshot/rollback UX, host-port
-helper UX, rootful nested Podman workflow, or container-mode nested-Podman support
-is implemented.
+To discard the current workspace's managed libkrun `/nix` disk and recreate it
+at the default size, use the explicit reset command:
+
+```bash
+./result/bin/agentbox libkrun reset-nix --force
+```
+
+`reset-nix` only targets `<state-root>/libkrun-nix.raw`; it does not reset the
+containers raw image, run any guest VM maintenance step, migrate state, create a
+backup, or prompt interactively. `--force` is required: without it the command
+fails before probing Podman or touching the filesystem. With `--force`, agentbox
+first refuses to proceed if Podman reports any running container with a matching
+`krun.disk.*.path` annotation, then deletes the existing managed `/nix` raw file
+if present and creates a fresh default btrfs image. Non-file paths at the managed
+image location are refused instead of removed.
+
+No live auto-resize, state migration, snapshot/rollback UX, host-port helper UX,
+rootful nested Podman workflow, or container-mode nested-Podman support is
+implemented.
 
 Manual host smoke checklist for the nested rootless Podman runtime:
 

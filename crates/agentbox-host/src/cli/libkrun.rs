@@ -43,6 +43,9 @@ pub struct LibkrunOptions {
 pub enum LibkrunSubcommand {
     #[command(about = "Grow an agentbox-managed libkrun raw btrfs image")]
     Resize(LibkrunResizeOptions),
+
+    #[command(about = "Delete and recreate the agentbox-managed libkrun /nix raw image")]
+    ResetNix(LibkrunResetNixOptions),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -58,6 +61,15 @@ pub struct LibkrunResizeOptions {
         help = "New raw image size; bare integers are GiB, suffixes include G/GiB/T/TiB"
     )]
     pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct LibkrunResetNixOptions {
+    #[arg(
+        long,
+        help = "Required acknowledgement that the managed libkrun /nix raw image will be deleted"
+    )]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

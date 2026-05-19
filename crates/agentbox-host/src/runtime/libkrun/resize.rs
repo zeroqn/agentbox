@@ -6,9 +6,12 @@ use std::process::{ExitCode, Stdio};
 use crate::CONTAINER_TMP_TMPFS;
 use crate::cli::{CommonOptions, LibkrunOptions, LibkrunResizeOptions, LibkrunResizeTarget};
 use crate::naming::{derive_task_container_name, derive_task_hostname};
-use crate::podman::command::{run_podman, run_podman_output};
+use crate::podman::command::run_podman;
 use crate::podman::run::{CORE, RunArgs, RunSpec};
 use crate::runtime::components::identity;
+use crate::runtime::libkrun::active_disks::{
+    HostPodmanOutputRunner, ensure_no_live_raw_disk_users,
+};
 use crate::runtime::libkrun::components::disk::containers::podman as containers_podman;
 use crate::runtime::libkrun::components::disk::containers::raw_image::RAW_CONTAINER_DISK_SPEC;
 use crate::runtime::libkrun::components::disk::nix::podman as nix_podman;
@@ -78,7 +81,7 @@ pub(crate) fn run(
     let target = resize_options.target;
     let target_path = managed_disk_path(state_layout.root_dir(), target);
 
-    ensure_no_live_raw_disk_users(&target_path, &HostPodmanOutputRunner)?;
+    ensure_no_live_raw_disk_users(&target_path, "resize", &HostPodmanOutputRunner)?;
     let image_guest_init_target = resolve_libkrun_guest_init_target(&image)?;
     let guest_init_override = run_options
         .guest_init
@@ -173,65 +176,6 @@ fn retry_after_guest_failure_message(
     )
 }
 
-trait PodmanOutputRunner {
-    fn output(&self, args: Vec<String>, context: &str) -> Result<String>;
-}
-
-#[derive(Debug, Clone, Copy)]
-struct HostPodmanOutputRunner;
-
-impl PodmanOutputRunner for HostPodmanOutputRunner {
-    fn output(&self, args: Vec<String>, context: &str) -> Result<String> {
-        run_podman_output(args, context)
-    }
-}
-
-fn ensure_no_live_raw_disk_users(path: &Path, runner: &impl PodmanOutputRunner) -> Result<()> {
-    let users = live_raw_disk_users(path, runner)?;
-    if !users.is_empty() {
-        anyhow::bail!(
-            "refusing to resize libkrun raw image '{}' while running Podman container(s) use it: {}",
-            path.display(),
-            users.join(", ")
-        );
-    }
-    Ok(())
-}
-
-fn live_raw_disk_users(path: &Path, runner: &impl PodmanOutputRunner) -> Result<Vec<String>> {
-    let ps = runner.output(
-        vec!["ps".to_owned(), "--format".to_owned(), "{{.ID}}".to_owned()],
-        "failed to list running Podman containers before libkrun resize",
-    )?;
-    let target = path.to_string_lossy();
-    let mut users = Vec::new();
-    for id in ps.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let annotations = runner.output(
-            vec![
-                "inspect".to_owned(),
-                "--format".to_owned(),
-                "{{range $key, $value := .Config.Annotations}}{{printf \"%s=%s\\n\" $key $value}}{{end}}"
-                    .to_owned(),
-                id.to_owned(),
-            ],
-            "failed to inspect running Podman container annotations before libkrun resize",
-        )?;
-        if annotations_use_raw_disk(&annotations, &target) {
-            users.push(id.to_owned());
-        }
-    }
-    Ok(users)
-}
-
-fn annotations_use_raw_disk(annotations: &str, target_path: &str) -> bool {
-    annotations.lines().any(|line| {
-        let Some((key, value)) = line.split_once('=') else {
-            return false;
-        };
-        key.starts_with("krun.disk.") && key.ends_with(".path") && value == target_path
-    })
-}
-
 pub(crate) struct LibkrunResizePodmanSpec<'a> {
     pub(crate) image: &'a str,
     pub(crate) container_name: &'a str,
@@ -311,9 +255,6 @@ mod tests {
     use crate::runtime::libkrun::components::disk::raw_btrfs::{
         RawBtrfsDiskStatus, test_support::FakeRunner,
     };
-    use anyhow::anyhow;
-    use std::cell::RefCell;
-    use std::collections::VecDeque;
     use std::fs::{self, File};
     use tempfile::tempdir;
 
@@ -423,30 +364,6 @@ mod tests {
     }
 
     #[test]
-    fn live_probe_blocks_matching_krun_disk_path_and_ignores_non_matching() {
-        let target = Path::new("/tmp/state/libkrun-nix.raw");
-        let runner = FakePodmanOutputRunner::new([
-            Ok("abc\ndef\n".to_owned()),
-            Ok("krun.disk.0.path=/tmp/state/libkrun-nix.raw\n".to_owned()),
-            Ok("krun.disk.1.path=/other.raw\n".to_owned()),
-        ]);
-
-        let users = live_raw_disk_users(target, &runner).unwrap();
-
-        assert_eq!(users, ["abc"]);
-    }
-
-    #[test]
-    fn live_probe_fails_closed_on_podman_errors() {
-        let target = Path::new("/tmp/state/libkrun-nix.raw");
-        let runner = FakePodmanOutputRunner::new([Err("podman unavailable".to_owned())]);
-
-        let err = ensure_no_live_raw_disk_users(target, &runner).unwrap_err();
-
-        assert!(err.to_string().contains("podman unavailable"));
-    }
-
-    #[test]
     fn resize_builder_is_non_interactive_and_direct_to_guest_init() {
         let disk = test_disk(LibkrunResizeTarget::Nix);
         let args = build_libkrun_resize_podman_args(LibkrunResizePodmanSpec {
@@ -530,28 +447,6 @@ mod tests {
         assert!(message.contains("rerun the same resize command"));
         assert!(message.contains("will not be shrunk or reset"));
         assert!(message.contains("exited with status 2"));
-    }
-
-    struct FakePodmanOutputRunner {
-        outputs: RefCell<VecDeque<Result<String, String>>>,
-    }
-
-    impl FakePodmanOutputRunner {
-        fn new<const N: usize>(outputs: [Result<String, String>; N]) -> Self {
-            Self {
-                outputs: RefCell::new(outputs.into()),
-            }
-        }
-    }
-
-    impl PodmanOutputRunner for FakePodmanOutputRunner {
-        fn output(&self, _args: Vec<String>, _context: &str) -> Result<String> {
-            match self.outputs.borrow_mut().pop_front() {
-                Some(Ok(output)) => Ok(output),
-                Some(Err(message)) => Err(anyhow!(message)),
-                None => Err(anyhow!("unexpected podman call")),
-            }
-        }
     }
 
     fn test_disk(target: LibkrunResizeTarget) -> RawBtrfsDisk {

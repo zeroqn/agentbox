@@ -1,7 +1,7 @@
 use crate::cli::{
     Cli, ContainerMode, ImageResolutionStrategy, LibkrunCommand, LibkrunOptions,
-    LibkrunResizeOptions, LibkrunResizeTarget, LibkrunSubcommand, RuntimeCommand,
-    resolve_image_strategy, select_default_image,
+    LibkrunResetNixOptions, LibkrunResizeOptions, LibkrunResizeTarget, LibkrunSubcommand,
+    RuntimeCommand, resolve_image_strategy, select_default_image,
 };
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 use clap::CommandFactory;
@@ -125,6 +125,38 @@ fn cli_accepts_libkrun_resize_subcommand_for_nix_and_containers() {
             })
         );
     }
+}
+
+#[test]
+fn cli_accepts_libkrun_reset_nix_subcommand_with_force() {
+    let cli = Cli::try_parse_from(["agentbox", "libkrun", "reset-nix", "--force"])
+        .expect("reset-nix --force should parse");
+
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Libkrun(LibkrunCommand {
+            run_options: LibkrunOptions::default(),
+            command: Some(LibkrunSubcommand::ResetNix(LibkrunResetNixOptions {
+                force: true,
+            })),
+        })
+    );
+}
+
+#[test]
+fn cli_accepts_libkrun_reset_nix_without_force_for_runtime_guard() {
+    let cli = Cli::try_parse_from(["agentbox", "libkrun", "reset-nix"])
+        .expect("reset-nix without --force should parse so runtime can reject before mutation");
+
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Libkrun(LibkrunCommand {
+            run_options: LibkrunOptions::default(),
+            command: Some(LibkrunSubcommand::ResetNix(LibkrunResetNixOptions {
+                force: false,
+            })),
+        })
+    );
 }
 
 #[test]
