@@ -1,5 +1,6 @@
 use crate::cli::{
-    Cli, ContainerMode, ImageResolutionStrategy, LibkrunOptions, RuntimeCommand,
+    Cli, ContainerMode, ImageResolutionStrategy, LibkrunCommand, LibkrunOptions,
+    LibkrunResizeOptions, LibkrunResizeTarget, LibkrunSubcommand, RuntimeCommand,
     resolve_image_strategy, select_default_image,
 };
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -19,7 +20,7 @@ fn cli_accepts_no_arguments_as_default_libkrun() {
     assert!(!cli.common_options().root);
     assert_eq!(
         cli.runtime_command_or_default(),
-        RuntimeCommand::Libkrun(LibkrunOptions::default())
+        RuntimeCommand::Libkrun(LibkrunCommand::default())
     );
 }
 
@@ -72,7 +73,7 @@ fn cli_accepts_libkrun_subcommand_defaults() {
 
     assert_eq!(
         cli.runtime_command_or_default(),
-        RuntimeCommand::Libkrun(LibkrunOptions::default())
+        RuntimeCommand::Libkrun(LibkrunCommand::default())
     );
 }
 
@@ -91,10 +92,70 @@ fn cli_accepts_libkrun_options_under_libkrun_subcommand() {
 
     assert_eq!(
         cli.runtime_command_or_default(),
-        RuntimeCommand::Libkrun(LibkrunOptions {
-            tsi: true,
-            mem_gib: Some(8),
-            guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
+        RuntimeCommand::Libkrun(LibkrunCommand {
+            run_options: LibkrunOptions {
+                tsi: true,
+                mem_gib: Some(8),
+                guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
+            },
+            command: None,
+        })
+    );
+}
+
+#[test]
+fn cli_accepts_libkrun_resize_subcommand_for_nix_and_containers() {
+    for (target_arg, expected_target) in [
+        ("nix", LibkrunResizeTarget::Nix),
+        ("containers", LibkrunResizeTarget::Containers),
+    ] {
+        let cli = Cli::try_parse_from([
+            "agentbox", "libkrun", "resize", "--target", target_arg, "--size", "128G",
+        ])
+        .unwrap_or_else(|err| panic!("resize target {target_arg} should parse: {err}"));
+
+        assert_eq!(
+            cli.runtime_command_or_default(),
+            RuntimeCommand::Libkrun(LibkrunCommand {
+                run_options: LibkrunOptions::default(),
+                command: Some(LibkrunSubcommand::Resize(LibkrunResizeOptions {
+                    target: expected_target,
+                    size_bytes: 128 * 1024 * 1024 * 1024,
+                })),
+            })
+        );
+    }
+}
+
+#[test]
+fn cli_accepts_libkrun_run_options_before_resize_for_resize_vm() {
+    let cli = Cli::try_parse_from([
+        "agentbox",
+        "libkrun",
+        "--mem",
+        "4",
+        "--guest-init",
+        "./agentbox-guest-init",
+        "resize",
+        "--target",
+        "nix",
+        "--size",
+        "2TiB",
+    ])
+    .expect("libkrun run options should remain available before resize subcommand");
+
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Libkrun(LibkrunCommand {
+            run_options: LibkrunOptions {
+                tsi: false,
+                mem_gib: Some(4),
+                guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
+            },
+            command: Some(LibkrunSubcommand::Resize(LibkrunResizeOptions {
+                target: LibkrunResizeTarget::Nix,
+                size_bytes: 2 * 1024 * 1024 * 1024 * 1024,
+            })),
         })
     );
 }
@@ -210,6 +271,27 @@ fn cli_rejects_invalid_mem_under_libkrun_subcommand() {
     let suffix = Cli::try_parse_from(["agentbox", "libkrun", "--mem", "8g"])
         .expect_err("suffix --mem should be rejected");
     assert_eq!(suffix.kind(), ErrorKind::ValueValidation);
+}
+
+#[test]
+fn cli_rejects_invalid_resize_target_and_size() {
+    let bad_target = Cli::try_parse_from([
+        "agentbox",
+        "libkrun",
+        "resize",
+        "--target",
+        "workspace",
+        "--size",
+        "128G",
+    ])
+    .expect_err("arbitrary resize target should be rejected");
+    assert_eq!(bad_target.kind(), ErrorKind::InvalidValue);
+
+    let bad_size = Cli::try_parse_from([
+        "agentbox", "libkrun", "resize", "--target", "nix", "--size", "0",
+    ])
+    .expect_err("zero resize size should be rejected");
+    assert_eq!(bad_size.kind(), ErrorKind::ValueValidation);
 }
 
 #[test]

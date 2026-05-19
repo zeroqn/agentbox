@@ -2,7 +2,7 @@ use clap::Parser;
 
 use crate::guest_init::cli::{
     ContainerSubcommand, DefaultSubcommand, GuestInitCli, LibkrunSubcommand, NixSubcommand,
-    PodmanSubcommand, RuntimeCommand,
+    PodmanSubcommand, ResizeTarget, RuntimeCommand,
 };
 
 #[test]
@@ -100,6 +100,30 @@ fn parses_libkrun_nix_prep_and_wait() {
             panic!("expected nix command");
         };
         assert_eq!(nix.command, expected);
+    }
+}
+
+#[test]
+fn parses_libkrun_resize_targets() {
+    for (arg, expected) in [
+        ("nix", ResizeTarget::Nix),
+        ("containers", ResizeTarget::Containers),
+    ] {
+        let cli = GuestInitCli::try_parse_from([
+            "agentbox-guest-init",
+            "libkrun",
+            "resize",
+            "--target",
+            arg,
+        ])
+        .unwrap();
+        let RuntimeCommand::Libkrun(libkrun) = cli.runtime else {
+            panic!("expected libkrun command");
+        };
+        let LibkrunSubcommand::Resize(resize) = libkrun.command else {
+            panic!("expected resize command");
+        };
+        assert_eq!(resize.target, expected);
     }
 }
 

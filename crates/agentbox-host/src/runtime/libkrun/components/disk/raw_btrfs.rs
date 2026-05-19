@@ -155,7 +155,57 @@ pub(crate) fn prepare_path_with_runner(
     Ok(disk(path.to_path_buf(), spec, RawBtrfsDiskStatus::Created))
 }
 
-fn validate_existing(
+pub(crate) fn grow_existing_path_with_runner(
+    path: &Path,
+    spec: &RawDiskSpec,
+    target_size_bytes: u64,
+    runner: &impl RawImageCommandRunner,
+) -> Result<RawBtrfsDisk> {
+    if !path.exists() {
+        anyhow::bail!(
+            "{} '{}' does not exist; run agentbox libkrun once to create it before resizing",
+            spec.diagnostic_name,
+            path.display()
+        );
+    }
+
+    validate_existing(path, spec, runner)?;
+    let current_size_bytes = path
+        .metadata()
+        .with_context(|| format!("failed to inspect '{}'", path.display()))?
+        .len();
+    if target_size_bytes <= current_size_bytes {
+        anyhow::bail!(
+            "target size {} bytes must be greater than existing {} size {} bytes; shrinking and equal-size resize are refused",
+            target_size_bytes,
+            spec.diagnostic_name,
+            current_size_bytes
+        );
+    }
+
+    let file = File::options().write(true).open(path).with_context(|| {
+        format!(
+            "failed to open {} '{}'",
+            spec.diagnostic_name,
+            path.display()
+        )
+    })?;
+    file.set_len(target_size_bytes).with_context(|| {
+        format!(
+            "failed to grow {} '{}' to {} bytes",
+            spec.diagnostic_name,
+            path.display(),
+            target_size_bytes
+        )
+    })?;
+
+    Ok(RawBtrfsDisk {
+        size_bytes: target_size_bytes,
+        ..disk(path.to_path_buf(), spec, RawBtrfsDiskStatus::Reused)
+    })
+}
+
+pub(crate) fn validate_existing(
     path: &Path,
     spec: &RawDiskSpec,
     runner: &impl RawImageCommandRunner,

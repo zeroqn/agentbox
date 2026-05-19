@@ -5,7 +5,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 pub use container::{ContainerMode, ContainerOptions};
-pub use libkrun::LibkrunOptions;
+pub use libkrun::{
+    LibkrunCommand, LibkrunOptions, LibkrunResizeOptions, LibkrunResizeTarget, LibkrunSubcommand,
+};
 
 use crate::podman::image::{podman_image_exists, pull_image};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -19,6 +21,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox
   agentbox libkrun
   agentbox libkrun --mem 8
+  agentbox libkrun resize --target nix --size 128G
   agentbox libkrun --guest-init ./agentbox-guest-init
   agentbox container
   agentbox container sidecar
@@ -97,7 +100,7 @@ impl Cli {
         self.command
             .clone()
             .map(RuntimeCommand::from)
-            .unwrap_or_else(|| RuntimeCommand::Libkrun(LibkrunOptions::default()))
+            .unwrap_or_else(|| RuntimeCommand::Libkrun(LibkrunCommand::default()))
     }
 
     pub fn into_runtime_parts(self) -> (CommonOptions, RuntimeCommand) {
@@ -111,7 +114,7 @@ impl Cli {
         let command = self
             .command
             .map(RuntimeCommand::from)
-            .unwrap_or_else(|| RuntimeCommand::Libkrun(LibkrunOptions::default()));
+            .unwrap_or_else(|| RuntimeCommand::Libkrun(LibkrunCommand::default()));
 
         (common, command)
     }
@@ -128,14 +131,14 @@ pub struct CommonOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCommand {
-    Libkrun(LibkrunOptions),
+    Libkrun(LibkrunCommand),
     Container(ContainerOptions),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 enum CliCommand {
     #[command(about = "Run the default Podman/libkrun VM-backed container shell")]
-    Libkrun(LibkrunOptions),
+    Libkrun(LibkrunCommand),
     #[command(about = "Run native Podman container mode with the managed nix-daemon sidecar")]
     Container(ContainerOptions),
 }

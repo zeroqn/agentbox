@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser, PartialEq, Eq)]
 #[command(name = "agentbox-guest-init")]
@@ -34,6 +34,7 @@ pub(in crate::guest_init) struct LibkrunCommand {
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum LibkrunSubcommand {
     Enter(EnterCommand),
+    Resize(ResizeCommand),
     Nix(NixCommand),
     Podman(PodmanCommand),
 }
@@ -77,6 +78,18 @@ pub(in crate::guest_init) struct NixCommand {
 pub(in crate::guest_init) enum NixSubcommand {
     Prep,
     Wait,
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+pub(in crate::guest_init) struct ResizeCommand {
+    #[arg(long, value_enum)]
+    pub(in crate::guest_init) target: ResizeTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(in crate::guest_init) enum ResizeTarget {
+    Nix,
+    Containers,
 }
 
 impl EnterCommand {

@@ -13,7 +13,7 @@ pub(crate) const RAW_CONTAINER_DISK_ID: &str = "agentbox-containers";
 pub(crate) const RAW_CONTAINER_DISK_LABEL: &str = "AGENTBOX_CONTAINERS";
 pub(crate) const RAW_CONTAINER_DISK_SIZE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
-const RAW_CONTAINER_DISK_SPEC: RawDiskSpec = RawDiskSpec {
+pub(crate) const RAW_CONTAINER_DISK_SPEC: RawDiskSpec = RawDiskSpec {
     file_name: RAW_CONTAINER_DISK_FILE_NAME,
     id: RAW_CONTAINER_DISK_ID,
     label: RAW_CONTAINER_DISK_LABEL,

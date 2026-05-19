@@ -319,12 +319,45 @@ used an existing path such as `--pull-latest` that pulls it before inspection.
 Existing raw images are reused only if `blkid` reports btrfs. Agentbox refuses
 to overwrite invalid existing images.
 
-Restart-time btrfs auto-grow is not performed. Extending
-`libkrun-nix.raw` or `libkrun-containers.raw` with `truncate` changes the
-apparent raw device size, but agentbox no longer runs
-`btrfs filesystem resize max` during guest initialization. A future explicit
-`agentbox` resize command is expected to own that workflow; it is not
-implemented yet.
+Restart-time btrfs auto-grow is not performed. To grow an existing
+agentbox-managed libkrun raw image, use the explicit resize command:
+
+```bash
+./result/bin/agentbox libkrun resize --target nix --size 128G
+./result/bin/agentbox libkrun resize --target containers --size 128G
+```
+
+Targets are limited to the current workspace's managed raw images:
+
+- `nix`: `<state-root>/libkrun-nix.raw`
+- `containers`: `<state-root>/libkrun-containers.raw`
+
+Bare integer sizes are interpreted as GiB. Supported binary suffixes include
+`G`, `GiB`, `T`, and `TiB`. Resize is grow-only: shrinking and equal-size no-op
+requests are rejected. The command validates that the selected managed image
+exists, is a regular file, and is btrfs before it extends the sparse raw file.
+It then starts a one-shot libkrun guest-init maintenance task to mount the
+selected btrfs disk privately under `/run/agentbox/resize-*` and run
+`btrfs filesystem resize max`.
+
+Resize launches a direct one-shot `agentbox-guest-init` entrypoint, so the
+selected image must be local and inspectable before host-side growth occurs. Use
+`--pull-latest` or pre-load/build the image if needed.
+
+The resize command refuses to run if Podman reports a running container with a
+matching `krun.disk.*.path` annotation, and it fails closed if that live-state
+probe cannot complete. It does not live-resize active disks, does not auto-grow
+during normal `agentbox libkrun` startup, does not accept arbitrary image paths,
+and does not reset or migrate state. Avoid starting a libkrun task concurrently
+with resize; the live-state check cannot eliminate every race between the probe
+and the one-shot maintenance task.
+
+If the host raw file is enlarged but the one-shot guest filesystem resize fails,
+agentbox reports the failure as retryable. Fix the reported guest issue and
+rerun the same resize command; agentbox will not shrink, roll back, or reset the
+raw image automatically. Full end-to-end verification requires a real libkrun
+guest with the raw disk mounted, so this path should be manually smoke-tested in
+addition to the host and guest unit tests.
 
 No live auto-resize, state migration/reset UX, snapshot/rollback UX, host-port
 helper UX, rootful nested Podman workflow, or container-mode nested-Podman support

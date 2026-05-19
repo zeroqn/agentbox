@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use crate::cli::{Cli, RuntimeCommand};
 
-pub(crate) use libkrun::parse_mem_gib_arg;
+pub(crate) use libkrun::{parse_mem_gib_arg, parse_raw_image_size_arg};
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

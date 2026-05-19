@@ -1,5 +1,6 @@
 use crate::guest_init::cli::{
     EnterCommand, LibkrunSubcommand, NixCommand, NixSubcommand, PodmanCommand, PodmanSubcommand,
+    ResizeCommand, ResizeTarget,
 };
 use crate::guest_init::runtime::libkrun::{
     LibkrunEnterOperation, planned_enter_operations, should_drop_to_identity,
@@ -81,4 +82,13 @@ fn libkrun_nix_subcommands_are_not_profiled_entrypoints() {
 
     assert!(!subcommand_starts_profiler(&prep));
     assert!(!subcommand_starts_profiler(&wait));
+}
+
+#[test]
+fn libkrun_resize_subcommand_is_not_profiled_entrypoint() {
+    let resize = LibkrunSubcommand::Resize(ResizeCommand {
+        target: ResizeTarget::Nix,
+    });
+
+    assert!(!subcommand_starts_profiler(&resize));
 }

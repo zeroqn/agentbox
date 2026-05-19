@@ -13,7 +13,7 @@ pub(crate) const RAW_NIX_DISK_ID: &str = "agentbox-nix";
 pub(crate) const RAW_NIX_DISK_LABEL: &str = "AGENTBOX_NIX";
 pub(crate) const RAW_NIX_DISK_SIZE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
-const RAW_NIX_DISK_SPEC: RawDiskSpec = RawDiskSpec {
+pub(crate) const RAW_NIX_DISK_SPEC: RawDiskSpec = RawDiskSpec {
     file_name: RAW_NIX_DISK_FILE_NAME,
     id: RAW_NIX_DISK_ID,
     label: RAW_NIX_DISK_LABEL,

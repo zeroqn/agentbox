@@ -1,14 +1,16 @@
 mod components;
+mod resize;
 mod task;
 #[cfg(test)]
 mod task_tests;
 pub(crate) use components::memory::parse_mem_gib_arg;
+pub(crate) use resize::parse_raw_image_size_arg;
 
 use anyhow::{Context, Result};
 use std::env;
 use std::process::{ExitCode, Stdio};
 
-use crate::cli::{CommonOptions, LibkrunOptions, resolve_image};
+use crate::cli::{CommonOptions, LibkrunCommand, LibkrunOptions, LibkrunSubcommand, resolve_image};
 use crate::naming::{derive_task_container_name, derive_task_hostname};
 use crate::podman::command::run_podman;
 use crate::runtime::components::volumes::prepare_task_volumes;
@@ -20,7 +22,16 @@ use components::guest_init::resolve_guest_init_override_mount;
 use components::memory::resolve_libkrun_ram_mib;
 use task::{LibkrunTaskPodmanSpec, build_libkrun_task_podman_args};
 
-pub(crate) fn run(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> {
+pub(crate) fn run(common: CommonOptions, command: LibkrunCommand) -> Result<ExitCode> {
+    match command.command {
+        Some(LibkrunSubcommand::Resize(resize_options)) => {
+            resize::run(common, command.run_options, resize_options)
+        }
+        None => run_task(common, command.run_options),
+    }
+}
+
+fn run_task(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> {
     let cwd = env::current_dir()
         .context("failed to resolve current directory")?
         .canonicalize()

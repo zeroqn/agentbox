@@ -54,6 +54,7 @@ pub(in crate::guest_init) fn subcommand_starts_profiler(command: &LibkrunSubcomm
 pub(in crate::guest_init) fn run(command: LibkrunCommand) -> Result<()> {
     match command.command {
         LibkrunSubcommand::Enter(enter_command) => enter(enter_command.resolved_command()),
+        LibkrunSubcommand::Resize(resize) => components::disk::resize::run(resize.target),
         LibkrunSubcommand::Nix(nix) => match nix.command {
             NixSubcommand::Prep => components::nix::root::run_prep_to_status(),
             NixSubcommand::Wait => components::nix::user::wait_for_prep(),

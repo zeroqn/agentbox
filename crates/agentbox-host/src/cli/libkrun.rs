@@ -1,7 +1,16 @@
-use clap::Args;
+use clap::{Args, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-use crate::runtime::parse_mem_gib_arg;
+use crate::runtime::{parse_mem_gib_arg, parse_raw_image_size_arg};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+pub struct LibkrunCommand {
+    #[command(flatten)]
+    pub run_options: LibkrunOptions,
+
+    #[command(subcommand)]
+    pub command: Option<LibkrunSubcommand>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct LibkrunOptions {
@@ -28,4 +37,31 @@ pub struct LibkrunOptions {
         long_help = "Bind-mount the host agentbox-guest-init binary read-only over the in-image guest-init path while preserving the normal image entrypoint and arguments. This lets guest-init fixes be tested without rebuilding the container image."
     )]
     pub guest_init: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum LibkrunSubcommand {
+    #[command(about = "Grow an agentbox-managed libkrun raw btrfs image")]
+    Resize(LibkrunResizeOptions),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct LibkrunResizeOptions {
+    #[arg(long, value_enum, help = "Managed libkrun raw image to grow")]
+    pub target: LibkrunResizeTarget,
+
+    #[arg(
+        long = "size",
+        alias = "size-bytes",
+        value_name = "SIZE",
+        value_parser = parse_raw_image_size_arg,
+        help = "New raw image size; bare integers are GiB, suffixes include G/GiB/T/TiB"
+    )]
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LibkrunResizeTarget {
+    Nix,
+    Containers,
 }

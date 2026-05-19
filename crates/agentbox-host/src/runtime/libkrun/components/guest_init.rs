@@ -34,8 +34,12 @@ pub(crate) fn resolve_guest_init_override_mount(
     path: &Path,
     image: &str,
 ) -> Result<GuestInitOverrideMount> {
-    let target = inspect_libkrun_guest_init_target(image)?;
+    let target = resolve_libkrun_guest_init_target(image)?;
     resolve_guest_init_override_mount_to(path, &target)
+}
+
+pub(crate) fn resolve_libkrun_guest_init_target(image: &str) -> Result<String> {
+    inspect_libkrun_guest_init_target(image)
 }
 
 fn resolve_guest_init_override_mount_to(
