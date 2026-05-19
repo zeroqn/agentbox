@@ -6,8 +6,12 @@ pins_file="$repo_root/nix/pins.nix"
 owner="Yeachan-Heo"
 repo="oh-my-codex"
 api_url="https://api.github.com/repos/$owner/$repo/releases/latest"
-explore_system="x86_64-linux"
-explore_asset_name="omx-explore-harness-x86_64-unknown-linux-musl.tar.xz"
+required_products=(
+  omx-api
+  omx-runtime
+  omx-sparkshell
+  omx-explore-harness
+)
 
 for cmd in curl jq nix-prefetch-url nix python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -52,12 +56,21 @@ if [ ! -f "$lockfile" ]; then
 fi
 
 npm_deps_hash="$(prefetch_npm_deps_hash "$lockfile" | tail -n 1)"
+native_manifest_url="https://github.com/$owner/$repo/releases/download/v$version/native-release-manifest.json"
+native_manifest_file="$(mktemp)"
+trap 'rm -f "$native_manifest_file"' EXIT
+curl -fsSL "$native_manifest_url" -o "$native_manifest_file"
 
-explore_asset_url="https://github.com/$owner/$repo/releases/download/v$version/$explore_asset_name"
-explore_hash_base32="$(nix-prefetch-url "$explore_asset_url")"
-explore_hash_sri="$(nix hash convert --hash-algo sha256 --to sri "$explore_hash_base32")"
-
-python3 - "$pins_file" "$version" "$src_hash_sri" "$npm_deps_hash" "$explore_system" "$explore_asset_name" "$explore_hash_sri" <<'PY'
+python3 - \
+  "$pins_file" \
+  "$version" \
+  "$src_hash_sri" \
+  "$npm_deps_hash" \
+  "$native_manifest_file" \
+  "${required_products[@]}" \
+  <<'PY'
+import base64
+import json
 import re
 import sys
 from pathlib import Path
@@ -66,72 +79,68 @@ pins_path = Path(sys.argv[1])
 version = sys.argv[2]
 src_hash = sys.argv[3]
 npm_hash = sys.argv[4]
-explore_system = sys.argv[5]
-explore_asset = sys.argv[6]
-explore_hash = sys.argv[7]
+manifest_path = Path(sys.argv[5])
+required_products = sys.argv[6:]
+manifest = json.loads(manifest_path.read_text())
 text = pins_path.read_text()
 
-def replace_exact(pattern: str, replacement: str, label: str, source: str | None = None) -> str:
-    target = text if source is None else source
-    updated, count = re.subn(pattern, replacement, target, count=1, flags=re.S)
-    if count != 1:
-        raise SystemExit(f"failed to update {label}; expected exactly one match")
-    return updated
+systems = {
+    "x86_64-linux": "x86_64-unknown-linux-musl",
+    "aarch64-linux": "aarch64-unknown-linux-musl",
+}
 
-text = replace_exact(
-    r'(ohMyCodex = \{\s*version = )"[^"]+"(;)',
-    rf'\1"{version}"\2',
-    "ohMyCodex version",
-)
-text = replace_exact(
-    r'(ohMyCodex = \{.*?srcHash = )"sha256-[^"]+"(;)',
-    rf'\1"{src_hash}"\2',
-    "ohMyCodex src hash",
-)
-text = replace_exact(
-    r'(ohMyCodex = \{.*?npmDepsHash = )"sha256-[^"]+"(;)',
-    rf'\1"{npm_hash}"\2',
-    "ohMyCodex npmDepsHash",
-)
+def sri_from_hex(hex_hash: str) -> str:
+    return "sha256-" + base64.b64encode(bytes.fromhex(hex_hash)).decode("ascii")
 
-oh_my_codex_block_pattern = r'(ohMyCodex = \{.*?\n  \};)'
-block_match = re.search(oh_my_codex_block_pattern, text, flags=re.S)
-if block_match is None:
-    raise SystemExit("failed to locate ohMyCodex block in nix/pins.nix")
+def find_asset(product: str, target: str) -> dict:
+    matches = [
+        asset for asset in manifest.get("assets", [])
+        if asset.get("product") == product
+        and asset.get("target") == target
+        and asset.get("libc") == "musl"
+    ]
+    if len(matches) != 1:
+        raise SystemExit(f"failed to find exactly one musl asset for {product} {target}; found {len(matches)}")
+    return matches[0]
 
-oh_my_codex_block = block_match.group(1)
-system_pattern = rf'({re.escape(explore_system)} = \{{.*?\n\s+\}};)'
-system_match = re.search(system_pattern, oh_my_codex_block, flags=re.S)
-if system_match is None:
-    raise SystemExit(f"failed to locate explore harness block for {explore_system}")
+lines = [
+    "  ohMyCodex = {",
+    f'    version = "{version}";',
+    f'    srcHash = "{src_hash}";',
+    f'    npmDepsHash = "{npm_hash}";',
+    "    nativeBinarySystems = {",
+]
 
-system_block = system_match.group(1)
-system_block = replace_exact(
-    r'(asset = )"[^"]+"(;)',
-    rf'\1"{explore_asset}"\2',
-    f"ohMyCodex explore harness asset for {explore_system}",
-    source=system_block,
-)
-system_block = replace_exact(
-    r'(hash = )"sha256-[^"]+"(;)',
-    rf'\1"{explore_hash}"\2',
-    f"ohMyCodex explore harness hash for {explore_system}",
-    source=system_block,
-)
+for system, target in systems.items():
+    lines.append(f"      {system} = {{")
+    for product in required_products:
+        asset = find_asset(product, target)
+        lines.extend([
+            f"        {product} = {{",
+            f'          asset = "{asset["archive"]}";',
+            f'          binary = "{asset["binary_path"]}";',
+            f'          hash = "{sri_from_hex(asset["sha256"])}";',
+            "        };",
+        ])
+    lines.append("      };")
+lines.extend(["    };", "  };"])
+new_block = "\n".join(lines)
 
-oh_my_codex_block = (
-    oh_my_codex_block[:system_match.start(1)]
-    + system_block
-    + oh_my_codex_block[system_match.end(1):]
-)
-text = text[:block_match.start(1)] + oh_my_codex_block + text[block_match.end(1):]
+updated, count = re.subn(r"  ohMyCodex = \{.*?\n  \};", new_block, text, count=1, flags=re.S)
+if count != 1:
+    raise SystemExit("failed to replace ohMyCodex block; expected exactly one match")
+pins_path.write_text(updated)
 
-pins_path.write_text(text)
+print("updated native assets:")
+for system, target in systems.items():
+    print(f"  {system} ({target}):")
+    for product in required_products:
+        asset = find_asset(product, target)
+        print(f"    {product}.asset = \"{asset['archive']}\";")
+        print(f"    {product}.hash = \"{sri_from_hex(asset['sha256'])}\";")
 PY
 
 echo "updated nix/pins.nix:"
 echo "  ohMyCodexVersion = \"$version\";"
 echo "  hash = \"$src_hash_sri\";"
 echo "  npmDepsHash = \"$npm_deps_hash\";"
-echo "  $explore_system.asset = \"$explore_asset_name\";"
-echo "  $explore_system.hash = \"$explore_hash_sri\";"

@@ -488,7 +488,7 @@ The container provides:
 - interactive `fish` + `starship`
 - Codex CLI, bubblewrap (`bwrap`), OpenCode (`opencode`), Pi (`pi`), and `oh-my-codex` (`omx`)
 - cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)
-- prebuilt `omx-explore-harness` with `OMX_EXPLORE_BIN` preset to the bundled binary
+- prebuilt OMX native helpers (`omx-api`, `omx-runtime`, `omx-sparkshell`, and `omx-explore-harness`) with matching `OMX_*` binary override environment variables preset
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
@@ -582,7 +582,7 @@ Refresh pinned Pi coding agent source/npm metadata in `nix/pins.nix` from `earen
 nix develop --command ./scripts/update-pi-coding-agent.sh
 ```
 
-Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix` (including the bundled `omx-explore-harness` asset hash):
+Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix` (including bundled Linux-musl native helper asset hashes):
 
 ```bash
 nix develop --command ./scripts/update-oh-my-codex.sh

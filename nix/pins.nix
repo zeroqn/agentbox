@@ -5,11 +5,50 @@
     version = "0.18.0";
     srcHash = "sha256-WhNRTBaj0Rl+YOZMN8G99NbZptu25DBNiJMrG6amkgI=";
     npmDepsHash = "sha256-t3yNMKhYi8E25HCq68wsES3tMHaylovdrJXpyKxNHeE=";
-    exploreHarnessSystems = {
+    nativeBinarySystems = {
       x86_64-linux = {
-        asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
-        binary = "omx-explore-harness";
-        hash = "sha256-ANP41G63dQ64RRr1cFetTwSnIHnC6sX0azKxnpAhEkE=";
+        omx-api = {
+          asset = "omx-api-x86_64-unknown-linux-musl.tar.xz";
+          binary = "omx-api";
+          hash = "sha256-6yGHU0NfZF9cOPipz/vFCx8QqGULN2quQkXAHA0YNUk=";
+        };
+        omx-runtime = {
+          asset = "omx-runtime-x86_64-unknown-linux-musl.tar.xz";
+          binary = "omx-runtime";
+          hash = "sha256-8WKWJAZAI5eh/btNbuqmQ0Ooq3F/MI6xs6mLnCpZk4Q=";
+        };
+        omx-sparkshell = {
+          asset = "omx-sparkshell-x86_64-unknown-linux-musl.tar.xz";
+          binary = "omx-sparkshell";
+          hash = "sha256-Jhsg7bnIawXRC9+HL35eV2XKcGZW8nNqXIgcWfQ46sA=";
+        };
+        omx-explore-harness = {
+          asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
+          binary = "omx-explore-harness";
+          hash = "sha256-ANP41G63dQ64RRr1cFetTwSnIHnC6sX0azKxnpAhEkE=";
+        };
+      };
+      aarch64-linux = {
+        omx-api = {
+          asset = "omx-api-aarch64-unknown-linux-musl.tar.xz";
+          binary = "omx-api";
+          hash = "sha256-pIKGA+Nlgj7pqubE6m5kV2oot7uoTvGw+n8SKjihP3Q=";
+        };
+        omx-runtime = {
+          asset = "omx-runtime-aarch64-unknown-linux-musl.tar.xz";
+          binary = "omx-runtime";
+          hash = "sha256-Yd9ZupIGEfsAWmsD+tRK39eVE2SoFVu0UO9ZFkcrtVA=";
+        };
+        omx-sparkshell = {
+          asset = "omx-sparkshell-aarch64-unknown-linux-musl.tar.xz";
+          binary = "omx-sparkshell";
+          hash = "sha256-wnfcLeReW6o0OmIU7vlaWbcdhyJ8Kl6Mp8xfkd10QsQ=";
+        };
+        omx-explore-harness = {
+          asset = "omx-explore-harness-aarch64-unknown-linux-musl.tar.xz";
+          binary = "omx-explore-harness";
+          hash = "sha256-zClftbL+gudhNe+Y9aQqZ/fVBKPU0ZB6gQlHXOncrHg=";
+        };
       };
     };
   };

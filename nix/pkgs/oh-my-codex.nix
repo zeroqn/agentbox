@@ -1,26 +1,42 @@
 { pkgs, pins }:
 let
-  exploreHarnessSystems = pins.ohMyCodex.exploreHarnessSystems or { };
+  nativeBinarySystems = pins.ohMyCodex.nativeBinarySystems or { };
   prebuiltSystem = pkgs.stdenv.hostPlatform.system;
-  exploreHarnessAssetInfo =
-    if builtins.hasAttr prebuiltSystem exploreHarnessSystems then
-      builtins.getAttr prebuiltSystem exploreHarnessSystems
+  nativeBinaryInfos =
+    if builtins.hasAttr prebuiltSystem nativeBinarySystems then
+      builtins.getAttr prebuiltSystem nativeBinarySystems
     else
-      null;
-  exploreHarnessSrc =
-    if exploreHarnessAssetInfo == null then
-      null
-    else
-      pkgs.fetchurl {
+      { };
+  nativeBinaries = pkgs.lib.mapAttrs (
+    product: info: {
+      inherit info product;
+      src = pkgs.fetchurl {
         url =
-          "https://github.com/Yeachan-Heo/oh-my-codex/releases/download/v${pins.ohMyCodex.version}/${exploreHarnessAssetInfo.asset}";
-        hash = exploreHarnessAssetInfo.hash;
+          "https://github.com/Yeachan-Heo/oh-my-codex/releases/download/v${pins.ohMyCodex.version}/${info.asset}";
+        hash = info.hash;
       };
-  exploreHarnessDir =
-    if exploreHarnessAssetInfo == null then
-      null
-    else
-      pkgs.lib.removeSuffix ".tar.xz" exploreHarnessAssetInfo.asset;
+      dir = pkgs.lib.removeSuffix ".tar.xz" info.asset;
+    }
+  ) nativeBinaryInfos;
+  installNativeBinaryCommands = pkgs.lib.concatStringsSep "\n" (
+    pkgs.lib.mapAttrsToList (
+      product: binary: ''
+        tar -xJf "${binary.src}" -C "$tmpdir"
+        install -Dm755 "$tmpdir/${binary.dir}/${binary.info.binary}" "$out/bin/${product}"
+      ''
+    ) nativeBinaries
+  );
+  nativeEnvByProduct = {
+    omx-api = "OMX_API_BIN";
+    omx-runtime = "OMX_RUNTIME_BINARY";
+    omx-sparkshell = "OMX_SPARKSHELL_BIN";
+    omx-explore-harness = "OMX_EXPLORE_BIN";
+  };
+  wrapNativeBinaryArgs = pkgs.lib.concatStringsSep " " (
+    pkgs.lib.mapAttrsToList (
+      product: _binary: ''--set ${builtins.getAttr product nativeEnvByProduct} "$out/bin/${product}"''
+    ) nativeBinaries
+  );
 in
 pkgs.buildNpmPackage {
   pname = "oh-my-codex";
@@ -41,21 +57,19 @@ pkgs.buildNpmPackage {
     pkgs.xz
   ];
 
-  postInstall = pkgs.lib.optionalString (exploreHarnessSrc != null) ''
+  postInstall = pkgs.lib.optionalString (nativeBinaries != { }) ''
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' EXIT
-    tar -xJf "${exploreHarnessSrc}" -C "$tmpdir"
-    install -Dm755 "$tmpdir/${exploreHarnessDir}/${exploreHarnessAssetInfo.binary}" "$out/bin/omx-explore-harness"
-    wrapProgram "$out/bin/omx" --set OMX_EXPLORE_BIN "$out/bin/omx-explore-harness"
+    ${installNativeBinaryCommands}
+    wrapProgram "$out/bin/omx" ${wrapNativeBinaryArgs}
   '';
 
   passthru = {
-    exploreHarness = if exploreHarnessSrc == null then null else {
-      asset = exploreHarnessAssetInfo.asset;
-      binary = exploreHarnessAssetInfo.binary;
+    nativeBinaries = pkgs.lib.mapAttrs (_product: binary: {
+      inherit (binary.info) asset binary hash;
       releaseUrl =
-        "https://github.com/Yeachan-Heo/oh-my-codex/releases/download/v${pins.ohMyCodex.version}/${exploreHarnessAssetInfo.asset}";
-    };
+        "https://github.com/Yeachan-Heo/oh-my-codex/releases/download/v${pins.ohMyCodex.version}/${binary.info.asset}";
+    }) nativeBinaries;
   };
 
   meta = {

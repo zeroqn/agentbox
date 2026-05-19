@@ -84,6 +84,9 @@ pkgs.dockerTools.buildLayeredImage {
       "RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache"
       "CMAKE_C_COMPILER_LAUNCHER=${pkgs.sccache}/bin/sccache"
       "CMAKE_CXX_COMPILER_LAUNCHER=${pkgs.sccache}/bin/sccache"
+      "OMX_API_BIN=${ohMyCodex}/bin/omx-api"
+      "OMX_RUNTIME_BINARY=${ohMyCodex}/bin/omx-runtime"
+      "OMX_SPARKSHELL_BIN=${ohMyCodex}/bin/omx-sparkshell"
       "OMX_EXPLORE_BIN=${ohMyCodex}/bin/omx-explore-harness"
     ];
   };
