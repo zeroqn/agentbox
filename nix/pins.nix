@@ -2,14 +2,14 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.17.3";
-    srcHash = "sha256-AEGXi2pmaxugn9kTVpQ7K8cH+3PaJI5ihxsnNkFEe9E=";
-    npmDepsHash = "sha256-QJW+1rucknyaCZCke574FG6yIevH1lcHXJ2DaTdRvQE=";
+    version = "0.18.0";
+    srcHash = "sha256-WhNRTBaj0Rl+YOZMN8G99NbZptu25DBNiJMrG6amkgI=";
+    npmDepsHash = "sha256-t3yNMKhYi8E25HCq68wsES3tMHaylovdrJXpyKxNHeE=";
     exploreHarnessSystems = {
       x86_64-linux = {
         asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
         binary = "omx-explore-harness";
-        hash = "sha256-ckp4cee70VMxI/kPMWx/7UWic9AQv3c1H+wG+oY0GAI=";
+        hash = "sha256-ANP41G63dQ64RRr1cFetTwSnIHnC6sX0azKxnpAhEkE=";
       };
     };
   };
@@ -21,12 +21,12 @@
   };
 
   piCodingAgent = {
-    version = "0.74.1";
+    version = "0.75.3";
     owner = "earendil-works";
     repo = "pi";
-    rev = "v0.74.1";
-    srcHash = "sha256-RU6xLz9uF1zTrvWtj7MNNmlavD1t/IVxiWCW90mN8QE=";
-    npmDepsHash = "sha256-1P0++7wKZXCq/SLk/9F9ITdIDketdbt+fxSlFKYovfM=";
+    rev = "v0.75.3";
+    srcHash = "sha256-c/+cxkp/EZ2PLERxTENN5edXHEs7M2oqzNepjRA4TIE=";
+    npmDepsHash = "sha256-4GmM0C7vPDs32TZ6Umso9I3wTZ9IbKjwNEESGkluPFQ=";
   };
 
   containerLibPolicySeccompJson = {
