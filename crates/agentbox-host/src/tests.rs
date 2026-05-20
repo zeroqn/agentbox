@@ -1,6 +1,9 @@
 const FLAKE_NIX: &str = include_str!("../../../flake.nix");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
+const IMAGE_CONFIG_NIX: &str = include_str!("../../../nix/image/config.nix");
+const IMAGE_CHECKS_NIX: &str = include_str!("../../../nix/image/checks.nix");
+const NIX_STORE_DB_CHECK_NIX: &str = include_str!("../../../nix/image/nix-store-db-check.nix");
 const PINS_NIX: &str = include_str!("../../../nix/pins.nix");
 const SECCOMP_JSON_NIX: &str =
     include_str!("../../../nix/pkgs/container-lib-policy-seccomp-json.nix");
@@ -82,13 +85,11 @@ fn image_includes_seccomp_policy_data_without_adding_it_to_path() {
 
 #[test]
 fn image_entrypoint_invokes_guest_init_default_enter_directly() {
-    assert!(CONTAINER_NIX.contains(
+    assert!(IMAGE_CONFIG_NIX.contains(
         r#"Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "default" "enter" "--" ];"#
     ));
-    let config_start = CONTAINER_NIX
-        .find("config = {")
-        .expect("image config should exist");
-    assert!(!CONTAINER_NIX[config_start..].contains("agentbox-entrypoint"));
+    assert!(CONTAINER_NIX.contains("config = imageConfig;"));
+    assert!(!IMAGE_CONFIG_NIX.contains("agentbox-entrypoint"));
 }
 
 #[test]
@@ -99,7 +100,7 @@ fn image_env_exposes_guest_init_runtime_payloads() {
         r#"AGENTBOX_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"#,
         r#"AGENTBOX_NSS_WRAPPER_LIB=${pkgs.nss_wrapper}/lib/libnss_wrapper.so"#,
     ] {
-        assert!(CONTAINER_NIX.contains(required), "missing {required}");
+        assert!(IMAGE_CONFIG_NIX.contains(required), "missing {required}");
     }
 }
 
@@ -215,7 +216,9 @@ fn image_materializes_graphene_hardened_malloc_as_nix_loader_preload() {
         r#"AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"#,
     ] {
         assert!(
-            LAYERS.contains(required) || CONTAINER_NIX.contains(required),
+            LAYERS.contains(required)
+                || CONTAINER_NIX.contains(required)
+                || IMAGE_CONFIG_NIX.contains(required),
             "missing {required}"
         );
     }
@@ -323,6 +326,52 @@ fn nix_wrapper_uses_marker_to_probe_connectivity_once_per_guest() {
 
     assert!(marker < probe);
     assert!(probe < marker_write);
+}
+
+#[test]
+fn image_static_nix_db_metadata_check_is_flake_exposed() {
+    for required in [
+        "checks = systems.forAllSystems",
+        "import ./nix/image/checks.nix",
+        "container-nix-db-metadata = imageChecks.imageConfigNixDbRefs;",
+    ] {
+        assert!(FLAKE_NIX.contains(required), "missing {required}");
+    }
+
+    for required in [
+        "builtins.unsafeDiscardStringContext metadataText",
+        "dbClosure = pkgs.closureInfo",
+        "rootPaths = layers.imageContents;",
+        "grep -Eo '/nix/store/[0-9a-df-np-sv-z]{32}-[^/\":, ]+'",
+        "comm -23 image-config-refs nix-db-roots-closure > missing-refs",
+        "This check is diagnostic only. It did not repair or mutate Nix DB metadata.",
+    ] {
+        assert!(IMAGE_CHECKS_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn image_includes_manual_nix_store_db_checker() {
+    for required in [
+        r#"pkgs.writeShellScriptBin "agentbox-nix-store-db-check""#,
+        "nix path-info --all",
+        "nix-store --verify-path",
+        "! -name .links",
+        "! -name '*.lock'",
+        "no repair was attempted",
+    ] {
+        assert!(
+            NIX_STORE_DB_CHECK_NIX.contains(required),
+            "missing {required}"
+        );
+    }
+
+    for required in [
+        "nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs; };",
+        "nixStoreDbCheck",
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
 }
 
 #[test]

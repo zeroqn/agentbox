@@ -105,6 +105,8 @@ let
     exec ${pkgs.docker-compose}/bin/docker-compose "$@"
   '';
 
+  nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs; };
+
   sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''
     LISTEN_PORT="$1"
     SOCKET_PATH="$2"
@@ -309,6 +311,7 @@ let
     pkgs.jq
     pkgs.less
     pkgs.nix
+    nixStoreDbCheck
     pkgs.diffutils
     pkgs.nss_wrapper
     pkgs.tmux
@@ -472,6 +475,7 @@ in
     imagePath
     clangMoldWrapper
     nixCommandCompat
+    nixStoreDbCheck
     podmanCommandCompat
     dockerCommandCompat
     dockerComposeCommandCompat

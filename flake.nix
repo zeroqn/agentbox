@@ -96,6 +96,29 @@
         }
       );
 
+      checks = systems.forAllSystems (
+        { pkgs, pkgsMaster, system, ... }:
+        let
+          packages = self.packages.${system};
+          imageChecks = import ./nix/image/checks.nix {
+            inherit pkgs pkgsMaster;
+            ohMyCodex = packages.oh-my-codex;
+            opencode = packages.opencode;
+            piCodingAgent = packages.pi-coding-agent;
+            symposium = packages.symposium;
+            rtkPrebuilt = packages.rtk-prebuilt or null;
+            containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
+            libkrun = packages.libkrun;
+            podman = packages.podman;
+            crun = packages.crun;
+            agentboxMuslPackage = packages.agentbox-musl;
+          };
+        in
+        {
+          container-nix-db-metadata = imageChecks.imageConfigNixDbRefs;
+        }
+      );
+
       devShells = systems.forAllSystems (
         { pkgs, ... }:
         {

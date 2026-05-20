@@ -134,6 +134,30 @@ nix build .#container
   `share/containers/seccomp.json` for downstream flakes or image reuse.
 - `.#container`: Podman image archive.
 
+### Nix store / DB diagnostics
+
+Run the static image metadata linter before rebuilding the full image:
+
+```bash
+nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).container-nix-db-metadata
+```
+
+The check compares store paths referenced by the image Docker config/env against
+the closure registered by `includeNixDB` roots. It fails when image metadata can
+pull a store path into `/nix/store` without matching Nix validity metadata.
+
+Inside an agentbox container, run the packaged live DB scanner manually:
+
+```bash
+agentbox-nix-store-db-check
+```
+
+The runtime checker compares present `/nix/store/<hash>-name` entries with
+`nix path-info --all`, ignores the internal `/nix/store/.links` link farm and
+transient `*.lock` files, and prints `nix-store --verify-path` evidence for
+present-but-invalid paths. It is diagnostic only and never repairs or mutates
+the Nix DB.
+
 ---
 
 ## Quick start
@@ -546,6 +570,8 @@ The container provides:
 - libkrun 1.18.0 (`libkrun.so`) plus pinned `libkrunfw.so` for nested KVM support inside the container
 - `nix` wrapper that clears the container NSS wrapper preload before invoking
   the real Nix binary, avoiding glibc-version mismatches in nested dev shells
+- `agentbox-nix-store-db-check` for non-mutating live `/nix/store` vs Nix DB
+  validity diagnostics
 - `rust-analyzer` wrapper that masks `/etc/ld-nix.so.preload` so rust-analyzer
   keeps the default allocator
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled
