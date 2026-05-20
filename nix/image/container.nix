@@ -59,6 +59,7 @@ let
       EOF_CONTAINERS_CONF
       chmod 0644 ./etc/containers/containers.conf
       cat > ./etc/tmux.conf <<'EOF_TMUX'
+      set-option -g mouse off
       bind-key | split-window -h
       bind-key - split-window -v
       bind-key h select-pane -L

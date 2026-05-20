@@ -229,6 +229,7 @@ fn image_materializes_graphene_hardened_malloc_as_nix_loader_preload() {
 fn image_materializes_system_tmux_defaults() {
     for required in [
         "cat > ./etc/tmux.conf <<'EOF_TMUX'",
+        "set-option -g mouse off",
         "bind-key | split-window -h",
         "bind-key - split-window -v",
         "bind-key h select-pane -L",
