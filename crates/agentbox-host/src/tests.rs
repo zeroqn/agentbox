@@ -435,6 +435,20 @@ fn image_places_cargo_deny_and_symposium_in_tooling_layer() {
 }
 
 #[test]
+fn image_roots_musl_bin_output_exposed_by_image_path() {
+    let c_toolchain_path = nix_list_body(LAYERS, "cToolchainPathPackages");
+
+    assert!(c_toolchain_path.contains("pkgs.clang"));
+    assert!(c_toolchain_path.contains("pkgs.gcc"));
+    assert!(c_toolchain_path.contains("muslBin"));
+    assert!(LAYERS.contains("imagePathPackages"));
+    assert!(LAYERS.contains("] ++ imagePathPackages);"));
+    assert!(LAYERS.contains("muslBin = pkgs.lib.getBin pkgs.musl;"));
+    assert!(LAYERS.contains("cToolchainImagePackages = cToolchainPathPackages ++ ["));
+    assert!(LAYERS.contains("pkgs.musl"));
+}
+
+#[test]
 fn image_wires_symposium_package_into_tooling_layer() {
     for required in [
         "symposium = import ./nix/pkgs/symposium.nix",

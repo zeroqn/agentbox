@@ -209,9 +209,15 @@ let
     pkgs.rustPlatform.rustLibSrc
   ];
 
-  cToolchainImagePackages = [
+  muslBin = pkgs.lib.getBin pkgs.musl;
+
+  cToolchainPathPackages = [
     pkgs.clang
     pkgs.gcc
+    muslBin
+  ];
+
+  cToolchainImagePackages = cToolchainPathPackages ++ [
     pkgs.musl
   ];
 
@@ -341,13 +347,23 @@ let
       toolingImageLayer
       agentImageLayer
     ];
+  imagePathPackages =
+    baseImagePackages
+    ++ rootlessPodmanImagePackages
+    ++ cToolchainPathPackages
+    ++ [
+      rustToolchainImageLayer
+      dynamicToolchainImageLayer
+      toolingImageLayer
+      agentImageLayer
+    ];
   imagePath = pkgs.lib.makeBinPath ([
     rustAnalyzerCommandCompat
     nixCommandCompat
     podmanCommandCompat
     dockerCommandCompat
     dockerComposeCommandCompat
-  ] ++ imagePackages);
+  ] ++ imagePathPackages);
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
   imageContents = imagePackages ++ [
