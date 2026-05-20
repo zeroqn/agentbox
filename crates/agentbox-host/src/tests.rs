@@ -379,11 +379,27 @@ fn image_includes_manual_nix_store_db_checker() {
         "nix-store --verify-path",
         "! -name .links",
         "! -name '*.lock'",
+        "/run/agentbox/nix-disk/upper",
+        "/store/",
+        "/var/nix",
+        "store object present in libkrun upperdir",
+        "store object not found in libkrun upperdir; may come from lower image or another mounted view",
+        "upperdir unavailable; overlay source evidence not inspected",
+        "upper store subdir unavailable/empty",
+        "store-layer evidence only; not root-cause evidence",
+        "metadata-shadow context only",
         "no repair was attempted",
     ] {
         assert!(
             NIX_STORE_DB_CHECK_NIX.contains(required),
             "missing {required}"
+        );
+    }
+
+    for forbidden in ["caused by upperdir", "lower image is at fault"] {
+        assert!(
+            !NIX_STORE_DB_CHECK_NIX.contains(forbidden),
+            "misleading causal wording present: {forbidden}"
         );
     }
 

@@ -159,8 +159,15 @@ agentbox-nix-store-db-check
 The runtime checker compares present `/nix/store/<hash>-name` entries with
 `nix path-info --all`, ignores the internal `/nix/store/.links` link farm and
 transient `*.lock` files, and prints `nix-store --verify-path` evidence for
-present-but-invalid paths. It is diagnostic only and never repairs or mutates
-the Nix DB.
+present-but-invalid paths. When the libkrun Nix disk upperdir is visible at
+`/run/agentbox/nix-disk/upper`, failures also compare each invalid store object
+with `/run/agentbox/nix-disk/upper/store/<name>` and report whether that
+store-layer object is present in the upperdir or not found there. This is
+store-layer evidence only, not root-cause proof: absence from the upperdir is
+not proof that lower image metadata is correct or that the lower image is at
+fault. If `upper/var/nix` or `upper/var/nix/db` exists, the checker reports it
+only as metadata-shadow context. It is diagnostic only and never repairs or
+mutates the Nix DB.
 
 ---
 
@@ -575,7 +582,8 @@ The container provides:
 - `nix` wrapper that clears the container NSS wrapper preload before invoking
   the real Nix binary, avoiding glibc-version mismatches in nested dev shells
 - `agentbox-nix-store-db-check` for non-mutating live `/nix/store` vs Nix DB
-  validity diagnostics
+  validity diagnostics, including cautious libkrun upperdir store-layer
+  evidence when `/run/agentbox/nix-disk/upper` is visible
 - `rust-analyzer` wrapper that masks `/etc/ld-nix.so.preload` so rust-analyzer
   keeps the default allocator
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled

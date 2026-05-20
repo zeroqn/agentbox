@@ -53,6 +53,51 @@ pkgs.writeShellScriptBin "agentbox-nix-store-db-check" ''
     echo "agentbox-nix-store-db-check: found $invalid_count present /nix/store path(s) missing from Nix validity metadata:" >&2
     ${pkgs.gnused}/bin/sed 's/^/  /' "$invalid_paths" >&2
 
+    libkrun_upper_dir="/run/agentbox/nix-disk/upper"
+    libkrun_upper_store_dir="$libkrun_upper_dir/store"
+    libkrun_upper_var_nix_dir="$libkrun_upper_dir/var/nix"
+    libkrun_upper_db_dir="$libkrun_upper_var_nix_dir/db"
+    upper_present_message="store object present in libkrun upperdir"
+    upper_absent_message="store object not found in libkrun upperdir; may come from lower image or another mounted view"
+    upper_unavailable_message="upperdir unavailable; overlay source evidence not inspected"
+    evidence_caveat="store-layer evidence only; not root-cause evidence"
+
+    echo "agentbox-nix-store-db-check: libkrun upperdir diagnostics: $evidence_caveat" >&2
+    if [ -d "$libkrun_upper_dir" ] && [ -r "$libkrun_upper_dir" ] && [ -x "$libkrun_upper_dir" ]; then
+      echo "agentbox-nix-store-db-check: inspecting libkrun upperdir: $libkrun_upper_dir" >&2
+      if [ -d "$libkrun_upper_store_dir" ] && [ -r "$libkrun_upper_store_dir" ] && [ -x "$libkrun_upper_store_dir" ]; then
+        if ${pkgs.findutils}/bin/find "$libkrun_upper_store_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | ${pkgs.gnugrep}/bin/grep -q .; then
+          while IFS= read -r store_path; do
+            store_name="$(${pkgs.coreutils}/bin/basename "$store_path")"
+            upper_store_candidate="$libkrun_upper_store_dir/$store_name"
+            if [ -e "$upper_store_candidate" ]; then
+              echo "  $store_path: $upper_present_message ($upper_store_candidate)" >&2
+            else
+              echo "  $store_path: $upper_absent_message" >&2
+            fi
+          done < "$invalid_paths"
+        else
+          echo "agentbox-nix-store-db-check: upper store subdir unavailable/empty: $libkrun_upper_store_dir" >&2
+          while IFS= read -r store_path; do
+            echo "  $store_path: $upper_absent_message" >&2
+          done < "$invalid_paths"
+        fi
+      else
+        echo "agentbox-nix-store-db-check: upper store subdir unavailable/empty: $libkrun_upper_store_dir" >&2
+        echo "agentbox-nix-store-db-check: overlay source evidence not inspected for individual invalid paths" >&2
+      fi
+
+      if [ -d "$libkrun_upper_db_dir" ]; then
+        echo "agentbox-nix-store-db-check: metadata-shadow context only: upper /var/nix/db exists at $libkrun_upper_db_dir and may shadow lower Nix metadata" >&2
+      elif [ -d "$libkrun_upper_var_nix_dir" ]; then
+        echo "agentbox-nix-store-db-check: metadata-shadow context only: upper /var/nix exists at $libkrun_upper_var_nix_dir and may shadow lower Nix metadata" >&2
+      else
+        echo "agentbox-nix-store-db-check: metadata-shadow context only: no upper /var/nix metadata directory was found" >&2
+      fi
+    else
+      echo "agentbox-nix-store-db-check: $upper_unavailable_message: $libkrun_upper_dir" >&2
+    fi
+
     if command -v nix-store >/dev/null 2>&1; then
       echo "agentbox-nix-store-db-check: nix-store --verify-path evidence:" >&2
       while IFS= read -r store_path; do
