@@ -294,6 +294,7 @@ fn materialize_dev_identity_files(nss_dir: &Path) -> Result<()> {
 }
 
 fn materialize_home_config(identity: &DevIdentity, set_ownership: bool) -> Result<()> {
+    let cache_nix_dir = identity.home.join(".cache/nix");
     let home_dirs = [
         identity.home.clone(),
         identity.home.join(".local"),
@@ -308,6 +309,10 @@ fn materialize_home_config(identity: &DevIdentity, set_ownership: bool) -> Resul
         if set_ownership {
             chown_if_possible(path, identity);
         }
+    }
+    guest_fs::create_dir_all(&cache_nix_dir)?;
+    if set_ownership {
+        chown_tree_if_possible(&cache_nix_dir, identity);
     }
 
     let config_dir = identity.home.join(".config");
@@ -412,6 +417,17 @@ fn chown_if_possible(path: &Path, identity: &DevIdentity) {
     if let Err(err) = guest_fs::chown(path, identity.uid, identity.gid) {
         eprintln!(
             "agentbox-guest-init container enter: warning: chown '{}' to {}:{} failed: {err:#}",
+            path.display(),
+            identity.uid,
+            identity.gid
+        );
+    }
+}
+
+fn chown_tree_if_possible(path: &Path, identity: &DevIdentity) {
+    if let Err(err) = guest_fs::chown_tree_skipping_symlinks(path, identity.uid, identity.gid) {
+        eprintln!(
+            "agentbox-guest-init container enter: warning: chown tree '{}' to {}:{} failed: {err:#}",
             path.display(),
             identity.uid,
             identity.gid

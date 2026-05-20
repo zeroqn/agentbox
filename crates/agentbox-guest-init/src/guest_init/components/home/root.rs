@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::guest_init::components::env::DEV_USER;
 use crate::guest_init::components::home::identity::DevIdentity;
@@ -20,21 +20,32 @@ pub(in crate::guest_init) fn materialize(identity: &DevIdentity) -> Result<()> {
 }
 
 pub(in crate::guest_init) fn ensure_home_dirs(identity: &DevIdentity) -> Result<()> {
-    for path in [
-        identity.home.as_path(),
-        Path::new("/home/dev/.local"),
-        Path::new("/home/dev/.local/share"),
-        Path::new("/home/dev/.local/state"),
-        Path::new("/home/dev/.cache"),
-        Path::new("/home/dev/.cache/tmp"),
-        Path::new("/home/dev/.config"),
-    ] {
-        fs::create_dir_all(path)?;
-        fs::chown(path, identity.uid, identity.gid)?;
+    for path in home_dirs(identity) {
+        fs::create_dir_all(&path)?;
+        fs::chown(&path, identity.uid, identity.gid)?;
     }
-    fs::chmod(Path::new("/home/dev/.local/state"), 0o700)?;
-    fs::chmod(Path::new("/home/dev/.cache/tmp"), 0o700)?;
+    let cache_nix_dir = nix_cache_dir(identity);
+    fs::create_dir_all(&cache_nix_dir)?;
+    fs::chown_tree_skipping_symlinks(&cache_nix_dir, identity.uid, identity.gid)?;
+    fs::chmod(&identity.home.join(".local/state"), 0o700)?;
+    fs::chmod(&identity.home.join(".cache/tmp"), 0o700)?;
     Ok(())
+}
+
+fn home_dirs(identity: &DevIdentity) -> [PathBuf; 7] {
+    [
+        identity.home.clone(),
+        identity.home.join(".local"),
+        identity.home.join(".local/share"),
+        identity.home.join(".local/state"),
+        identity.home.join(".cache"),
+        identity.home.join(".cache/tmp"),
+        identity.home.join(".config"),
+    ]
+}
+
+fn nix_cache_dir(identity: &DevIdentity) -> PathBuf {
+    identity.home.join(".cache/nix")
 }
 
 fn build_passwd(identity: &DevIdentity) -> Result<String> {
@@ -68,3 +79,7 @@ fn read_without_dev(path: &Path) -> Result<String> {
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "root_tests.rs"]
+mod tests;
