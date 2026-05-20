@@ -311,6 +311,7 @@ fn materialize_home_config(identity: &DevIdentity, set_ownership: bool) -> Resul
         }
     }
     guest_fs::create_dir_all(&cache_nix_dir)?;
+    guest_fs::chmod(&cache_nix_dir, 0o700)?;
     if set_ownership {
         chown_tree_if_possible(&cache_nix_dir, identity);
     }

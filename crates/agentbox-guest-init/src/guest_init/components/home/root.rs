@@ -27,6 +27,7 @@ pub(in crate::guest_init) fn ensure_home_dirs(identity: &DevIdentity) -> Result<
     let cache_nix_dir = nix_cache_dir(identity);
     fs::create_dir_all(&cache_nix_dir)?;
     fs::chown_tree_skipping_symlinks(&cache_nix_dir, identity.uid, identity.gid)?;
+    fs::chmod(&cache_nix_dir, 0o700)?;
     fs::chmod(&identity.home.join(".local/state"), 0o700)?;
     fs::chmod(&identity.home.join(".cache/tmp"), 0o700)?;
     Ok(())

@@ -58,6 +58,14 @@ fn shell_config_materialization_installs_fish_starship_payloads() {
         );
     }
     assert_eq!(
+        fs::metadata(identity.home.join(".cache/starship"))
+            .expect("starship cache metadata should be readable")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
         fs::metadata(identity.home.join(".config/starship.toml"))
             .expect("starship metadata should be readable")
             .permissions()

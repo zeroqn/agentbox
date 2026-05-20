@@ -1,15 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 
 use super::{
     ContainerEnterOperation, HOST_GID_ENV, HOST_UID_ENV, ProcessIds, build_nss_wrapper_plan,
-    derive_identity_plan, materialize_writable_dir, normal_shell_environment,
-    planned_enter_operations,
+    derive_identity_plan, materialize_home_config, materialize_writable_dir,
+    normal_shell_environment, planned_enter_operations,
 };
 use crate::guest_init::cli::EnterCommand;
 use crate::guest_init::components::env::ENTER_AS_ROOT_ENV;
+use crate::guest_init::components::home::identity::DevIdentity;
 
 struct TestEnv(BTreeMap<String, String>);
 
@@ -43,6 +44,28 @@ fn explicit_container_enter_command_is_preserved() {
     };
 
     assert_eq!(enter.resolved_command(), ["bash", "-lc", "true"]);
+}
+
+#[test]
+fn container_home_config_makes_nix_cache_private() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let identity = DevIdentity {
+        uid: 1000,
+        gid: 1000,
+        home: temp.path().join("home"),
+        shell: PathBuf::from("fish"),
+    };
+
+    materialize_home_config(&identity, false).expect("home config should materialize");
+
+    assert_eq!(
+        fs::metadata(identity.home.join(".cache/nix"))
+            .expect("nix cache metadata should be readable")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
 }
 
 #[test]

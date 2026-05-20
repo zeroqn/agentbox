@@ -26,6 +26,7 @@ pub(in crate::guest_init) fn materialize_config(
 
 fn create_dir_for_identity(path: &Path, identity: &DevIdentity, set_ownership: bool) -> Result<()> {
     fs::create_dir_all(path)?;
+    fs::chmod(path, 0o700)?;
     if set_ownership {
         fs::chown(path, identity.uid, identity.gid)?;
     }

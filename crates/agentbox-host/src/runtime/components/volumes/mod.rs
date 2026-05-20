@@ -71,6 +71,7 @@ fn append_sccache(run: &mut RunSpec, mount: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
     #[test]
@@ -141,6 +142,14 @@ mod tests {
             format!("{}:{}", sccache_dir.display(), crate::CONTAINER_SCCACHE_DIR)
         );
         assert!(sccache_dir.is_dir());
+        assert_eq!(
+            std::fs::metadata(&sccache_dir)
+                .expect("sccache metadata should be readable")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
     }
 
     #[test]
