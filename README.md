@@ -136,15 +136,17 @@ nix build .#container
 
 ### Nix store / DB diagnostics
 
-Run the static image metadata linter before rebuilding the full image:
+`nix build .#container` runs the static image metadata linter before starting
+the layered image build. To run only that linter:
 
 ```bash
 nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).container-nix-db-metadata
 ```
 
 The check compares store paths referenced by the image Docker config/env against
-the closure registered by `includeNixDB` roots. It fails when image metadata can
-pull a store path into `/nix/store` without matching Nix validity metadata.
+the static Nix DB root set declared by the image layer configuration. It fails
+fast when image metadata can pull a store path into `/nix/store` without that
+path being covered by image Nix DB metadata.
 
 Inside an agentbox container, run the packaged live DB scanner manually:
 

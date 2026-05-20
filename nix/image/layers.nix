@@ -367,6 +367,15 @@ let
     dockerComposeCommandCompat
     rustAnalyzerCommandCompat
   ];
+  imageMetadataNixDbRoots =
+    imageContents
+    ++ stableRustToolchainPackages
+    ++ dynamicToolchainImagePackages
+    ++ toolingImagePackages
+    ++ agentImagePackages
+    ++ [
+      pkgs.libclang.lib
+    ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
   toolingLayerPaths = [ (toString toolingImageLayer) ];
@@ -472,6 +481,7 @@ in
     agentboxImageLayeringPipeline
     agentboxImageMaxLayers
     imageContents
+    imageMetadataNixDbRoots
     imagePath
     clangMoldWrapper
     nixCommandCompat
