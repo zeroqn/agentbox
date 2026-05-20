@@ -76,7 +76,9 @@ let
       chown -R 1000:1000 ./home/dev ./workspace
     '';
 
-    config = imageConfig;
+    config = builtins.fromJSON (
+      builtins.unsafeDiscardStringContext (builtins.toJSON imageConfig)
+    );
   };
 in
 if imageChecks.missingImageConfigNixDbRefs != [ ] then

@@ -49,33 +49,35 @@ let
     in
     sortStoreRefs refs;
 
-  metadataText = builtins.toJSON imageConfig;
-  imageMetadataRootsText = builtins.concatStringsSep "\n" (
-    map toString layers.imageMetadataNixDbRoots
-  );
-  imageConfigRefs = storeRefsIn metadataText;
-  imageMetadataRoots = storeRefsIn imageMetadataRootsText;
+  imageConfigText = builtins.unsafeDiscardStringContext (builtins.toJSON imageConfig);
+  imageConfigRefs = storeRefsIn imageConfigText;
+  imageNixDbClosureInfo = pkgs.closureInfo {
+    rootPaths = layers.imageContents;
+  };
+  imageNixDbStorePathsText = builtins.readFile "${imageNixDbClosureInfo}/store-paths";
+  imageNixDbStorePaths = storeRefsIn imageNixDbStorePathsText;
   missingImageConfigNixDbRefs = builtins.filter (
-    ref: !(builtins.elem ref imageMetadataRoots)
+    ref: !(builtins.elem ref imageNixDbStorePaths)
   ) imageConfigRefs;
 
   refsText = refs: builtins.concatStringsSep "\n" refs;
   indentedRefsText = refs: builtins.concatStringsSep "\n" (map (ref: "  ${ref}") refs);
   missingRefsMessage = ''
-    agentbox image config references store paths outside the static Nix DB root set.
-    These paths can be pulled in by Docker config/env references before they are covered by image Nix DB metadata.
+    agentbox image config references store paths outside the generated image Nix DB metadata.
+    These paths can be pulled in by Docker config/env references without being registered in /nix/var/nix/db.
 
-    Missing from layers.imageMetadataNixDbRoots:
+    Missing from pkgs.closureInfo { rootPaths = layers.imageContents; }:
     ${indentedRefsText missingImageConfigNixDbRefs}
 
-    This check is diagnostic only. It did not repair or mutate Nix DB metadata.
+    This check uses the same root path closure that dockerTools.includeNixDB loads into the image DB.
+    It does not inspect, repair, or mutate the host Nix DB.
   '';
 
   imageConfigRefsFile = pkgs.writeText "agentbox-image-config-refs.txt" (
-    builtins.unsafeDiscardStringContext (refsText imageConfigRefs)
+    refsText imageConfigRefs
   );
-  imageMetadataRootsFile = pkgs.writeText "agentbox-image-metadata-roots.txt" (
-    builtins.unsafeDiscardStringContext (refsText imageMetadataRoots)
+  imageNixDbStorePathsFile = pkgs.writeText "agentbox-image-nix-db-store-paths.txt" (
+    builtins.unsafeDiscardStringContext imageNixDbStorePathsText
   );
   missingRefsFile = pkgs.writeText "agentbox-image-config-missing-refs.txt" (
     builtins.unsafeDiscardStringContext (refsText missingImageConfigNixDbRefs)
@@ -87,7 +89,8 @@ in
 {
   inherit
     imageConfigRefs
-    imageMetadataRoots
+    imageNixDbClosureInfo
+    imageNixDbStorePaths
     missingImageConfigNixDbRefs
     missingRefsMessage
     ;
@@ -96,14 +99,13 @@ in
     {
       nativeBuildInputs = [
         pkgs.coreutils
-        pkgs.gnused
       ];
     }
     ''
       set -euo pipefail
 
       cp ${imageConfigRefsFile} image-config-refs
-      cp ${imageMetadataRootsFile} image-metadata-roots
+      cp ${imageNixDbStorePathsFile} image-nix-db-valid-paths
       cp ${missingRefsFile} missing-refs
 
       if [ -s missing-refs ]; then
@@ -113,7 +115,7 @@ in
 
       mkdir -p "$out"
       cp image-config-refs "$out/image-config-refs"
-      cp image-metadata-roots "$out/image-metadata-roots"
+      cp image-nix-db-valid-paths "$out/image-nix-db-valid-paths"
       touch "$out/passed"
     '';
 }

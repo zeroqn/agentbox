@@ -88,7 +88,7 @@ fn image_entrypoint_invokes_guest_init_default_enter_directly() {
     assert!(IMAGE_CONFIG_NIX.contains(
         r#"Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "default" "enter" "--" ];"#
     ));
-    assert!(CONTAINER_NIX.contains("config = imageConfig;"));
+    assert!(CONTAINER_NIX.contains("builtins.toJSON imageConfig"));
     assert!(!IMAGE_CONFIG_NIX.contains("agentbox-entrypoint"));
 }
 
@@ -341,31 +341,25 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
     for required in [
         "storeRefsIn = text:",
         "pkgs.lib.splitString \"/nix/store/\" text",
-        "imageMetadataRootsText = builtins.concatStringsSep",
-        "map toString layers.imageMetadataNixDbRoots",
+        "imageConfigText = builtins.unsafeDiscardStringContext",
+        "imageNixDbClosureInfo = pkgs.closureInfo",
+        "rootPaths = layers.imageContents;",
+        "imageNixDbStorePathsText = builtins.readFile",
         "missingImageConfigNixDbRefs = builtins.filter",
-        "missingRefsMessage =",
+        "Missing from pkgs.closureInfo { rootPaths = layers.imageContents; }:",
+        "It does not inspect, repair, or mutate the host Nix DB.",
         "cat ${missingRefsMessageFile} >&2",
-        "Missing from layers.imageMetadataNixDbRoots:",
-        "This check is diagnostic only. It did not repair or mutate Nix DB metadata.",
     ] {
         assert!(IMAGE_CHECKS_NIX.contains(required), "missing {required}");
     }
 
-    for required in [
-        "imageMetadataNixDbRoots =",
-        "++ stableRustToolchainPackages",
-        "++ dynamicToolchainImagePackages",
-        "++ toolingImagePackages",
-        "++ agentImagePackages",
-        "pkgs.libclang.lib",
-    ] {
-        assert!(LAYERS.contains(required), "missing {required}");
-    }
+    assert!(!LAYERS.contains("imageMetadataNixDbRoots"));
 
     for required in [
         "imageChecks = import ./checks.nix",
         "image = pkgs.dockerTools.buildLayeredImage",
+        "config = builtins.fromJSON (",
+        "builtins.unsafeDiscardStringContext (builtins.toJSON imageConfig)",
         "if imageChecks.missingImageConfigNixDbRefs != [ ] then",
         "builtins.throw imageChecks.missingRefsMessage",
         "image.overrideAttrs",
