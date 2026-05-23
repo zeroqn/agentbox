@@ -49,7 +49,7 @@ done
 
 case "$system" in
   x86_64-linux)
-    asset_name="libkrunfw-x86_64-lto.tgz"
+    asset_name="libkrunfw-x86_64-kvm-lto.tgz"
     ;;
   aarch64-linux)
     asset_name="libkrunfw-aarch64.tgz"
