@@ -1,7 +1,7 @@
 { pkgs, libkrun, libkrunfw }:
 
 let
-  crunAgentboxRev = "e76e053b69d2537cd6dbe8f12a2fd2dde6b31fed";
+  crunAgentboxRev = "9f20944b95c00a5642191ebf6cb1bd0a9a07faaf";
 in
 (pkgs.crun.override {
   inherit libkrun;
@@ -14,7 +14,7 @@ in
     repo = "crun";
     rev = crunAgentboxRev;
     fetchSubmodules = true;
-    hash = "sha256-Y5+FzWlqyMWX8Sen5/OnF95XXGxiayD9rCC7qIBMg10=";
+    hash = "sha256-p62gpEtZkwvzPeXppOR28YE+8Yzh/kafjkkaJ1oZocQ=";
   };
 
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ pkgs.makeWrapper ];
