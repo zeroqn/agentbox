@@ -18,6 +18,7 @@ in
   };
 
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ pkgs.makeWrapper ];
+  buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ pkgs.json_c ];
 
   postPatch = ''
     echo ${crunAgentboxRev} > COMMIT
