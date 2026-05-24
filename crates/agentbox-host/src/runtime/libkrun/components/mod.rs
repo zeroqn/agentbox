@@ -3,5 +3,6 @@ pub mod disk;
 pub mod guest_init;
 pub mod host_identity;
 pub mod memory;
+pub mod nested;
 pub mod network;
 pub mod oci;

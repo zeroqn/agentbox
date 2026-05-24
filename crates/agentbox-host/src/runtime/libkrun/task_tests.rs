@@ -31,6 +31,9 @@ use crate::runtime::libkrun::components::host_identity::{
     HOST_IDENTITY_OWNER, LIBKRUN_KVM_DROP_TO_DEV_ENV,
 };
 use crate::runtime::libkrun::components::memory::MEMORY_OWNER;
+use crate::runtime::libkrun::components::nested::{
+    LIBKRUN_NESTED_VIRT_ANNOTATION, NESTED_VIRT_OWNER,
+};
 use crate::runtime::libkrun::components::network;
 use crate::runtime::libkrun::components::oci::{LIBKRUN_HANDLER_ANNOTATION, OCI_OWNER};
 use crate::runtime::libkrun::task::{build_libkrun_task_podman_args, build_libkrun_task_run_args};
@@ -100,6 +103,7 @@ fn libkrun_task_args_include_krun_disk_annotations_and_guest_overlay_env() {
     assert!(args.contains(&"project-random".to_owned()));
     assert!(args.contains(&LIBKRUN_HANDLER_ANNOTATION.to_owned()));
     assert!(args.contains(&"krun.ram_mib=8192".to_owned()));
+    assert!(args.contains(&LIBKRUN_NESTED_VIRT_ANNOTATION.to_owned()));
     assert!(args.contains(&"krun.cpus=16".to_owned()));
     assert!(args.contains(&"krun.disk.0.id=agentbox-nix".to_owned()));
     assert!(args.contains(&"krun.disk.1.id=agentbox-containers".to_owned()));
@@ -130,6 +134,11 @@ fn libkrun_task_args_expose_component_owner_ownership() {
     assert!(args.contains_option_from(OCI_OWNER, "--runtime", "crun"));
     assert!(args.contains_option_from(OCI_OWNER, "--annotation", LIBKRUN_HANDLER_ANNOTATION));
     assert!(args.contains_option_from(MEMORY_OWNER, "--annotation", "krun.ram_mib=8192"));
+    assert!(args.contains_option_from(
+        NESTED_VIRT_OWNER,
+        "--annotation",
+        LIBKRUN_NESTED_VIRT_ANNOTATION
+    ));
     assert!(args.contains_option_from(CPU_OWNER, "--annotation", "krun.cpus=16"));
     assert!(args.contains_option_from(
         NIX_DISK_OWNER,
@@ -387,6 +396,8 @@ fn expected_args(options: ExpectedOptions) -> Vec<String> {
         "run.oci.handler=krun",
         "--annotation",
         "krun.ram_mib=8192",
+        "--annotation",
+        "krun.nested_virt=1",
         "--annotation",
         "krun.disk.0.path=/tmp/state/agentbox/project/libkrun-nix.raw",
         "--annotation",

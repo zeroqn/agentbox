@@ -125,8 +125,8 @@ nix build .#container
 - `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4)
   with net, sound, GPU, block, and input support enabled.
 - `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
-  override, krun handler support, raw data disk annotation support, and `pkgs.passt`
-  on crun's runtime `PATH`.
+  override, krun handler support, raw data disk annotation support,
+  `krun.nested_virt` support, and `pkgs.passt` on crun's runtime `PATH`.
 - `.#podman`: build Podman against the custom crun for libkrun/raw-image
   development.
 - `.#container-lib-policy-seccomp-json`: install the pinned
@@ -311,6 +311,7 @@ The raw images are attached with crun annotations:
 run.oci.handler=krun
 krun.ram_mib=<memory MiB>
 krun.cpus=<cpu count>
+krun.nested_virt=1
 krun.disk.0.path=<state-root>/libkrun-nix.raw
 krun.disk.0.id=agentbox-nix
 krun.disk.0.readonly=false
@@ -326,6 +327,11 @@ whole GiB, and emits that value with `krun.ram_mib=<MiB>`. Pass
 `agentbox libkrun --mem <GiB>` to override it. On Linux, agentbox also emits
 `krun.cpus=<n>`: hosts with up to 6 CPUs pass all available CPUs through;
 larger hosts reserve 2 CPUs for the host.
+
+Agentbox also emits `krun.nested_virt=1` so crun/libkrun expose VMX/SVM to the
+libkrun guest when the host or outer VM already supports nested KVM. This does
+not bind-mount host `/dev/kvm` into the guest and cannot enable nested KVM if
+the host kernel or outer hypervisor has disabled it.
 
 By default, libkrun mode uses passt networking through `krun.use_passt=1`. Pass
 `agentbox libkrun --tsi` to switch to the older TSI/proxy environment path.

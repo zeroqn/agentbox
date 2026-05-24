@@ -8,7 +8,9 @@ use crate::runtime::libkrun::components::disk::containers::raw_image::RawContain
 use crate::runtime::libkrun::components::disk::nix::podman as nix_podman;
 use crate::runtime::libkrun::components::disk::nix::raw_image::RawNixDisk;
 use crate::runtime::libkrun::components::guest_init::GuestInitOverrideMount;
-use crate::runtime::libkrun::components::{cpu, guest_init, host_identity, memory, network, oci};
+use crate::runtime::libkrun::components::{
+    cpu, guest_init, host_identity, memory, nested, network, oci,
+};
 use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
 pub(crate) struct LibkrunTaskPodmanSpec<'a> {
@@ -44,6 +46,7 @@ pub(crate) fn build_libkrun_task_run_args(spec: LibkrunTaskPodmanSpec<'_>) -> Re
     host_identity::append_root_user(&mut run);
     oci::append_oci_args(&mut run);
     memory::append_ram_annotation(&mut run, spec.ram_mib);
+    nested::append_nested_virt_annotation(&mut run);
     nix_podman::append_disk_annotations(&mut run, spec.raw_nix_disk);
     containers_podman::append_disk_annotations(&mut run, spec.raw_container_disk);
     network::append_tun_device(&mut run);
