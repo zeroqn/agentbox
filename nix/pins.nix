@@ -2,52 +2,52 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.18.2";
-    srcHash = "sha256-IvNnRcY6pjDj5GdNwsmEU8J6CC9M43x17RXdjMPSwXk=";
-    npmDepsHash = "sha256-7o+Zl9MRHsvMMPbIZJGTVYTYYT/zwl2k9AZvhfAkZpk=";
+    version = "0.18.3";
+    srcHash = "sha256-oGZc9zHgb1wYoHXY5d+br0SSwt2m+MPI2cmABS6t4BQ=";
+    npmDepsHash = "sha256-dD/g8f6ngGQruIm3R0KCom/YZqCEatAvuwQdf7ndPRk=";
     nativeBinarySystems = {
       x86_64-linux = {
         omx-api = {
           asset = "omx-api-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-jJSRYyaL15s1iwvmFkXHJCf4sq6iFHhq/XVxvgKg3a4=";
+          hash = "sha256-Tq14s8d3bJdSWXuDKsx50F/ncnMaU2YdYRPwkbgbamU=";
         };
         omx-runtime = {
           asset = "omx-runtime-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-LppD1C9Qdwn2pjEqQ9N7VMMH9uD2C1KOYLa90+DD9UQ=";
+          hash = "sha256-0jHevHLzqIInyUTC/4EYfyO+3S54b8pZTS0mL81hT9o=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-GOEn7ku5P/wGCNoSOXx7gnFAeWmiZa6hso6MyWL98cE=";
+          hash = "sha256-+QzNKYySfKlhQztAE1XjNwG5UtdelUclmLRmkpqC/U0=";
         };
         omx-explore-harness = {
           asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-explore-harness";
-          hash = "sha256-Son8BbGJHVKAesbE4N1ovylzU7aUu69DeUt1ciRnvBA=";
+          hash = "sha256-h4+v6OEoSj6vdmijQM3sbVPlqJxS+MXba9m7/mWKM0E=";
         };
       };
       aarch64-linux = {
         omx-api = {
           asset = "omx-api-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-qDG0rF5tIoHBnoEXuws8cagGjFmg8Ec+Zay7LvcyHMk=";
+          hash = "sha256-n6ZT+IZg/V1Rf3gisU1rpsQOSy6r+VpkEe8/7axyZQA=";
         };
         omx-runtime = {
           asset = "omx-runtime-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-WE7yqKiDS2H3vv0dlN4etoTxzFpS26xu2BVswIfl5rs=";
+          hash = "sha256-t3pEZCDnHHwYqcAJ76aOSAkJFLhULK+jow5ZI1WAnsY=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-tRjZut1hXyvu8zKDTEnJRMbImEDWulCRqz81l38ooUk=";
+          hash = "sha256-xufCCttm25CJRYdS3DZ4QfNJgatkdSW22msggVBzdaU=";
         };
         omx-explore-harness = {
           asset = "omx-explore-harness-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-explore-harness";
-          hash = "sha256-hVFjHh7MMDu/mcHJ0jC3nNtwguO8rRwW0IIvwKnr3y4=";
+          hash = "sha256-uoGYZ45rABaagqYMEjeO0w8rIzgFVG1Q2omQZzunpq0=";
         };
       };
     };
