@@ -267,7 +267,6 @@ let
   agentImagePackages = [
     pkgsMaster.codex
     pkgs.bubblewrap
-    opencode
     piCodingAgent
     reasonix
     ohMyCodex

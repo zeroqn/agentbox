@@ -578,7 +578,7 @@ agentbox repos and containers.
 The container provides:
 
 - interactive `fish` + `starship`
-- Codex CLI, bubblewrap (`bwrap`), OpenCode (`opencode`), Pi (`pi`), Reasonix (`reasonix`/`dsnix`), and `oh-my-codex` (`omx`)
+- Codex CLI, bubblewrap (`bwrap`), Pi (`pi`), Reasonix (`reasonix`/`dsnix`), and `oh-my-codex` (`omx`)
 - cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)
 - prebuilt OMX native helpers (`omx-api`, `omx-runtime`, `omx-sparkshell`, and `omx-explore-harness`) with matching `OMX_*` binary override environment variables preset
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
