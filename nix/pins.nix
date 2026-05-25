@@ -68,6 +68,15 @@
     npmDepsHash = "sha256-5eCRPuoeBdybFYPWlmPSJEXl71Nq1cV3CpORq6sfjGs=";
   };
 
+  reasonix = {
+    version = "0.50.0";
+    owner = "esengine";
+    repo = "DeepSeek-Reasonix";
+    rev = "28d95059c72885a2f2a23d5732336488e32374c2";
+    srcHash = "sha256-BAUQowb7DKbLHNf9Z4xgZukAKWwVvPOwQ/pSX3gQInM=";
+    npmDepsHash = "sha256-ZCAuwe7SBoRcGgqiIpDlv63I88jQZMKkomD1BMVAVbw=";
+  };
+
   containerLibPolicySeccompJson = {
     owner = "containers";
     repo = "container-libs";
