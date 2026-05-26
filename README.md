@@ -28,6 +28,10 @@ Current runtime split:
   host `fuse-overlayfs` and a reusable `nix-daemon` sidecar.
   `agentbox container sidecar` starts or reuses only the sidecar stack for
   debugging.
+- **Microvm mode (`agentbox microvm`, experimental):** direct-libkrun runtime
+  skeleton for future task-based microVM runs from an OCI image cache. The
+  command and help are present, but image ingestion, task rootfs materialization,
+  and direct libkrun boot are milestone-gated and not implemented yet.
 
 Seeded `/nix` copy fallback has been removed. Container mode always uses the
 managed sidecar.
@@ -542,6 +546,37 @@ podman logs <sidecar-name>
 podman port <sidecar-name> 19876
 podman rm -f <sidecar-name>
 ```
+
+---
+
+### 3) Microvm mode (experimental)
+
+Run/help:
+
+```bash
+./result/bin/agentbox microvm --help
+./result/bin/agentbox microvm --storage auto
+./result/bin/agentbox microvm --storage btrfs
+./result/bin/agentbox microvm --storage fuse-overlay
+```
+
+`agentbox microvm` is an explicit experimental runtime branch for the planned
+task-based direct-libkrun implementation. It is intentionally separate from the
+current Podman-backed `libkrun` mode: slice 01 only adds CLI selection,
+documentation, and a safe placeholder runtime error. It does not ingest OCI
+images, materialize immutable image rootfs caches, create per-task writable
+rootfs snapshots, attach persistent dev-cache disks, or boot a microVM yet.
+
+The planned storage policy values are:
+
+- `auto`: prefer the btrfs fast path when available, otherwise use the portable
+  `fuse-overlayfs` fallback.
+- `btrfs`: require the future btrfs image-rootfs cache/snapshot path.
+- `fuse-overlay`: require the portable future `fuse-overlayfs` image-rootfs
+  path.
+
+Image selection remains global through `--image` or `AGENTBOX_IMAGE`; microvm
+does not add a runtime-local image flag.
 
 ---
 

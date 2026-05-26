@@ -1,5 +1,6 @@
 mod container;
 mod libkrun;
+mod microvm;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -9,6 +10,7 @@ pub use libkrun::{
     LibkrunCommand, LibkrunOptions, LibkrunResetNixOptions, LibkrunResizeOptions,
     LibkrunResizeTarget, LibkrunSubcommand,
 };
+pub use microvm::MicrovmOptions;
 
 use crate::podman::image::{podman_image_exists, pull_image};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -27,6 +29,8 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox libkrun --guest-init ./agentbox-guest-init
   agentbox container
   agentbox container sidecar
+  agentbox microvm --help
+  agentbox microvm --storage auto
   agentbox --debug container sidecar
   agentbox container --debug sidecar
   agentbox --profile --debug
@@ -135,6 +139,7 @@ pub struct CommonOptions {
 pub enum RuntimeCommand {
     Libkrun(LibkrunCommand),
     Container(ContainerOptions),
+    Microvm(MicrovmOptions),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -143,6 +148,8 @@ enum CliCommand {
     Libkrun(LibkrunCommand),
     #[command(about = "Run native Podman container mode with the managed nix-daemon sidecar")]
     Container(ContainerOptions),
+    #[command(about = "Run experimental direct-libkrun microvm mode")]
+    Microvm(MicrovmOptions),
 }
 
 impl From<CliCommand> for RuntimeCommand {
@@ -150,6 +157,7 @@ impl From<CliCommand> for RuntimeCommand {
         match command {
             CliCommand::Libkrun(options) => RuntimeCommand::Libkrun(options),
             CliCommand::Container(options) => RuntimeCommand::Container(options),
+            CliCommand::Microvm(options) => RuntimeCommand::Microvm(options),
         }
     }
 }

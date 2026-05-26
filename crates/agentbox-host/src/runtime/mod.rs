@@ -1,6 +1,7 @@
 mod components;
 mod container;
 mod libkrun;
+mod microvm;
 
 use anyhow::Result;
 use std::process::ExitCode;
@@ -14,6 +15,7 @@ pub(crate) use libkrun::{parse_mem_gib_arg, parse_raw_image_size_arg};
 enum RuntimeMode {
     Container,
     Libkrun,
+    Microvm,
 }
 
 pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
@@ -21,6 +23,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     match command {
         RuntimeCommand::Container(options) => container::run(common, options),
         RuntimeCommand::Libkrun(options) => libkrun::run(common, options),
+        RuntimeCommand::Microvm(options) => microvm::run(common, options),
     }
 }
 
@@ -29,6 +32,7 @@ fn resolve_runtime_mode(cli: &Cli) -> RuntimeMode {
     match cli.runtime_command_or_default() {
         RuntimeCommand::Container(_) => RuntimeMode::Container,
         RuntimeCommand::Libkrun(_) => RuntimeMode::Libkrun,
+        RuntimeCommand::Microvm(_) => RuntimeMode::Microvm,
     }
 }
 
@@ -72,5 +76,22 @@ mod tests {
             resolve_runtime_mode(&parse(&["container", "sidecar"])),
             RuntimeMode::Container
         );
+    }
+
+    #[test]
+    fn microvm_subcommand_resolves_to_microvm() {
+        assert_eq!(
+            resolve_runtime_mode(&parse(&["microvm"])),
+            RuntimeMode::Microvm
+        );
+    }
+
+    #[test]
+    fn microvm_placeholder_error_is_explicit() {
+        let message = crate::runtime::microvm::not_implemented_message().to_lowercase();
+
+        assert!(message.contains("microvm"));
+        assert!(message.contains("experimental"));
+        assert!(message.contains("not implemented"));
     }
 }

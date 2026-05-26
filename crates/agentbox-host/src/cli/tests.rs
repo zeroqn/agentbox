@@ -1,7 +1,8 @@
+use crate::cli::microvm::MicrovmStoragePolicy;
 use crate::cli::{
     Cli, ContainerMode, ImageResolutionStrategy, LibkrunCommand, LibkrunOptions,
     LibkrunResetNixOptions, LibkrunResizeOptions, LibkrunResizeTarget, LibkrunSubcommand,
-    RuntimeCommand, resolve_image_strategy, select_default_image,
+    MicrovmOptions, RuntimeCommand, resolve_image_strategy, select_default_image,
 };
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 use clap::CommandFactory;
@@ -199,6 +200,98 @@ fn cli_accepts_container_subcommand_as_task_mode() {
     match cli.runtime_command_or_default() {
         RuntimeCommand::Container(options) => assert_eq!(options.mode(), ContainerMode::Task),
         other => panic!("expected container command, got {other:?}"),
+    }
+}
+
+#[test]
+fn cli_accepts_microvm_subcommand_with_default_options() {
+    let cli = Cli::try_parse_from(["agentbox", "microvm"]).expect("microvm should parse");
+
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Microvm(MicrovmOptions {
+            storage: MicrovmStoragePolicy::Auto,
+            guest_init: None,
+            preserve_debug: false,
+            mem_gib: None,
+        })
+    );
+}
+
+#[test]
+fn cli_microvm_help_mentions_experimental() {
+    let err = Cli::try_parse_from(["agentbox", "microvm", "--help"])
+        .expect_err("microvm --help should short-circuit");
+
+    assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+    assert!(err.to_string().to_lowercase().contains("experimental"));
+}
+
+#[test]
+fn cli_accepts_global_image_before_microvm_subcommand() {
+    let cli = Cli::try_parse_from([
+        "agentbox",
+        "--image",
+        "ghcr.io/example/agentbox:dev",
+        "microvm",
+    ])
+    .expect("global image flag before microvm should parse");
+
+    assert_eq!(
+        cli.common_options().image.as_deref(),
+        Some("ghcr.io/example/agentbox:dev")
+    );
+    assert!(matches!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Microvm(_)
+    ));
+}
+
+#[test]
+fn cli_accepts_microvm_skeleton_flags() {
+    let cli = Cli::try_parse_from([
+        "agentbox",
+        "microvm",
+        "--storage",
+        "btrfs",
+        "--guest-init",
+        "./agentbox-guest-init",
+        "--preserve-debug",
+        "--mem",
+        "8",
+    ])
+    .expect("microvm skeleton flags should parse");
+
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Microvm(MicrovmOptions {
+            storage: MicrovmStoragePolicy::Btrfs,
+            guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
+            preserve_debug: true,
+            mem_gib: Some(8),
+        })
+    );
+}
+
+#[test]
+fn cli_accepts_all_microvm_storage_policies() {
+    for (storage_arg, expected_storage) in [
+        ("auto", MicrovmStoragePolicy::Auto),
+        ("btrfs", MicrovmStoragePolicy::Btrfs),
+        ("fuse-overlay", MicrovmStoragePolicy::FuseOverlay),
+    ] {
+        let cli = Cli::try_parse_from(["agentbox", "microvm", "--storage", storage_arg])
+            .unwrap_or_else(|err| panic!("storage policy {storage_arg} should parse: {err}"));
+
+        assert!(matches!(
+            cli.runtime_command_or_default(),
+            RuntimeCommand::Microvm(MicrovmOptions {
+                storage,
+                guest_init: None,
+                preserve_debug: false,
+                mem_gib: None,
+            }) if storage == expected_storage
+        ));
     }
 }
 
