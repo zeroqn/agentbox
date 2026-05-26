@@ -49,6 +49,17 @@ let
 
     exec "$@"
   '';
+  rustcCommandCompat = pkgs.writeShellScriptBin "rustc" ''
+    unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
+    exec ${pkgs.bubblewrap}/bin/bwrap \
+      --dev-bind / / \
+      --ro-bind ${emptyLdNixSoPreload} /etc/ld-nix.so.preload \
+      --unsetenv LD_PRELOAD \
+      --unsetenv NSS_WRAPPER_PASSWD \
+      --unsetenv NSS_WRAPPER_GROUP \
+      -- \
+      ${pkgs.rustc}/bin/rustc "$@"
+  '';
   rustAnalyzerCommandCompat = pkgs.writeShellScriptBin "rust-analyzer" ''
     unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
     exec ${pkgs.bubblewrap}/bin/bwrap \
@@ -358,6 +369,7 @@ let
       agentImageLayer
     ];
   imagePath = pkgs.lib.makeBinPath ([
+    rustcCommandCompat
     rustAnalyzerCommandCompat
     nixCommandCompat
     podmanCommandCompat
@@ -381,6 +393,7 @@ let
     podmanCommandCompat
     dockerCommandCompat
     dockerComposeCommandCompat
+    rustcCommandCompat
     rustAnalyzerCommandCompat
   ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
@@ -495,6 +508,7 @@ in
     podmanCommandCompat
     dockerCommandCompat
     dockerComposeCommandCompat
+    rustcCommandCompat
     rustAnalyzerCommandCompat
     grapheneHardenedMalloc
     hardeningRun

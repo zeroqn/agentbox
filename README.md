@@ -75,12 +75,12 @@ env -u LD_PRELOAD -u NSS_WRAPPER_PASSWD -u NSS_WRAPPER_GROUP nix develop
 
 The container also enables GrapheneOS `hardened_malloc` for Nix-linked dynamic
 binaries through `/etc/ld-nix.so.preload`, matching NixOS' allocator preload
-mechanism rather than setting a global allocator `LD_PRELOAD`. `rust-analyzer` is
-started through a wrapper that masks `/etc/ld-nix.so.preload` for that process so
-it keeps the default allocator. Foreign/FHS glibc binaries usually read
-`/etc/ld.so.preload` instead of `/etc/ld-nix.so.preload`, while static or musl
-binaries generally ignore both files. For a specific foreign/FHS command, opt in
-with:
+mechanism rather than setting a global allocator `LD_PRELOAD`. `rustc` and
+`rust-analyzer` are started through wrappers that mask `/etc/ld-nix.so.preload`
+for those processes so they keep the default allocator. Foreign/FHS glibc
+binaries usually read `/etc/ld.so.preload` instead of `/etc/ld-nix.so.preload`,
+while static or musl binaries generally ignore both files. For a specific
+foreign/FHS command, opt in with:
 
 ```bash
 hardening-run some-foreign-binary --flag
@@ -592,8 +592,8 @@ The container provides:
 - `agentbox-nix-store-db-check` for non-mutating live `/nix/store` vs Nix DB
   validity diagnostics, including cautious libkrun upperdir store-layer
   evidence when `/run/agentbox/nix-disk/upper` is visible
-- `rust-analyzer` wrapper that masks `/etc/ld-nix.so.preload` so rust-analyzer
-  keeps the default allocator
+- `rustc` and `rust-analyzer` wrappers that mask `/etc/ld-nix.so.preload` so
+  both tools keep the default allocator
 - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER` preset to the bundled
   `clang_mold_wrapper` helper for the `x86_64-unknown-linux-gnu` target
 - `LIBCLANG_PATH` preset to the bundled Nix `libclang` library directory

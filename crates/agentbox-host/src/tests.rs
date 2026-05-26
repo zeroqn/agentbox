@@ -258,8 +258,16 @@ fn image_includes_hardening_run_for_foreign_binary_allocator_opt_in() {
 }
 
 #[test]
-fn rust_analyzer_wrapper_masks_nix_loader_preload() {
+fn rust_tool_wrappers_mask_nix_loader_preload() {
     for required in [
+        "rustcCommandCompat",
+        r#"pkgs.writeShellScriptBin "rustc""#,
+        "agentbox-empty-ld-nix-so-preload",
+        "--ro-bind ${emptyLdNixSoPreload} /etc/ld-nix.so.preload",
+        "--unsetenv LD_PRELOAD",
+        "--unsetenv NSS_WRAPPER_PASSWD",
+        "--unsetenv NSS_WRAPPER_GROUP",
+        r#"${pkgs.rustc}/bin/rustc "$@""#,
         "rustAnalyzerCommandCompat",
         r#"pkgs.writeShellScriptBin "rust-analyzer""#,
         "agentbox-empty-ld-nix-so-preload",
