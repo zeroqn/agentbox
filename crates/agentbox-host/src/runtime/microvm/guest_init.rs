@@ -15,7 +15,7 @@ pub(crate) fn resolve_guest_init(
     task_rootfs: &Path,
     override_path: Option<&Path>,
 ) -> Result<ResolvedGuestInit> {
-    let target = find_default_guest_init(task_rootfs)?;
+    let target = find_agentbox_guest_init(task_rootfs)?;
     if let Some(override_path) = override_path {
         copy_guest_init_override(override_path, &target)?;
     }
@@ -25,7 +25,7 @@ pub(crate) fn resolve_guest_init(
     })
 }
 
-fn find_default_guest_init(task_rootfs: &Path) -> Result<PathBuf> {
+pub(crate) fn find_agentbox_guest_init(task_rootfs: &Path) -> Result<PathBuf> {
     let store = task_rootfs.join("nix/store");
     let mut matches = Vec::new();
     if store.is_dir() {

@@ -14,6 +14,21 @@ pub(crate) trait LibkrunApi {
     fn set_log_level(&mut self, level: u32) -> Result<i32>;
     fn set_vm_config(&mut self, ctx_id: u32, vcpus: u8, ram_mib: u32) -> Result<i32>;
     fn set_root(&mut self, ctx_id: u32, root_path: &Path) -> Result<i32>;
+    fn add_disk(
+        &mut self,
+        ctx_id: u32,
+        block_id: &str,
+        disk_path: &Path,
+        read_only: bool,
+    ) -> Result<i32>;
+    fn disable_implicit_console(&mut self, ctx_id: u32) -> Result<i32>;
+    fn add_virtio_console_default(
+        &mut self,
+        ctx_id: u32,
+        input_fd: i32,
+        output_fd: i32,
+        err_fd: i32,
+    ) -> Result<i32>;
     fn add_virtiofs3(
         &mut self,
         ctx_id: u32,
@@ -63,6 +78,16 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         check_setup("krun_set_vm_config", rc)?;
         let rc = self.api.set_root(ctx_id, &config.task_rootfs)?;
         check_setup("krun_set_root", rc)?;
+        for disk in &config.disks {
+            let rc = self
+                .api
+                .add_disk(ctx_id, &disk.id, &disk.path, disk.read_only)?;
+            check_setup("krun_add_disk", rc)?;
+        }
+        let rc = self.api.disable_implicit_console(ctx_id)?;
+        check_setup("krun_disable_implicit_console", rc)?;
+        let rc = self.api.add_virtio_console_default(ctx_id, 0, 1, 2)?;
+        check_setup("krun_add_virtio_console_default", rc)?;
         let rc = self.api.add_virtiofs3(
             ctx_id,
             &config.workspace.tag,
@@ -101,6 +126,9 @@ type KrunCreateCtx = unsafe extern "C" fn() -> i32;
 type KrunFreeCtx = unsafe extern "C" fn(u32) -> i32;
 type KrunSetVmConfig = unsafe extern "C" fn(u32, u8, u32) -> i32;
 type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
+type KrunAddDisk = unsafe extern "C" fn(u32, *const c_char, *const c_char, bool) -> i32;
+type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
+type KrunAddVirtioConsoleDefault = unsafe extern "C" fn(u32, i32, i32, i32) -> i32;
 type KrunAddVirtiofs3 = unsafe extern "C" fn(u32, *const c_char, *const c_char, u64, bool) -> i32;
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
@@ -114,6 +142,9 @@ pub(crate) struct DynamicLibkrunApi {
     free_ctx: KrunFreeCtx,
     set_vm_config: KrunSetVmConfig,
     set_root: KrunSetRoot,
+    add_disk: KrunAddDisk,
+    disable_implicit_console: KrunDisableImplicitConsole,
+    add_virtio_console_default: KrunAddVirtioConsoleDefault,
     add_virtiofs3: KrunAddVirtiofs3,
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
@@ -163,6 +194,24 @@ impl DynamicLibkrunApi {
                     set_root: std::mem::transmute::<*mut c_void, KrunSetRoot>(load_symbol(
                         handle,
                         "krun_set_root",
+                    )?),
+                    add_disk: std::mem::transmute::<*mut c_void, KrunAddDisk>(load_symbol(
+                        handle,
+                        "krun_add_disk",
+                    )?),
+                    disable_implicit_console: std::mem::transmute::<
+                        *mut c_void,
+                        KrunDisableImplicitConsole,
+                    >(load_symbol(
+                        handle,
+                        "krun_disable_implicit_console",
+                    )?),
+                    add_virtio_console_default: std::mem::transmute::<
+                        *mut c_void,
+                        KrunAddVirtioConsoleDefault,
+                    >(load_symbol(
+                        handle,
+                        "krun_add_virtio_console_default",
                     )?),
                     add_virtiofs3: std::mem::transmute::<*mut c_void, KrunAddVirtiofs3>(
                         load_symbol(handle, "krun_add_virtiofs3")?,
@@ -227,6 +276,35 @@ impl LibkrunApi for DynamicLibkrunApi {
         let root_path = path_cstring(root_path)?;
         // SAFETY: C string lives for the duration of the call.
         Ok(unsafe { (self.set_root)(ctx_id, root_path.as_ptr()) })
+    }
+
+    fn add_disk(
+        &mut self,
+        ctx_id: u32,
+        block_id: &str,
+        disk_path: &Path,
+        read_only: bool,
+    ) -> Result<i32> {
+        let block_id = CString::new(block_id)?;
+        let disk_path = path_cstring(disk_path)?;
+        // SAFETY: C strings live for the duration of the call.
+        Ok(unsafe { (self.add_disk)(ctx_id, block_id.as_ptr(), disk_path.as_ptr(), read_only) })
+    }
+
+    fn disable_implicit_console(&mut self, ctx_id: u32) -> Result<i32> {
+        // SAFETY: function pointer resolved from libkrun with verified signature.
+        Ok(unsafe { (self.disable_implicit_console)(ctx_id) })
+    }
+
+    fn add_virtio_console_default(
+        &mut self,
+        ctx_id: u32,
+        input_fd: i32,
+        output_fd: i32,
+        err_fd: i32,
+    ) -> Result<i32> {
+        // SAFETY: function pointer resolved from libkrun with verified signature.
+        Ok(unsafe { (self.add_virtio_console_default)(ctx_id, input_fd, output_fd, err_fd) })
     }
 
     fn add_virtiofs3(
@@ -341,6 +419,9 @@ mod tests {
         SetLogLevel(u32),
         SetVmConfig(u32, u8, u32),
         SetRoot(u32, String),
+        AddDisk(u32, String, String, bool),
+        DisableImplicitConsole(u32),
+        AddVirtioConsoleDefault(u32, i32, i32, i32),
         AddVirtiofs3(u32, String, String, u64, bool),
         SetWorkdir(u32, String),
         SetExec(u32, String, Vec<String>, Vec<(String, String)>),
@@ -401,6 +482,42 @@ mod tests {
                 .borrow_mut()
                 .push(Call::SetRoot(ctx_id, root_path.display().to_string()));
             Ok(self.rc("krun_set_root"))
+        }
+
+        fn add_disk(
+            &mut self,
+            ctx_id: u32,
+            block_id: &str,
+            disk_path: &Path,
+            read_only: bool,
+        ) -> Result<i32> {
+            self.calls.borrow_mut().push(Call::AddDisk(
+                ctx_id,
+                block_id.to_owned(),
+                disk_path.display().to_string(),
+                read_only,
+            ));
+            Ok(self.rc("krun_add_disk"))
+        }
+
+        fn disable_implicit_console(&mut self, ctx_id: u32) -> Result<i32> {
+            self.calls
+                .borrow_mut()
+                .push(Call::DisableImplicitConsole(ctx_id));
+            Ok(self.rc("krun_disable_implicit_console"))
+        }
+
+        fn add_virtio_console_default(
+            &mut self,
+            ctx_id: u32,
+            input_fd: i32,
+            output_fd: i32,
+            err_fd: i32,
+        ) -> Result<i32> {
+            self.calls.borrow_mut().push(Call::AddVirtioConsoleDefault(
+                ctx_id, input_fd, output_fd, err_fd,
+            ));
+            Ok(self.rc("krun_add_virtio_console_default"))
         }
 
         fn add_virtiofs3(
@@ -471,6 +588,19 @@ mod tests {
             host_uid: 1000,
             host_gid: 1001,
             vcpus: 2,
+            disks: vec![
+                crate::runtime::microvm::launch::MicrovmDiskAttachment {
+                    id: "agentbox-nix".to_owned(),
+                    path: Path::new("/state/microvm-nix.raw").to_path_buf(),
+                    read_only: false,
+                },
+                crate::runtime::microvm::launch::MicrovmDiskAttachment {
+                    id: "agentbox-containers".to_owned(),
+                    path: Path::new("/state/microvm-containers.raw").to_path_buf(),
+                    read_only: false,
+                },
+            ],
+            extra_env: Vec::new(),
         })
         .expect("config should build")
     }
@@ -489,6 +619,26 @@ mod tests {
         assert_eq!(calls[3], Call::SetRoot(7, "/rootfs".to_owned()));
         assert_eq!(
             calls[4],
+            Call::AddDisk(
+                7,
+                "agentbox-nix".to_owned(),
+                "/state/microvm-nix.raw".to_owned(),
+                false,
+            )
+        );
+        assert_eq!(
+            calls[5],
+            Call::AddDisk(
+                7,
+                "agentbox-containers".to_owned(),
+                "/state/microvm-containers.raw".to_owned(),
+                false,
+            )
+        );
+        assert_eq!(calls[6], Call::DisableImplicitConsole(7));
+        assert_eq!(calls[7], Call::AddVirtioConsoleDefault(7, 0, 1, 2));
+        assert_eq!(
+            calls[8],
             Call::AddVirtiofs3(
                 7,
                 "agentbox-workspace".to_owned(),
@@ -497,12 +647,12 @@ mod tests {
                 false,
             )
         );
-        assert_eq!(calls[5], Call::SetWorkdir(7, "/workspace".to_owned()));
-        assert!(matches!(calls[6], Call::SetExec(7, _, _, _)));
-        assert_eq!(calls[7], Call::StartEnter(7));
+        assert_eq!(calls[9], Call::SetWorkdir(7, "/workspace".to_owned()));
+        assert!(matches!(calls[10], Call::SetExec(7, _, _, _)));
+        assert_eq!(calls[11], Call::StartEnter(7));
         assert_eq!(
             calls.len(),
-            8,
+            12,
             "v1 must not call krun_set_env or passt APIs"
         );
     }

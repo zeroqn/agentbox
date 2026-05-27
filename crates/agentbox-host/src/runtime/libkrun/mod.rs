@@ -5,6 +5,7 @@ mod resize;
 mod task;
 #[cfg(test)]
 mod task_tests;
+pub(crate) use components::disk::raw_btrfs;
 pub(crate) use components::memory::parse_mem_gib_arg;
 pub(crate) use resize::parse_raw_image_size_arg;
 

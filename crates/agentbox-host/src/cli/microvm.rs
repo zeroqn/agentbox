@@ -4,6 +4,17 @@ use std::path::PathBuf;
 use crate::runtime::parse_mem_gib_arg;
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
+#[command(
+    long_about = "Run experimental direct-libkrun microvm mode as a one-shot task with a clean task rootfs.",
+    after_help = "Microvm notes:
+  - experimental direct-libkrun path; separate from Podman-backed libkrun mode
+  - each run gets a clean task rootfs copied from the immutable image rootfs cache
+  - --preserve-debug keeps the task rootfs and launch config for inspection after failures
+  - persistent /nix and container-store disk images are reused per workspace
+  - no inbound port publishing is available in this experimental mode
+  - outbound networking uses libkrun's current default path and needs real-VM smoke validation
+  - terminal resize has the default virtio-console hook wired, but still needs real-VM smoke validation"
+)]
 pub struct MicrovmOptions {
     #[arg(
         long = "storage",

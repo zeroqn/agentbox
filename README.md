@@ -30,10 +30,10 @@ Current runtime split:
   debugging.
 - **Microvm mode (`agentbox microvm`, experimental):** task-based direct-libkrun
   runtime branch for one-shot microVM runs from an OCI image cache. It prepares
-  a clean per-task rootfs, supervises a same-binary helper that calls libkrun
-  directly, runs `agentbox-guest-init microvm enter`, and mounts the current
-  workspace at `/workspace` through virtiofs. Persistent dev-cache disks remain
-  a follow-up milestone.
+  a clean per-task rootfs, attaches per-workspace sparse btrfs disks for `/nix`
+  and rootless container storage, supervises a same-binary helper that calls
+  libkrun directly, runs `agentbox-guest-init microvm enter`, and mounts the
+  current workspace at `/workspace` through virtiofs.
 
 Seeded `/nix` copy fallback has been removed. Container mode always uses the
 managed sidecar.
@@ -49,12 +49,14 @@ managed sidecar.
   by the `.#agentbox-prebuilt` package runtime environment)
 - `buildah` for experimental `agentbox microvm` cache misses or future cache
   refreshes. Existing digest-keyed microvm cache hits do not require Buildah.
+  The current dev shell keeps Buildah optional because cache-hit launches remain
+  Buildah-free and real host cache-miss smoke is tracked separately.
 - `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
   normal host binary does not link to libkrun at build time; the hidden microvm
   helper loads it dynamically immediately before entering the VM.
-- `mkfs.btrfs` and `blkid` on the host for first-time libkrun raw-image
-  creation and reuse validation (`btrfs-progs` + `util-linux`; included in
-  `nix develop`)
+- `mkfs.btrfs` and `blkid` on the host for first-time libkrun/microvm
+  raw-image creation and reuse validation (`btrfs-progs` + `util-linux`;
+  included in `nix develop`)
 - `/dev/net/tun` on the host for libkrun mode, passed through to the guest so
   nested rootless Podman can set up TUN-backed networking.
 - default libkrun mode requires Podman using the custom crun/libkrun stack that
@@ -581,23 +583,45 @@ Current implemented milestone:
 - digest-pinned references hit by digest;
 - mutable tags may hit only through local ref-to-digest metadata, which is a
   cache hint rather than an authoritative freshness check;
+- cache misses are ingested through the microvm-owned Buildah path: `buildah
+  from`, `buildah inspect --format '{{.FromImageDigest}}'`, `buildah mount`,
+  a rootfs-preserving copy into the digest-keyed cache, exact-one executable
+  `agentbox-guest-init` validation, atomic compatibility marker finalization,
+  then `buildah umount`/`buildah rm` cleanup;
 - per-task writable rootfs directories are materialized from compatible cached
-  roots and removed after the run unless `--preserve-debug` is set;
+  roots with executable modes and symlinks preserved, then removed after the run
+  unless `--preserve-debug` is set;
+- the parent process prepares two per-workspace sparse btrfs raw disks:
+
+  ```text
+  <state-root>/microvm-nix.raw
+  <state-root>/microvm-containers.raw
+  ```
+
+  Each disk has a default apparent size of `64 GiB` and is reused only when the
+  existing file validates as btrfs. Invalid existing files are refused rather
+  than reformatted automatically;
 - the parent process writes a std-only `KEY=hex-encoded-value` launch config,
   starts a hidden same-binary helper, waits for the helper status, maps that
   status back to the `agentbox microvm` exit code, and still cleans the task
   rootfs after helper failure;
 - the helper dynamically loads `libkrun.so`, creates a context, sets CPU/memory,
-  sets the task rootfs, adds the workspace virtiofs device, sets workdir/exec
-  and env through `krun_set_exec`, then calls `krun_start_enter()`;
+  sets the task rootfs, attaches `/nix` and container-store disks through
+  `krun_add_disk`, disables libkrun's implicit console, wires stdio through
+  `krun_add_virtio_console_default(0, 1, 2)`, adds the workspace virtiofs
+  device, sets workdir/exec and env through `krun_set_exec`, then calls
+  `krun_start_enter()`;
 - inside the guest, `agentbox-guest-init microvm enter` mounts the workspace
-  virtiofs tag at `/workspace` before dropping to the host/dev identity and
-  execing the default `fish -l` shell.
+  virtiofs tag at `/workspace`, starts reusable Nix and rootless container-store
+  preparation against the attached disks, then drops to the host/dev identity and
+  execs the default `fish -l` shell.
 
-Current limitations: real Buildah unpacking into the cache is still pending,
-networking relies on libkrun's no-passt default path, terminal resize handling is
-not complete, and persistent `/nix` plus container-store disks are deferred to
-the next slice.
+Current limitations: real Buildah cache-miss smoke has not been run in this
+workspace, networking relies on libkrun's no-passt/TSI default path, inbound
+port publishing is intentionally unavailable, terminal resize has only the
+narrow default virtio-console hook wired so far, and real VM smoke validation is
+still pending. See `docs/microvm-smoke.md` for the manual smoke checklist and
+current not-tested items.
 
 The storage policy values are:
 
@@ -608,6 +632,13 @@ The storage policy values are:
 
 Image selection remains global through `--image` or `AGENTBOX_IMAGE`; microvm
 does not add a runtime-local image flag.
+
+Failure diagnostics are phase-classified around cache ingestion, storage backend
+selection, task rootfs materialization, guest-init resolution, persistent disk
+preparation, launch config construction, helper/libkrun launch, and cleanup. If
+`--preserve-debug` is set and a failure happens after task rootfs
+materialization, the error reports the preserved task rootfs, task state
+directory, and expected `launch.conf` path for inspection.
 
 ---
 

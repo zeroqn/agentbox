@@ -222,9 +222,24 @@ fn cli_accepts_microvm_subcommand_with_default_options() {
 fn cli_microvm_help_mentions_experimental() {
     let err = Cli::try_parse_from(["agentbox", "microvm", "--help"])
         .expect_err("microvm --help should short-circuit");
+    let help = err.to_string().to_lowercase();
 
     assert_eq!(err.kind(), ErrorKind::DisplayHelp);
-    assert!(err.to_string().to_lowercase().contains("experimental"));
+    for expected in [
+        "experimental",
+        "clean task rootfs",
+        "--preserve-debug",
+        "persistent /nix",
+        "container-store disk",
+        "no inbound port publishing",
+        "terminal resize",
+        "outbound networking",
+    ] {
+        assert!(
+            help.contains(expected),
+            "microvm help should mention {expected:?}"
+        );
+    }
 }
 
 #[test]

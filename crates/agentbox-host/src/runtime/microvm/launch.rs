@@ -23,6 +23,13 @@ pub(crate) struct MicrovmWorkspaceMount {
     pub(crate) target: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MicrovmDiskAttachment {
+    pub(crate) id: String,
+    pub(crate) path: PathBuf,
+    pub(crate) read_only: bool,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct MicrovmLaunchSpec<'a> {
     pub(crate) task_rootfs: &'a Path,
@@ -33,12 +40,15 @@ pub(crate) struct MicrovmLaunchSpec<'a> {
     pub(crate) host_uid: u32,
     pub(crate) host_gid: u32,
     pub(crate) vcpus: u8,
+    pub(crate) disks: Vec<MicrovmDiskAttachment>,
+    pub(crate) extra_env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MicrovmLaunchConfig {
     pub(crate) task_rootfs: PathBuf,
     pub(crate) workspace: MicrovmWorkspaceMount,
+    pub(crate) disks: Vec<MicrovmDiskAttachment>,
     pub(crate) ram_mib: u32,
     pub(crate) vcpus: u8,
     pub(crate) workdir: String,
@@ -69,6 +79,7 @@ impl MicrovmLaunchConfig {
         if spec.common.debug {
             env.push((GUEST_DEBUG_ENV.to_owned(), "1".to_owned()));
         }
+        env.extend(spec.extra_env);
 
         Ok(Self {
             task_rootfs: spec.task_rootfs.to_path_buf(),
@@ -77,6 +88,7 @@ impl MicrovmLaunchConfig {
                 tag: WORKSPACE_TAG.to_owned(),
                 target: CONTAINER_WORKDIR.to_owned(),
             },
+            disks: spec.disks,
             ram_mib,
             vcpus: spec.vcpus,
             workdir: CONTAINER_WORKDIR.to_owned(),
@@ -138,6 +150,19 @@ impl MicrovmLaunchConfig {
         push_field(&mut out, "vcpus", &self.vcpus.to_string());
         push_field(&mut out, "workdir", &self.workdir);
         push_field(&mut out, "exec_path", &self.exec_path);
+        for (index, disk) in self.disks.iter().enumerate() {
+            push_field(&mut out, &format!("disk.{index}.id"), &disk.id);
+            push_field(
+                &mut out,
+                &format!("disk.{index}.path"),
+                &disk.path.display().to_string(),
+            );
+            push_field(
+                &mut out,
+                &format!("disk.{index}.read_only"),
+                if disk.read_only { "true" } else { "false" },
+            );
+        }
         for (index, arg) in self.argv.iter().enumerate() {
             push_field(&mut out, &format!("argv.{index}"), arg);
         }
@@ -151,6 +176,7 @@ impl MicrovmLaunchConfig {
         let mut fields = BTreeMap::new();
         let mut argv = BTreeMap::new();
         let mut env = BTreeMap::new();
+        let mut disks: BTreeMap<usize, PartialDiskAttachment> = BTreeMap::new();
 
         for (line_index, line) in text.lines().enumerate() {
             if line.trim().is_empty() {
@@ -168,7 +194,26 @@ impl MicrovmLaunchConfig {
                     line_index + 1
                 )
             })?;
-            if let Some(index) = key.strip_prefix("argv.") {
+            if let Some(rest) = key.strip_prefix("disk.") {
+                let (index, field) = rest.split_once('.').ok_or_else(|| {
+                    anyhow!("microvm launch config disk entry {key} is missing field")
+                })?;
+                let disk = disks.entry(parse_index(key, index)?).or_default();
+                match field {
+                    "id" => disk.id = Some(value),
+                    "path" => disk.path = Some(PathBuf::from(value)),
+                    "read_only" => {
+                        disk.read_only = Some(match value.as_str() {
+                            "true" => true,
+                            "false" => false,
+                            _ => anyhow::bail!(
+                                "microvm launch config disk entry {key} has invalid read_only"
+                            ),
+                        });
+                    }
+                    _ => anyhow::bail!("microvm launch config contains unknown key {key}"),
+                }
+            } else if let Some(index) = key.strip_prefix("argv.") {
                 argv.insert(parse_index(key, index)?, value);
             } else if let Some(index) = key.strip_prefix("env.") {
                 let (name, actual) = value.split_once('=').ok_or_else(|| {
@@ -216,12 +261,39 @@ impl MicrovmLaunchConfig {
                 tag: required("workspace_tag")?,
                 target: required("workspace_target")?,
             },
+            disks: disks
+                .into_iter()
+                .map(|(index, disk)| disk.finish(index))
+                .collect::<Result<Vec<_>>>()?,
             ram_mib,
             vcpus,
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,
             argv: argv.into_values().collect(),
             env: env.into_values().collect(),
+        })
+    }
+}
+
+#[derive(Default)]
+struct PartialDiskAttachment {
+    id: Option<String>,
+    path: Option<PathBuf>,
+    read_only: Option<bool>,
+}
+
+impl PartialDiskAttachment {
+    fn finish(self, index: usize) -> Result<MicrovmDiskAttachment> {
+        Ok(MicrovmDiskAttachment {
+            id: self
+                .id
+                .ok_or_else(|| anyhow!("microvm launch config disk.{index} missing id"))?,
+            path: self
+                .path
+                .ok_or_else(|| anyhow!("microvm launch config disk.{index} missing path"))?,
+            read_only: self
+                .read_only
+                .ok_or_else(|| anyhow!("microvm launch config disk.{index} missing read_only"))?,
         })
     }
 }
@@ -288,7 +360,9 @@ mod tests {
     use std::path::Path;
 
     use crate::cli::{CommonOptions, MicrovmOptions, MicrovmStoragePolicy};
-    use crate::runtime::microvm::launch::{MicrovmLaunchConfig, MicrovmLaunchSpec};
+    use crate::runtime::microvm::launch::{
+        MicrovmDiskAttachment, MicrovmLaunchConfig, MicrovmLaunchSpec,
+    };
 
     #[test]
     fn launch_config_defaults_to_guest_init_microvm_enter_fish_shell() {
@@ -312,6 +386,8 @@ mod tests {
             host_uid: 1000,
             host_gid: 1001,
             vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
         })
         .expect("launch config should build");
 
@@ -369,6 +445,22 @@ mod tests {
             host_uid: 1000,
             host_gid: 1001,
             vcpus: 2,
+            disks: vec![
+                MicrovmDiskAttachment {
+                    id: "agentbox-nix".to_owned(),
+                    path: Path::new("/state/microvm-nix.raw").to_path_buf(),
+                    read_only: false,
+                },
+                MicrovmDiskAttachment {
+                    id: "agentbox-containers".to_owned(),
+                    path: Path::new("/state/microvm-containers.raw").to_path_buf(),
+                    read_only: false,
+                },
+            ],
+            extra_env: vec![(
+                "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE".to_owned(),
+                "1".to_owned(),
+            )],
         })
         .expect("launch config should build");
 
@@ -376,6 +468,12 @@ mod tests {
 
         assert_eq!(parsed, config);
         assert!(parsed.env_contains("AGENTBOX_ENTER_AS_ROOT", "1"));
+        assert!(parsed.env_contains("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE", "1"));
+        assert_eq!(parsed.disks[0].id, "agentbox-nix");
+        assert_eq!(
+            parsed.disks[1].path,
+            Path::new("/state/microvm-containers.raw")
+        );
     }
 
     #[test]

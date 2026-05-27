@@ -3,7 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::guest_init::cli::{MicrovmCommand, MicrovmSubcommand};
-use crate::guest_init::components::env::{DEFAULT_SHELL, ENTER_AS_ROOT_ENV};
+use crate::guest_init::components::env::{
+    DEFAULT_SHELL, ENTER_AS_ROOT_ENV, LibkrunEnv, NIX_REMOTE_URI,
+};
 use crate::guest_init::components::home::identity::{DevIdentity, validate_host_identity};
 use crate::guest_init::{command, process, profile};
 
@@ -23,6 +25,9 @@ pub(in crate::guest_init) enum MicrovmEnterOperation {
     MaterializeHome,
     MaterializeAllocatorPreload,
     RestrictDmesg,
+    StartNixPrep,
+    StartPodmanPrep,
+    ExportNixRemote,
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
     DropAndExec,
@@ -39,6 +44,9 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<MicrovmEnterOpera
         MicrovmEnterOperation::MaterializeHome,
         MicrovmEnterOperation::MaterializeAllocatorPreload,
         MicrovmEnterOperation::RestrictDmesg,
+        MicrovmEnterOperation::StartNixPrep,
+        MicrovmEnterOperation::StartPodmanPrep,
+        MicrovmEnterOperation::ExportNixRemote,
         MicrovmEnterOperation::ClearProfileEnvBeforeExec,
         MicrovmEnterOperation::ReportProfileBeforeExec,
         MicrovmEnterOperation::DropAndExec,
@@ -52,6 +60,7 @@ struct MicrovmEnv {
     enter_as_root: bool,
     host_uid: Option<u32>,
     host_gid: Option<u32>,
+    libkrun: LibkrunEnv,
 }
 
 trait EnvSource {
@@ -88,7 +97,10 @@ fn enter_microvm(command: Vec<String>) -> Result<()> {
         )
     })?;
     let shell_env = profiler.measure("derive-shell-env", || {
-        crate::guest_init::components::shell::env::derive(&identity, false)
+        crate::guest_init::components::shell::env::derive(
+            &identity,
+            env_contract.libkrun.containers_storage,
+        )
     });
     profiler.measure("export-shell-env", || {
         crate::guest_init::components::shell::env::export(&shell_env)
@@ -107,6 +119,22 @@ fn enter_microvm(command: Vec<String>) -> Result<()> {
         }
         Ok(())
     })?;
+    profiler.measure_result("start-nix-prep", || {
+        crate::guest_init::components::nix::root::start_background_prep(&env_contract.libkrun)
+    })?;
+    profiler.measure_result("start-podman-prep", || {
+        crate::guest_init::components::podman::root::start_background_prep(
+            &identity,
+            &env_contract.libkrun,
+        )
+    })?;
+    profiler.measure("export-nix-remote", || {
+        if env_contract.libkrun.nix_overlay {
+            // SAFETY: microvm entry mutates the process environment during
+            // single-threaded bootstrap before exec so the shell sees NIX_REMOTE.
+            unsafe { std::env::set_var("NIX_REMOTE", NIX_REMOTE_URI) };
+        }
+    });
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
@@ -135,8 +163,40 @@ impl MicrovmEnv {
             enter_as_root: env.var(ENTER_AS_ROOT_ENV).as_deref() == Some("1"),
             host_uid: parse_optional_u32(env, HOST_UID_ENV)?,
             host_gid: parse_optional_u32(env, HOST_GID_ENV)?,
+            libkrun: libkrun_env_from(env)?,
         })
     }
+}
+
+fn libkrun_env_from(env: &impl EnvSource) -> Result<LibkrunEnv> {
+    Ok(LibkrunEnv {
+        nix_overlay: env_flag(env, "AGENTBOX_LIBKRUN_NIX_OVERLAY"),
+        containers_storage: env_flag(env, "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE"),
+        use_passt: env_flag(env, "AGENTBOX_LIBKRUN_USE_PASST"),
+        enter_as_root: env_flag(env, ENTER_AS_ROOT_ENV),
+        host_uid: parse_optional_u32(env, HOST_UID_ENV)?,
+        host_gid: parse_optional_u32(env, HOST_GID_ENV)?,
+        nix_disk_id: env
+            .var("AGENTBOX_LIBKRUN_NIX_DISK_ID")
+            .unwrap_or_else(|| crate::guest_init::components::env::RAW_NIX_DISK_ID.to_owned()),
+        nix_disk_label: env
+            .var("AGENTBOX_LIBKRUN_NIX_DISK_LABEL")
+            .unwrap_or_else(|| crate::guest_init::components::env::RAW_NIX_DISK_LABEL.to_owned()),
+        containers_disk_id: env
+            .var("AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID")
+            .unwrap_or_else(|| {
+                crate::guest_init::components::env::RAW_CONTAINER_DISK_ID.to_owned()
+            }),
+        containers_disk_label: env
+            .var("AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL")
+            .unwrap_or_else(|| {
+                crate::guest_init::components::env::RAW_CONTAINER_DISK_LABEL.to_owned()
+            }),
+    })
+}
+
+fn env_flag(env: &impl EnvSource, name: &str) -> bool {
+    env.var(name).as_deref() == Some("1")
 }
 
 fn parse_optional_u32(env: &impl EnvSource, name: &str) -> Result<Option<u32>> {
@@ -270,19 +330,33 @@ mod tests {
     #[test]
     fn planned_microvm_enter_mounts_workspace_before_identity_drop_and_exec() {
         let operations = planned_enter_operations();
-        let mount = operations
-            .iter()
-            .position(|op| op == &MicrovmEnterOperation::MountWorkspace)
-            .expect("mount operation should exist");
-        let drop = operations
-            .iter()
-            .position(|op| op == &MicrovmEnterOperation::DropAndExec)
-            .expect("drop/exec operation should exist");
+        let pos = |op| {
+            operations
+                .iter()
+                .position(|candidate| candidate == &op)
+                .expect("operation should exist")
+        };
 
-        assert!(mount < drop);
-        let names = format!("{operations:?}").to_lowercase();
-        assert!(!names.contains("podman"));
-        assert!(!names.contains("nix"));
+        assert!(
+            pos(MicrovmEnterOperation::MountWorkspace)
+                < pos(MicrovmEnterOperation::ResolveIdentity)
+        );
+        assert!(
+            pos(MicrovmEnterOperation::MountWorkspace) < pos(MicrovmEnterOperation::StartNixPrep)
+        );
+        assert!(
+            pos(MicrovmEnterOperation::ResolveIdentity)
+                < pos(MicrovmEnterOperation::StartPodmanPrep)
+        );
+        assert!(
+            pos(MicrovmEnterOperation::StartNixPrep) < pos(MicrovmEnterOperation::StartPodmanPrep)
+        );
+        assert!(
+            pos(MicrovmEnterOperation::StartPodmanPrep) < pos(MicrovmEnterOperation::DropAndExec)
+        );
+        assert!(
+            pos(MicrovmEnterOperation::ExportNixRemote) < pos(MicrovmEnterOperation::DropAndExec)
+        );
     }
 
     #[test]
@@ -301,6 +375,35 @@ mod tests {
             ]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn microvm_env_accepts_libkrun_disk_compatibility_bridge() {
+        let env = MicrovmEnv::from_env(&env(&[
+            (WORKSPACE_TAG_ENV, "agentbox-workspace"),
+            ("AGENTBOX_LIBKRUN_NIX_OVERLAY", "1"),
+            ("AGENTBOX_LIBKRUN_NIX_DISK_ID", "agentbox-nix"),
+            ("AGENTBOX_LIBKRUN_NIX_DISK_LABEL", "AGENTBOX_NIX"),
+            ("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE", "1"),
+            ("AGENTBOX_LIBKRUN_CONTAINERS_DISK_ID", "agentbox-containers"),
+            (
+                "AGENTBOX_LIBKRUN_CONTAINERS_DISK_LABEL",
+                "AGENTBOX_CONTAINERS",
+            ),
+            (HOST_UID_ENV, "1000"),
+            (HOST_GID_ENV, "1001"),
+        ]))
+        .expect("env should parse");
+
+        assert!(env.libkrun.nix_overlay);
+        assert!(env.libkrun.containers_storage);
+        assert!(!env.libkrun.use_passt);
+        assert_eq!(env.libkrun.nix_disk_id, "agentbox-nix");
+        assert_eq!(env.libkrun.nix_disk_label, "AGENTBOX_NIX");
+        assert_eq!(env.libkrun.containers_disk_id, "agentbox-containers");
+        assert_eq!(env.libkrun.containers_disk_label, "AGENTBOX_CONTAINERS");
+        assert_eq!(env.libkrun.host_uid, Some(1000));
+        assert_eq!(env.libkrun.host_gid, Some(1001));
     }
 
     #[test]

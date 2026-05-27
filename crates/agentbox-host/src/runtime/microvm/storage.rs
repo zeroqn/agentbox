@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use std::fs;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use crate::cli::MicrovmStoragePolicy;
@@ -114,7 +115,7 @@ impl StorageManager {
                 )
             })?;
         }
-        copy_dir(&entry.rootfs, &root).with_context(|| {
+        copy_rootfs_tree(&entry.rootfs, &root).with_context(|| {
             format!(
                 "failed to materialize microvm task rootfs from '{}' to '{}'",
                 entry.rootfs.display(),
@@ -138,7 +139,21 @@ fn command_available(command: &str) -> bool {
         .is_ok()
 }
 
-fn copy_dir(source: &Path, destination: &Path) -> Result<()> {
+pub(crate) fn copy_rootfs_tree(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(source)
+        .with_context(|| format!("failed to stat '{}'", source.display()))?;
+    if metadata.file_type().is_symlink() {
+        copy_symlink(source, destination)
+    } else if metadata.is_dir() {
+        copy_dir(source, destination, &metadata)
+    } else if metadata.is_file() {
+        copy_file(source, destination, &metadata)
+    } else {
+        anyhow::bail!("unsupported rootfs entry type '{}'", source.display())
+    }
+}
+
+fn copy_dir(source: &Path, destination: &Path, metadata: &fs::Metadata) -> Result<()> {
     fs::create_dir_all(destination)
         .with_context(|| format!("failed to create '{}'", destination.display()))?;
     for entry in
@@ -147,22 +162,50 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<()> {
         let entry = entry?;
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            if let Some(parent) = destination_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::copy(&source_path, &destination_path).with_context(|| {
-                format!(
-                    "failed to copy '{}' to '{}'",
-                    source_path.display(),
-                    destination_path.display()
-                )
-            })?;
-        }
+        copy_rootfs_tree(&source_path, &destination_path)?;
     }
+    fs::set_permissions(
+        destination,
+        fs::Permissions::from_mode(metadata.permissions().mode()),
+    )
+    .with_context(|| format!("failed to preserve mode on '{}'", destination.display()))?;
+    Ok(())
+}
+
+fn copy_file(source: &Path, destination: &Path, metadata: &fs::Metadata) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create '{}'", parent.display()))?;
+    }
+    fs::copy(source, destination).with_context(|| {
+        format!(
+            "failed to copy '{}' to '{}'",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    fs::set_permissions(
+        destination,
+        fs::Permissions::from_mode(metadata.permissions().mode()),
+    )
+    .with_context(|| format!("failed to preserve mode on '{}'", destination.display()))?;
+    Ok(())
+}
+
+fn copy_symlink(source: &Path, destination: &Path) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create '{}'", parent.display()))?;
+    }
+    let target = fs::read_link(source)
+        .with_context(|| format!("failed to read symlink '{}'", source.display()))?;
+    symlink(&target, destination).with_context(|| {
+        format!(
+            "failed to copy symlink '{}' to '{}'",
+            source.display(),
+            destination.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -292,6 +335,49 @@ mod tests {
             CleanupResult::Removed
         );
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn task_rootfs_materialization_preserves_executable_modes_and_symlinks() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let cache = ImageCache::new(temp.path().join("images"));
+        let digest = ImageDigest::parse("sha256:abc123").expect("digest should parse");
+        let entry_dir = cache.entry_path(&digest);
+        let bin_dir = entry_dir.join("rootfs").join("usr/bin");
+        fs::create_dir_all(&bin_dir).expect("bin dir should be created");
+        let tool = bin_dir.join("tool");
+        fs::write(&tool, "#!/bin/sh\n").expect("tool should be written");
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o755))
+            .expect("tool mode should be set");
+        std::os::unix::fs::symlink("tool", bin_dir.join("tool-link"))
+            .expect("symlink should be created");
+        fs::write(entry_dir.join("agentbox-compatible"), "agentbox\n")
+            .expect("compatibility marker should be written");
+        let entry = cache
+            .ensure(
+                ImageReference::from_cli(Some("ghcr.io/example/agentbox@sha256:abc123")),
+                &NoBuildah,
+            )
+            .expect("cache hit should resolve");
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+
+        let handle = manager
+            .materialize(&entry, StorageBackend::FuseOverlay, "task-preserve", false)
+            .expect("task rootfs should materialize");
+
+        assert_eq!(
+            fs::metadata(handle.root.join("usr/bin/tool"))
+                .expect("tool metadata should be readable")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+        assert_eq!(
+            fs::read_link(handle.root.join("usr/bin/tool-link"))
+                .expect("symlink should be preserved"),
+            PathBuf::from("tool")
+        );
     }
 
     #[test]
