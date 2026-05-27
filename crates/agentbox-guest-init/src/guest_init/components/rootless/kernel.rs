@@ -5,7 +5,8 @@ use crate::guest_init::fs;
 
 pub(in crate::guest_init) fn prepare() -> Result<()> {
     enable_user_namespaces()?;
-    prepare_tun_device()
+    prepare_tun_device()?;
+    prepare_kvm_device()
 }
 
 fn enable_user_namespaces() -> Result<()> {
@@ -49,3 +50,23 @@ fn prepare_tun_device() -> Result<()> {
     fs::chmod(tun, 0o666)
         .context("failed to make /dev/net/tun accessible to rootless container runtimes")
 }
+
+fn prepare_kvm_device() -> Result<()> {
+    prepare_kvm_device_at(Path::new("/dev/kvm"))
+}
+
+fn prepare_kvm_device_at(kvm: &Path) -> Result<()> {
+    if !kvm.exists() {
+        return Ok(());
+    }
+    fs::chmod(kvm, 0o666).with_context(|| {
+        format!(
+            "failed to make {} accessible to non-root nested KVM tasks",
+            kvm.display()
+        )
+    })
+}
+
+#[cfg(test)]
+#[path = "kernel_tests.rs"]
+mod tests;

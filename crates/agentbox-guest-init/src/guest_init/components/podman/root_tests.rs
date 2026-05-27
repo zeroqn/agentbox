@@ -5,7 +5,8 @@ fn podman_prep_operation_order_keeps_root_setup_before_configs() {
     let ops = planned_operations();
     let pos = |op| ops.iter().position(|candidate| candidate == &op).unwrap();
     assert_eq!(pos(PodmanPrepOperation::WriteRunningStatus), 0);
-    assert!(pos(PodmanPrepOperation::PrepareTun) < pos(PodmanPrepOperation::MaterializeSubids));
+    assert!(pos(PodmanPrepOperation::PrepareTun) < pos(PodmanPrepOperation::PrepareKvm));
+    assert!(pos(PodmanPrepOperation::PrepareKvm) < pos(PodmanPrepOperation::MaterializeSubids));
     assert!(
         pos(PodmanPrepOperation::MaterializeSubids) < pos(PodmanPrepOperation::InstallIdmapHelpers)
     );

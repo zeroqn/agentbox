@@ -333,7 +333,9 @@ larger hosts reserve 2 CPUs for the host.
 Agentbox also emits `krun.nested_virt=1` so crun/libkrun expose VMX/SVM to the
 libkrun guest when the host or outer VM already supports nested KVM. This does
 not bind-mount host `/dev/kvm` into the guest and cannot enable nested KVM if
-the host kernel or outer hypervisor has disabled it.
+the host kernel or outer hypervisor has disabled it. During guest root prep,
+`agentbox-guest-init` makes an exposed guest `/dev/kvm` world-accessible so the
+default non-root `dev` task shell can use nested KVM.
 
 By default, libkrun mode uses passt networking through `krun.use_passt=1`. Pass
 `agentbox libkrun --tsi` to switch to the older TSI/proxy environment path.
