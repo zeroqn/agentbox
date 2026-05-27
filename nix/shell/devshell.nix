@@ -3,6 +3,7 @@
 pkgs.mkShell {
   packages = [
     pkgs.btrfs-progs
+    pkgs.buildah
     pkgs.cargo
     pkgs.cargo-deny
     pkgs.clippy
