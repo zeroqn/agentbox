@@ -10,7 +10,7 @@ pub use libkrun::{
     LibkrunCommand, LibkrunOptions, LibkrunResetNixOptions, LibkrunResizeOptions,
     LibkrunResizeTarget, LibkrunSubcommand,
 };
-pub use microvm::MicrovmOptions;
+pub use microvm::{MicrovmOptions, MicrovmStoragePolicy};
 
 use crate::podman::image::{podman_image_exists, pull_image};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};

@@ -1,0 +1,313 @@
+use anyhow::{Context, Result, anyhow};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::cli::MicrovmStoragePolicy;
+use crate::runtime::microvm::image_cache::ImageCacheEntry;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StorageBackend {
+    Btrfs,
+    FuseOverlay,
+}
+
+pub(crate) trait StorageProbe {
+    fn btrfs_available(&self) -> bool;
+    fn fuse_overlay_available(&self) -> bool;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HostStorageProbe;
+
+impl StorageProbe for HostStorageProbe {
+    fn btrfs_available(&self) -> bool {
+        command_available("btrfs")
+    }
+
+    fn fuse_overlay_available(&self) -> bool {
+        command_available("fuse-overlayfs")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskRootfsHandle {
+    pub(crate) root: PathBuf,
+    preserve_debug: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CleanupResult {
+    Removed,
+    Preserved(PathBuf),
+}
+
+impl TaskRootfsHandle {
+    pub(crate) fn cleanup(self) -> Result<CleanupResult> {
+        if self.preserve_debug {
+            return Ok(CleanupResult::Preserved(self.root));
+        }
+        if self.root.exists() {
+            fs::remove_dir_all(&self.root).with_context(|| {
+                format!(
+                    "failed to clean up microvm task rootfs '{}'",
+                    self.root.display()
+                )
+            })?;
+        }
+        Ok(CleanupResult::Removed)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StorageManager {
+    state_root: PathBuf,
+}
+
+impl StorageManager {
+    pub(crate) fn new(state_root: PathBuf) -> Self {
+        Self { state_root }
+    }
+
+    pub(crate) fn select_backend(
+        policy: MicrovmStoragePolicy,
+        probe: &impl StorageProbe,
+    ) -> Result<StorageBackend> {
+        match policy {
+            MicrovmStoragePolicy::Auto if probe.btrfs_available() => Ok(StorageBackend::Btrfs),
+            MicrovmStoragePolicy::Auto if probe.fuse_overlay_available() => {
+                Ok(StorageBackend::FuseOverlay)
+            }
+            MicrovmStoragePolicy::Auto => Err(anyhow!(
+                "experimental microvm storage requires btrfs or fuse-overlayfs; install btrfs-progs or fuse-overlayfs"
+            )),
+            MicrovmStoragePolicy::Btrfs if probe.btrfs_available() => Ok(StorageBackend::Btrfs),
+            MicrovmStoragePolicy::Btrfs => Err(anyhow!(
+                "experimental microvm storage --storage btrfs requires btrfs-progs/btrfs on PATH"
+            )),
+            MicrovmStoragePolicy::FuseOverlay if probe.fuse_overlay_available() => {
+                Ok(StorageBackend::FuseOverlay)
+            }
+            MicrovmStoragePolicy::FuseOverlay => Err(anyhow!(
+                "experimental microvm storage --storage fuse-overlay requires fuse-overlayfs on PATH"
+            )),
+        }
+    }
+
+    pub(crate) fn materialize(
+        &self,
+        entry: &ImageCacheEntry,
+        backend: StorageBackend,
+        task_id: &str,
+        preserve_debug: bool,
+    ) -> Result<TaskRootfsHandle> {
+        entry.ensure_agentbox_compatible()?;
+        let task_dir = self.state_root.join("microvm-tasks").join(task_id);
+        let root = task_dir.join(match backend {
+            StorageBackend::Btrfs => "rootfs-btrfs",
+            StorageBackend::FuseOverlay => "rootfs-fuse-overlay",
+        });
+        if root.exists() {
+            fs::remove_dir_all(&root).with_context(|| {
+                format!(
+                    "failed to reset stale microvm task rootfs '{}'",
+                    root.display()
+                )
+            })?;
+        }
+        copy_dir(&entry.rootfs, &root).with_context(|| {
+            format!(
+                "failed to materialize microvm task rootfs from '{}' to '{}'",
+                entry.rootfs.display(),
+                root.display()
+            )
+        })?;
+        Ok(TaskRootfsHandle {
+            root,
+            preserve_debug,
+        })
+    }
+}
+
+fn command_available(command: &str) -> bool {
+    std::process::Command::new(command)
+        .arg("--help")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
+fn copy_dir(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)
+        .with_context(|| format!("failed to create '{}'", destination.display()))?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("failed to read '{}'", source.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&source_path, &destination_path).with_context(|| {
+                format!(
+                    "failed to copy '{}' to '{}'",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::microvm::image_cache::{
+        BuildahRunner, ImageCache, ImageDigest, ImageReference,
+    };
+
+    #[derive(Debug, Clone, Copy)]
+    struct Probe {
+        btrfs: bool,
+        fuse: bool,
+    }
+
+    impl StorageProbe for Probe {
+        fn btrfs_available(&self) -> bool {
+            self.btrfs
+        }
+
+        fn fuse_overlay_available(&self) -> bool {
+            self.fuse
+        }
+    }
+
+    fn cached_entry(temp: &tempfile::TempDir) -> ImageCacheEntry {
+        let cache = ImageCache::new(temp.path().join("images"));
+        let digest = ImageDigest::parse("sha256:abc123").expect("digest should parse");
+        let entry_dir = cache.entry_path(&digest);
+        fs::create_dir_all(entry_dir.join("rootfs").join("etc"))
+            .expect("cache rootfs should be created");
+        fs::write(
+            entry_dir.join("rootfs").join("etc").join("agentbox"),
+            "cached",
+        )
+        .expect("cache content should be written");
+        fs::write(entry_dir.join("agentbox-compatible"), "agentbox\n")
+            .expect("compatibility marker should be written");
+        cache
+            .ensure(
+                ImageReference::from_cli(Some("ghcr.io/example/agentbox@sha256:abc123")),
+                &NoBuildah,
+            )
+            .expect("cache hit should resolve")
+    }
+
+    struct NoBuildah;
+
+    impl BuildahRunner for NoBuildah {
+        fn ingest(&self, _reference: &ImageReference, _cache_root: &Path) -> Result<ImageDigest> {
+            anyhow::bail!("buildah should not be called")
+        }
+    }
+
+    #[test]
+    fn auto_storage_prefers_btrfs_then_falls_back_to_fuse_overlay() {
+        assert_eq!(
+            StorageManager::select_backend(
+                MicrovmStoragePolicy::Auto,
+                &Probe {
+                    btrfs: true,
+                    fuse: true,
+                }
+            )
+            .expect("auto should select btrfs when available"),
+            StorageBackend::Btrfs
+        );
+        assert_eq!(
+            StorageManager::select_backend(
+                MicrovmStoragePolicy::Auto,
+                &Probe {
+                    btrfs: false,
+                    fuse: true,
+                }
+            )
+            .expect("auto should fall back to fuse-overlay"),
+            StorageBackend::FuseOverlay
+        );
+    }
+
+    #[test]
+    fn explicit_storage_policy_reports_missing_helper() {
+        let btrfs_error = StorageManager::select_backend(
+            MicrovmStoragePolicy::Btrfs,
+            &Probe {
+                btrfs: false,
+                fuse: true,
+            },
+        )
+        .expect_err("explicit btrfs should fail when unavailable");
+        assert!(format!("{btrfs_error:#}").contains("btrfs"));
+
+        let fuse_error = StorageManager::select_backend(
+            MicrovmStoragePolicy::FuseOverlay,
+            &Probe {
+                btrfs: true,
+                fuse: false,
+            },
+        )
+        .expect_err("explicit fuse-overlay should fail when unavailable");
+        assert!(format!("{fuse_error:#}").contains("fuse-overlayfs"));
+    }
+
+    #[test]
+    fn task_rootfs_is_writable_copy_and_cleanup_removes_it() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+
+        let handle = manager
+            .materialize(&entry, StorageBackend::FuseOverlay, "task-1", false)
+            .expect("task rootfs should materialize");
+
+        assert_ne!(handle.root, entry.rootfs);
+        assert_eq!(
+            fs::read_to_string(handle.root.join("etc").join("agentbox"))
+                .expect("cached content should be visible"),
+            "cached"
+        );
+        fs::write(handle.root.join("task-only"), "mutable").expect("task root should be writable");
+        assert!(!entry.rootfs.join("task-only").exists());
+        let root = handle.root.clone();
+
+        assert_eq!(
+            handle.cleanup().expect("cleanup should succeed"),
+            CleanupResult::Removed
+        );
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn preserve_debug_keeps_task_rootfs_and_reports_path() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+        let handle = manager
+            .materialize(&entry, StorageBackend::Btrfs, "task-2", true)
+            .expect("task rootfs should materialize");
+        let root = handle.root.clone();
+
+        assert_eq!(
+            handle.cleanup().expect("cleanup should preserve"),
+            CleanupResult::Preserved(root.clone())
+        );
+        assert!(root.exists());
+    }
+}

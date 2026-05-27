@@ -18,6 +18,10 @@ impl StateLayout {
         &self.root_dir
     }
 
+    pub fn microvm_image_cache_dir(&self) -> PathBuf {
+        self.app_dir.join("microvm").join("images")
+    }
+
     pub fn sccache_dir(&self) -> PathBuf {
         self.app_dir.join("sccache")
     }

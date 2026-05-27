@@ -40,6 +40,15 @@ fn resolve_state_layout_uses_default_xdg_state_root() {
         Path::new("/tmp/xdg-state/agentbox/sccache")
     );
     assert_eq!(
+        layout.microvm_image_cache_dir(),
+        Path::new("/tmp/xdg-state/agentbox/microvm/images")
+    );
+    assert!(
+        !layout
+            .microvm_image_cache_dir()
+            .starts_with(&layout.root_dir)
+    );
+    assert_eq!(
         layout.root_dir.join("cargo"),
         Path::new("/tmp/xdg-state/agentbox/project/cargo")
     );

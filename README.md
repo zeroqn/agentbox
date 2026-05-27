@@ -29,9 +29,10 @@ Current runtime split:
   `agentbox container sidecar` starts or reuses only the sidecar stack for
   debugging.
 - **Microvm mode (`agentbox microvm`, experimental):** direct-libkrun runtime
-  skeleton for future task-based microVM runs from an OCI image cache. The
-  command and help are present, but image ingestion, task rootfs materialization,
-  and direct libkrun boot are milestone-gated and not implemented yet.
+  branch for future task-based microVM runs from an OCI image cache. It now
+  owns the early image-cache/task-rootfs preparation contracts, including
+  digest-keyed cache lookup and per-task writable rootfs materialization, but
+  direct libkrun boot is still milestone-gated and not implemented yet.
 
 Seeded `/nix` copy fallback has been removed. Container mode always uses the
 managed sidecar.
@@ -45,6 +46,8 @@ managed sidecar.
 - `nix` (for building via flake)
 - `fuse-overlayfs` (required for `agentbox container` sidecar mode; included
   by the `.#agentbox-prebuilt` package runtime environment)
+- `buildah` for experimental `agentbox microvm` cache misses or future cache
+  refreshes. Existing digest-keyed microvm cache hits do not require Buildah.
 - `mkfs.btrfs` and `blkid` on the host for first-time libkrun raw-image
   creation and reuse validation (`btrfs-progs` + `util-linux`; included in
   `nix develop`)
@@ -562,18 +565,30 @@ Run/help:
 
 `agentbox microvm` is an explicit experimental runtime branch for the planned
 task-based direct-libkrun implementation. It is intentionally separate from the
-current Podman-backed `libkrun` mode: slice 01 only adds CLI selection,
-documentation, and a safe placeholder runtime error. It does not ingest OCI
-images, materialize immutable image rootfs caches, create per-task writable
-rootfs snapshots, attach persistent dev-cache disks, or boot a microVM yet.
+current Podman-backed `libkrun` mode. The microvm path does not call the
+Podman-backed image resolver or Podman pull path; cache misses require the
+microvm-owned Buildah ingestion path, and `agentbox --pull-latest microvm`
+currently fails clearly instead of reusing Podman semantics.
 
-The planned storage policy values are:
+Current implemented milestone:
+
+- image references are resolved against a global per-user immutable cache under
+  the agentbox state root;
+- digest-pinned references hit by digest;
+- mutable tags may hit only through local ref-to-digest metadata, which is a
+  cache hint rather than an authoritative freshness check;
+- per-task writable rootfs directories are materialized from compatible cached
+  roots and removed after the milestone stop unless `--preserve-debug` is set.
+
+Still pending: real Buildah unpacking into the cache, direct libkrun boot,
+persistent dev-cache disks, and workspace/container-store disk attachment.
+
+The storage policy values are:
 
 - `auto`: prefer the btrfs fast path when available, otherwise use the portable
   `fuse-overlayfs` fallback.
-- `btrfs`: require the future btrfs image-rootfs cache/snapshot path.
-- `fuse-overlay`: require the portable future `fuse-overlayfs` image-rootfs
-  path.
+- `btrfs`: require the btrfs image-rootfs cache/snapshot fast path.
+- `fuse-overlay`: require the portable `fuse-overlayfs` image-rootfs path.
 
 Image selection remains global through `--image` or `AGENTBOX_IMAGE`; microvm
 does not add a runtime-local image flag.

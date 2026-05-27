@@ -87,11 +87,20 @@ mod tests {
     }
 
     #[test]
-    fn microvm_placeholder_error_is_explicit() {
-        let message = crate::runtime::microvm::not_implemented_message().to_lowercase();
+    fn microvm_boot_pending_error_is_explicit() {
+        let message = crate::runtime::microvm::boot_pending_message().to_lowercase();
 
         assert!(message.contains("microvm"));
         assert!(message.contains("experimental"));
         assert!(message.contains("not implemented"));
+    }
+
+    #[test]
+    fn microvm_pull_latest_error_rejects_podman_backed_semantics() {
+        let message = crate::runtime::microvm::pull_latest_not_supported_message().to_lowercase();
+
+        assert!(message.contains("pull-latest"));
+        assert!(message.contains("microvm"));
+        assert!(message.contains("podman"));
     }
 }
