@@ -1,7 +1,7 @@
 mod components;
 mod container;
 mod libkrun;
-mod microvm;
+pub(crate) mod microvm;
 
 use anyhow::Result;
 use std::process::ExitCode;
@@ -92,7 +92,8 @@ mod tests {
 
         assert!(message.contains("microvm"));
         assert!(message.contains("experimental"));
-        assert!(message.contains("not implemented"));
+        assert!(message.contains("direct"));
+        assert!(message.contains("enabled"));
     }
 
     #[test]

@@ -29,6 +29,14 @@ impl StateLayout {
     fn new(app_dir: PathBuf, root_dir: PathBuf) -> Self {
         Self { app_dir, root_dir }
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(root_dir: PathBuf) -> Self {
+        Self {
+            app_dir: root_dir.join("app"),
+            root_dir,
+        }
+    }
 }
 
 pub fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {

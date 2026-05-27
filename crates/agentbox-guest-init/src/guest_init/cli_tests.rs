@@ -147,3 +147,22 @@ fn parses_container_enter_command() {
     let ContainerSubcommand::Enter(enter) = container.command;
     assert_eq!(enter.command, ["bash", "-lc", "true"]);
 }
+
+#[test]
+fn parses_microvm_enter_command() {
+    let cli = GuestInitCli::try_parse_from([
+        "agentbox-guest-init",
+        "microvm",
+        "enter",
+        "--",
+        "fish",
+        "-l",
+    ])
+    .unwrap();
+
+    let RuntimeCommand::Microvm(microvm) = cli.runtime else {
+        panic!("expected microvm command");
+    };
+    let crate::guest_init::cli::MicrovmSubcommand::Enter(enter) = microvm.command;
+    assert_eq!(enter.command, ["fish", "-l"]);
+}

@@ -12,6 +12,7 @@ pub(in crate::guest_init) enum RuntimeCommand {
     Default(DefaultCommand),
     Libkrun(LibkrunCommand),
     Container(ContainerCommand),
+    Microvm(MicrovmCommand),
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
@@ -47,6 +48,17 @@ pub(in crate::guest_init) struct ContainerCommand {
 
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum ContainerSubcommand {
+    Enter(EnterCommand),
+}
+
+#[derive(Debug, Args, PartialEq, Eq)]
+pub(in crate::guest_init) struct MicrovmCommand {
+    #[command(subcommand)]
+    pub(in crate::guest_init) command: MicrovmSubcommand,
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub(in crate::guest_init) enum MicrovmSubcommand {
     Enter(EnterCommand),
 }
 

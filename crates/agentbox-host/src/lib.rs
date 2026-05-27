@@ -11,6 +11,7 @@ mod state;
 
 use cli::Cli;
 use podman::process::set_podman_debug;
+use runtime::microvm::supervisor::MICROVM_HELPER_ARG;
 
 const DEFAULT_IMAGE: &str = "localhost/agentbox:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/agentbox:latest";
@@ -37,6 +38,22 @@ const TASK_CONTAINER_ROLE_VALUE: &str = "task";
 const TASK_CONTAINER_SIDECAR_LABEL: &str = "io.agentbox.sidecar";
 
 pub fn entrypoint() -> ExitCode {
+    let mut args = std::env::args_os();
+    let _program = args.next();
+    if args.next().as_deref() == Some(std::ffi::OsStr::new(MICROVM_HELPER_ARG)) {
+        let Some(config_path) = args.next() else {
+            eprintln!("agentbox: microvm helper requires a launch config path");
+            return ExitCode::from(1);
+        };
+        return match runtime::microvm::run_helper_from_path(std::path::Path::new(&config_path)) {
+            Ok(()) => ExitCode::from(0),
+            Err(err) => {
+                eprintln!("agentbox: {err:#}");
+                ExitCode::from(1)
+            }
+        };
+    }
+
     let cli = Cli::parse();
 
     match run(cli) {

@@ -28,11 +28,12 @@ Current runtime split:
   host `fuse-overlayfs` and a reusable `nix-daemon` sidecar.
   `agentbox container sidecar` starts or reuses only the sidecar stack for
   debugging.
-- **Microvm mode (`agentbox microvm`, experimental):** direct-libkrun runtime
-  branch for future task-based microVM runs from an OCI image cache. It now
-  owns the early image-cache/task-rootfs preparation contracts, including
-  digest-keyed cache lookup and per-task writable rootfs materialization, but
-  direct libkrun boot is still milestone-gated and not implemented yet.
+- **Microvm mode (`agentbox microvm`, experimental):** task-based direct-libkrun
+  runtime branch for one-shot microVM runs from an OCI image cache. It prepares
+  a clean per-task rootfs, supervises a same-binary helper that calls libkrun
+  directly, runs `agentbox-guest-init microvm enter`, and mounts the current
+  workspace at `/workspace` through virtiofs. Persistent dev-cache disks remain
+  a follow-up milestone.
 
 Seeded `/nix` copy fallback has been removed. Container mode always uses the
 managed sidecar.
@@ -48,6 +49,9 @@ managed sidecar.
   by the `.#agentbox-prebuilt` package runtime environment)
 - `buildah` for experimental `agentbox microvm` cache misses or future cache
   refreshes. Existing digest-keyed microvm cache hits do not require Buildah.
+- `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
+  normal host binary does not link to libkrun at build time; the hidden microvm
+  helper loads it dynamically immediately before entering the VM.
 - `mkfs.btrfs` and `blkid` on the host for first-time libkrun raw-image
   creation and reuse validation (`btrfs-progs` + `util-linux`; included in
   `nix develop`)
@@ -563,12 +567,12 @@ Run/help:
 ./result/bin/agentbox microvm --storage fuse-overlay
 ```
 
-`agentbox microvm` is an explicit experimental runtime branch for the planned
-task-based direct-libkrun implementation. It is intentionally separate from the
-current Podman-backed `libkrun` mode. The microvm path does not call the
-Podman-backed image resolver or Podman pull path; cache misses require the
-microvm-owned Buildah ingestion path, and `agentbox --pull-latest microvm`
-currently fails clearly instead of reusing Podman semantics.
+`agentbox microvm` is an explicit experimental task-based direct-libkrun runtime.
+It is intentionally separate from the current Podman-backed `libkrun` mode. The
+microvm path does not call the Podman-backed image resolver, `podman run`,
+`crun`, or `runc`; cache misses require the microvm-owned Buildah ingestion
+path, and `agentbox --pull-latest microvm` currently fails clearly instead of
+reusing Podman semantics.
 
 Current implemented milestone:
 
@@ -578,10 +582,22 @@ Current implemented milestone:
 - mutable tags may hit only through local ref-to-digest metadata, which is a
   cache hint rather than an authoritative freshness check;
 - per-task writable rootfs directories are materialized from compatible cached
-  roots and removed after the milestone stop unless `--preserve-debug` is set.
+  roots and removed after the run unless `--preserve-debug` is set;
+- the parent process writes a std-only `KEY=hex-encoded-value` launch config,
+  starts a hidden same-binary helper, waits for the helper status, maps that
+  status back to the `agentbox microvm` exit code, and still cleans the task
+  rootfs after helper failure;
+- the helper dynamically loads `libkrun.so`, creates a context, sets CPU/memory,
+  sets the task rootfs, adds the workspace virtiofs device, sets workdir/exec
+  and env through `krun_set_exec`, then calls `krun_start_enter()`;
+- inside the guest, `agentbox-guest-init microvm enter` mounts the workspace
+  virtiofs tag at `/workspace` before dropping to the host/dev identity and
+  execing the default `fish -l` shell.
 
-Still pending: real Buildah unpacking into the cache, direct libkrun boot,
-persistent dev-cache disks, and workspace/container-store disk attachment.
+Current limitations: real Buildah unpacking into the cache is still pending,
+networking relies on libkrun's no-passt default path, terminal resize handling is
+not complete, and persistent `/nix` plus container-store disks are deferred to
+the next slice.
 
 The storage policy values are:
 
