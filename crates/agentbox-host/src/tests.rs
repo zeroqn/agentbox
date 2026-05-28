@@ -10,6 +10,7 @@ const SECCOMP_JSON_NIX: &str =
 const REASONIX_NIX: &str = include_str!("../../../nix/pkgs/reasonix.nix");
 const UPDATE_REASONIX_SH: &str = include_str!("../../../scripts/update-reasonix.sh");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
+const AGENTBOX_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/agentbox-prebuilt.nix");
 const GUEST_DEFAULT_RUNTIME: &str =
     include_str!("../../agentbox-guest-init/src/guest_init/runtime/default.rs");
 const GUEST_CONTAINER_RUNTIME: &str =
@@ -150,6 +151,31 @@ fn nix_agentbox_binary_does_not_embed_libkrun_guest_init_image_path() {
     let removed_env = ["AGENTBOX", "LIBKRUN", "GUEST_INIT", "TARGET"].join("_");
 
     assert!(!AGENTBOX_RUST_NIX.contains(&removed_env));
+}
+
+#[test]
+fn nix_agentbox_packages_provide_buildah_at_runtime() {
+    for required in [
+        "runtimePath = pkgs.lib.makeBinPath [ pkgs.buildah ];",
+        "\"PATH\"",
+        "runtimeWrapperArgs",
+        "wrapProgram \"$out/bin/agentbox\"",
+    ] {
+        assert!(AGENTBOX_RUST_NIX.contains(required), "missing {required}");
+    }
+
+    for required in [
+        "runtimeTools = [",
+        "pkgs.buildah",
+        "pkgs.fuse-overlayfs",
+        "propagatedUserEnvPkgs = runtimeTools;",
+        "pkgs.lib.makeBinPath runtimeTools",
+    ] {
+        assert!(
+            AGENTBOX_PREBUILT_NIX.contains(required),
+            "missing {required}"
+        );
+    }
 }
 
 #[test]

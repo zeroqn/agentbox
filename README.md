@@ -48,12 +48,13 @@ managed sidecar.
 - `fuse-overlayfs` (required for `agentbox container` sidecar mode; included
   by the `.#agentbox-prebuilt` package runtime environment)
 - `buildah` for experimental `agentbox microvm` cache misses or future cache
-  refreshes. Existing digest-keyed microvm cache hits do not require Buildah.
-  Cache-miss ingestion is rootless and runs as one `buildah unshare`
-  transaction so Buildah storage, mount, copy, and cleanup share the same user
-  namespace; the cache copy uses `cp -a --reflink=auto` so CoW filesystems
-  can avoid full data copies while non-reflink filesystems keep the portable
-  fallback.
+  refreshes; included by the Nix `.#agentbox` and `.#agentbox-prebuilt`
+  package runtime environments. Existing digest-keyed microvm cache hits do not
+  require Buildah. Cache-miss ingestion is rootless and runs as one
+  `buildah unshare` transaction so Buildah storage, mount, copy, and cleanup
+  share the same user namespace; the cache copy uses `cp -a --reflink=auto` so
+  CoW filesystems can avoid full data copies while non-reflink filesystems keep
+  the portable fallback.
 - `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
   normal host binary does not link to libkrun at build time; the Nix `.#agentbox`
   package wraps the binary with this repo's libkrun/libkrunfw library path, and
@@ -136,8 +137,9 @@ nix build .#container
 - `.#agentbox`: compile from source.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
-  `fuse-overlayfs` into the runtime environment for `agentbox container`
-  sidecar mode.
+  `fuse-overlayfs` and `buildah` into the runtime environment for
+  `agentbox container` sidecar mode and experimental `agentbox microvm`
+  cache misses.
 - `.#agentbox-musl`: static host binary.
 - `.#reasonix`: build the pinned DeepSeek-Reasonix CLI from the release source rev.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently

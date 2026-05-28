@@ -5,6 +5,20 @@ let
     pkgs.lib.optionals (libkrun != null) [ (pkgs.lib.getLib libkrun) ]
     ++ pkgs.lib.optionals (libkrunfw != null) [ (pkgs.lib.getLib libkrunfw) ]
   );
+  runtimePath = pkgs.lib.makeBinPath [ pkgs.buildah ];
+  runtimeWrapperArgs =
+    [
+      "--prefix"
+      "PATH"
+      ":"
+      runtimePath
+    ]
+    ++ pkgs.lib.optionals (runtimeLibraryPath != "") [
+      "--prefix"
+      "LD_LIBRARY_PATH"
+      ":"
+      runtimeLibraryPath
+    ];
 
   rustPackage = pkgs.rustPlatform.buildRustPackage {
     pname = "agentbox";
@@ -17,9 +31,8 @@ let
       lockFile = ../../Cargo.lock;
     };
 
-    postInstall = pkgs.lib.optionalString (runtimeLibraryPath != "") ''
-      wrapProgram "$out/bin/agentbox" \
-        --prefix LD_LIBRARY_PATH : ${runtimeLibraryPath}
+    postInstall = ''
+      wrapProgram "$out/bin/agentbox" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
     '';
   };
 

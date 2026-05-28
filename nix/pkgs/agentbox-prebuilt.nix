@@ -9,6 +9,10 @@ if builtins.hasAttr prebuiltSystem agentboxPrebuiltRelease.systems then
     assetInfo = builtins.getAttr prebuiltSystem agentboxPrebuiltRelease.systems;
     releaseUrl =
       "https://github.com/${agentboxPrebuiltRelease.owner}/${agentboxPrebuiltRelease.repo}/releases/download/${agentboxPrebuiltRelease.tag}/${assetInfo.asset}";
+    runtimeTools = [
+      pkgs.buildah
+      pkgs.fuse-overlayfs
+    ];
   in
   pkgs.stdenvNoCC.mkDerivation {
     pname = "agentbox";
@@ -21,13 +25,13 @@ if builtins.hasAttr prebuiltSystem agentboxPrebuiltRelease.systems then
 
     nativeBuildInputs = [ pkgs.makeWrapper ];
 
-    propagatedUserEnvPkgs = [ pkgs.fuse-overlayfs ];
+    propagatedUserEnvPkgs = runtimeTools;
 
     installPhase = ''
       runHook preInstall
       install -Dm755 "$src" "$out/libexec/agentbox"
       makeWrapper "$out/libexec/agentbox" "$out/bin/agentbox" \
-        --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.fuse-overlayfs ]}
+        --prefix PATH : ${pkgs.lib.makeBinPath runtimeTools}
       runHook postInstall
     '';
 
@@ -37,7 +41,7 @@ if builtins.hasAttr prebuiltSystem agentboxPrebuiltRelease.systems then
     };
 
     meta = {
-      description = "Prebuilt agentbox binary with fuse-overlayfs available for sidecar mode";
+      description = "Prebuilt agentbox binary with runtime tools for sidecar and microvm modes";
       homepage = "https://github.com/${agentboxPrebuiltRelease.owner}/${agentboxPrebuiltRelease.repo}";
       license = pkgs.lib.licenses.mit;
       mainProgram = "agentbox";
