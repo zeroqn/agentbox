@@ -28,9 +28,13 @@ launch config round-trips, and the direct libkrun FFI call order avoids host
 ## Host prerequisites
 
 - `/dev/kvm` is available to the user running `agentbox`.
-- `libkrun.so` is loadable by the hidden microvm helper.
+- `libkrun.so` is loadable by the hidden microvm helper. The Nix `.#agentbox`
+  package should provide libkrun/libkrunfw discovery without manual
+  `LD_LIBRARY_PATH`; source/debug builds may set
+  `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1`.
 - `libkrunfw.so` is available as required by the installed libkrun build.
-- `buildah` is available when testing cache misses or refreshes.
+- `buildah` is available when testing cache misses or refreshes. Cache-miss
+  ingestion must remain rootless and should run through `buildah unshare`.
 - `btrfs`, `mkfs.btrfs`, `blkid`, and `fuse-overlayfs` are available.
 - The selected OCI image contains exactly one executable
   `/nix/store/*/bin/agentbox-guest-init`; cache-miss ingestion refuses images
@@ -60,10 +64,11 @@ launch config round-trips, and the direct libkrun FFI call order avoids host
    ```
 
    Expected host-side evidence:
-   - the first run invokes Buildah to create a working container, inspect its
-     resolved digest, mount it, copy the mounted rootfs into the digest-keyed
-     microvm cache, validate `agentbox-guest-init`, write
-     `agentbox-compatible`, then unmount/remove the Buildah container;
+   - the first run invokes one rootless `buildah unshare` ingestion transaction
+     to create a working container, inspect its resolved digest, mount it, copy
+     the mounted rootfs into the digest-keyed microvm cache, validate
+     `agentbox-guest-init`, write `agentbox-compatible`, then unmount/remove the
+     Buildah container;
    - a second run with the same mutable tag resolves through local ref metadata
      and does not require Buildah;
    - digest-pinned mismatches and empty Buildah digest output fail before ref
@@ -88,8 +93,18 @@ launch config round-trips, and the direct libkrun FFI call order avoids host
 
 ## Current manual result
 
-As of 2026-05-27, real direct-libkrun smoke and real host Buildah cache-miss
-smoke have not been run in this workspace. The automated contracts above are
-the current evidence. Do not claim real VM boot, outbound networking, terminal
-resize, or real Buildah unpack success until this file is updated with host
-details, commands, and observed output.
+As of 2026-05-28, a pre-populated direct-libkrun smoke reached
+`agentbox-guest-init microvm enter` on this host after `/dev/kvm` was made
+accessible to the dev user. A later packaged smoke repeated that path through
+the Nix `.#agentbox` wrapper without manual `LD_LIBRARY_PATH`, proving packaged
+libkrun/libkrunfw discovery, direct libkrun context creation, task-rootfs
+launch, virtio console output, and persistent disk attachment far enough for
+guest code to execute and exit successfully.
+
+Real remote OCI cache-miss smoke still has a host Buildah storage blocker: the
+product now invokes the intended rootless `buildah unshare` transaction, but
+this container host fails while Buildah applies pulled layers with pivot-dir
+permission errors under vfs, overlay/fuse-overlayfs, and chroot-isolation
+attempts. Do not claim outbound networking, terminal resize, or real remote OCI
+cache-miss success until this file is updated with passing host details,
+commands, and observed output.

@@ -7,6 +7,8 @@ use crate::runtime::microvm::launch::MicrovmLaunchConfig;
 
 const DAX_SHM_SIZE: u64 = 0;
 const READ_WRITE: bool = false;
+const LIBKRUN_LIBRARY_ENV: &str = "AGENTBOX_LIBKRUN_LIBRARY";
+const DEFAULT_LIBKRUN_NAMES: [&str; 2] = ["libkrun.so.1", "libkrun.so"];
 
 pub(crate) trait LibkrunApi {
     fn create_ctx(&mut self) -> Result<u32>;
@@ -153,8 +155,17 @@ pub(crate) struct DynamicLibkrunApi {
 
 impl DynamicLibkrunApi {
     pub(crate) fn open_default() -> Result<Self> {
+        if let Some(path) = explicit_libkrun_library_override()? {
+            return Self::open(&path).with_context(|| {
+                format!(
+                    "{LIBKRUN_LIBRARY_ENV} points to '{}', but that libkrun library could not be loaded",
+                    path
+                )
+            });
+        }
+
         let mut last_error = None;
-        for name in ["libkrun.so.1", "libkrun.so"] {
+        for name in DEFAULT_LIBKRUN_NAMES {
             match Self::open(name) {
                 Ok(api) => return Ok(api),
                 Err(err) => last_error = Some(err),
@@ -232,6 +243,30 @@ impl DynamicLibkrunApi {
             };
         Ok(api)
     }
+}
+
+fn explicit_libkrun_library_override() -> Result<Option<String>> {
+    match std::env::var(LIBKRUN_LIBRARY_ENV) {
+        Ok(value) if value.trim().is_empty() => Ok(None),
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            bail!("{LIBKRUN_LIBRARY_ENV} must be valid UTF-8")
+        }
+    }
+}
+
+#[cfg(test)]
+fn planned_libkrun_load_order(override_value: Option<&str>) -> Vec<String> {
+    if let Some(value) = override_value
+        && !value.trim().is_empty()
+    {
+        return vec![value.to_owned()];
+    }
+    DEFAULT_LIBKRUN_NAMES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
 }
 
 impl Drop for DynamicLibkrunApi {
@@ -603,6 +638,22 @@ mod tests {
             extra_env: Vec::new(),
         })
         .expect("config should build")
+    }
+
+    #[test]
+    fn libkrun_loader_prefers_explicit_library_override_before_sonames() {
+        assert_eq!(
+            planned_libkrun_load_order(Some("/tmp/libkrun-custom.so")),
+            vec!["/tmp/libkrun-custom.so"]
+        );
+        assert_eq!(
+            planned_libkrun_load_order(None),
+            vec!["libkrun.so.1", "libkrun.so"]
+        );
+        assert_eq!(
+            planned_libkrun_load_order(Some("")),
+            vec!["libkrun.so.1", "libkrun.so"]
+        );
     }
 
     #[test]

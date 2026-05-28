@@ -37,9 +37,6 @@
           symposium = import ./nix/pkgs/symposium.nix {
             inherit pkgs;
           };
-          rustPackages = import ./nix/pkgs/agentbox-rust.nix {
-            inherit self pkgs pins;
-          };
           prebuiltAgentbox = import ./nix/pkgs/agentbox-prebuilt.nix {
             inherit pkgs pins;
           };
@@ -54,6 +51,15 @@
           };
           libkrun = import ./nix/pkgs/libkrun.nix {
             inherit pkgs libkrunfw;
+          };
+          rustPackages = import ./nix/pkgs/agentbox-rust.nix {
+            inherit
+              self
+              pkgs
+              pins
+              libkrun
+              libkrunfw
+              ;
           };
           crun = import ./nix/pkgs/crun.nix {
             inherit pkgs libkrun libkrunfw;

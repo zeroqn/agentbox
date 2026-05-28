@@ -78,6 +78,14 @@ _Avoid_: mandatory prepare step
 The host-side preparation step that resolves an OCI image into a cached root filesystem for later microvm task use. Buildah is acceptable here because it is not the microvm run path.
 _Avoid_: VM launch
 
+**rootless image ingestion**:
+The expectation that a microvm cache miss can prepare the image cache without sudo. Host image ingestion may use rootless Buildah/user-namespace mechanisms, but it remains part of the normal rootless user experience.
+_Avoid_: sudo-only cache miss
+
+**Buildah ingestion transaction**:
+The single rootless user-namespace operation that resolves, mounts, copies, finalizes, and cleans up an OCI image during microvm image ingestion. Keeping the whole sequence together avoids mismatched Buildah storage and mount namespaces.
+_Avoid_: split namespace ingestion
+
 **rootless user contract**:
 The expectation that normal agentbox commands run without sudo from the user's perspective. Microvm storage setup may have optional preparation paths, but normal task launch should remain rootless or use a portable fallback.
 _Avoid_: sudo-only runtime
@@ -95,6 +103,10 @@ _Avoid_: passt by default
 **libkrun FFI boundary**:
 The host-side Rust boundary that calls libkrun directly for microvm task launch. Microvm starts with a narrow hand-written FFI surface wrapped by safe host code, rather than generated broad bindings.
 _Avoid_: broad generated bindings by default
+
+**libkrun discovery**:
+The host-side mechanism that lets direct microvm boot load `libkrun.so` and its firmware dependency. Packaged agentbox should provide this automatically, while an explicit environment override remains available for source-build and debug workflows.
+_Avoid_: manual linker setup as normal path
 
 **run path**:
 The critical execution path that starts a task environment. For **microvm**, the run path uses direct libkrun VM APIs rather than Podman, crun, or runc.
@@ -184,6 +196,9 @@ Domain expert: No. Microvm starts as an experimental runtime mode until its deve
 Dev: Should direct libkrun use generated bindings?
 Domain expert: No, not initially. The libkrun FFI boundary should be narrow and hand-written for v1.
 
+Dev: Should users set `LD_LIBRARY_PATH` manually for `agentbox microvm`?
+Domain expert: No. Libkrun discovery is a packaging responsibility for normal use, with an explicit environment override kept for source-build and debug workflows.
+
 Dev: Can terminal resizing wait until later?
 Domain expert: Only if libkrun cannot support it cleanly. The terminal contract is part of a usable v1 task shell.
 
@@ -207,6 +222,12 @@ Domain expert: No. Lazy image ingestion prepares the image cache on first run if
 
 Dev: Is Buildah required for every microvm run?
 Domain expert: No. A cache hit run does not require Buildah; Buildah is required only when image ingestion is needed.
+
+Dev: Can a microvm cache miss require sudo?
+Domain expert: No. Rootless image ingestion means cache-miss preparation is part of the normal rootless user experience.
+
+Dev: Should only `buildah mount` run inside `buildah unshare`?
+Domain expert: No. Use one Buildah ingestion transaction so image resolution, mounting, copying, finalization, and cleanup share the same rootless namespace context.
 
 Dev: Is the image cache per workspace?
 Domain expert: No. The global image cache is per user and digest-addressed; mutable persistent cache disks stay per workspace.

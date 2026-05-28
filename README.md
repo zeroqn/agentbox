@@ -49,11 +49,13 @@ managed sidecar.
   by the `.#agentbox-prebuilt` package runtime environment)
 - `buildah` for experimental `agentbox microvm` cache misses or future cache
   refreshes. Existing digest-keyed microvm cache hits do not require Buildah.
-  The current dev shell keeps Buildah optional because cache-hit launches remain
-  Buildah-free and real host cache-miss smoke is tracked separately.
+  Cache-miss ingestion is rootless and runs as one `buildah unshare`
+  transaction so Buildah storage, mount, copy, and cleanup share the same user
+  namespace.
 - `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
-  normal host binary does not link to libkrun at build time; the hidden microvm
-  helper loads it dynamically immediately before entering the VM.
+  normal host binary does not link to libkrun at build time; the Nix `.#agentbox`
+  package wraps the binary with this repo's libkrun/libkrunfw library path, and
+  source/debug builds can set `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1`.
 - `mkfs.btrfs` and `blkid` on the host for first-time libkrun/microvm
   raw-image creation and reuse validation (`btrfs-progs` + `util-linux`;
   included in `nix develop`)
@@ -583,9 +585,10 @@ Current implemented milestone:
 - digest-pinned references hit by digest;
 - mutable tags may hit only through local ref-to-digest metadata, which is a
   cache hint rather than an authoritative freshness check;
-- cache misses are ingested through the microvm-owned Buildah path: `buildah
-  from`, `buildah inspect --format '{{.FromImageDigest}}'`, `buildah mount`,
-  a rootfs-preserving copy into the digest-keyed cache, exact-one executable
+- cache misses are ingested through the microvm-owned rootless Buildah path:
+  one `buildah unshare` transaction performs `buildah from`,
+  `buildah inspect --format '{{.FromImageDigest}}'`, `buildah mount`, a
+  rootfs-preserving copy into the digest-keyed cache, exact-one executable
   `agentbox-guest-init` validation, atomic compatibility marker finalization,
   then `buildah umount`/`buildah rm` cleanup;
 - per-task writable rootfs directories are materialized from compatible cached
@@ -605,19 +608,20 @@ Current implemented milestone:
   starts a hidden same-binary helper, waits for the helper status, maps that
   status back to the `agentbox microvm` exit code, and still cleans the task
   rootfs after helper failure;
-- the helper dynamically loads `libkrun.so`, creates a context, sets CPU/memory,
-  sets the task rootfs, attaches `/nix` and container-store disks through
-  `krun_add_disk`, disables libkrun's implicit console, wires stdio through
-  `krun_add_virtio_console_default(0, 1, 2)`, adds the workspace virtiofs
-  device, sets workdir/exec and env through `krun_set_exec`, then calls
-  `krun_start_enter()`;
+- the helper dynamically loads `libkrun.so` using `AGENTBOX_LIBKRUN_LIBRARY`
+  when set, otherwise by normal soname lookup. The Nix package supplies the
+  libkrun/libkrunfw library path for the normal packaged path. After loading, it
+  creates a context, sets CPU/memory, sets the task rootfs, attaches `/nix` and
+  container-store disks through `krun_add_disk`, disables libkrun's implicit
+  console, wires stdio through `krun_add_virtio_console_default(0, 1, 2)`, adds
+  the workspace virtiofs device, sets workdir/exec and env through
+  `krun_set_exec`, then calls `krun_start_enter()`;
 - inside the guest, `agentbox-guest-init microvm enter` mounts the workspace
   virtiofs tag at `/workspace`, starts reusable Nix and rootless container-store
   preparation against the attached disks, then drops to the host/dev identity and
   execs the default `fish -l` shell.
 
-Current limitations: real Buildah cache-miss smoke has not been run in this
-workspace, networking relies on libkrun's no-passt/TSI default path, inbound
+Current limitations: networking relies on libkrun's no-passt/TSI default path, inbound
 port publishing is intentionally unavailable, terminal resize has only the
 narrow default virtio-console hook wired so far, and real VM smoke validation is
 still pending. See `docs/microvm-smoke.md` for the manual smoke checklist and

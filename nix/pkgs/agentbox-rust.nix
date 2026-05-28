@@ -1,15 +1,26 @@
-{ self, pkgs, pins }:
+{ self, pkgs, pins, libkrun ? null, libkrunfw ? null }:
 let
   agentboxVersion = pins.agentboxVersion;
+  runtimeLibraryPath = pkgs.lib.makeLibraryPath (
+    pkgs.lib.optionals (libkrun != null) [ (pkgs.lib.getLib libkrun) ]
+    ++ pkgs.lib.optionals (libkrunfw != null) [ (pkgs.lib.getLib libkrunfw) ]
+  );
 
   rustPackage = pkgs.rustPlatform.buildRustPackage {
     pname = "agentbox";
     version = agentboxVersion;
     src = self;
 
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+
     cargoLock = {
       lockFile = ../../Cargo.lock;
     };
+
+    postInstall = pkgs.lib.optionalString (runtimeLibraryPath != "") ''
+      wrapProgram "$out/bin/agentbox" \
+        --prefix LD_LIBRARY_PATH : ${runtimeLibraryPath}
+    '';
   };
 
   muslTarget =
