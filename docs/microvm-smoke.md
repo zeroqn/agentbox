@@ -66,7 +66,8 @@ launch config round-trips, and the direct libkrun FFI call order avoids host
    Expected host-side evidence:
    - the first run invokes one rootless `buildah unshare` ingestion transaction
      to create a working container, inspect its resolved digest, mount it, copy
-     the mounted rootfs into the digest-keyed microvm cache, validate
+     the mounted rootfs into the digest-keyed microvm cache with
+     `cp -a --reflink=auto`, validate
      `agentbox-guest-init`, write `agentbox-compatible`, then unmount/remove the
      Buildah container;
    - a second run with the same mutable tag resolves through local ref metadata

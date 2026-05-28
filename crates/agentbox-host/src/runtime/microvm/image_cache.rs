@@ -326,7 +326,7 @@ mkdir -p "$staging_dir/rootfs"
 
 mount_path=$(buildah mount "$container_id")
 mounted=1
-cp -a "$mount_path"/. "$staging_dir/rootfs"/
+cp -a --reflink=auto "$mount_path"/. "$staging_dir/rootfs"/
 
 store_dir=$staging_dir/rootfs/nix/store
 matches=
@@ -877,7 +877,7 @@ mod tests {
         assert!(script.contains("buildah from \"$image_ref\""));
         assert!(script.contains("buildah inspect --format '{{.FromImageDigest}}'"));
         assert!(script.contains("buildah mount \"$container_id\""));
-        assert!(script.contains("cp -a \"$mount_path\"/. \"$staging_dir/rootfs\"/"));
+        assert!(script.contains("cp -a --reflink=auto \"$mount_path\"/. \"$staging_dir/rootfs\"/"));
         assert!(script.contains("buildah umount \"$container_id\""));
         assert!(script.contains("buildah rm \"$container_id\""));
     }

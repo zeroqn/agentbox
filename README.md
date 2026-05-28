@@ -51,7 +51,9 @@ managed sidecar.
   refreshes. Existing digest-keyed microvm cache hits do not require Buildah.
   Cache-miss ingestion is rootless and runs as one `buildah unshare`
   transaction so Buildah storage, mount, copy, and cleanup share the same user
-  namespace.
+  namespace; the cache copy uses `cp -a --reflink=auto` so CoW filesystems
+  can avoid full data copies while non-reflink filesystems keep the portable
+  fallback.
 - `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
   normal host binary does not link to libkrun at build time; the Nix `.#agentbox`
   package wraps the binary with this repo's libkrun/libkrunfw library path, and
@@ -587,9 +589,10 @@ Current implemented milestone:
   cache hint rather than an authoritative freshness check;
 - cache misses are ingested through the microvm-owned rootless Buildah path:
   one `buildah unshare` transaction performs `buildah from`,
-  `buildah inspect --format '{{.FromImageDigest}}'`, `buildah mount`, a
-  rootfs-preserving copy into the digest-keyed cache, exact-one executable
-  `agentbox-guest-init` validation, atomic compatibility marker finalization,
+  `buildah inspect --format '{{.FromImageDigest}}'`, `buildah mount`, an
+  opportunistic reflink rootfs-preserving copy into the digest-keyed cache,
+  exact-one executable `agentbox-guest-init` validation, atomic compatibility
+  marker finalization,
   then `buildah umount`/`buildah rm` cleanup;
 - per-task writable rootfs directories are materialized from compatible cached
   roots with executable modes and symlinks preserved, then removed after the run
@@ -631,7 +634,9 @@ The storage policy values are:
 
 - `auto`: prefer the btrfs fast path when available, otherwise use the portable
   `fuse-overlayfs` fallback.
-- `btrfs`: require the btrfs image-rootfs cache/snapshot fast path.
+- `btrfs`: require the btrfs-backed task-rootfs fast path. Image-cache ingestion
+  still treats Buildah storage as opaque and uses opportunistic reflinks rather
+  than direct btrfs snapshots.
 - `fuse-overlay`: require the portable `fuse-overlayfs` image-rootfs path.
 
 Image selection remains global through `--image` or `AGENTBOX_IMAGE`; microvm
