@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::ExitCode;
 
+use crate::DEFAULT_FALLBACK_IMAGE;
 use crate::cli::{CommonOptions, MicrovmOptions};
 use crate::naming::derive_task_container_name;
 use crate::state::resolve_state_layout;
@@ -83,8 +84,9 @@ fn run_with_deps(
         anyhow::bail!(pull_latest_not_supported_message());
     }
 
-    let reference = ImageReference::from_cli(request.common.image.as_deref());
     let cache = ImageCache::new(request.state_layout.microvm_image_cache_dir());
+    let reference = resolve_image_reference(request.common.image.as_deref(), &cache, deps.buildah)
+        .context("microvm image reference resolution failed")?;
     let entry = cache
         .ensure(reference, deps.buildah)
         .context("microvm image cache ingestion failed")?;
@@ -150,6 +152,21 @@ fn run_with_deps(
     Ok(status.exit_code())
 }
 
+fn resolve_image_reference(
+    image: Option<&str>,
+    cache: &ImageCache,
+    buildah: &impl BuildahRunner,
+) -> Result<ImageReference> {
+    let Some(_explicit_image) = image else {
+        let default = ImageReference::from_cli(None);
+        if cache.has_cached_reference(&default)? || buildah.local_image_exists(&default)? {
+            return Ok(default);
+        }
+        return Ok(ImageReference::from_cli(Some(DEFAULT_FALLBACK_IMAGE)));
+    };
+    Ok(ImageReference::from_cli(image))
+}
+
 fn launch_failure_context(
     preserve_debug: bool,
     task_rootfs: &Path,
@@ -208,6 +225,32 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct FakeBuildah {
+        local_images: Vec<ImageReference>,
+        ingests: Rc<RefCell<Vec<ImageReference>>>,
+    }
+
+    impl FakeBuildah {
+        fn new(local_images: Vec<ImageReference>) -> Self {
+            Self {
+                local_images,
+                ingests: Rc::new(RefCell::new(Vec::new())),
+            }
+        }
+    }
+
+    impl BuildahRunner for FakeBuildah {
+        fn ingest(&self, reference: &ImageReference, _cache_root: &Path) -> Result<ImageDigest> {
+            self.ingests.borrow_mut().push(reference.clone());
+            anyhow::bail!("buildah ingest should not be called in this test")
+        }
+
+        fn local_image_exists(&self, reference: &ImageReference) -> Result<bool> {
+            Ok(self.local_images.iter().any(|image| image == reference))
+        }
+    }
+
     struct Probe;
 
     impl StorageProbe for Probe {
@@ -241,8 +284,9 @@ mod tests {
         fn run(
             &self,
             config: &MicrovmLaunchConfig,
-            _task_state_dir: &Path,
+            task_state_dir: &Path,
         ) -> Result<MicrovmChildStatus> {
+            config.write_to(&task_state_dir.join("launch.conf"))?;
             self.calls.borrow_mut().push(config.clone());
             Ok(self.status)
         }
@@ -262,6 +306,16 @@ mod tests {
     }
 
     fn write_cached_guest_init(state_layout: &crate::state::StateLayout) {
+        write_cached_guest_init_for_reference(
+            state_layout,
+            "ghcr.io/example/agentbox@sha256:abc123",
+        );
+    }
+
+    fn write_cached_guest_init_for_reference(
+        state_layout: &crate::state::StateLayout,
+        reference: &str,
+    ) {
         let cache = ImageCache::new(state_layout.microvm_image_cache_dir());
         let digest = ImageDigest::parse("sha256:abc123").expect("digest should parse");
         let entry = cache.entry_path(&digest);
@@ -272,10 +326,7 @@ mod tests {
             .expect("guest init mode");
         fs::write(entry.join("agentbox-compatible"), "agentbox\n").expect("compat marker");
         cache
-            .record_ref_digest(
-                &ImageReference::from_cli(Some("ghcr.io/example/agentbox@sha256:abc123")),
-                &digest,
-            )
+            .record_ref_digest(&ImageReference::from_cli(Some(reference)), &digest)
             .expect("ref should be recorded");
     }
 
@@ -296,6 +347,92 @@ mod tests {
 
     fn ok_disk_preparer() -> FakePersistentDiskPreparer {
         FakePersistentDiskPreparer::ok(Rc::new(RefCell::new(Vec::new())))
+    }
+
+    #[test]
+    fn omitted_image_falls_back_to_ghcr_when_default_is_not_local_or_cached() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state_layout = crate::state::StateLayout::for_test(temp.path().join("state"));
+        write_cached_guest_init_for_reference(&state_layout, DEFAULT_FALLBACK_IMAGE);
+        let supervisor = FakeSupervisor {
+            calls: Rc::new(RefCell::new(Vec::new())),
+            status: MicrovmChildStatus::exited(0),
+        };
+        let buildah = FakeBuildah::new(Vec::new());
+        let disk_preparer = ok_disk_preparer();
+
+        run_with_deps(
+            MicrovmRunRequest {
+                common: CommonOptions {
+                    image: None,
+                    pull_latest: false,
+                    debug: false,
+                    profile: false,
+                    root: false,
+                },
+                options: MicrovmOptions {
+                    storage: MicrovmStoragePolicy::FuseOverlay,
+                    guest_init: None,
+                    preserve_debug: false,
+                    mem_gib: Some(2),
+                },
+                state_layout: &state_layout,
+                task_id: "fallback-image",
+                workspace_source: temp.path(),
+            },
+            MicrovmRunDeps {
+                buildah: &buildah,
+                storage_probe: &Probe,
+                supervisor: &supervisor,
+                disk_preparer: &disk_preparer,
+            },
+        )
+        .expect("fallback image should resolve from cache");
+
+        assert!(buildah.ingests.borrow().is_empty());
+    }
+
+    #[test]
+    fn omitted_image_keeps_default_when_default_is_local() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state_layout = crate::state::StateLayout::for_test(temp.path().join("state"));
+        write_cached_guest_init_for_reference(&state_layout, crate::DEFAULT_IMAGE);
+        let supervisor = FakeSupervisor {
+            calls: Rc::new(RefCell::new(Vec::new())),
+            status: MicrovmChildStatus::exited(0),
+        };
+        let buildah = FakeBuildah::new(vec![ImageReference::from_cli(None)]);
+        let disk_preparer = ok_disk_preparer();
+
+        run_with_deps(
+            MicrovmRunRequest {
+                common: CommonOptions {
+                    image: None,
+                    pull_latest: false,
+                    debug: false,
+                    profile: false,
+                    root: false,
+                },
+                options: MicrovmOptions {
+                    storage: MicrovmStoragePolicy::FuseOverlay,
+                    guest_init: None,
+                    preserve_debug: false,
+                    mem_gib: Some(2),
+                },
+                state_layout: &state_layout,
+                task_id: "default-image",
+                workspace_source: temp.path(),
+            },
+            MicrovmRunDeps {
+                buildah: &buildah,
+                storage_probe: &Probe,
+                supervisor: &supervisor,
+                disk_preparer: &disk_preparer,
+            },
+        )
+        .expect("default image should resolve from cache");
+
+        assert!(buildah.ingests.borrow().is_empty());
     }
 
     #[test]
@@ -343,7 +480,7 @@ mod tests {
         assert!(
             !state_layout
                 .root_dir()
-                .join("microvm-tasks/task-one/rootfs-fuse-overlay")
+                .join("microvm-tasks/task-one")
                 .exists()
         );
     }
@@ -387,12 +524,9 @@ mod tests {
         )
         .expect("microvm run should succeed");
 
-        assert!(
-            state_layout
-                .root_dir()
-                .join("microvm-tasks/task-one/rootfs-fuse-overlay")
-                .exists()
-        );
+        let task_dir = state_layout.root_dir().join("microvm-tasks/task-one");
+        assert!(task_dir.join("rootfs-fuse-overlay").exists());
+        assert!(task_dir.join("launch.conf").exists());
     }
     #[test]
     fn run_with_deps_prepares_persistent_dev_cache_disks_before_supervisor() {

@@ -33,6 +33,7 @@ impl StorageProbe for HostStorageProbe {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskRootfsHandle {
     pub(crate) root: PathBuf,
+    task_dir: PathBuf,
     preserve_debug: bool,
 }
 
@@ -47,11 +48,11 @@ impl TaskRootfsHandle {
         if self.preserve_debug {
             return Ok(CleanupResult::Preserved(self.root));
         }
-        if self.root.exists() {
-            fs::remove_dir_all(&self.root).with_context(|| {
+        if self.task_dir.exists() {
+            remove_task_rootfs_tree(&self.task_dir).with_context(|| {
                 format!(
-                    "failed to clean up microvm task rootfs '{}'",
-                    self.root.display()
+                    "failed to clean up microvm task state dir '{}'",
+                    self.task_dir.display()
                 )
             })?;
         }
@@ -108,7 +109,7 @@ impl StorageManager {
             StorageBackend::FuseOverlay => "rootfs-fuse-overlay",
         });
         if root.exists() {
-            fs::remove_dir_all(&root).with_context(|| {
+            remove_task_rootfs_tree(&root).with_context(|| {
                 format!(
                     "failed to reset stale microvm task rootfs '{}'",
                     root.display()
@@ -124,6 +125,7 @@ impl StorageManager {
         })?;
         Ok(TaskRootfsHandle {
             root,
+            task_dir,
             preserve_debug,
         })
     }
@@ -137,6 +139,37 @@ fn command_available(command: &str) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok()
+}
+
+fn remove_task_rootfs_tree(root: &Path) -> Result<()> {
+    make_directories_owner_writable(root)?;
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+fn make_directories_owner_writable(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to stat '{}'", path.display()))?;
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+
+    let mode = metadata.permissions().mode();
+    if mode & 0o200 == 0 {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700)).with_context(|| {
+            format!(
+                "failed to make microvm task rootfs directory writable '{}'",
+                path.display()
+            )
+        })?;
+    }
+
+    for entry in
+        fs::read_dir(path).with_context(|| format!("failed to read '{}'", path.display()))?
+    {
+        make_directories_owner_writable(&entry?.path())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn copy_rootfs_tree(source: &Path, destination: &Path) -> Result<()> {
@@ -253,6 +286,12 @@ mod tests {
             .expect("cache hit should resolve")
     }
 
+    fn set_mode(path: &Path, mode: u32) {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap_or_else(|err| {
+            panic!("failed to set mode {mode:o} on '{}': {err}", path.display())
+        });
+    }
+
     struct NoBuildah;
 
     impl BuildahRunner for NoBuildah {
@@ -327,14 +366,91 @@ mod tests {
             "cached"
         );
         fs::write(handle.root.join("task-only"), "mutable").expect("task root should be writable");
+        fs::write(handle.task_dir.join("launch.conf"), "config")
+            .expect("launch config should be written");
         assert!(!entry.rootfs.join("task-only").exists());
         let root = handle.root.clone();
+        let task_dir = handle.task_dir.clone();
 
         assert_eq!(
             handle.cleanup().expect("cleanup should succeed"),
             CleanupResult::Removed
         );
         assert!(!root.exists());
+        assert!(!task_dir.exists());
+    }
+
+    #[test]
+    fn cleanup_removes_task_rootfs_with_read_only_directories() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let read_only_dir = entry.rootfs.join("nix/store/hash/bin");
+        fs::create_dir_all(&read_only_dir).expect("read-only dir should be created");
+        fs::write(read_only_dir.join("tool"), "#!/bin/sh\n").expect("tool should be written");
+        set_mode(&read_only_dir, 0o555);
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+
+        let handle = manager
+            .materialize(
+                &entry,
+                StorageBackend::FuseOverlay,
+                "readonly-cleanup",
+                false,
+            )
+            .expect("task rootfs should materialize");
+        set_mode(&read_only_dir, 0o755);
+        fs::write(handle.task_dir.join("launch.conf"), "config")
+            .expect("launch config should be written");
+        let copied_read_only_dir = handle.root.join("nix/store/hash/bin");
+        assert_eq!(
+            fs::metadata(&copied_read_only_dir)
+                .expect("copied dir metadata should be readable")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o555
+        );
+        let root = handle.root.clone();
+        let task_dir = handle.task_dir.clone();
+
+        assert_eq!(
+            handle
+                .cleanup()
+                .expect("cleanup should remove read-only dirs"),
+            CleanupResult::Removed
+        );
+        assert!(!root.exists());
+        assert!(!task_dir.exists());
+    }
+
+    #[test]
+    fn materialize_resets_stale_read_only_task_rootfs() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let read_only_dir = entry.rootfs.join("nix/store/hash/bin");
+        fs::create_dir_all(&read_only_dir).expect("read-only dir should be created");
+        fs::write(read_only_dir.join("tool"), "#!/bin/sh\n").expect("tool should be written");
+        set_mode(&read_only_dir, 0o555);
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+
+        let stale = manager
+            .materialize(&entry, StorageBackend::FuseOverlay, "readonly-reset", true)
+            .expect("stale task rootfs should materialize");
+        assert!(stale.root.exists());
+        set_mode(&read_only_dir, 0o755);
+
+        let replacement = manager
+            .materialize(&entry, StorageBackend::FuseOverlay, "readonly-reset", false)
+            .expect("stale read-only task rootfs should be reset");
+        let replacement_root = replacement.root.clone();
+
+        assert!(replacement_root.exists());
+        assert_eq!(
+            replacement
+                .cleanup()
+                .expect("replacement cleanup should succeed"),
+            CleanupResult::Removed
+        );
     }
 
     #[test]

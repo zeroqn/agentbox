@@ -23,7 +23,7 @@ impl ImageReference {
         Self(image.unwrap_or(DEFAULT_IMAGE).to_owned())
     }
 
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 
@@ -99,10 +99,15 @@ impl ImageCacheEntry {
 
 pub(crate) trait BuildahRunner {
     fn ingest(&self, reference: &ImageReference, cache_root: &Path) -> Result<ImageDigest>;
+
+    fn local_image_exists(&self, _reference: &ImageReference) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 pub(crate) trait BuildahCommandRunner {
     fn run(&self, args: &[&str]) -> Result<String>;
+    fn status(&self, args: &[&str]) -> Result<bool>;
     fn run_unshare(&self, script: &str, args: &[&str]) -> Result<String>;
 }
 
@@ -112,6 +117,10 @@ struct HostBuildahCommandRunner;
 impl BuildahCommandRunner for HostBuildahCommandRunner {
     fn run(&self, args: &[&str]) -> Result<String> {
         run_buildah(args)
+    }
+
+    fn status(&self, args: &[&str]) -> Result<bool> {
+        run_buildah_status(args)
     }
 
     fn run_unshare(&self, script: &str, args: &[&str]) -> Result<String> {
@@ -193,6 +202,24 @@ fn run_buildah(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn run_buildah_status(args: &[&str]) -> Result<bool> {
+    let status = match Command::new("buildah")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) => status,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => {
+            return Err(anyhow!(err))
+                .with_context(|| format!("failed to run buildah {}", args.join(" ")));
+        }
+    };
+    Ok(status.success())
+}
+
 struct BuildahCommandIngestor<'a, C> {
     commands: &'a C,
 }
@@ -207,6 +234,10 @@ impl<C: BuildahCommandRunner> BuildahRunner for BuildahCommandIngestor<'_, C> {
     fn ingest(&self, reference: &ImageReference, cache_root: &Path) -> Result<ImageDigest> {
         ingest_with_buildah_commands(reference, cache_root, self.commands)
     }
+
+    fn local_image_exists(&self, reference: &ImageReference) -> Result<bool> {
+        local_image_exists_with_buildah_commands(reference, self.commands)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -216,6 +247,24 @@ impl BuildahRunner for HostBuildahRunner {
     fn ingest(&self, reference: &ImageReference, cache_root: &Path) -> Result<ImageDigest> {
         BuildahCommandIngestor::new(&HostBuildahCommandRunner).ingest(reference, cache_root)
     }
+
+    fn local_image_exists(&self, reference: &ImageReference) -> Result<bool> {
+        BuildahCommandIngestor::new(&HostBuildahCommandRunner).local_image_exists(reference)
+    }
+}
+
+fn local_image_exists_with_buildah_commands(
+    reference: &ImageReference,
+    commands: &impl BuildahCommandRunner,
+) -> Result<bool> {
+    commands
+        .status(&["inspect", "--type", "image", reference.as_str()])
+        .with_context(|| {
+            format!(
+                "failed to inspect local microvm image '{}'",
+                reference.as_str()
+            )
+        })
 }
 
 fn ingest_with_buildah_commands(
@@ -516,6 +565,16 @@ impl ImageCache {
         cache_entry_path(&self.root, digest)
     }
 
+    pub(crate) fn has_cached_reference(&self, reference: &ImageReference) -> Result<bool> {
+        if let Some(digest) = reference.digest() {
+            return Ok(self.entry_if_cached(reference.clone(), digest)?.is_some());
+        }
+        let Some(digest) = self.lookup_ref_digest(reference)? else {
+            return Ok(false);
+        };
+        Ok(self.entry_if_cached(reference.clone(), digest)?.is_some())
+    }
+
     #[cfg(test)]
     pub(crate) fn record_ref_digest(
         &self,
@@ -679,6 +738,16 @@ mod tests {
             match args {
                 ["--version"] => Ok("buildah version 1.42.0\n".to_owned()),
                 other => anyhow::bail!("unexpected buildah args: {other:?}"),
+            }
+        }
+
+        fn status(&self, args: &[&str]) -> Result<bool> {
+            self.calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| (*arg).to_owned()).collect());
+            match args {
+                ["inspect", "--type", "image", reference] => Ok(*reference == self.reference),
+                other => anyhow::bail!("unexpected buildah status args: {other:?}"),
             }
         }
 
