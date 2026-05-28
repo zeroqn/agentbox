@@ -3,6 +3,7 @@ pub(crate) mod guest_init;
 pub(crate) mod image_cache;
 pub(crate) mod launch;
 pub(crate) mod persistent_disks;
+mod profile;
 pub(crate) mod storage;
 pub(crate) mod supervisor;
 
@@ -19,6 +20,7 @@ use self::guest_init::resolve_guest_init;
 use self::image_cache::{BuildahRunner, HostBuildahRunner, ImageCache, ImageReference};
 use self::launch::{MicrovmLaunchConfig, MicrovmLaunchSpec, resolve_cpu_count};
 use self::persistent_disks::{HostMicrovmPersistentDiskPreparer, MicrovmPersistentDiskPreparer};
+use self::profile::MicrovmHostProfiler;
 use self::storage::{HostStorageProbe, StorageManager, StorageProbe};
 use self::supervisor::{HostMicrovmSupervisor, MicrovmSupervisor};
 
@@ -83,23 +85,35 @@ fn run_with_deps(
     if request.common.pull_latest {
         anyhow::bail!(pull_latest_not_supported_message());
     }
+    let host_profile_enabled = host_profile_enabled(&request.common);
+    let mut profiler = MicrovmHostProfiler::new(host_profile_enabled);
 
     let cache = ImageCache::new(request.state_layout.microvm_image_cache_dir());
-    let reference = resolve_image_reference(request.common.image.as_deref(), &cache, deps.buildah)
+    let reference = profiler
+        .measure_result("image_reference_resolution", || {
+            resolve_image_reference(request.common.image.as_deref(), &cache, deps.buildah)
+        })
         .context("microvm image reference resolution failed")?;
-    let entry = cache
-        .ensure(reference, deps.buildah)
+    let entry = profiler
+        .measure_result("image_cache_ensure", || {
+            cache.ensure(reference, deps.buildah)
+        })
         .context("microvm image cache ingestion failed")?;
-    let backend = StorageManager::select_backend(request.options.storage, deps.storage_probe)
+    let backend = profiler
+        .measure_result("storage_backend_selection", || {
+            StorageManager::select_backend(request.options.storage, deps.storage_probe)
+        })
         .context("microvm storage backend selection failed")?;
     let storage = StorageManager::new(request.state_layout.root_dir().to_path_buf());
-    let handle = storage
-        .materialize(
-            &entry,
-            backend,
-            request.task_id,
-            request.options.preserve_debug,
-        )
+    let handle = profiler
+        .measure_result("task_rootfs_materialization", || {
+            storage.materialize(
+                &entry,
+                backend,
+                request.task_id,
+                request.options.preserve_debug,
+            )
+        })
         .context("microvm task rootfs materialization failed")?;
     let run_result = (|| {
         let task_state_dir = handle
@@ -107,38 +121,48 @@ fn run_with_deps(
             .parent()
             .ok_or_else(|| anyhow::anyhow!("microvm task rootfs has no parent state dir"))?
             .to_path_buf();
-        let guest_init = resolve_guest_init(&handle.root, request.options.guest_init.as_deref())
+        let guest_init = profiler
+            .measure_result("guest_init_resolution", || {
+                resolve_guest_init(&handle.root, request.options.guest_init.as_deref())
+            })
             .context("microvm guest-init resolution failed")?;
-        let disks = deps
-            .disk_preparer
-            .prepare(request.state_layout.root_dir())
+        let disks = profiler
+            .measure_result("persistent_disk_preparation", || {
+                deps.disk_preparer.prepare(request.state_layout.root_dir())
+            })
             .context("microvm persistent disk preparation failed")?;
         let (host_uid, host_gid) = current_host_ids();
-        let config = MicrovmLaunchConfig::build_for_task(MicrovmLaunchSpec {
-            task_rootfs: &handle.root,
-            workspace_source: request.workspace_source,
-            guest_init_exec: &guest_init.guest_exec_path,
-            common: request.common,
-            options: request.options.clone(),
-            host_uid,
-            host_gid,
-            vcpus: resolve_cpu_count()?,
-            disks: disks.attachments(),
-            extra_env: disks.env_pairs(),
-        })
-        .context("microvm launch config build failed")?;
-
-        deps.supervisor
-            .run(&config, &task_state_dir)
-            .with_context(|| {
-                launch_failure_context(
-                    request.options.preserve_debug,
-                    &handle.root,
-                    &task_state_dir,
-                )
+        let config = profiler
+            .measure_result("launch_config_build", || {
+                MicrovmLaunchConfig::build_for_task(MicrovmLaunchSpec {
+                    task_rootfs: &handle.root,
+                    workspace_source: request.workspace_source,
+                    guest_init_exec: &guest_init.guest_exec_path,
+                    common: request.common,
+                    options: request.options.clone(),
+                    host_uid,
+                    host_gid,
+                    vcpus: resolve_cpu_count()?,
+                    disks: disks.attachments(),
+                    extra_env: disks.env_pairs(),
+                })
             })
+            .context("microvm launch config build failed")?;
+
+        profiler.measure_result("helper_session", || {
+            deps.supervisor
+                .run(&config, &task_state_dir)
+                .with_context(|| {
+                    launch_failure_context(
+                        request.options.preserve_debug,
+                        &handle.root,
+                        &task_state_dir,
+                    )
+                })
+        })
     })();
-    let cleanup_result = handle.cleanup();
+    let cleanup_result = profiler.measure_result("task_state_cleanup", || handle.cleanup());
+    profiler.emit_to_stderr();
     let status = match (run_result, cleanup_result) {
         (Ok(status), Ok(_)) => status,
         (Ok(_), Err(cleanup_err)) => return Err(cleanup_err),
@@ -165,6 +189,10 @@ fn resolve_image_reference(
         return Ok(ImageReference::from_cli(Some(DEFAULT_FALLBACK_IMAGE)));
     };
     Ok(ImageReference::from_cli(image))
+}
+
+fn host_profile_enabled(common: &CommonOptions) -> bool {
+    common.debug && common.profile
 }
 
 fn launch_failure_context(
@@ -347,6 +375,22 @@ mod tests {
 
     fn ok_disk_preparer() -> FakePersistentDiskPreparer {
         FakePersistentDiskPreparer::ok(Rc::new(RefCell::new(Vec::new())))
+    }
+
+    #[test]
+    fn host_profile_requires_debug_and_profile_flags() {
+        let common = |debug, profile| CommonOptions {
+            image: None,
+            pull_latest: false,
+            debug,
+            profile,
+            root: false,
+        };
+
+        assert!(!host_profile_enabled(&common(false, false)));
+        assert!(!host_profile_enabled(&common(true, false)));
+        assert!(!host_profile_enabled(&common(false, true)));
+        assert!(host_profile_enabled(&common(true, true)));
     }
 
     #[test]

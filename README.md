@@ -257,20 +257,25 @@ Enable debug logging for troubleshooting agentbox-managed Podman commands:
 including task launch, sidecar setup, image inspection/mounting, health probes,
 and cleanup paths. It also allows guest-side diagnostic reports to use stderr.
 
-Collect `agentbox-guest-init` component timings for the task container:
+Collect agentbox component timings:
 
 ```bash
 ./result/bin/agentbox --profile --debug
 ./result/bin/agentbox container --profile --debug
+./result/bin/agentbox microvm --profile --debug
 ```
 
-`--profile` enables guest-init timing collection. Timings are printed only when
-`--debug` is also set, and the report is written to stderr so stdout remains
-reserved for command output. `--profile` without `--debug` enables measurement
-but suppresses the report; `--debug` without `--profile` does not print a timing
-report. Libkrun background Podman prep/wait workers and sidecar debug runs do
-not emit guest-init profile reports. When libkrun `/nix` overlay bootstrap runs,
-nested
+`--profile` enables timing collection. Timings are printed only when `--debug`
+is also set, and reports are written to stderr so stdout remains reserved for
+command output. `--profile` without `--debug` enables measurement but suppresses
+reports; `--debug` without `--profile` does not print timing reports. Container
+and libkrun task runs emit `agentbox-guest-init` timings. Microvm runs also emit
+a host-side `agentbox microvm host profile` report for completed profiled host
+phases such as image reference resolution, image cache lookup/ingestion, task
+rootfs materialization, guest-init lookup, persistent disk preparation, launch
+config build, helper session, and task state cleanup. Libkrun background Podman
+prep/wait workers and sidecar debug runs do not emit guest-init profile reports.
+When libkrun `/nix` overlay bootstrap runs, nested
 `bootstrap-nix:*` rows break down disk discovery, mount/preseed work, daemon
 startup, and the `bootstrap-nix:wait-socket` polling loop.
 

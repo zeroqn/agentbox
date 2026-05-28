@@ -68,8 +68,8 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Enable guest-init component timing collection",
-        long_help = "Enable agentbox-guest-init component timing collection for the task container. Timing is reported to stderr only when --debug is also set, so normal command stdout remains reserved for command output."
+        help = "Enable agentbox component timing collection",
+        long_help = "Enable agentbox component timing collection. Guest-init timings are collected for task containers, and microvm host lifecycle timings are collected for microvm runs. Timing is reported to stderr only when --debug is also set, so normal command stdout remains reserved for command output."
     )]
     profile: bool,
 
