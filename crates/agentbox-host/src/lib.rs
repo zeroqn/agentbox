@@ -40,18 +40,63 @@ const TASK_CONTAINER_SIDECAR_LABEL: &str = "io.agentbox.sidecar";
 pub fn entrypoint() -> ExitCode {
     let mut args = std::env::args_os();
     let _program = args.next();
-    if args.next().as_deref() == Some(std::ffi::OsStr::new(MICROVM_HELPER_ARG)) {
-        let Some(config_path) = args.next() else {
-            eprintln!("agentbox: microvm helper requires a launch config path");
-            return ExitCode::from(1);
-        };
-        return match runtime::microvm::run_helper_from_path(std::path::Path::new(&config_path)) {
-            Ok(()) => ExitCode::from(0),
-            Err(err) => {
-                eprintln!("agentbox: {err:#}");
-                ExitCode::from(1)
+    match args.next().as_deref() {
+        Some(arg) if arg == std::ffi::OsStr::new(MICROVM_HELPER_ARG) => {
+            let Some(config_path) = args.next() else {
+                eprintln!("agentbox: microvm helper requires a launch config path");
+                return ExitCode::from(1);
+            };
+            return match runtime::microvm::run_helper_from_path(std::path::Path::new(&config_path))
+            {
+                Ok(()) => ExitCode::from(0),
+                Err(err) => {
+                    eprintln!("agentbox: {err:#}");
+                    ExitCode::from(1)
+                }
+            };
+        }
+        Some(arg) if arg == std::ffi::OsStr::new("internal") => {
+            let Some(command) = args.next() else {
+                eprintln!("agentbox: internal command is required");
+                return ExitCode::from(1);
+            };
+            if command != std::ffi::OsStr::new("microvm-ingest-cache") {
+                eprintln!(
+                    "agentbox: unsupported internal command '{}'",
+                    command.to_string_lossy()
+                );
+                return ExitCode::from(1);
             }
-        };
+            let Some(image_ref) = args.next() else {
+                eprintln!("agentbox: internal microvm-ingest-cache requires an image reference");
+                return ExitCode::from(1);
+            };
+            let Some(cache_root) = args.next() else {
+                eprintln!("agentbox: internal microvm-ingest-cache requires a cache root");
+                return ExitCode::from(1);
+            };
+            let Some(expected_digest) = args.next() else {
+                eprintln!(
+                    "agentbox: internal microvm-ingest-cache requires an expected digest argument"
+                );
+                return ExitCode::from(1);
+            };
+            return match runtime::microvm::image_cache::run_ingest_cache_child(
+                &image_ref.to_string_lossy(),
+                std::path::Path::new(&cache_root),
+                &expected_digest.to_string_lossy(),
+            ) {
+                Ok(digest) => {
+                    println!("{}", digest.as_str());
+                    ExitCode::from(0)
+                }
+                Err(err) => {
+                    eprintln!("agentbox: {err:#}");
+                    ExitCode::from(1)
+                }
+            };
+        }
+        _ => {}
     }
 
     let cli = Cli::parse();

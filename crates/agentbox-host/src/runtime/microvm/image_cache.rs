@@ -1,11 +1,9 @@
 use anyhow::{Context, Result, anyhow};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::DEFAULT_IMAGE;
-#[cfg(test)]
 use crate::runtime::microvm::guest_init::find_agentbox_guest_init;
 #[cfg(test)]
 use crate::runtime::microvm::storage::copy_rootfs_tree;
@@ -108,7 +106,7 @@ pub(crate) trait BuildahRunner {
 pub(crate) trait BuildahCommandRunner {
     fn run(&self, args: &[&str]) -> Result<String>;
     fn status(&self, args: &[&str]) -> Result<bool>;
-    fn run_unshare(&self, script: &str, args: &[&str]) -> Result<String>;
+    fn run_unshare_ingestion(&self, args: &[&str]) -> Result<String>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -123,59 +121,21 @@ impl BuildahCommandRunner for HostBuildahCommandRunner {
         run_buildah_status(args)
     }
 
-    fn run_unshare(&self, script: &str, args: &[&str]) -> Result<String> {
-        let script_dir = std::env::temp_dir().join(format!(
-            "agentbox-buildah-unshare-{}-{}",
-            std::process::id(),
-            monotonic_nanos()
-        ));
-        fs::create_dir_all(&script_dir).with_context(|| {
-            format!(
-                "failed to create temporary buildah unshare script directory '{}'",
-                script_dir.display()
-            )
-        })?;
-        let script_path = script_dir.join("ingest.sh");
-        let write_result = (|| {
-            fs::write(&script_path, script).with_context(|| {
-                format!(
-                    "failed to write buildah unshare script '{}'",
-                    script_path.display()
-                )
-            })?;
-            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700)).with_context(
-                || {
-                    format!(
-                        "failed to make buildah unshare script executable '{}'",
-                        script_path.display()
-                    )
-                },
-            )?;
-
-            let mut command_args = vec![
-                "unshare".to_owned(),
-                "sh".to_owned(),
-                script_path.display().to_string(),
-            ];
-            command_args.extend(args.iter().map(|arg| (*arg).to_owned()));
-            let borrowed = command_args.iter().map(String::as_str).collect::<Vec<_>>();
-            run_buildah(&borrowed)
-        })();
-        let cleanup_result = fs::remove_dir_all(&script_dir).with_context(|| {
-            format!(
-                "failed to clean temporary buildah unshare script directory '{}'",
-                script_dir.display()
-            )
-        });
-
-        match (write_result, cleanup_result) {
-            (Ok(output), Ok(())) => Ok(output),
-            (Ok(_), Err(err)) => Err(err),
-            (Err(err), Ok(())) => Err(err),
-            (Err(err), Err(cleanup_err)) => Err(cleanup_err.context(format!(
-                "buildah unshare script cleanup failed after command error: {err:#}"
-            ))),
-        }
+    fn run_unshare_ingestion(&self, args: &[&str]) -> Result<String> {
+        let executable = std::env::current_exe()
+            .context("failed to resolve current executable for buildah unshare ingestion")?;
+        let executable = executable
+            .to_str()
+            .ok_or_else(|| anyhow!("agentbox executable path is not valid UTF-8"))?;
+        let mut command_args = vec![
+            "unshare".to_owned(),
+            executable.to_owned(),
+            "internal".to_owned(),
+            "microvm-ingest-cache".to_owned(),
+        ];
+        command_args.extend(args.iter().map(|arg| (*arg).to_owned()));
+        let borrowed = command_args.iter().map(String::as_str).collect::<Vec<_>>();
+        run_buildah(&borrowed)
     }
 }
 
@@ -288,10 +248,7 @@ fn ingest_with_buildah_commands(
         .to_str()
         .ok_or_else(|| anyhow!("microvm image cache path is not valid UTF-8"))?;
     let output = commands
-        .run_unshare(
-            buildah_ingestion_script(),
-            &[reference.as_str(), cache_root, expected_digest.as_str()],
-        )
+        .run_unshare_ingestion(&[reference.as_str(), cache_root, expected_digest.as_str()])
         .with_context(|| {
             format!(
                 "failed to ingest microvm image '{}' with rootless buildah unshare",
@@ -312,101 +269,233 @@ fn trim_required(output: String, empty_message: &'static str) -> Result<String> 
     Ok(trimmed.to_owned())
 }
 
-fn buildah_ingestion_script() -> &'static str {
-    r#"set -eu
-
-image_ref=$1
-cache_root=$2
-expected_digest=$3
-
-container_id=
-mounted=0
-staging_dir=
-
-cleanup() {
-  status=$?
-  if [ "$mounted" = 1 ] && [ -n "$container_id" ]; then
-    buildah umount "$container_id" >/dev/null 2>&1 || true
-  fi
-  if [ -n "$container_id" ]; then
-    buildah rm "$container_id" >/dev/null 2>&1 || true
-  fi
-  if [ "$status" -ne 0 ] && [ -n "$staging_dir" ] && [ -d "$staging_dir" ]; then
-    rm -rf "$staging_dir" >/dev/null 2>&1 || true
-  fi
-  exit "$status"
+pub(crate) fn run_ingest_cache_child(
+    image_ref: &str,
+    cache_root: &Path,
+    expected_digest: &str,
+) -> Result<ImageDigest> {
+    ingest_cache_entry_in_unshare(
+        image_ref,
+        cache_root,
+        expected_digest,
+        &HostBuildahCommandRunner,
+    )
 }
-trap cleanup EXIT HUP INT TERM
 
-container_id=$(buildah from "$image_ref")
-digest=$(buildah inspect --format '{{.FromImageDigest}}' "$container_id")
-if [ -z "$digest" ]; then
-  echo "buildah inspect did not return an image digest" >&2
-  exit 20
-fi
-if [ -n "$expected_digest" ] && [ "$digest" != "$expected_digest" ]; then
-  echo "buildah resolved '$image_ref' to digest '$digest', but the image reference requested '$expected_digest'" >&2
-  exit 21
-fi
+fn ingest_cache_entry_in_unshare(
+    image_ref: &str,
+    cache_root: &Path,
+    expected_digest: &str,
+    commands: &impl BuildahCommandRunner,
+) -> Result<ImageDigest> {
+    let container_id = trim_required(
+        commands.run(&["from", image_ref])?,
+        "buildah from did not return a container id",
+    )?;
+    let mut container = BuildahContainerGuard::new(commands, container_id);
+    let digest = trim_required(
+        commands.run(&[
+            "inspect",
+            "--format",
+            "{{.FromImageDigest}}",
+            container.id(),
+        ])?,
+        "buildah inspect did not return an image digest",
+    )?;
+    if !expected_digest.is_empty() && expected_digest != digest {
+        anyhow::bail!(
+            "buildah resolved '{}' to digest '{}', but the image reference requested '{}'",
+            image_ref,
+            digest,
+            expected_digest
+        );
+    }
+    let digest = ImageDigest::parse(&digest)?;
 
-algorithm=${digest%%:*}
-value=${digest#*:}
-if [ "$algorithm" = "$digest" ] || [ -z "$algorithm" ] || [ -z "$value" ]; then
-  echo "image digest '$digest' must use algorithm:value form" >&2
-  exit 22
-fi
-case "$algorithm" in
-  */*|*..*) echo "image digest '$digest' is not safe for cache paths" >&2; exit 23 ;;
-esac
-case "$value" in
-  */*|*..*) echo "image digest '$digest' is not safe for cache paths" >&2; exit 23 ;;
-esac
+    let entry_dir = cache_entry_path(cache_root, &digest);
+    if entry_dir.join(ROOTFS_DIR).is_dir() && entry_dir.join(COMPATIBILITY_MARKER).exists() {
+        return Ok(digest);
+    }
 
-entry_dir=$cache_root/blobs/$algorithm/$value
-if [ -d "$entry_dir/rootfs" ] && [ -e "$entry_dir/agentbox-compatible" ]; then
-  printf '%s\n' "$digest"
-  exit 0
-fi
-entry_parent=$(dirname "$entry_dir")
-mkdir -p "$entry_parent"
-staging_dir=$entry_parent/.$value.partial-$$-$(date +%s%N 2>/dev/null || date +%s)
-rm -rf "$staging_dir"
-mkdir -p "$staging_dir/rootfs"
+    let parent = entry_dir
+        .parent()
+        .ok_or_else(|| anyhow!("microvm image cache entry has no parent"))?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create microvm image cache directory '{}'",
+            parent.display()
+        )
+    })?;
+    let staging_dir = staging_entry_path(&entry_dir);
+    cleanup_cache_staging_dir(&staging_dir, true).with_context(|| {
+        format!(
+            "failed to reset stale microvm image cache staging directory '{}'",
+            staging_dir.display()
+        )
+    })?;
+    fs::create_dir_all(&staging_dir).with_context(|| {
+        format!(
+            "failed to create microvm image cache staging directory '{}'",
+            staging_dir.display()
+        )
+    })?;
 
-mount_path=$(buildah mount "$container_id")
-mounted=1
-cp -a --reflink=auto "$mount_path"/. "$staging_dir/rootfs"/
+    let finalize_result = (|| {
+        let staged_rootfs = staging_dir.join(ROOTFS_DIR);
+        let rootfs_is_subvolume = create_snapshot_capable_rootfs(&staged_rootfs)?;
+        let mount_path = PathBuf::from(trim_required(
+            commands.run(&["mount", container.id()])?,
+            "buildah mount did not return a mount path",
+        )?);
+        container.mark_mounted();
+        copy_rootfs_with_cp(&mount_path, &staged_rootfs)?;
+        find_agentbox_guest_init(&staged_rootfs).with_context(|| {
+            format!(
+                "buildah-ingested image digest '{}' is not agentbox-compatible",
+                digest.as_str()
+            )
+        })?;
+        fs::write(staging_dir.join(COMPATIBILITY_MARKER), "agentbox\n").with_context(|| {
+            format!(
+                "failed to write microvm image cache compatibility marker '{}'",
+                staging_dir.join(COMPATIBILITY_MARKER).display()
+            )
+        })?;
+        match fs::rename(&staging_dir, &entry_dir) {
+            Ok(()) => Ok(()),
+            Err(_err)
+                if entry_dir.join(ROOTFS_DIR).is_dir()
+                    && entry_dir.join(COMPATIBILITY_MARKER).exists() =>
+            {
+                cleanup_cache_staging_dir(&staging_dir, rootfs_is_subvolume)?;
+                Ok(())
+            }
+            Err(err) => Err(err).with_context(|| {
+                format!(
+                    "failed to finalize microvm image cache entry '{}'",
+                    entry_dir.display()
+                )
+            }),
+        }
+    })();
 
-store_dir=$staging_dir/rootfs/nix/store
-matches=
-if [ -d "$store_dir" ]; then
-  matches=$(find "$store_dir" -mindepth 3 -maxdepth 3 -type f -path '*/bin/agentbox-guest-init' -perm /111 -print 2>/dev/null || true)
-fi
-match_count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
-if [ "$match_count" = 0 ]; then
-  echo "buildah-ingested image digest '$digest' is not agentbox-compatible: no executable agentbox-guest-init found under /nix/store/*/bin" >&2
-  exit 24
-fi
-if [ "$match_count" != 1 ]; then
-  echo "buildah-ingested image digest '$digest' is ambiguous: found $match_count executable agentbox-guest-init binaries under /nix/store/*/bin" >&2
-  exit 25
-fi
+    match finalize_result {
+        Ok(()) => Ok(digest),
+        Err(err) => {
+            cleanup_cache_staging_dir(&staging_dir, true).with_context(|| {
+                format!(
+                    "failed to clean microvm image cache staging directory '{}' after error: {err:#}",
+                    staging_dir.display()
+                )
+            })?;
+            Err(err)
+        }
+    }
+}
 
-printf 'agentbox\n' > "$staging_dir/agentbox-compatible"
-if mv "$staging_dir" "$entry_dir"; then
-  staging_dir=
-  printf '%s\n' "$digest"
-  exit 0
-fi
-if [ -d "$entry_dir/rootfs" ] && [ -e "$entry_dir/agentbox-compatible" ]; then
-  rm -rf "$staging_dir"
-  staging_dir=
-  printf '%s\n' "$digest"
-  exit 0
-fi
-echo "failed to finalize microvm image cache entry '$entry_dir'" >&2
-exit 26
-"#
+struct BuildahContainerGuard<'a, C: BuildahCommandRunner> {
+    commands: &'a C,
+    id: String,
+    mounted: bool,
+}
+
+impl<'a, C: BuildahCommandRunner> BuildahContainerGuard<'a, C> {
+    fn new(commands: &'a C, id: String) -> Self {
+        Self {
+            commands,
+            id,
+            mounted: false,
+        }
+    }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn mark_mounted(&mut self) {
+        self.mounted = true;
+    }
+}
+
+impl<C: BuildahCommandRunner> Drop for BuildahContainerGuard<'_, C> {
+    fn drop(&mut self) {
+        if self.mounted {
+            let _ = self.commands.run(&["umount", &self.id]);
+        }
+        let _ = self.commands.run(&["rm", &self.id]);
+    }
+}
+
+fn create_snapshot_capable_rootfs(rootfs: &Path) -> Result<bool> {
+    match Command::new("btrfs")
+        .arg("subvolume")
+        .arg("create")
+        .arg(rootfs)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) if status.success() => Ok(true),
+        Ok(_) | Err(_) => {
+            fs::create_dir_all(rootfs)
+                .with_context(|| format!("failed to create '{}'", rootfs.display()))?;
+            Ok(false)
+        }
+    }
+}
+
+fn copy_rootfs_with_cp(source: &Path, destination: &Path) -> Result<()> {
+    let source_contents = source.join(".");
+    let output = Command::new("cp")
+        .arg("-a")
+        .arg("--reflink=auto")
+        .arg(&source_contents)
+        .arg(destination)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => anyhow!("cp is not installed or not available on PATH"),
+            _ => err.into(),
+        })
+        .with_context(|| {
+            format!(
+                "failed to copy buildah-mounted rootfs '{}' into microvm image cache '{}'",
+                source.display(),
+                destination.display()
+            )
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "cp -a --reflink=auto failed from '{}' to '{}': {}",
+            source.display(),
+            destination.display(),
+            stderr.trim()
+        );
+    }
+    Ok(())
+}
+
+fn cleanup_cache_staging_dir(staging_dir: &Path, may_contain_btrfs_subvolume: bool) -> Result<()> {
+    if !staging_dir.exists() {
+        return Ok(());
+    }
+    if may_contain_btrfs_subvolume {
+        let rootfs = staging_dir.join(ROOTFS_DIR);
+        if rootfs.exists() {
+            let _ = Command::new("btrfs")
+                .arg("subvolume")
+                .arg("delete")
+                .arg(&rootfs)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+    fs::remove_dir_all(staging_dir)
+        .with_context(|| format!("failed to remove '{}'", staging_dir.display()))
 }
 
 #[cfg(test)]
@@ -499,7 +588,6 @@ fn cache_entry_path(cache_root: &Path, digest: &ImageDigest) -> PathBuf {
     cache_root.join(BLOBS_DIR).join(algorithm).join(value)
 }
 
-#[cfg(test)]
 fn staging_entry_path(entry_dir: &Path) -> PathBuf {
     let name = entry_dir
         .file_name()
@@ -694,7 +782,6 @@ mod tests {
 
     struct FakeBuildahCommands {
         calls: RefCell<Vec<Vec<String>>>,
-        unshare_scripts: RefCell<Vec<String>>,
         mount_root: PathBuf,
         reference: String,
         digest_output: String,
@@ -704,7 +791,6 @@ mod tests {
         fn new(mount_root: PathBuf) -> Self {
             Self {
                 calls: RefCell::new(Vec::new()),
-                unshare_scripts: RefCell::new(Vec::new()),
                 mount_root,
                 reference: "ghcr.io/example/agentbox:dev".to_owned(),
                 digest_output: "sha256:feedface\n".to_owned(),
@@ -713,10 +799,6 @@ mod tests {
 
         fn calls(&self) -> Vec<Vec<String>> {
             self.calls.borrow().clone()
-        }
-
-        fn unshare_scripts(&self) -> Vec<String> {
-            self.unshare_scripts.borrow().clone()
         }
 
         fn with_reference(mut self, reference: &str) -> Self {
@@ -737,6 +819,18 @@ mod tests {
                 .push(args.iter().map(|arg| (*arg).to_owned()).collect());
             match args {
                 ["--version"] => Ok("buildah version 1.42.0\n".to_owned()),
+                ["from", reference] if *reference == self.reference => {
+                    Ok("fake-container\n".to_owned())
+                }
+                [
+                    "inspect",
+                    "--format",
+                    "{{.FromImageDigest}}",
+                    "fake-container",
+                ] => Ok(self.digest_output.clone()),
+                ["mount", "fake-container"] => Ok(format!("{}\n", self.mount_root.display())),
+                ["umount", "fake-container"] => Ok(String::new()),
+                ["rm", "fake-container"] => Ok(String::new()),
                 other => anyhow::bail!("unexpected buildah args: {other:?}"),
             }
         }
@@ -751,9 +845,13 @@ mod tests {
             }
         }
 
-        fn run_unshare(&self, script: &str, args: &[&str]) -> Result<String> {
-            self.unshare_scripts.borrow_mut().push(script.to_owned());
-            let mut call = vec!["unshare".to_owned(), "sh".to_owned(), "<script>".to_owned()];
+        fn run_unshare_ingestion(&self, args: &[&str]) -> Result<String> {
+            let mut call = vec![
+                "unshare".to_owned(),
+                "agentbox".to_owned(),
+                "internal".to_owned(),
+                "microvm-ingest-cache".to_owned(),
+            ];
             call.extend(args.iter().map(|arg| (*arg).to_owned()));
             self.calls.borrow_mut().push(call);
 
@@ -931,24 +1029,47 @@ mod tests {
                 vec!["--version"],
                 vec![
                     "unshare",
-                    "sh",
-                    "<script>",
+                    "agentbox",
+                    "internal",
+                    "microvm-ingest-cache",
                     "ghcr.io/example/agentbox:dev",
                     cache.root.to_str().expect("cache root should be utf8"),
                     ""
                 ],
             ]
         );
-        let script = commands
-            .unshare_scripts()
-            .pop()
-            .expect("unshare script should be captured");
-        assert!(script.contains("buildah from \"$image_ref\""));
-        assert!(script.contains("buildah inspect --format '{{.FromImageDigest}}'"));
-        assert!(script.contains("buildah mount \"$container_id\""));
-        assert!(script.contains("cp -a --reflink=auto \"$mount_path\"/. \"$staging_dir/rootfs\"/"));
-        assert!(script.contains("buildah umount \"$container_id\""));
-        assert!(script.contains("buildah rm \"$container_id\""));
+    }
+
+    #[test]
+    fn rust_ingestion_child_materializes_cache_and_cleans_buildah_container() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let mount_root = temp.path().join("buildah-mount");
+        write_guest_init(&mount_root);
+        fs::write(mount_root.join("etc-os-release"), "NAME=agentbox\n")
+            .expect("rootfs content should be written");
+        let commands = FakeBuildahCommands::new(mount_root);
+        let cache_root = temp.path().join("images");
+
+        let digest = ingest_cache_entry_in_unshare(
+            "ghcr.io/example/agentbox:dev",
+            &cache_root,
+            "",
+            &commands,
+        )
+        .expect("rust child ingestion should succeed");
+        let entry_dir = cache_entry_path(&cache_root, &digest);
+
+        assert_eq!(digest, ImageDigest::parse("sha256:feedface").unwrap());
+        assert!(entry_dir.join(ROOTFS_DIR).join("etc-os-release").exists());
+        assert!(entry_dir.join(COMPATIBILITY_MARKER).exists());
+        let calls = commands.calls();
+        assert!(calls.contains(&vec![
+            "from".to_owned(),
+            "ghcr.io/example/agentbox:dev".to_owned()
+        ]));
+        assert!(calls.contains(&vec!["mount".to_owned(), "fake-container".to_owned()]));
+        assert!(calls.contains(&vec!["umount".to_owned(), "fake-container".to_owned()]));
+        assert!(calls.contains(&vec!["rm".to_owned(), "fake-container".to_owned()]));
     }
 
     #[test]
@@ -985,8 +1106,9 @@ mod tests {
                 vec!["--version"],
                 vec![
                     "unshare",
-                    "sh",
-                    "<script>",
+                    "agentbox",
+                    "internal",
+                    "microvm-ingest-cache",
                     "ghcr.io/example/agentbox@sha256:expected",
                     cache.root.to_str().expect("cache root should be utf8"),
                     "sha256:expected"
@@ -1019,7 +1141,10 @@ mod tests {
         assert!(!cache.root.join("blobs").exists());
         assert_eq!(commands.calls().len(), 2);
         assert_eq!(commands.calls()[0], vec!["--version"]);
-        assert_eq!(commands.calls()[1][0..3], ["unshare", "sh", "<script>"]);
+        assert_eq!(
+            commands.calls()[1][0..4],
+            ["unshare", "agentbox", "internal", "microvm-ingest-cache"]
+        );
     }
 
     #[test]
@@ -1057,7 +1182,10 @@ mod tests {
         assert_eq!(remaining_entries, 0);
         assert_eq!(commands.calls().len(), 2);
         assert_eq!(commands.calls()[0], vec!["--version"]);
-        assert_eq!(commands.calls()[1][0..3], ["unshare", "sh", "<script>"]);
+        assert_eq!(
+            commands.calls()[1][0..4],
+            ["unshare", "agentbox", "internal", "microvm-ingest-cache"]
+        );
     }
 
     #[test]

@@ -49,6 +49,8 @@ pub struct MicrovmOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MicrovmStoragePolicy {
     Auto,
+    #[value(name = "btrfs-snapshot")]
+    BtrfsSnapshot,
     Reflink,
     #[value(name = "fuse-overlay")]
     FuseOverlay,

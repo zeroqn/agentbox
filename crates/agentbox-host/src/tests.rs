@@ -154,9 +154,12 @@ fn nix_agentbox_binary_does_not_embed_libkrun_guest_init_image_path() {
 }
 
 #[test]
-fn nix_agentbox_packages_provide_buildah_at_runtime() {
+fn nix_agentbox_packages_provide_microvm_storage_helpers_at_runtime() {
     for required in [
-        "runtimePath = pkgs.lib.makeBinPath [ pkgs.buildah ];",
+        "runtimePath = pkgs.lib.makeBinPath [",
+        "pkgs.buildah",
+        "pkgs.btrfs-progs",
+        "pkgs.fuse-overlayfs",
         "\"PATH\"",
         "runtimeWrapperArgs",
         "wrapProgram \"$out/bin/agentbox\"",
@@ -167,6 +170,7 @@ fn nix_agentbox_packages_provide_buildah_at_runtime() {
     for required in [
         "runtimeTools = [",
         "pkgs.buildah",
+        "pkgs.btrfs-progs",
         "pkgs.fuse-overlayfs",
         "propagatedUserEnvPkgs = runtimeTools;",
         "pkgs.lib.makeBinPath runtimeTools",

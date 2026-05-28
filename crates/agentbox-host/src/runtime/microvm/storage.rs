@@ -12,13 +12,34 @@ use crate::runtime::microvm::image_cache::ImageCacheEntry;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StorageBackend {
     Auto,
+    BtrfsSnapshot,
     Reflink,
     FuseOverlay,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MaterializedStorageBackend {
+    BtrfsSnapshot,
+    Reflink,
+    FuseOverlay,
+}
+
+impl MaterializedStorageBackend {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::BtrfsSnapshot => "btrfs-snapshot",
+            Self::Reflink => "reflink",
+            Self::FuseOverlay => "fuse-overlay",
+        }
+    }
+}
+
 pub(crate) trait StorageCommands {
+    fn btrfs_snapshot_available(&self) -> bool;
     fn reflink_copy_available(&self) -> bool;
     fn fuse_overlay_available(&self) -> bool;
+    fn snapshot_btrfs_subvolume(&self, source: &Path, destination: &Path) -> Result<()>;
+    fn delete_btrfs_subvolume(&self, subvolume: &Path) -> Result<()>;
     fn reflink_copy_tree(&self, source: &Path, destination: &Path) -> Result<()>;
     fn mount_fuse_overlay(
         &self,
@@ -34,12 +55,85 @@ pub(crate) trait StorageCommands {
 pub(crate) struct HostStorageCommands;
 
 impl StorageCommands for HostStorageCommands {
+    fn btrfs_snapshot_available(&self) -> bool {
+        command_available("btrfs")
+    }
+
     fn reflink_copy_available(&self) -> bool {
         command_available("cp")
     }
 
     fn fuse_overlay_available(&self) -> bool {
         command_available("fuse-overlayfs")
+    }
+
+    fn snapshot_btrfs_subvolume(&self, source: &Path, destination: &Path) -> Result<()> {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create '{}'", parent.display()))?;
+        }
+        let output = Command::new("btrfs")
+            .arg("subvolume")
+            .arg("snapshot")
+            .arg(source)
+            .arg(destination)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => {
+                    anyhow!("btrfs is not installed or not available on PATH")
+                }
+                _ => err.into(),
+            })
+            .with_context(|| {
+                format!(
+                    "failed to run btrfs snapshot rootfs materialization from '{}' to '{}'",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "btrfs subvolume snapshot failed from '{}' to '{}': {}",
+                source.display(),
+                destination.display(),
+                stderr.trim()
+            );
+        }
+        Ok(())
+    }
+
+    fn delete_btrfs_subvolume(&self, subvolume: &Path) -> Result<()> {
+        let output = Command::new("btrfs")
+            .arg("subvolume")
+            .arg("delete")
+            .arg(subvolume)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => {
+                    anyhow!("btrfs is not installed or not available on PATH")
+                }
+                _ => err.into(),
+            })
+            .with_context(|| {
+                format!(
+                    "failed to run btrfs subvolume delete for '{}'",
+                    subvolume.display()
+                )
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "btrfs subvolume delete failed for '{}': {}",
+                subvolume.display(),
+                stderr.trim()
+            );
+        }
+        Ok(())
     }
 
     fn reflink_copy_tree(&self, source: &Path, destination: &Path) -> Result<()> {
@@ -165,6 +259,7 @@ pub(crate) struct TaskRootfsHandle {
     pub(crate) root: PathBuf,
     task_dir: PathBuf,
     preserve_debug: bool,
+    storage_backend: MaterializedStorageBackend,
     mounted_fuse_overlay: bool,
 }
 
@@ -177,6 +272,10 @@ pub(crate) enum CleanupResult {
 impl TaskRootfsHandle {
     pub(crate) fn task_dir(&self) -> &Path {
         &self.task_dir
+    }
+
+    pub(crate) fn storage_mode_label(&self) -> &'static str {
+        self.storage_backend.label()
     }
 
     #[cfg(test)]
@@ -196,9 +295,19 @@ impl TaskRootfsHandle {
         })
     }
 
-    pub(crate) fn cleanup_state(self) -> Result<CleanupResult> {
+    pub(crate) fn cleanup_state(self, commands: &impl StorageCommands) -> Result<CleanupResult> {
         if self.preserve_debug {
             return Ok(CleanupResult::Preserved(self.root));
+        }
+        if self.storage_backend == MaterializedStorageBackend::BtrfsSnapshot && self.root.exists() {
+            commands
+                .delete_btrfs_subvolume(&self.root)
+                .with_context(|| {
+                    format!(
+                        "failed to delete btrfs snapshot task rootfs '{}'",
+                        self.root.display()
+                    )
+                })?;
         }
         if self.task_dir.exists() {
             remove_task_rootfs_tree(&self.task_dir).with_context(|| {
@@ -212,13 +321,19 @@ impl TaskRootfsHandle {
     }
 
     pub(crate) fn preserve_debug_hint(&self) -> Option<String> {
-        self.mounted_fuse_overlay.then(|| {
-            format!(
+        match self.storage_backend {
+            MaterializedStorageBackend::BtrfsSnapshot => Some(format!(
+                "btrfs snapshot task rootfs is preserved; delete it with `btrfs subvolume delete '{}'` before deleting '{}'",
+                self.root.display(),
+                self.task_dir.display()
+            )),
+            MaterializedStorageBackend::FuseOverlay => Some(format!(
                 "fuse-overlay task rootfs is still mounted; unmount it with `fusermount3 -u '{}'` before deleting '{}'",
                 self.root.display(),
                 self.task_dir.display()
-            )
-        })
+            )),
+            MaterializedStorageBackend::Reflink => None,
+        }
     }
 }
 
@@ -238,12 +353,18 @@ impl StorageManager {
     ) -> Result<StorageBackend> {
         match policy {
             MicrovmStoragePolicy::Auto
-                if commands.reflink_copy_available() || commands.fuse_overlay_available() =>
+                if commands.btrfs_snapshot_available() || commands.fuse_overlay_available() =>
             {
                 Ok(StorageBackend::Auto)
             }
             MicrovmStoragePolicy::Auto => Err(anyhow!(
-                "experimental microvm storage requires cp for reflink materialization or fuse-overlayfs on PATH"
+                "experimental microvm storage auto requires btrfs for snapshots or fuse-overlayfs on PATH"
+            )),
+            MicrovmStoragePolicy::BtrfsSnapshot if commands.btrfs_snapshot_available() => {
+                Ok(StorageBackend::BtrfsSnapshot)
+            }
+            MicrovmStoragePolicy::BtrfsSnapshot => Err(anyhow!(
+                "experimental microvm storage --storage btrfs-snapshot requires btrfs on PATH"
             )),
             MicrovmStoragePolicy::Reflink if commands.reflink_copy_available() => {
                 Ok(StorageBackend::Reflink)
@@ -272,6 +393,14 @@ impl StorageManager {
         let task_dir = self.state_root.join("microvm-tasks").join(task_id);
         match backend {
             StorageBackend::Auto => self.materialize_auto(entry, &task_dir, preserve_debug, commands),
+            StorageBackend::BtrfsSnapshot => self
+                .materialize_btrfs_snapshot(entry, &task_dir, preserve_debug, commands)
+                .with_context(|| {
+                    format!(
+                        "failed to materialize microvm task rootfs with btrfs snapshot from '{}'; refresh the microvm image cache if this cache entry was created before btrfs snapshot support",
+                        entry.rootfs.display()
+                    )
+                }),
             StorageBackend::Reflink => self
                 .materialize_reflink(entry, &task_dir, preserve_debug, commands)
                 .with_context(|| {
@@ -298,32 +427,62 @@ impl StorageManager {
         preserve_debug: bool,
         commands: &impl StorageCommands,
     ) -> Result<TaskRootfsHandle> {
-        let reflink_result = if commands.reflink_copy_available() {
-            self.materialize_reflink(entry, task_dir, preserve_debug, commands)
+        let btrfs_result = if commands.btrfs_snapshot_available() {
+            self.materialize_btrfs_snapshot(entry, task_dir, preserve_debug, commands)
         } else {
-            Err(anyhow!("cp is not available for reflink materialization"))
+            Err(anyhow!(
+                "btrfs is not available for snapshot materialization"
+            ))
         };
-        match reflink_result {
+        match btrfs_result {
             Ok(handle) => Ok(handle),
-            Err(reflink_err) => {
-                reset_task_dir(task_dir).with_context(|| {
+            Err(btrfs_err) => {
+                reset_task_dir(task_dir, commands).with_context(|| {
                     format!(
-                        "failed to clean partial reflink microvm task rootfs after: {reflink_err:#}"
+                        "failed to clean partial btrfs-snapshot microvm task rootfs after: {btrfs_err:#}"
                     )
                 })?;
                 if !commands.fuse_overlay_available() {
                     return Err(anyhow!(
-                        "auto microvm storage failed: reflink materialization failed ({reflink_err:#}); fuse-overlayfs is not available on PATH"
+                        "auto microvm storage failed: btrfs-snapshot materialization failed ({btrfs_err:#}); fuse-overlayfs is not available on PATH"
                     ));
                 }
                 self.materialize_fuse_overlay(entry, task_dir, preserve_debug, commands)
                     .map_err(|fuse_err| {
                         anyhow!(
-                            "auto microvm storage failed: reflink materialization failed ({reflink_err:#}); fuse-overlay materialization failed ({fuse_err:#})"
+                            "auto microvm storage failed: btrfs-snapshot materialization failed ({btrfs_err:#}); fuse-overlay materialization failed ({fuse_err:#})"
                         )
                     })
             }
         }
+    }
+
+    fn materialize_btrfs_snapshot(
+        &self,
+        entry: &ImageCacheEntry,
+        task_dir: &Path,
+        preserve_debug: bool,
+        commands: &impl StorageCommands,
+    ) -> Result<TaskRootfsHandle> {
+        reset_task_dir(task_dir, commands)?;
+        let root = task_dir.join("rootfs-btrfs-snapshot");
+        commands
+            .snapshot_btrfs_subvolume(&entry.rootfs, &root)
+            .map_err(|err| cleanup_after_materialization_failure(task_dir, commands, err))
+            .with_context(|| {
+                format!(
+                    "failed to snapshot microvm task rootfs from '{}' to '{}'",
+                    entry.rootfs.display(),
+                    root.display()
+                )
+            })?;
+        Ok(TaskRootfsHandle {
+            root,
+            task_dir: task_dir.to_path_buf(),
+            preserve_debug,
+            storage_backend: MaterializedStorageBackend::BtrfsSnapshot,
+            mounted_fuse_overlay: false,
+        })
     }
 
     fn materialize_reflink(
@@ -333,11 +492,11 @@ impl StorageManager {
         preserve_debug: bool,
         commands: &impl StorageCommands,
     ) -> Result<TaskRootfsHandle> {
-        reset_task_dir(task_dir)?;
+        reset_task_dir(task_dir, commands)?;
         let root = task_dir.join("rootfs-reflink");
         commands
             .reflink_copy_tree(&entry.rootfs, &root)
-            .map_err(|err| cleanup_after_materialization_failure(task_dir, err))
+            .map_err(|err| cleanup_after_materialization_failure(task_dir, commands, err))
             .with_context(|| {
                 format!(
                     "failed to reflink-copy microvm task rootfs from '{}' to '{}'",
@@ -349,6 +508,7 @@ impl StorageManager {
             root,
             task_dir: task_dir.to_path_buf(),
             preserve_debug,
+            storage_backend: MaterializedStorageBackend::Reflink,
             mounted_fuse_overlay: false,
         })
     }
@@ -360,7 +520,7 @@ impl StorageManager {
         preserve_debug: bool,
         commands: &impl StorageCommands,
     ) -> Result<TaskRootfsHandle> {
-        reset_task_dir(task_dir)?;
+        reset_task_dir(task_dir, commands)?;
         let root = task_dir.join("rootfs-fuse-overlay");
         let upper = task_dir.join("upper-fuse-overlay");
         let work = task_dir.join("work-fuse-overlay");
@@ -372,7 +532,7 @@ impl StorageManager {
             .with_context(|| format!("failed to create '{}'", work.display()))?;
         commands
             .mount_fuse_overlay(&entry.rootfs, &upper, &work, &root)
-            .map_err(|err| cleanup_after_materialization_failure(task_dir, err))
+            .map_err(|err| cleanup_after_materialization_failure(task_dir, commands, err))
             .with_context(|| {
                 format!(
                     "failed to mount microvm task rootfs from lower '{}' to merged '{}'",
@@ -384,13 +544,18 @@ impl StorageManager {
             root,
             task_dir: task_dir.to_path_buf(),
             preserve_debug,
+            storage_backend: MaterializedStorageBackend::FuseOverlay,
             mounted_fuse_overlay: true,
         })
     }
 }
 
-fn cleanup_after_materialization_failure(task_dir: &Path, err: anyhow::Error) -> anyhow::Error {
-    match reset_task_dir(task_dir) {
+fn cleanup_after_materialization_failure(
+    task_dir: &Path,
+    commands: &impl StorageCommands,
+    err: anyhow::Error,
+) -> anyhow::Error {
+    match reset_task_dir(task_dir, commands) {
         Ok(()) => err,
         Err(cleanup_err) => cleanup_err.context(format!(
             "failed to clean partial microvm task rootfs after materialization error: {err:#}"
@@ -408,8 +573,12 @@ fn command_available(command: &str) -> bool {
         .is_ok()
 }
 
-fn reset_task_dir(task_dir: &Path) -> Result<()> {
+fn reset_task_dir(task_dir: &Path, commands: &impl StorageCommands) -> Result<()> {
     if task_dir.exists() {
+        let btrfs_root = task_dir.join("rootfs-btrfs-snapshot");
+        if btrfs_root.exists() {
+            let _ = commands.delete_btrfs_subvolume(&btrfs_root);
+        }
         remove_task_rootfs_tree(task_dir).with_context(|| {
             format!(
                 "failed to reset stale microvm task state dir '{}'",
@@ -536,6 +705,11 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum StorageCall {
+        BtrfsSnapshot {
+            source: PathBuf,
+            destination: PathBuf,
+        },
+        DeleteBtrfsSubvolume(PathBuf),
         ReflinkCopy {
             source: PathBuf,
             destination: PathBuf,
@@ -551,8 +725,11 @@ mod tests {
 
     #[derive(Debug)]
     struct FakeStorageCommands {
+        btrfs_available: bool,
         reflink_available: bool,
         fuse_available: bool,
+        btrfs_errors: RefCell<VecDeque<&'static str>>,
+        btrfs_delete_errors: RefCell<VecDeque<&'static str>>,
         reflink_errors: RefCell<VecDeque<&'static str>>,
         fuse_errors: RefCell<VecDeque<&'static str>>,
         unmount_errors: RefCell<VecDeque<&'static str>>,
@@ -562,8 +739,11 @@ mod tests {
     impl FakeStorageCommands {
         fn available() -> Self {
             Self {
+                btrfs_available: true,
                 reflink_available: true,
                 fuse_available: true,
+                btrfs_errors: RefCell::new(VecDeque::new()),
+                btrfs_delete_errors: RefCell::new(VecDeque::new()),
                 reflink_errors: RefCell::new(VecDeque::new()),
                 fuse_errors: RefCell::new(VecDeque::new()),
                 unmount_errors: RefCell::new(VecDeque::new()),
@@ -573,12 +753,22 @@ mod tests {
 
         fn missing() -> Self {
             Self {
+                btrfs_available: false,
                 reflink_available: false,
                 fuse_available: false,
+                btrfs_errors: RefCell::new(VecDeque::new()),
+                btrfs_delete_errors: RefCell::new(VecDeque::new()),
                 reflink_errors: RefCell::new(VecDeque::new()),
                 fuse_errors: RefCell::new(VecDeque::new()),
                 unmount_errors: RefCell::new(VecDeque::new()),
                 calls: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn without_btrfs() -> Self {
+            Self {
+                btrfs_available: false,
+                ..Self::available()
             }
         }
 
@@ -594,6 +784,11 @@ mod tests {
                 reflink_available: false,
                 ..Self::available()
             }
+        }
+
+        fn fail_btrfs(self, message: &'static str) -> Self {
+            self.btrfs_errors.borrow_mut().push_back(message);
+            self
         }
 
         fn fail_reflink(self, message: &'static str) -> Self {
@@ -617,12 +812,45 @@ mod tests {
     }
 
     impl StorageCommands for FakeStorageCommands {
+        fn btrfs_snapshot_available(&self) -> bool {
+            self.btrfs_available
+        }
+
         fn reflink_copy_available(&self) -> bool {
             self.reflink_available
         }
 
         fn fuse_overlay_available(&self) -> bool {
             self.fuse_available
+        }
+
+        fn snapshot_btrfs_subvolume(&self, source: &Path, destination: &Path) -> Result<()> {
+            self.calls.borrow_mut().push(StorageCall::BtrfsSnapshot {
+                source: source.to_path_buf(),
+                destination: destination.to_path_buf(),
+            });
+            if let Some(message) = self.btrfs_errors.borrow_mut().pop_front() {
+                anyhow::bail!(message);
+            }
+            copy_rootfs_tree(source, destination)
+        }
+
+        fn delete_btrfs_subvolume(&self, subvolume: &Path) -> Result<()> {
+            self.calls
+                .borrow_mut()
+                .push(StorageCall::DeleteBtrfsSubvolume(subvolume.to_path_buf()));
+            if let Some(message) = self.btrfs_delete_errors.borrow_mut().pop_front() {
+                anyhow::bail!(message);
+            }
+            if subvolume.exists() {
+                fs::remove_dir_all(subvolume).with_context(|| {
+                    format!(
+                        "failed to remove fake btrfs subvolume '{}'",
+                        subvolume.display()
+                    )
+                })?;
+            }
+            Ok(())
         }
 
         fn reflink_copy_tree(&self, source: &Path, destination: &Path) -> Result<()> {
@@ -714,23 +942,28 @@ mod tests {
         assert_eq!(
             StorageManager::select_backend(
                 MicrovmStoragePolicy::Auto,
-                &FakeStorageCommands::without_reflink(),
+                &FakeStorageCommands::without_btrfs(),
             )
-            .expect("auto should use fuse-overlay when reflink command is missing"),
+            .expect("auto should use fuse-overlay when btrfs is missing"),
             StorageBackend::Auto
         );
-        assert_eq!(
-            StorageManager::select_backend(
-                MicrovmStoragePolicy::Auto,
-                &FakeStorageCommands::without_fuse(),
-            )
-            .expect("auto should use reflink when fuse-overlayfs is missing"),
-            StorageBackend::Auto
-        );
+        let no_fallback = FakeStorageCommands {
+            btrfs_available: false,
+            fuse_available: false,
+            ..FakeStorageCommands::available()
+        };
+        assert!(StorageManager::select_backend(MicrovmStoragePolicy::Auto, &no_fallback).is_err());
     }
 
     #[test]
     fn explicit_storage_policy_reports_missing_helper() {
+        let btrfs_error = StorageManager::select_backend(
+            MicrovmStoragePolicy::BtrfsSnapshot,
+            &FakeStorageCommands::without_btrfs(),
+        )
+        .expect_err("explicit btrfs-snapshot should fail when btrfs is unavailable");
+        assert!(format!("{btrfs_error:#}").contains("btrfs-snapshot"));
+
         let reflink_error = StorageManager::select_backend(
             MicrovmStoragePolicy::Reflink,
             &FakeStorageCommands::without_reflink(),
@@ -750,7 +983,73 @@ mod tests {
             &FakeStorageCommands::missing(),
         )
         .expect_err("auto should fail when no CoW backend is available");
-        assert!(format!("{missing_error:#}").contains("requires cp"));
+        assert!(format!("{missing_error:#}").contains("requires btrfs"));
+    }
+
+    #[test]
+    fn btrfs_snapshot_materialization_requires_btrfs_snapshot_command() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let commands = FakeStorageCommands::available();
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+
+        let handle = manager
+            .materialize(
+                &entry,
+                StorageBackend::BtrfsSnapshot,
+                "task-btrfs",
+                false,
+                &commands,
+            )
+            .expect("task rootfs should materialize");
+
+        assert_eq!(handle.root.file_name().unwrap(), "rootfs-btrfs-snapshot");
+        assert_eq!(handle.storage_mode_label(), "btrfs-snapshot");
+        assert!(!handle.requires_unmount());
+        assert_eq!(
+            fs::read_to_string(handle.root.join("etc").join("agentbox"))
+                .expect("cached content should be visible"),
+            "cached"
+        );
+        assert_eq!(
+            commands.calls(),
+            vec![StorageCall::BtrfsSnapshot {
+                source: entry.rootfs,
+                destination: handle.root,
+            }]
+        );
+    }
+
+    #[test]
+    fn explicit_btrfs_snapshot_failure_does_not_fall_back_to_fuse_overlay() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let commands = FakeStorageCommands::available().fail_btrfs("not a subvolume");
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+
+        let error = manager
+            .materialize(
+                &entry,
+                StorageBackend::BtrfsSnapshot,
+                "task-btrfs",
+                false,
+                &commands,
+            )
+            .expect_err("required btrfs snapshot should fail");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("btrfs snapshot"));
+        assert!(message.contains("not a subvolume"));
+        assert!(
+            !temp
+                .path()
+                .join("workspace-state/microvm-tasks/task-btrfs")
+                .exists()
+        );
+        assert!(matches!(
+            commands.calls().as_slice(),
+            [StorageCall::BtrfsSnapshot { .. }]
+        ));
     }
 
     #[test]
@@ -807,10 +1106,10 @@ mod tests {
     }
 
     #[test]
-    fn auto_reflink_failure_falls_back_to_real_fuse_overlay_backend() {
+    fn auto_btrfs_snapshot_failure_falls_back_to_real_fuse_overlay_backend() {
         let temp = tempfile::tempdir().expect("tempdir should be created");
         let entry = cached_entry(&temp);
-        let commands = FakeStorageCommands::available().fail_reflink("reflink unsupported");
+        let commands = FakeStorageCommands::available().fail_btrfs("not a subvolume");
         let manager = StorageManager::new(temp.path().join("workspace-state"));
 
         let handle = manager
@@ -822,6 +1121,7 @@ mod tests {
         assert!(handle.requires_unmount());
         assert!(task_dir.join("upper-fuse-overlay").is_dir());
         assert!(task_dir.join("work-fuse-overlay").is_dir());
+        assert!(!task_dir.join("rootfs-btrfs-snapshot").exists());
         assert!(!task_dir.join("rootfs-reflink").exists());
         assert_eq!(
             fs::read_to_string(handle.root.join("etc/agentbox"))
@@ -831,18 +1131,18 @@ mod tests {
         assert!(matches!(
             commands.calls().as_slice(),
             [
-                StorageCall::ReflinkCopy { .. },
+                StorageCall::BtrfsSnapshot { .. },
                 StorageCall::MountFuseOverlay { .. }
             ]
         ));
     }
 
     #[test]
-    fn auto_reports_both_reflink_and_fuse_overlay_failures() {
+    fn auto_reports_both_btrfs_snapshot_and_fuse_overlay_failures() {
         let temp = tempfile::tempdir().expect("tempdir should be created");
         let entry = cached_entry(&temp);
         let commands = FakeStorageCommands::available()
-            .fail_reflink("reflink unsupported")
+            .fail_btrfs("not a subvolume")
             .fail_fuse("fuse denied");
         let manager = StorageManager::new(temp.path().join("workspace-state"));
 
@@ -852,7 +1152,7 @@ mod tests {
 
         let message = format!("{error:#}");
         assert!(message.contains("auto microvm storage failed"));
-        assert!(message.contains("reflink unsupported"));
+        assert!(message.contains("not a subvolume"));
         assert!(message.contains("fuse denied"));
         assert!(
             !temp
@@ -917,7 +1217,9 @@ mod tests {
             .unmount_for_cleanup(&commands)
             .expect("unmount should succeed");
         assert_eq!(
-            handle.cleanup_state().expect("cleanup should succeed"),
+            handle
+                .cleanup_state(&commands)
+                .expect("cleanup should succeed"),
             CleanupResult::Removed
         );
 
@@ -925,6 +1227,44 @@ mod tests {
             commands
                 .calls()
                 .contains(&StorageCall::UnmountFuseOverlay(root))
+        );
+        assert!(!task_dir.exists());
+    }
+
+    #[test]
+    fn btrfs_snapshot_cleanup_deletes_subvolume_then_removes_task_state_dir() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let commands = FakeStorageCommands::available();
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+        let handle = manager
+            .materialize(
+                &entry,
+                StorageBackend::BtrfsSnapshot,
+                "task-clean-btrfs",
+                false,
+                &commands,
+            )
+            .expect("btrfs snapshot rootfs should materialize");
+        fs::write(handle.task_dir().join("launch.conf"), "config")
+            .expect("launch config should be written");
+        let root = handle.root.clone();
+        let task_dir = handle.task_dir().to_path_buf();
+
+        handle
+            .unmount_for_cleanup(&commands)
+            .expect("btrfs cleanup has no unmount");
+        assert_eq!(
+            handle
+                .cleanup_state(&commands)
+                .expect("cleanup should succeed"),
+            CleanupResult::Removed
+        );
+
+        assert!(
+            commands
+                .calls()
+                .contains(&StorageCall::DeleteBtrfsSubvolume(root))
         );
         assert!(!task_dir.exists());
     }
@@ -977,7 +1317,9 @@ mod tests {
             .unmount_for_cleanup(&commands)
             .expect("preserve-debug should skip unmount");
         assert_eq!(
-            handle.cleanup_state().expect("cleanup should preserve"),
+            handle
+                .cleanup_state(&commands)
+                .expect("cleanup should preserve"),
             CleanupResult::Preserved(root.clone())
         );
 
@@ -989,6 +1331,46 @@ mod tests {
                 .calls()
                 .iter()
                 .any(|call| matches!(call, StorageCall::UnmountFuseOverlay(_)))
+        );
+    }
+
+    #[test]
+    fn preserve_debug_keeps_btrfs_snapshot_and_reports_cleanup_hint() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let commands = FakeStorageCommands::available();
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+        let handle = manager
+            .materialize(
+                &entry,
+                StorageBackend::BtrfsSnapshot,
+                "task-debug-btrfs",
+                true,
+                &commands,
+            )
+            .expect("btrfs snapshot rootfs should materialize");
+        let root = handle.root.clone();
+        let task_dir = handle.task_dir().to_path_buf();
+        let hint = handle.preserve_debug_hint().expect("btrfs hint");
+
+        handle
+            .unmount_for_cleanup(&commands)
+            .expect("preserve-debug should skip unmount");
+        assert_eq!(
+            handle
+                .cleanup_state(&commands)
+                .expect("cleanup should preserve"),
+            CleanupResult::Preserved(root.clone())
+        );
+
+        assert!(root.exists());
+        assert!(task_dir.exists());
+        assert!(hint.contains("btrfs subvolume delete"));
+        assert!(
+            !commands
+                .calls()
+                .iter()
+                .any(|call| matches!(call, StorageCall::DeleteBtrfsSubvolume(_)))
         );
     }
 
@@ -1032,7 +1414,7 @@ mod tests {
             .expect("reflink cleanup has no unmount");
         assert_eq!(
             handle
-                .cleanup_state()
+                .cleanup_state(&commands)
                 .expect("cleanup should remove read-only dirs"),
             CleanupResult::Removed
         );
@@ -1080,7 +1462,7 @@ mod tests {
         assert!(!replacement.task_dir().join("launch.conf").exists());
         assert_eq!(
             replacement
-                .cleanup_state()
+                .cleanup_state(&commands)
                 .expect("replacement cleanup should succeed"),
             CleanupResult::Removed
         );

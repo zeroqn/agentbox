@@ -5,7 +5,11 @@ let
     pkgs.lib.optionals (libkrun != null) [ (pkgs.lib.getLib libkrun) ]
     ++ pkgs.lib.optionals (libkrunfw != null) [ (pkgs.lib.getLib libkrunfw) ]
   );
-  runtimePath = pkgs.lib.makeBinPath [ pkgs.buildah ];
+  runtimePath = pkgs.lib.makeBinPath [
+    pkgs.buildah
+    pkgs.btrfs-progs
+    pkgs.fuse-overlayfs
+  ];
   runtimeWrapperArgs =
     [
       "--prefix"

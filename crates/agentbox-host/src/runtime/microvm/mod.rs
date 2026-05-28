@@ -116,6 +116,7 @@ fn run_with_deps(
             )
         })
         .context("microvm task rootfs materialization failed")?;
+    profiler.record_metadata("storage_mode", handle.storage_mode_label());
     let run_result = (|| {
         let task_state_dir = handle.task_dir().to_path_buf();
         let guest_init = profiler
@@ -162,7 +163,9 @@ fn run_with_deps(
         handle.unmount_for_cleanup(deps.storage_commands)
     });
     let cleanup_result = match unmount_result {
-        Ok(()) => profiler.measure_result("task_state_cleanup", || handle.cleanup_state()),
+        Ok(()) => profiler.measure_result("task_state_cleanup", || {
+            handle.cleanup_state(deps.storage_commands)
+        }),
         Err(err) => Err(err),
     };
     profiler.emit_to_stderr();
@@ -312,6 +315,7 @@ mod tests {
     }
 
     struct FakeStorageCommands {
+        btrfs_available: bool,
         reflink_available: bool,
         fuse_available: bool,
     }
@@ -319,6 +323,7 @@ mod tests {
     impl FakeStorageCommands {
         fn available() -> Self {
             Self {
+                btrfs_available: true,
                 reflink_available: true,
                 fuse_available: true,
             }
@@ -326,6 +331,7 @@ mod tests {
 
         fn missing() -> Self {
             Self {
+                btrfs_available: false,
                 reflink_available: false,
                 fuse_available: false,
             }
@@ -333,12 +339,27 @@ mod tests {
     }
 
     impl StorageCommands for FakeStorageCommands {
+        fn btrfs_snapshot_available(&self) -> bool {
+            self.btrfs_available
+        }
+
         fn reflink_copy_available(&self) -> bool {
             self.reflink_available
         }
 
         fn fuse_overlay_available(&self) -> bool {
             self.fuse_available
+        }
+
+        fn snapshot_btrfs_subvolume(&self, source: &Path, destination: &Path) -> Result<()> {
+            copy_rootfs_tree(source, destination)
+        }
+
+        fn delete_btrfs_subvolume(&self, subvolume: &Path) -> Result<()> {
+            if subvolume.exists() {
+                fs::remove_dir_all(subvolume)?;
+            }
+            Ok(())
         }
 
         fn reflink_copy_tree(&self, source: &Path, destination: &Path) -> Result<()> {

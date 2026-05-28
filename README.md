@@ -53,16 +53,18 @@ managed sidecar.
   package runtime environments. Existing digest-keyed microvm cache hits do not
   require Buildah. Cache-miss ingestion is rootless and runs as one
   `buildah unshare` transaction so Buildah storage, mount, copy, and cleanup
-  share the same user namespace; the cache copy uses `cp -a --reflink=auto` so
-  CoW filesystems can avoid full data copies while non-reflink filesystems keep
-  the portable fallback.
+  share the same user namespace; the Rust ingestion child creates a btrfs
+  subvolume cache rootfs when supported, then copies with `cp -a --reflink=auto`
+  so CoW filesystems can avoid full data copies while non-reflink filesystems
+  keep the portable fallback.
 - `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
   normal host binary does not link to libkrun at build time; the Nix `.#agentbox`
   package wraps the binary with this repo's libkrun/libkrunfw library path, and
   source/debug builds can set `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1`.
-- `mkfs.btrfs` and `blkid` on the host for first-time libkrun/microvm
-  raw-image creation and reuse validation (`btrfs-progs` + `util-linux`;
-  included in `nix develop`)
+- `btrfs`, `mkfs.btrfs`, and `blkid` on the host for microvm btrfs-snapshot
+  storage, first-time libkrun/microvm raw-image creation, and reuse validation
+  (`btrfs-progs` + `util-linux`; included in `nix develop`, and `btrfs` is
+  included in the Nix `.#agentbox` and `.#agentbox-prebuilt` runtime wrappers)
 - `/dev/net/tun` on the host for libkrun mode, passed through to the guest so
   nested rootless Podman can set up TUN-backed networking.
 - default libkrun mode requires Podman using the custom crun/libkrun stack that
@@ -578,8 +580,9 @@ Run/help:
 ```bash
 ./result/bin/agentbox microvm --help
 ./result/bin/agentbox microvm --storage auto
-./result/bin/agentbox microvm --storage reflink
+./result/bin/agentbox microvm --storage btrfs-snapshot
 ./result/bin/agentbox microvm --storage fuse-overlay
+./result/bin/agentbox microvm --storage reflink
 ```
 
 `agentbox microvm` is an explicit experimental task-based direct-libkrun runtime.
@@ -597,19 +600,20 @@ Current implemented milestone:
 - mutable tags may hit only through local ref-to-digest metadata, which is a
   cache hint rather than an authoritative freshness check;
 - cache misses are ingested through the microvm-owned rootless Buildah path:
-  one `buildah unshare` transaction performs `buildah from`,
-  `buildah inspect --format '{{.FromImageDigest}}'`, `buildah mount`, an
-  opportunistic reflink rootfs-preserving copy into the digest-keyed cache,
-  exact-one executable `agentbox-guest-init` validation, atomic compatibility
-  marker finalization,
-  then `buildah umount`/`buildah rm` cleanup;
+  one `buildah unshare` transaction runs the hidden Rust ingestion child, which
+  performs `buildah from`, `buildah inspect --format '{{.FromImageDigest}}'`,
+  `buildah mount`, opportunistically creates a btrfs subvolume cache rootfs,
+  copies into the digest-keyed cache with `cp -a --reflink=auto`, validates
+  exact-one executable `agentbox-guest-init`, atomically finalizes the
+  compatibility marker, then performs explicit mount/container/staging cleanup;
 - per-task writable rootfs directories are materialized from compatible cached
-  roots through explicit copy-on-write storage methods. `reflink` requires
-  `cp -a --reflink=always`; `fuse-overlay` mounts a real `fuse-overlayfs`
-  merged root from cached lower plus per-task upper/work dirs. Plain recursive
-  task-rootfs copies are not used. Normal cleanup unmounts any task overlay and
-  removes the task state dir; `--preserve-debug` intentionally preserves the
-  task rootfs for inspection;
+  roots through explicit copy-on-write storage methods. `btrfs-snapshot` uses a
+  writable btrfs subvolume snapshot, `fuse-overlay` mounts a real
+  `fuse-overlayfs` merged root from cached lower plus per-task upper/work dirs,
+  and explicit `reflink` requires `cp -a --reflink=always`. Plain recursive
+  task-rootfs copies are not used. Normal cleanup deletes task subvolumes,
+  unmounts any task overlay, and removes the task state dir; `--preserve-debug`
+  intentionally preserves the task rootfs for inspection;
 - the parent process prepares two per-workspace sparse btrfs raw disks:
 
   ```text
@@ -645,15 +649,19 @@ current not-tested items.
 
 The storage policy values are:
 
-- `auto`: try required reflink materialization first, then clean partial output
-  and try the `fuse-overlayfs` fallback if reflinks are unavailable or fail.
-- `reflink`: require `cp -a --reflink=always` for task-rootfs materialization;
-  fail instead of falling back to byte-for-byte file copies.
+- `auto`: try `btrfs-snapshot` first, then clean partial output and try the
+  `fuse-overlayfs` fallback. `auto` does not select `reflink`.
+- `btrfs-snapshot`: require `btrfs subvolume snapshot` for task-rootfs
+  materialization; fail instead of falling back to another backend. Existing
+  non-subvolume cache entries may need refresh before this explicit mode works.
 - `fuse-overlay`: require the portable `fuse-overlayfs` image-rootfs path with
   cached image rootfs as lowerdir and per-task upper/work/merged dirs.
+- `reflink`: explicit opt-in only; require `cp -a --reflink=always` for
+  task-rootfs materialization and fail instead of falling back to byte-for-byte
+  file copies.
 
-The previous experimental `btrfs` storage policy is intentionally removed until
-agentbox has a real btrfs snapshot implementation.
+The shorthand `btrfs` storage policy remains intentionally rejected; use the
+precise `btrfs-snapshot` policy for snapshot-backed task roots.
 
 Image selection remains global through `--image` or `AGENTBOX_IMAGE`; microvm
 does not add a runtime-local image flag.

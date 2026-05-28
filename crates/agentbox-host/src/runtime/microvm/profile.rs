@@ -6,7 +6,14 @@ use std::time::{Duration, Instant};
 pub(super) struct MicrovmHostProfiler {
     enabled: bool,
     started_at: Instant,
+    metadata: Vec<ProfileMetadata>,
     records: Vec<ProfileRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProfileMetadata {
+    label: &'static str,
+    value: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,7 +27,14 @@ impl MicrovmHostProfiler {
         Self {
             enabled,
             started_at: Instant::now(),
+            metadata: Vec::new(),
             records: Vec::new(),
+        }
+    }
+
+    pub(super) fn record_metadata(&mut self, label: &'static str, value: &'static str) {
+        if self.enabled {
+            self.metadata.push(ProfileMetadata { label, value });
         }
     }
 
@@ -54,6 +68,9 @@ impl MicrovmHostProfiler {
         }
 
         writeln!(writer, "agentbox microvm host profile")?;
+        for metadata in &self.metadata {
+            writeln!(writer, "  {}: {}", metadata.label, metadata.value)?;
+        }
         for record in &self.records {
             writeln!(
                 writer,
@@ -96,6 +113,7 @@ mod tests {
     fn host_profile_report_uses_stable_labels_and_total_scope() {
         let mut profiler = MicrovmHostProfiler::new(true);
 
+        profiler.record_metadata("storage_mode", "btrfs-snapshot");
         profiler
             .measure_result("image_reference_resolution", || Ok(()))
             .expect("phase should pass");
@@ -134,6 +152,7 @@ mod tests {
         let text = String::from_utf8(output).expect("report should be utf-8");
 
         assert!(text.starts_with("agentbox microvm host profile\n"));
+        assert!(text.contains("storage_mode: btrfs-snapshot"));
         for label in [
             "image_reference_resolution",
             "image_cache_ensure",

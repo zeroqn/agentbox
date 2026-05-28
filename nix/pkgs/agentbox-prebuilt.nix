@@ -11,6 +11,7 @@ if builtins.hasAttr prebuiltSystem agentboxPrebuiltRelease.systems then
       "https://github.com/${agentboxPrebuiltRelease.owner}/${agentboxPrebuiltRelease.repo}/releases/download/${agentboxPrebuiltRelease.tag}/${assetInfo.asset}";
     runtimeTools = [
       pkgs.buildah
+      pkgs.btrfs-progs
       pkgs.fuse-overlayfs
     ];
   in

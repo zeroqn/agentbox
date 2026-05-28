@@ -292,6 +292,7 @@ fn cli_accepts_microvm_skeleton_flags() {
 fn cli_accepts_all_microvm_storage_policies() {
     for (storage_arg, expected_storage) in [
         ("auto", MicrovmStoragePolicy::Auto),
+        ("btrfs-snapshot", MicrovmStoragePolicy::BtrfsSnapshot),
         ("reflink", MicrovmStoragePolicy::Reflink),
         ("fuse-overlay", MicrovmStoragePolicy::FuseOverlay),
     ] {
