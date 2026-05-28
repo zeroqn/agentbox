@@ -121,6 +121,9 @@ mod tests {
             .measure_result("helper_session", || Ok(()))
             .expect("phase should pass");
         profiler
+            .measure_result("task_rootfs_unmount", || Ok(()))
+            .expect("phase should pass");
+        profiler
             .measure_result("task_state_cleanup", || Ok(()))
             .expect("phase should pass");
 
@@ -140,6 +143,7 @@ mod tests {
             "persistent_disk_preparation",
             "launch_config_build",
             "helper_session",
+            "task_rootfs_unmount",
             "task_state_cleanup",
             "total_profiled_host_runtime",
         ] {

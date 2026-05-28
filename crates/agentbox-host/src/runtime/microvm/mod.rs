@@ -21,7 +21,7 @@ use self::image_cache::{BuildahRunner, HostBuildahRunner, ImageCache, ImageRefer
 use self::launch::{MicrovmLaunchConfig, MicrovmLaunchSpec, resolve_cpu_count};
 use self::persistent_disks::{HostMicrovmPersistentDiskPreparer, MicrovmPersistentDiskPreparer};
 use self::profile::MicrovmHostProfiler;
-use self::storage::{HostStorageProbe, StorageManager, StorageProbe};
+use self::storage::{HostStorageCommands, StorageCommands, StorageManager};
 use self::supervisor::{HostMicrovmSupervisor, MicrovmSupervisor};
 
 struct MicrovmRunRequest<'a> {
@@ -34,7 +34,7 @@ struct MicrovmRunRequest<'a> {
 
 struct MicrovmRunDeps<'a, B, S, M, D> {
     buildah: &'a B,
-    storage_probe: &'a S,
+    storage_commands: &'a S,
     supervisor: &'a M,
     disk_preparer: &'a D,
 }
@@ -65,7 +65,7 @@ fn run_with_layout(
         },
         MicrovmRunDeps {
             buildah: &HostBuildahRunner,
-            storage_probe: &HostStorageProbe,
+            storage_commands: &HostStorageCommands,
             supervisor: &HostMicrovmSupervisor,
             disk_preparer: &HostMicrovmPersistentDiskPreparer,
         },
@@ -77,7 +77,7 @@ fn run_with_deps(
     deps: MicrovmRunDeps<
         '_,
         impl BuildahRunner,
-        impl StorageProbe,
+        impl StorageCommands,
         impl MicrovmSupervisor,
         impl MicrovmPersistentDiskPreparer,
     >,
@@ -101,7 +101,7 @@ fn run_with_deps(
         .context("microvm image cache ingestion failed")?;
     let backend = profiler
         .measure_result("storage_backend_selection", || {
-            StorageManager::select_backend(request.options.storage, deps.storage_probe)
+            StorageManager::select_backend(request.options.storage, deps.storage_commands)
         })
         .context("microvm storage backend selection failed")?;
     let storage = StorageManager::new(request.state_layout.root_dir().to_path_buf());
@@ -112,15 +112,12 @@ fn run_with_deps(
                 backend,
                 request.task_id,
                 request.options.preserve_debug,
+                deps.storage_commands,
             )
         })
         .context("microvm task rootfs materialization failed")?;
     let run_result = (|| {
-        let task_state_dir = handle
-            .root
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("microvm task rootfs has no parent state dir"))?
-            .to_path_buf();
+        let task_state_dir = handle.task_dir().to_path_buf();
         let guest_init = profiler
             .measure_result("guest_init_resolution", || {
                 resolve_guest_init(&handle.root, request.options.guest_init.as_deref())
@@ -153,16 +150,29 @@ fn run_with_deps(
             deps.supervisor
                 .run(&config, &task_state_dir)
                 .with_context(|| {
-                    launch_failure_context(
-                        request.options.preserve_debug,
-                        &handle.root,
-                        &task_state_dir,
-                    )
+                    launch_failure_context(request.options.preserve_debug, &handle, &task_state_dir)
                 })
         })
     })();
-    let cleanup_result = profiler.measure_result("task_state_cleanup", || handle.cleanup());
+    let preserve_debug_notice = request
+        .options
+        .preserve_debug
+        .then(|| preserved_debug_state_notice(&handle));
+    let unmount_result = profiler.measure_result("task_rootfs_unmount", || {
+        handle.unmount_for_cleanup(deps.storage_commands)
+    });
+    let cleanup_result = match unmount_result {
+        Ok(()) => profiler.measure_result("task_state_cleanup", || handle.cleanup_state()),
+        Err(err) => Err(err),
+    };
     profiler.emit_to_stderr();
+    if matches!(
+        cleanup_result,
+        Ok(self::storage::CleanupResult::Preserved(_))
+    ) && let Some(notice) = preserve_debug_notice
+    {
+        eprintln!("{notice}");
+    }
     let status = match (run_result, cleanup_result) {
         (Ok(status), Ok(_)) => status,
         (Ok(_), Err(cleanup_err)) => return Err(cleanup_err),
@@ -174,6 +184,22 @@ fn run_with_deps(
         }
     };
     Ok(status.exit_code())
+}
+
+fn preserved_debug_state_notice(handle: &self::storage::TaskRootfsHandle) -> String {
+    let task_state_dir = handle.task_dir();
+    let launch_config = task_state_dir.join("launch.conf");
+    let cleanup_hint = handle
+        .preserve_debug_hint()
+        .map(|hint| format!("; {hint}"))
+        .unwrap_or_default();
+    format!(
+        "agentbox: preserved microvm debug state: task_rootfs='{}', task_state_dir='{}', launch_config='{}'{}",
+        handle.root.display(),
+        task_state_dir.display(),
+        launch_config.display(),
+        cleanup_hint
+    )
 }
 
 fn resolve_image_reference(
@@ -197,21 +223,26 @@ fn host_profile_enabled(common: &CommonOptions) -> bool {
 
 fn launch_failure_context(
     preserve_debug: bool,
-    task_rootfs: &Path,
+    handle: &self::storage::TaskRootfsHandle,
     task_state_dir: &Path,
 ) -> String {
     let launch_config = task_state_dir.join("launch.conf");
     if preserve_debug {
+        let cleanup_hint = handle
+            .preserve_debug_hint()
+            .map(|hint| format!("; {hint}"))
+            .unwrap_or_default();
         return format!(
-            "microvm launch failed; preserved microvm debug state: task_rootfs='{}', task_state_dir='{}', launch_config='{}'",
-            task_rootfs.display(),
+            "microvm launch failed; preserved microvm debug state: task_rootfs='{}', task_state_dir='{}', launch_config='{}'{}",
+            handle.root.display(),
             task_state_dir.display(),
-            launch_config.display()
+            launch_config.display(),
+            cleanup_hint
         );
     }
     format!(
         "microvm launch failed; task debug state was cleaned unless cleanup reported another error; rerun with --preserve-debug to keep task_rootfs='{}' and launch_config='{}'",
-        task_rootfs.display(),
+        handle.root.display(),
         launch_config.display()
     )
 }
@@ -239,6 +270,7 @@ mod tests {
     use crate::cli::MicrovmStoragePolicy;
     use crate::runtime::microvm::image_cache::{ImageDigest, ImageReference};
     use crate::runtime::microvm::persistent_disks::test_support::FakePersistentDiskPreparer;
+    use crate::runtime::microvm::storage::copy_rootfs_tree;
     use crate::runtime::microvm::supervisor::MicrovmChildStatus;
     use std::cell::RefCell;
     use std::fs;
@@ -279,26 +311,52 @@ mod tests {
         }
     }
 
-    struct Probe;
+    struct FakeStorageCommands {
+        reflink_available: bool,
+        fuse_available: bool,
+    }
 
-    impl StorageProbe for Probe {
-        fn btrfs_available(&self) -> bool {
-            false
+    impl FakeStorageCommands {
+        fn available() -> Self {
+            Self {
+                reflink_available: true,
+                fuse_available: true,
+            }
         }
-        fn fuse_overlay_available(&self) -> bool {
-            true
+
+        fn missing() -> Self {
+            Self {
+                reflink_available: false,
+                fuse_available: false,
+            }
         }
     }
 
-    struct MissingStorageProbe;
-
-    impl StorageProbe for MissingStorageProbe {
-        fn btrfs_available(&self) -> bool {
-            false
+    impl StorageCommands for FakeStorageCommands {
+        fn reflink_copy_available(&self) -> bool {
+            self.reflink_available
         }
 
         fn fuse_overlay_available(&self) -> bool {
-            false
+            self.fuse_available
+        }
+
+        fn reflink_copy_tree(&self, source: &Path, destination: &Path) -> Result<()> {
+            copy_rootfs_tree(source, destination)
+        }
+
+        fn mount_fuse_overlay(
+            &self,
+            lowerdir: &Path,
+            _upperdir: &Path,
+            _workdir: &Path,
+            merged: &Path,
+        ) -> Result<()> {
+            copy_rootfs_tree(lowerdir, merged)
+        }
+
+        fn unmount_fuse_overlay(&self, _merged: &Path) -> Result<()> {
+            Ok(())
         }
     }
 
@@ -426,7 +484,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &buildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -469,7 +527,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &buildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -512,7 +570,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -561,7 +619,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -606,7 +664,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -662,7 +720,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -710,7 +768,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -754,7 +812,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &FailingSupervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -801,7 +859,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -831,7 +889,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &MissingStorageProbe,
+                storage_commands: &FakeStorageCommands::missing(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -860,7 +918,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },
@@ -890,7 +948,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &FakePersistentDiskPreparer::failing(Rc::new(RefCell::new(
                     Vec::new(),
@@ -921,7 +979,7 @@ mod tests {
             },
             MicrovmRunDeps {
                 buildah: &NoBuildah,
-                storage_probe: &Probe,
+                storage_commands: &FakeStorageCommands::available(),
                 supervisor: &supervisor,
                 disk_preparer: &disk_preparer,
             },

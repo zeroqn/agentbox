@@ -45,8 +45,9 @@ managed sidecar.
 - Linux
 - `podman`
 - `nix` (for building via flake)
-- `fuse-overlayfs` (required for `agentbox container` sidecar mode; included
-  by the `.#agentbox-prebuilt` package runtime environment)
+- `fuse-overlayfs` (required for `agentbox container` sidecar mode and for
+  `agentbox microvm --storage fuse-overlay`; included by the
+  `.#agentbox-prebuilt` package runtime environment)
 - `buildah` for experimental `agentbox microvm` cache misses or future cache
   refreshes; included by the Nix `.#agentbox` and `.#agentbox-prebuilt`
   package runtime environments. Existing digest-keyed microvm cache hits do not
@@ -273,8 +274,9 @@ and libkrun task runs emit `agentbox-guest-init` timings. Microvm runs also emit
 a host-side `agentbox microvm host profile` report for completed profiled host
 phases such as image reference resolution, image cache lookup/ingestion, task
 rootfs materialization, guest-init lookup, persistent disk preparation, launch
-config build, helper session, and task state cleanup. Libkrun background Podman
-prep/wait workers and sidecar debug runs do not emit guest-init profile reports.
+config build, helper session, task rootfs unmount, and task state cleanup.
+Libkrun background Podman prep/wait workers and sidecar debug runs do not emit
+guest-init profile reports.
 When libkrun `/nix` overlay bootstrap runs, nested
 `bootstrap-nix:*` rows break down disk discovery, mount/preseed work, daemon
 startup, and the `bootstrap-nix:wait-socket` polling loop.
@@ -576,7 +578,7 @@ Run/help:
 ```bash
 ./result/bin/agentbox microvm --help
 ./result/bin/agentbox microvm --storage auto
-./result/bin/agentbox microvm --storage btrfs
+./result/bin/agentbox microvm --storage reflink
 ./result/bin/agentbox microvm --storage fuse-overlay
 ```
 
@@ -602,8 +604,12 @@ Current implemented milestone:
   marker finalization,
   then `buildah umount`/`buildah rm` cleanup;
 - per-task writable rootfs directories are materialized from compatible cached
-  roots with executable modes and symlinks preserved, then removed after the run
-  unless `--preserve-debug` is set;
+  roots through explicit copy-on-write storage methods. `reflink` requires
+  `cp -a --reflink=always`; `fuse-overlay` mounts a real `fuse-overlayfs`
+  merged root from cached lower plus per-task upper/work dirs. Plain recursive
+  task-rootfs copies are not used. Normal cleanup unmounts any task overlay and
+  removes the task state dir; `--preserve-debug` intentionally preserves the
+  task rootfs for inspection;
 - the parent process prepares two per-workspace sparse btrfs raw disks:
 
   ```text
@@ -639,22 +645,26 @@ current not-tested items.
 
 The storage policy values are:
 
-- `auto`: prefer the btrfs fast path when available, otherwise use the portable
-  `fuse-overlayfs` fallback.
-- `btrfs`: require the btrfs-backed task-rootfs fast path. Image-cache ingestion
-  still treats Buildah storage as opaque and uses opportunistic reflinks rather
-  than direct btrfs snapshots.
-- `fuse-overlay`: require the portable `fuse-overlayfs` image-rootfs path.
+- `auto`: try required reflink materialization first, then clean partial output
+  and try the `fuse-overlayfs` fallback if reflinks are unavailable or fail.
+- `reflink`: require `cp -a --reflink=always` for task-rootfs materialization;
+  fail instead of falling back to byte-for-byte file copies.
+- `fuse-overlay`: require the portable `fuse-overlayfs` image-rootfs path with
+  cached image rootfs as lowerdir and per-task upper/work/merged dirs.
+
+The previous experimental `btrfs` storage policy is intentionally removed until
+agentbox has a real btrfs snapshot implementation.
 
 Image selection remains global through `--image` or `AGENTBOX_IMAGE`; microvm
 does not add a runtime-local image flag.
 
 Failure diagnostics are phase-classified around cache ingestion, storage backend
 selection, task rootfs materialization, guest-init resolution, persistent disk
-preparation, launch config construction, helper/libkrun launch, and cleanup. If
-`--preserve-debug` is set and a failure happens after task rootfs
-materialization, the error reports the preserved task rootfs, task state
-directory, and expected `launch.conf` path for inspection.
+preparation, launch config construction, helper/libkrun launch, task rootfs
+unmount, and task state cleanup. If `--preserve-debug` is set and a failure
+happens after task rootfs materialization, the error reports the preserved task
+rootfs, task state directory, expected `launch.conf` path, and for fuse-overlay
+tasks an explicit unmount hint for later cleanup.
 
 ---
 

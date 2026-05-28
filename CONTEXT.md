@@ -126,17 +126,17 @@ The cleanup policy for a microvm task root filesystem. Task root filesystems are
 _Avoid_: persistent task rootfs by default
 
 **storage backend**:
-The host-side mechanism used to materialize a clean task root filesystem from an OCI-image-derived cache.
+The host-side mechanism used to materialize a clean task root filesystem from an OCI-image-derived cache. A storage backend must preserve the clean task root filesystem contract without falling back to a plain recursive file copy.
+_Avoid_: plain copy fallback
 
 
-**btrfs image subvolume**:
-A global image cache entry stored as a btrfs subvolume when the btrfs fast path is available. It is the snapshot source for clean per-task root filesystems.
+**reflink fast path**:
+A **storage backend** that materializes a task root filesystem by requiring a copy-on-write clone operation such as `cp -a --reflink=always`. It fails when reflinks are unavailable rather than silently performing a byte-for-byte file copy.
+_Avoid_: reflink auto fallback
 
-**btrfs task snapshot**:
-A writable btrfs snapshot created from a btrfs image subvolume for one microvm task. It is deleted according to the task rootfs lifecycle.
-
-**btrfs fast path**:
-An optional **storage backend** that uses btrfs copy-on-write snapshots for per-task root filesystems when available.
+**btrfs snapshot fast path**:
+A deferred btrfs-specific **storage backend** that would use btrfs subvolumes and writable snapshots for per-task root filesystems. It should not be named as implemented until actual snapshot support exists.
+_Avoid_: btrfs name for generic copies
 
 
 
@@ -145,11 +145,11 @@ A host helper that agentbox should provide through its package or development sh
 _Avoid_: hidden manual install requirement
 
 **fuse-overlay fallback**:
-The portable fallback storage backend for microvm task root filesystems when the btrfs fast path is unavailable. It uses `fuse-overlayfs` to preserve rootless copy-on-write behavior even though it adds a host helper dependency.
+The portable fallback storage backend for microvm task root filesystems when the reflink fast path is unavailable or not requested. It uses a real `fuse-overlayfs` mount with image-rootfs lower, task upper/work directories, and a merged task rootfs to preserve rootless copy-on-write behavior even though it adds a host helper dependency.
 _Avoid_: plain copy fallback
 
 **portable fallback**:
-A non-btrfs **storage backend** used when the **btrfs fast path** is unavailable or not requested. For microvm v1, this means the **fuse-overlay fallback**.
+A non-reflink **storage backend** used when the **reflink fast path** is unavailable or not requested. For microvm v1, this means the **fuse-overlay fallback**.
 _Avoid_: mandatory fallback
 
 ## Example dialogue
@@ -158,7 +158,7 @@ Dev: Should this task use a named VM instance?
 Domain expert: No. A microvm is task-based: each task gets a clean root filesystem derived from the image cache.
 
 Dev: Is btrfs required?
-Domain expert: No. Use the btrfs fast path when available, otherwise use a portable fallback.
+Domain expert: No. Microvm v1 can use a reflink fast path or a fuse-overlay fallback. A btrfs snapshot fast path is deferred until actual snapshot support exists.
 
 Dev: Is Buildah forbidden?
 Domain expert: Not for image ingestion. It is acceptable for unpacking or caching OCI images, but not for the microvm run path.
@@ -232,11 +232,14 @@ Domain expert: No. Use one Buildah ingestion transaction so image resolution, mo
 Dev: Is the image cache per workspace?
 Domain expert: No. The global image cache is per user and digest-addressed; mutable persistent cache disks stay per workspace.
 
-Dev: Where does the btrfs fast path apply?
-Domain expert: To both the global image cache and per-task rootfs: image cache entries are btrfs image subvolumes, and task roots are btrfs task snapshots.
+Dev: Should a `btrfs` storage option exist before btrfs snapshots are implemented?
+Domain expert: No. Do not label a generic rootfs copy as btrfs. A btrfs snapshot fast path should be added only when task roots are real btrfs snapshots.
 
 Dev: Should the portable fallback be a plain copied rootfs?
-Domain expert: No. The portable fallback is a fuse-overlay fallback: it accepts a host helper to keep rootless copy-on-write behavior.
+Domain expert: No. The portable fallback is a real fuse-overlay fallback: it accepts a host helper to keep rootless copy-on-write behavior.
+
+Dev: Should reflink materialization silently fall back to regular file copies?
+Domain expert: No. The reflink fast path requires copy-on-write clone support and fails when reflinks are unavailable.
 
 Dev: Should users manually install fuse-overlayfs?
 Domain expert: Prefer no. Treat it as a packaged helper dependency when possible, with a clear error outside packaged environments.

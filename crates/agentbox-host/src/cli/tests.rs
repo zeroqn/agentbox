@@ -268,7 +268,7 @@ fn cli_accepts_microvm_skeleton_flags() {
         "agentbox",
         "microvm",
         "--storage",
-        "btrfs",
+        "reflink",
         "--guest-init",
         "./agentbox-guest-init",
         "--preserve-debug",
@@ -280,7 +280,7 @@ fn cli_accepts_microvm_skeleton_flags() {
     assert_eq!(
         cli.runtime_command_or_default(),
         RuntimeCommand::Microvm(MicrovmOptions {
-            storage: MicrovmStoragePolicy::Btrfs,
+            storage: MicrovmStoragePolicy::Reflink,
             guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
             preserve_debug: true,
             mem_gib: Some(8),
@@ -292,7 +292,7 @@ fn cli_accepts_microvm_skeleton_flags() {
 fn cli_accepts_all_microvm_storage_policies() {
     for (storage_arg, expected_storage) in [
         ("auto", MicrovmStoragePolicy::Auto),
-        ("btrfs", MicrovmStoragePolicy::Btrfs),
+        ("reflink", MicrovmStoragePolicy::Reflink),
         ("fuse-overlay", MicrovmStoragePolicy::FuseOverlay),
     ] {
         let cli = Cli::try_parse_from(["agentbox", "microvm", "--storage", storage_arg])
@@ -308,6 +308,14 @@ fn cli_accepts_all_microvm_storage_policies() {
             }) if storage == expected_storage
         ));
     }
+}
+
+#[test]
+fn cli_rejects_removed_microvm_btrfs_storage_policy() {
+    let error = Cli::try_parse_from(["agentbox", "microvm", "--storage", "btrfs"])
+        .expect_err("btrfs storage policy should be removed until snapshots exist");
+
+    assert!(error.to_string().contains("btrfs"));
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::runtime::parse_mem_gib_arg;
     long_about = "Run experimental direct-libkrun microvm mode as a one-shot task with a clean task rootfs.",
     after_help = "Microvm notes:
   - experimental direct-libkrun path; separate from Podman-backed libkrun mode
-  - each run gets a clean task rootfs copied from the immutable image rootfs cache
+  - each run gets a clean task rootfs materialized from the immutable image rootfs cache
   - --preserve-debug keeps the task rootfs and launch config for inspection after failures
   - persistent /nix and container-store disk images are reused per workspace
   - no inbound port publishing is available in this experimental mode
@@ -49,7 +49,7 @@ pub struct MicrovmOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MicrovmStoragePolicy {
     Auto,
-    Btrfs,
+    Reflink,
     #[value(name = "fuse-overlay")]
     FuseOverlay,
 }
