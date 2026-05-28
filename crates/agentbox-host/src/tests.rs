@@ -471,14 +471,13 @@ fn docker_wrapper_unsets_compat_env_before_execing_podman() {
 }
 
 #[test]
-fn image_places_cargo_deny_and_symposium_in_tooling_layer() {
+fn image_places_cargo_deny_in_tooling_layer_without_symposium() {
     let rust_toolchain = nix_list_body(LAYERS, "stableRustToolchainPackages");
     let tooling = nix_list_body(LAYERS, "toolingImagePackages");
 
     assert!(!rust_toolchain.contains("pkgs.cargo-deny"));
-    assert!(!rust_toolchain.contains("symposium"));
     assert!(tooling.contains("pkgs.cargo-deny"));
-    assert!(tooling.contains("symposium"));
+    assert!(!LAYERS.contains("symposium"));
 }
 
 #[test]
@@ -496,18 +495,22 @@ fn image_roots_musl_bin_output_exposed_by_image_path() {
 }
 
 #[test]
-fn image_wires_symposium_package_into_tooling_layer() {
-    for required in [
+fn image_does_not_wire_symposium_package_into_container_layers() {
+    for retained_package_output in [
         "symposium = import ./nix/pkgs/symposium.nix",
         "symposium = symposium;",
-        "\n              symposium\n",
     ] {
-        assert!(FLAKE_NIX.contains(required), "missing {required}");
+        assert!(
+            FLAKE_NIX.contains(retained_package_output),
+            "missing {retained_package_output}"
+        );
     }
 
-    assert!(CONTAINER_NIX.contains("piCodingAgent, reasonix, symposium, rtkPrebuilt"));
-    assert!(CONTAINER_NIX.contains("piCodingAgent reasonix symposium rtkPrebuilt"));
-    assert!(LAYERS.contains("piCodingAgent, reasonix, symposium, rtkPrebuilt"));
+    assert!(!FLAKE_NIX.contains("symposium = packages.symposium;"));
+    assert!(!FLAKE_NIX.contains("\n              symposium\n"));
+    assert!(!CONTAINER_NIX.contains("symposium"));
+    assert!(!IMAGE_CHECKS_NIX.contains("symposium"));
+    assert!(!LAYERS.contains("symposium"));
 }
 
 #[test]
@@ -520,10 +523,10 @@ fn image_wires_reasonix_package_into_agent_layer() {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
 
-    assert!(CONTAINER_NIX.contains("piCodingAgent, reasonix, symposium"));
-    assert!(CONTAINER_NIX.contains("piCodingAgent reasonix symposium"));
-    assert!(IMAGE_CHECKS_NIX.contains("piCodingAgent, reasonix, symposium"));
-    assert!(LAYERS.contains("piCodingAgent, reasonix, symposium"));
+    assert!(CONTAINER_NIX.contains("piCodingAgent, reasonix, rtkPrebuilt"));
+    assert!(CONTAINER_NIX.contains("piCodingAgent reasonix rtkPrebuilt"));
+    assert!(IMAGE_CHECKS_NIX.contains("piCodingAgent, reasonix, rtkPrebuilt"));
+    assert!(LAYERS.contains("piCodingAgent, reasonix, rtkPrebuilt"));
 
     let agent_packages = nix_list_body(LAYERS, "agentImagePackages");
     assert!(agent_packages.contains("reasonix"));

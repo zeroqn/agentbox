@@ -69,7 +69,6 @@
               opencode
               piCodingAgent
               reasonix
-              symposium
               rtkPrebuilt
               containerLibPolicySeccompJson
               libkrun
@@ -111,7 +110,6 @@
             opencode = packages.opencode;
             piCodingAgent = packages.pi-coding-agent;
             reasonix = packages.reasonix;
-            symposium = packages.symposium;
             rtkPrebuilt = packages.rtk-prebuilt or null;
             containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
             libkrun = packages.libkrun;

@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, symposium, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, fishConfig, starshipConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, fishConfig, starshipConfig }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -262,7 +262,6 @@ let
     pkgs.fzf
     pkgs.gh
     pkgs.neovim
-    symposium
   ]
   ++ pkgs.lib.optional (rtkPrebuilt != null) rtkPrebuilt
   ++ [
