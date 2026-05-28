@@ -46,7 +46,7 @@ pub(in crate::guest_init) fn planned_operations() -> Vec<PodmanPrepOperation> {
 }
 
 pub(in crate::guest_init) fn start_background_prep(
-    _identity: &DevIdentity,
+    identity: &DevIdentity,
     env_contract: &LibkrunEnv,
 ) -> Result<()> {
     if !env_contract.containers_storage {
@@ -64,6 +64,8 @@ pub(in crate::guest_init) fn start_background_prep(
         .append(true)
         .open(&log_path)
         .with_context(|| format!("failed to open {}", log_path.display()))?;
+    fs::chown(&log_path, identity.uid, identity.gid)?;
+    fs::chmod(&log_path, 0o644)?;
     let log_err = log.try_clone()?;
     let child = unsafe {
         Command::new(current_exe)
@@ -100,6 +102,9 @@ pub(in crate::guest_init) fn run_prep_to_status() -> Result<()> {
     }
 
     match run_prep(&identity, &env_contract) {
+        // Ready means kernel/userns, idmap, storage, and config prep completed.
+        // The long-lived Podman API socket is started lazily by the Docker
+        // compatibility wait path, not by root prep.
         Ok(()) => status::mark_ready_for_pid(&status_path, pid),
         Err(err) => {
             let message = format!("{err:#}");

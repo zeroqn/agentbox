@@ -66,6 +66,7 @@ pub(in crate::guest_init) struct PodmanCommand {
 pub(in crate::guest_init) enum PodmanSubcommand {
     Prep,
     Wait,
+    ServiceWait,
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]

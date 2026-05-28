@@ -75,6 +75,7 @@ fn parses_libkrun_podman_prep_and_wait() {
     for (arg, expected) in [
         ("prep", PodmanSubcommand::Prep),
         ("wait", PodmanSubcommand::Wait),
+        ("service-wait", PodmanSubcommand::ServiceWait),
     ] {
         let cli = GuestInitCli::try_parse_from(["agentbox-guest-init", "libkrun", "podman", arg])
             .unwrap();

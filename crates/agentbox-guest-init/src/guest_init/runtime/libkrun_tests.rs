@@ -57,10 +57,14 @@ fn libkrun_podman_subcommands_are_not_profiled_entrypoints() {
     let wait = LibkrunSubcommand::Podman(PodmanCommand {
         command: PodmanSubcommand::Wait,
     });
+    let service_wait = LibkrunSubcommand::Podman(PodmanCommand {
+        command: PodmanSubcommand::ServiceWait,
+    });
 
     assert!(subcommand_starts_profiler(&enter));
     assert!(!subcommand_starts_profiler(&prep));
     assert!(!subcommand_starts_profiler(&wait));
+    assert!(!subcommand_starts_profiler(&service_wait));
 }
 
 #[test]

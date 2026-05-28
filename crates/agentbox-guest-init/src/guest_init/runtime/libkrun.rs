@@ -62,6 +62,7 @@ pub(in crate::guest_init) fn run(command: LibkrunCommand) -> Result<()> {
         LibkrunSubcommand::Podman(podman) => match podman.command {
             PodmanSubcommand::Prep => components::podman::root::run_prep_to_status(),
             PodmanSubcommand::Wait => components::podman::user::wait_for_prep(),
+            PodmanSubcommand::ServiceWait => components::podman::user::wait_for_service(),
         },
     }
 }

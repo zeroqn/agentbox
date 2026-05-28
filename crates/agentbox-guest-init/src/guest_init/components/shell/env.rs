@@ -34,6 +34,10 @@ pub(in crate::guest_init) fn derive(
             "XDG_RUNTIME_DIR".to_owned(),
             runtime_dir.display().to_string(),
         ));
+        vars.push((
+            "DOCKER_HOST".to_owned(),
+            crate::guest_init::components::podman::service::docker_host_uri(identity),
+        ));
     }
     if containers_storage {
         let path = env::var("PATH").unwrap_or_default();

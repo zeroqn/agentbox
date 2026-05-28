@@ -101,9 +101,17 @@ fn image_env_exposes_guest_init_runtime_payloads() {
         r#"AGENTBOX_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"#,
         r#"AGENTBOX_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"#,
         r#"AGENTBOX_NSS_WRAPPER_LIB=${pkgs.nss_wrapper}/lib/libnss_wrapper.so"#,
+        r#"AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"#,
     ] {
         assert!(IMAGE_CONFIG_NIX.contains(required), "missing {required}");
     }
+}
+
+#[test]
+fn image_exports_real_podman_path_for_guest_init_service_start() {
+    assert!(LAYERS.contains(r#"realPodmanBin = "${podman}/bin/podman";"#));
+    assert!(LAYERS.contains("realPodmanBin"));
+    assert!(IMAGE_CONFIG_NIX.contains(r#"AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"#));
 }
 
 #[test]
@@ -153,19 +161,29 @@ fn image_layers_include_guest_init_config_payloads() {
 
 #[test]
 fn podman_wrapper_waits_only_for_libkrun_container_storage() {
-    assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
-    assert!(LAYERS.contains("agentbox-guest-init libkrun podman wait"));
-    let gate = LAYERS
+    let start = LAYERS
+        .find("podmanCommandCompat =")
+        .expect("podman wrapper should exist");
+    let end = LAYERS[start..]
+        .find("dockerCommandCompat =")
+        .map(|offset| start + offset)
+        .expect("podman wrapper should end before docker wrapper");
+    let wrapper = &LAYERS[start..end];
+
+    assert!(wrapper.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
+    let gate = wrapper
         .find("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE")
         .expect("libkrun container storage gate should exist");
-    let wait = LAYERS
+    let wait = wrapper
         .find("agentbox-guest-init libkrun podman wait")
-        .expect("podman wait should exist");
-    let exec = LAYERS
+        .expect("podman prep wait should exist");
+    let exec = wrapper
         .find(r#"exec ${podman}/bin/podman "$@""#)
         .expect("real podman exec should exist");
     assert!(gate < wait);
     assert!(wait < exec);
+    assert!(!wrapper.contains("agentbox-guest-init libkrun podman service-wait"));
+    assert!(!wrapper.contains("podman system service"));
 }
 
 #[test]
@@ -181,10 +199,11 @@ fn docker_wrapper_waits_for_podman_and_execs_podman_compat() {
 
     assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker""#));
     assert!(wrapper.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
-    assert!(wrapper.contains("agentbox-guest-init libkrun podman wait"));
+    assert!(wrapper.contains("agentbox-guest-init libkrun podman service-wait"));
     assert!(wrapper.contains(r#"exec ${podman}/bin/podman "$@""#));
+    assert!(!wrapper.contains("agentbox-guest-init libkrun podman wait"));
     assert!(!wrapper.contains("agentbox-guest-init libkrun docker"));
-    assert!(!wrapper.contains("DOCKER_HOST"));
+    assert!(!wrapper.contains("podman system service"));
     assert!(!wrapper.contains(r#"exec ${docker}/bin/docker "$@""#));
 }
 
@@ -200,8 +219,9 @@ fn docker_compose_wrapper_waits_for_podman_and_uses_docker_compose() {
     let wrapper = &LAYERS[start..end];
 
     assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker-compose""#));
-    assert!(wrapper.contains("agentbox-guest-init libkrun podman wait"));
+    assert!(wrapper.contains("agentbox-guest-init libkrun podman service-wait"));
     assert!(wrapper.contains(r#"exec ${pkgs.docker-compose}/bin/docker-compose "$@""#));
+    assert!(!wrapper.contains("agentbox-guest-init libkrun podman wait"));
     assert!(!wrapper.contains("agentbox-guest-init libkrun docker"));
 }
 

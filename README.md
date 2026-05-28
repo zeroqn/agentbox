@@ -18,7 +18,10 @@ Current runtime split:
   uses disk 0 for a persistent kernel overlay at `/nix` and disk 1 for
   rootless Podman storage as `dev` with the `btrfs` storage driver. The image
   also provides `docker` and `docker-compose` compatibility commands backed by
-  Podman rather than a Docker daemon.
+  Podman rather than a Docker daemon. Libkrun shell entry starts rootless
+  Podman preparation in the background; direct `podman` waits only for that
+  prep to finish, while `docker` and `docker-compose` additionally start or
+  repair the Podman API socket on first use.
   The `/workspace` bind mount uses `--userns=keep-id` so ownership matches the
   host user after the guest drops privileges.
 - **Container mode (`agentbox container`):** native Podman task container plus
@@ -427,11 +430,33 @@ implemented.
 Manual host smoke checklist for the nested rootless Podman runtime:
 
 1. Build and load `.#container`, then start default libkrun mode on the host.
-2. Inside the guest, confirm the shell is `dev` and run `podman info`; verify
-   rootless mode and storage driver `btrfs`.
-3. Run `docker info`; it should use the Podman compatibility wrapper and report
-   the same rootless Podman storage instead of starting `dockerd`.
-4. Confirm `/dev/net/tun` exists inside the guest, then run both:
+2. Inside the guest, confirm the shell is `dev` and run `podman info`; the
+   `podman` compatibility command waits for rootless Podman prep to finish,
+   then execs real Podman. Verify rootless mode and storage driver `btrfs`.
+3. Confirm the Docker-compatible API endpoint is exported:
+
+   ```bash
+   echo "$DOCKER_HOST"
+   ```
+
+   `DOCKER_HOST` should be `unix:///run/user/<uid>/podman/podman.sock`. The
+   socket is created lazily by Docker-compatible commands rather than by guest
+   shell entry or direct `podman`.
+4. Run `docker info`; it should use the Docker compatibility wrapper, wait for
+   Podman prep if needed, start or repair the rootless Podman API socket, and
+   report the same rootless Podman storage instead of starting `dockerd`.
+   After this, the socket should exist and accept remote Podman requests:
+
+   ```bash
+   test -S "$XDG_RUNTIME_DIR/podman/podman.sock"
+   podman --remote --url "$DOCKER_HOST" info
+   ```
+
+   The socket is a rootless Podman API endpoint for the `dev` user. It is less
+   privileged than a rootful Docker daemon socket, but still grants API-level
+   control over that user's containers and images, so treat it as a trusted
+   in-guest development interface.
+5. Confirm `/dev/net/tun` exists inside the guest, then run both:
 
    ```bash
    podman run --rm docker.io/library/alpine:latest echo hello
@@ -439,13 +464,17 @@ Manual host smoke checklist for the nested rootless Podman runtime:
    docker-compose version
    ```
 
-5. Exit and restart agentbox; verify pulled Podman image/storage persists via
+6. Exit and restart agentbox; verify pulled Podman image/storage persists via
    `<state-root>/libkrun-containers.raw`. Runtime state should live under
    `/home/dev/.local/share/containers/storage`; `/var/lib/docker`,
    `/var/lib/containerd`, and `/home/dev/.local/share/docker` should be absent.
-6. For Podman troubleshooting, inspect `/run/agentbox/podman-prep.status` and
-   `/run/agentbox/podman-prep.log`.
-7. Confirm no fuse-overlayfs path/config/binary is required by rootless Podman
+7. For Podman troubleshooting, inspect `/run/agentbox/podman-prep.status`,
+   `/run/agentbox/podman-prep.log`, and
+   `$XDG_RUNTIME_DIR/podman/podman.sock`. Use
+   `agentbox-guest-init libkrun podman wait` to wait only for prep readiness,
+   or `agentbox-guest-init libkrun podman service-wait` to also start/repair
+   the Docker-compatible Podman API socket.
+8. Confirm no fuse-overlayfs path/config/binary is required by rootless Podman
    setup.
 
 Libkrun mode intentionally does **not** use the container sidecar/overlay bridge,

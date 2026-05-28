@@ -101,7 +101,7 @@ let
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman wait
+      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman service-wait
     fi
     exec ${podman}/bin/podman "$@"
   '';
@@ -111,7 +111,7 @@ let
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
     if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman wait
+      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman service-wait
     fi
     exec ${pkgs.docker-compose}/bin/docker-compose "$@"
   '';
@@ -376,6 +376,7 @@ let
     dockerCommandCompat
     dockerComposeCommandCompat
   ] ++ imagePathPackages);
+  realPodmanBin = "${podman}/bin/podman";
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
   imageContents = imagePackages ++ [
@@ -502,6 +503,7 @@ in
     agentboxImageMaxLayers
     imageContents
     imagePath
+    realPodmanBin
     clangMoldWrapper
     nixCommandCompat
     nixStoreDbCheck

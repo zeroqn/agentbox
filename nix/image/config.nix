@@ -11,6 +11,7 @@
     "AGENTBOX_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"
     "AGENTBOX_NSS_WRAPPER_LIB=${pkgs.nss_wrapper}/lib/libnss_wrapper.so"
     "AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
+    "AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"
     "LIBCLANG_PATH=${pkgs.libclang.lib}/lib"
     "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${agentboxMuslPackage}/bin"
     "NIX_CONFIG=experimental-features = nix-command flakes"
