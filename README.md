@@ -67,8 +67,10 @@ managed sidecar.
   storage, first-time libkrun/microvm raw-image creation, and reuse validation
   (`btrfs-progs` + `util-linux`; included in `nix develop`, and `btrfs` is
   included in the Nix `.#agentbox` and `.#agentbox-prebuilt` runtime wrappers).
-  Task-rootfs btrfs snapshot and delete commands run through `buildah unshare`
-  so rootless cleanup uses the same namespace contract as cache ingestion.
+  Task-rootfs btrfs snapshot and delete commands run through `buildah unshare`.
+  Rootless btrfs-snapshot cleanup also requires the backing btrfs mount to allow
+  user-owned subvolume removal; add `user_subvol_rm_allowed` to that mount's
+  options when using this fast path.
 - `/dev/net/tun` on the host for libkrun mode, passed through to the guest so
   nested rootless Podman can set up TUN-backed networking.
 - default libkrun mode requires Podman using the custom crun/libkrun stack that
@@ -612,13 +614,14 @@ Current implemented milestone:
   compatibility marker, then performs explicit mount/container/staging cleanup;
 - per-task writable rootfs directories are materialized from compatible cached
   roots through explicit copy-on-write storage methods. `btrfs-snapshot` uses a
-  writable btrfs subvolume snapshot and deletes it through `buildah unshare`,
-  `fuse-overlay` mounts a real
-  `fuse-overlayfs` merged root from cached lower plus per-task upper/work dirs,
-  and explicit `reflink` requires `cp -a --reflink=always`. Plain recursive
-  task-rootfs copies are not used. Normal cleanup deletes task subvolumes,
-  unmounts any task overlay, and removes the task state dir; `--preserve-debug`
-  intentionally preserves the task rootfs for inspection;
+  writable btrfs subvolume snapshot and deletes it through `buildah unshare`;
+  rootless deletion requires the backing btrfs mount option
+  `user_subvol_rm_allowed`. `fuse-overlay` mounts a real `fuse-overlayfs`
+  merged root from cached lower plus per-task upper/work dirs, and explicit
+  `reflink` requires `cp -a --reflink=always`. Plain recursive task-rootfs
+  copies are not used. Normal cleanup deletes task subvolumes, unmounts any task
+  overlay, and removes the task state dir; `--preserve-debug` intentionally
+  preserves the task rootfs for inspection;
 - the parent process prepares two per-workspace sparse btrfs raw disks:
 
   ```text
@@ -658,7 +661,13 @@ The storage policy values are:
   `fuse-overlayfs` fallback. `auto` does not select `reflink`.
 - `btrfs-snapshot`: require `buildah unshare btrfs subvolume snapshot` for
   task-rootfs materialization and `buildah unshare btrfs subvolume delete` for
-  cleanup; fail instead of falling back to another backend. Existing
+  cleanup; fail instead of falling back to another backend. Rootless cleanup
+  requires the backing btrfs mount to include `user_subvol_rm_allowed`; if
+  cleanup reports `Operation not permitted`, inspect the mount with
+  `findmnt -T '<task-rootfs>' -o TARGET,SOURCE,FSTYPE,OPTIONS`, add
+  `user_subvol_rm_allowed` to the matching `/etc/fstab` btrfs entry, remount
+  with `sudo mount -o remount,user_subvol_rm_allowed <mountpoint>`, and retry
+  `buildah unshare btrfs subvolume delete '<task-rootfs>'`. Existing
   non-subvolume cache entries may need refresh before this explicit mode works.
 - `fuse-overlay`: require the portable `fuse-overlayfs` image-rootfs path with
   cached image rootfs as lowerdir and per-task upper/work/merged dirs.
@@ -680,7 +689,8 @@ happens after task rootfs materialization, the error reports the preserved task
 rootfs, task state directory, expected `launch.conf` path, and for fuse-overlay
 tasks an explicit unmount hint for later cleanup. Preserved btrfs-snapshot
 tasks report the matching `buildah unshare btrfs subvolume delete` cleanup
-command.
+command and point permission-denied cleanup failures at the btrfs
+`user_subvol_rm_allowed` mount option.
 
 ---
 

@@ -279,6 +279,7 @@ impl TaskRootfsHandle {
         if self.storage_backend == MaterializedStorageBackend::BtrfsSnapshot && self.root.exists() {
             commands
                 .delete_btrfs_subvolume(&self.root)
+                .with_context(|| btrfs_subvolume_delete_failure_hint(&self.root, &self.task_dir))
                 .with_context(|| {
                     format!(
                         "failed to delete btrfs snapshot task rootfs '{}'",
@@ -300,9 +301,10 @@ impl TaskRootfsHandle {
     pub(crate) fn preserve_debug_hint(&self) -> Option<String> {
         match self.storage_backend {
             MaterializedStorageBackend::BtrfsSnapshot => Some(format!(
-                "btrfs snapshot task rootfs is preserved; delete it with `buildah unshare btrfs subvolume delete '{}'` before deleting '{}'",
+                "btrfs snapshot task rootfs is preserved; delete it with `buildah unshare btrfs subvolume delete '{}'` before deleting '{}'. If deletion is denied, inspect the mount with `findmnt -T '{}' -o TARGET,SOURCE,FSTYPE,OPTIONS` and enable the btrfs `user_subvol_rm_allowed` mount option for rootless subvolume cleanup.",
                 self.root.display(),
-                self.task_dir.display()
+                self.task_dir.display(),
+                self.root.display()
             )),
             MaterializedStorageBackend::FuseOverlay => Some(format!(
                 "fuse-overlay task rootfs is still mounted; unmount it with `fusermount3 -u '{}'` before deleting '{}'",
@@ -525,6 +527,15 @@ impl StorageManager {
             mounted_fuse_overlay: true,
         })
     }
+}
+
+fn btrfs_subvolume_delete_failure_hint(rootfs: &Path, task_dir: &Path) -> String {
+    format!(
+        "btrfs-snapshot cleanup uses `btrfs subvolume delete`, which is fast but requires root/CAP_SYS_ADMIN unless the host btrfs mount allows user-owned subvolume removal. For rootless cleanup, enable the btrfs `user_subvol_rm_allowed` mount option on the filesystem containing this task rootfs. Inspect the relevant mount with `findmnt -T '{}' -o TARGET,SOURCE,FSTYPE,OPTIONS`; add `user_subvol_rm_allowed` to the OPTIONS for the matching btrfs entry in /etc/fstab; then remount with `sudo mount -o remount,user_subvol_rm_allowed <mountpoint>`. After remounting, retry manual cleanup with `buildah unshare btrfs subvolume delete '{}'` and then remove the task state dir '{}' if it remains",
+        rootfs.display(),
+        rootfs.display(),
+        task_dir.display()
+    )
 }
 
 fn cleanup_after_materialization_failure(
@@ -1293,8 +1304,13 @@ mod tests {
             .cleanup_state(&commands)
             .expect_err("failed btrfs delete should stop cleanup");
 
-        assert!(format!("{cleanup_error:#}").contains("failed to delete btrfs snapshot"));
-        assert!(format!("{cleanup_error:#}").contains("operation not permitted"));
+        let cleanup_message = format!("{cleanup_error:#}");
+        assert!(cleanup_message.contains("failed to delete btrfs snapshot"));
+        assert!(cleanup_message.contains("operation not permitted"));
+        assert!(cleanup_message.contains("user_subvol_rm_allowed"));
+        assert!(cleanup_message.contains("findmnt -T"));
+        assert!(cleanup_message.contains("/etc/fstab"));
+        assert!(cleanup_message.contains("sudo mount -o remount,user_subvol_rm_allowed"));
         assert!(
             commands
                 .calls()
@@ -1400,6 +1416,8 @@ mod tests {
         assert!(root.exists());
         assert!(task_dir.exists());
         assert!(hint.contains("buildah unshare btrfs subvolume delete"));
+        assert!(hint.contains("user_subvol_rm_allowed"));
+        assert!(hint.contains("findmnt -T"));
         assert!(
             !commands
                 .calls()

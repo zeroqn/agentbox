@@ -135,7 +135,7 @@ A **storage backend** that materializes a task root filesystem by requiring a co
 _Avoid_: reflink auto fallback
 
 **btrfs snapshot fast path**:
-A btrfs-specific **storage backend** that gives each task a writable snapshot derived from a snapshot-capable cached root filesystem. It runs snapshot/delete through `buildah unshare` so rootless cleanup uses the same namespace contract as image-cache ingestion. It is the preferred automatic fast path when available.
+A btrfs-specific **storage backend** that gives each task a writable snapshot derived from a snapshot-capable cached root filesystem. It runs snapshot/delete through `buildah unshare`; rootless cleanup also depends on the host btrfs mount allowing user-owned subvolume removal with `user_subvol_rm_allowed`. It is the preferred automatic fast path when available and the host mount policy supports it.
 _Avoid_: btrfs name for generic copies
 
 
@@ -161,7 +161,7 @@ Dev: Is btrfs required?
 Domain expert: No. Microvm can use a btrfs snapshot fast path when available and a fuse-overlay fallback otherwise. Reflink is an explicit opt-in storage backend, not part of automatic selection.
 
 Dev: Is Buildah forbidden?
-Domain expert: Not for image ingestion or namespace-sensitive btrfs snapshot/delete commands. It should not be required for portable fuse-overlay cache-hit launches.
+Domain expert: Not for image ingestion or namespace-sensitive btrfs snapshot/delete commands. It should not be required for portable fuse-overlay cache-hit launches. Btrfs-snapshot cleanup may still require the host btrfs mount option `user_subvol_rm_allowed` for rootless subvolume deletion.
 
 Dev: Should `latest` name the cache?
 Domain expert: No. The image cache identity is the resolved digest; the original tag is only metadata.
@@ -221,13 +221,13 @@ Dev: Must users prepare image caches before running?
 Domain expert: No. Lazy image ingestion prepares the image cache on first run if needed.
 
 Dev: Is Buildah required for every microvm run?
-Domain expert: No. A portable fuse-overlay cache-hit run does not require Buildah; Buildah is required when image ingestion is needed or when the selected storage backend is btrfs-snapshot.
+Domain expert: No. A portable fuse-overlay cache-hit run does not require Buildah; Buildah is required when image ingestion is needed or when the selected storage backend is btrfs-snapshot. Btrfs-snapshot cleanup also expects the backing btrfs mount to allow rootless subvolume removal with `user_subvol_rm_allowed`.
 
 Dev: Can a microvm cache miss require sudo?
 Domain expert: No. Rootless image ingestion means cache-miss preparation is part of the normal rootless user experience.
 
 Dev: Should only `buildah mount` run inside `buildah unshare`?
-Domain expert: No. Use one Buildah ingestion transaction so image resolution, mounting, copying, finalization, and cleanup share the same rootless namespace context. The btrfs task snapshot/delete path should also run through `buildah unshare` for the same rootless namespace reason.
+Domain expert: No. Use one Buildah ingestion transaction so image resolution, mounting, copying, finalization, and cleanup share the same rootless namespace context. The btrfs task snapshot/delete path should also run through `buildah unshare`, and permission-denied delete failures should tell users to enable `user_subvol_rm_allowed` on the relevant btrfs mount rather than silently falling back to recursive cleanup.
 
 Dev: Is the image cache per workspace?
 Domain expert: No. The global image cache is per user and digest-addressed; mutable persistent cache disks stay per workspace.
