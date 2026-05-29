@@ -17,8 +17,48 @@ _Avoid_: immediate default runtime
 The canonical user-facing runtime mode for launching an OCI-image-derived agentbox environment through direct libkrun VM APIs, distinct from Podman-backed container/runtime modes.
 _Avoid_: akvm, avm, krunvm
 
+**loftd**:
+The future canonical CLI/runtime owner for direct-libkrun microvm task environments extracted from agentbox. During extraction, agentbox retains its existing microvm code until loftd is complete.
+_Avoid_: agentbox microvm as the long-term owner
+
+**single-runtime loftd CLI**:
+The loftd command shape where `loftd` launches a microvm task directly because loftd owns only the direct-libkrun microvm runtime family. Runtime selection subcommands such as `loftd microvm` are unnecessary.
+_Avoid_: preserving agentbox runtime selection in loftd
+
+**host Podman exclusion**:
+The loftd boundary that prevents the host CLI/runtime from depending directly on Podman for launch behavior. This exclusion does not ban rootless Podman preparation inside the guest environment.
+_Avoid_: banning guest Podman tooling
+
+**dynamic loftd build**:
+The packaging boundary where loftd and loftd-init are normal dynamically linked Rust binaries instead of static artifacts. Dynamic system/package libraries such as libkrun are expected to be supplied by the package or development shell.
+_Avoid_: static loftd artifact
+
+**loftd-init**:
+The future canonical guest init binary for loftd microvm task environments, extracted from agentbox guest init while preserving the same guest bootstrap role.
+_Avoid_: agentbox-guest-init as the long-term loftd init name
+
+**loftd contract naming**:
+The runtime contract naming convention where loftd and loftd-init use `LOFTD_*` environment variables, status names, and log identity. Loftd-init does not accept legacy `AGENTBOX_*` aliases.
+_Avoid_: compatibility aliases in loftd-init
+
+**compatibility handoff**:
+The transition boundary where existing agentbox microvm behavior remains available until loftd and loftd-init are complete, after which agentbox may delegate to loftd or remove the microvm command.
+_Avoid_: early removal of agentbox microvm
+
+**structure-preserving extraction**:
+The extraction style where loftd mirrors agentbox-host's crate and module layout, and loftd-init mirrors agentbox-guest-init's crate and module layout, while changing ownership and binary identity. It preserves reviewability rather than redesigning the architecture during extraction.
+_Avoid_: opportunistic rearchitecture during extraction
+
+**loftd state root**:
+The loftd-owned runtime state location for task state, persistent cache disks, and related runtime state. By default it uses the loftd app namespace and can be redirected through loftd config without sharing agentbox state.
+_Avoid_: reusing agentbox state for loftd
+
+**loftd state config**:
+The user config file that can override the base location for loftd runtime state, mirroring agentbox's `[state].location` shape under a loftd config namespace. It changes where loftd keeps runtime state without changing Buildah's normal containers configuration.
+_Avoid_: Buildah config isolation knob
+
 **workspace cache scope**:
-The ownership boundary for microvm persistent cache disks. Persistent cache disks are scoped to the current workspace by default, matching existing agentbox state isolation.
+The ownership boundary for microvm persistent cache disks. Persistent cache disks are scoped to the current workspace by default, with loftd using a separate `.loftd/` state root rather than sharing agentbox's `.agentbox/` state.
 _Avoid_: global cache by default
 
 **persistent cache disk**:
@@ -26,7 +66,7 @@ A shared guest disk that survives across microvm tasks to preserve expensive dev
 _Avoid_: persistent root filesystem
 
 **guest container tooling**:
-Rootless container tools available inside the guest development environment. They are allowed because the microvm restriction applies to the host run path, not to developer tools inside the guest.
+Rootless container tools available inside the guest development environment. They remain part of loftd-init because the Podman restriction applies to the loftd host run path, not to developer tools inside the guest.
 _Avoid_: host runtime dependency
 
 **container store**:
@@ -64,6 +104,10 @@ _Avoid_: image entrypoint by default
 An OCI image that contains the guest init contract required to boot an agentbox task environment. Microvm v1 requires an agentbox-compatible image rather than adapting arbitrary OCI images at ingestion time.
 _Avoid_: arbitrary image support in v1
 
+**loftd-compatible image**:
+An OCI image that contains the loftd-init guest contract required to boot a loftd microvm task environment. Loftd defaults to loftd image identities rather than agentbox image identities.
+_Avoid_: agentbox image as loftd default
+
 
 
 **cache hit run**:
@@ -85,6 +129,14 @@ _Avoid_: sudo-only cache miss
 **Buildah ingestion transaction**:
 The single rootless user-namespace operation that resolves, mounts, copies, finalizes, and cleans up an OCI image during microvm image ingestion. Keeping the whole sequence together avoids mismatched Buildah storage and mount namespaces.
 _Avoid_: split namespace ingestion
+
+**loftd image ingestion boundary**:
+The host preparation boundary where loftd may use Buildah to resolve and cache OCI-image root filesystems, while keeping Podman out of the host run path. Buildah may reuse the user's normal containers configuration, such as `~/.config/containers`; a cache-hit loftd launch should not require Podman and should avoid Buildah unless the selected storage backend needs a namespace-sensitive operation.
+_Avoid_: Podman-backed loftd launch
+
+**loftd image refresh**:
+The explicit image-refresh path where loftd may pull the canonical loftd image through Buildah, including `--pull-latest`. It preserves user ergonomics without reintroducing Podman-backed image operations.
+_Avoid_: Podman pull for loftd
 
 **rootless user contract**:
 The expectation that normal agentbox commands run without sudo from the user's perspective. Microvm storage setup may have optional preparation paths, but normal task launch should remain rootless or use a portable fallback.

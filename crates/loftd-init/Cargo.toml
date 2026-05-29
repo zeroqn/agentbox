@@ -1,0 +1,13 @@
+[package]
+name = "loftd-init"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "loftd-init"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true

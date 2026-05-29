@@ -1,0 +1,16 @@
+[package]
+name = "loftd"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "loftd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
