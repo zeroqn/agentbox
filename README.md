@@ -49,14 +49,16 @@ managed sidecar.
   `agentbox microvm --storage fuse-overlay`; included by the
   `.#agentbox-prebuilt` package runtime environment)
 - `buildah` for experimental `agentbox microvm` cache misses or future cache
-  refreshes; included by the Nix `.#agentbox` and `.#agentbox-prebuilt`
-  package runtime environments. Existing digest-keyed microvm cache hits do not
-  require Buildah. Cache-miss ingestion is rootless and runs as one
-  `buildah unshare` transaction so Buildah storage, mount, copy, and cleanup
-  share the same user namespace; the Rust ingestion child creates a btrfs
-  subvolume cache rootfs when supported, then copies with `cp -a --reflink=auto`
-  so CoW filesystems can avoid full data copies while non-reflink filesystems
-  keep the portable fallback.
+  refreshes, and for `agentbox microvm --storage btrfs-snapshot` task-rootfs
+  snapshot/delete operations; included by the Nix `.#agentbox` and
+  `.#agentbox-prebuilt` package runtime environments. Cache-miss ingestion is
+  rootless and runs as one `buildah unshare` transaction so Buildah storage,
+  mount, copy, and cleanup share the same user namespace; the Rust ingestion
+  child creates a btrfs subvolume cache rootfs when supported, then copies with
+  `cp -a --reflink=auto` so CoW filesystems can avoid full data copies while
+  non-reflink filesystems keep the portable fallback. Existing digest-keyed
+  microvm cache hits do not require Buildah unless the selected storage backend
+  is `btrfs-snapshot`.
 - `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
   normal host binary does not link to libkrun at build time; the Nix `.#agentbox`
   package wraps the binary with this repo's libkrun/libkrunfw library path, and
@@ -64,7 +66,9 @@ managed sidecar.
 - `btrfs`, `mkfs.btrfs`, and `blkid` on the host for microvm btrfs-snapshot
   storage, first-time libkrun/microvm raw-image creation, and reuse validation
   (`btrfs-progs` + `util-linux`; included in `nix develop`, and `btrfs` is
-  included in the Nix `.#agentbox` and `.#agentbox-prebuilt` runtime wrappers)
+  included in the Nix `.#agentbox` and `.#agentbox-prebuilt` runtime wrappers).
+  Task-rootfs btrfs snapshot and delete commands run through `buildah unshare`
+  so rootless cleanup uses the same namespace contract as cache ingestion.
 - `/dev/net/tun` on the host for libkrun mode, passed through to the guest so
   nested rootless Podman can set up TUN-backed networking.
 - default libkrun mode requires Podman using the custom crun/libkrun stack that
@@ -608,7 +612,8 @@ Current implemented milestone:
   compatibility marker, then performs explicit mount/container/staging cleanup;
 - per-task writable rootfs directories are materialized from compatible cached
   roots through explicit copy-on-write storage methods. `btrfs-snapshot` uses a
-  writable btrfs subvolume snapshot, `fuse-overlay` mounts a real
+  writable btrfs subvolume snapshot and deletes it through `buildah unshare`,
+  `fuse-overlay` mounts a real
   `fuse-overlayfs` merged root from cached lower plus per-task upper/work dirs,
   and explicit `reflink` requires `cp -a --reflink=always`. Plain recursive
   task-rootfs copies are not used. Normal cleanup deletes task subvolumes,
@@ -651,8 +656,9 @@ The storage policy values are:
 
 - `auto`: try `btrfs-snapshot` first, then clean partial output and try the
   `fuse-overlayfs` fallback. `auto` does not select `reflink`.
-- `btrfs-snapshot`: require `btrfs subvolume snapshot` for task-rootfs
-  materialization; fail instead of falling back to another backend. Existing
+- `btrfs-snapshot`: require `buildah unshare btrfs subvolume snapshot` for
+  task-rootfs materialization and `buildah unshare btrfs subvolume delete` for
+  cleanup; fail instead of falling back to another backend. Existing
   non-subvolume cache entries may need refresh before this explicit mode works.
 - `fuse-overlay`: require the portable `fuse-overlayfs` image-rootfs path with
   cached image rootfs as lowerdir and per-task upper/work/merged dirs.
@@ -672,7 +678,9 @@ preparation, launch config construction, helper/libkrun launch, task rootfs
 unmount, and task state cleanup. If `--preserve-debug` is set and a failure
 happens after task rootfs materialization, the error reports the preserved task
 rootfs, task state directory, expected `launch.conf` path, and for fuse-overlay
-tasks an explicit unmount hint for later cleanup.
+tasks an explicit unmount hint for later cleanup. Preserved btrfs-snapshot
+tasks report the matching `buildah unshare btrfs subvolume delete` cleanup
+command.
 
 ---
 

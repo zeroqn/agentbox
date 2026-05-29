@@ -67,15 +67,15 @@ _Avoid_: arbitrary image support in v1
 
 
 **cache hit run**:
-A microvm task launch where the digest-addressed image cache already exists. A cache hit run should not require Buildah because no image ingestion is needed.
-_Avoid_: Buildah required for every run
+A microvm task launch where the digest-addressed image cache already exists. A cache hit run should not require Buildah for image ingestion, but the btrfs snapshot storage backend may still use `buildah unshare` for namespace-sensitive snapshot/delete operations.
+_Avoid_: Buildah required for every backend
 
 **lazy image ingestion**:
 The default cache behavior where the first microvm run for an image prepares the digest-addressed image cache if it is missing. Separate cache-management commands are optional future ergonomics, not required for v1 launch.
 _Avoid_: mandatory prepare step
 
 **image ingestion**:
-The host-side preparation step that resolves an OCI image into a cached root filesystem for later microvm task use. Buildah is acceptable here because it is not the microvm run path.
+The host-side preparation step that resolves an OCI image into a cached root filesystem for later microvm task use. Buildah is acceptable here because it owns the image cache transaction, distinct from the VM launch itself.
 _Avoid_: VM launch
 
 **rootless image ingestion**:
@@ -135,7 +135,7 @@ A **storage backend** that materializes a task root filesystem by requiring a co
 _Avoid_: reflink auto fallback
 
 **btrfs snapshot fast path**:
-A btrfs-specific **storage backend** that gives each task a writable snapshot derived from a snapshot-capable cached root filesystem. It is the preferred automatic fast path when available.
+A btrfs-specific **storage backend** that gives each task a writable snapshot derived from a snapshot-capable cached root filesystem. It runs snapshot/delete through `buildah unshare` so rootless cleanup uses the same namespace contract as image-cache ingestion. It is the preferred automatic fast path when available.
 _Avoid_: btrfs name for generic copies
 
 
@@ -161,7 +161,7 @@ Dev: Is btrfs required?
 Domain expert: No. Microvm can use a btrfs snapshot fast path when available and a fuse-overlay fallback otherwise. Reflink is an explicit opt-in storage backend, not part of automatic selection.
 
 Dev: Is Buildah forbidden?
-Domain expert: Not for image ingestion. It is acceptable for unpacking or caching OCI images, but not for the microvm run path.
+Domain expert: Not for image ingestion or namespace-sensitive btrfs snapshot/delete commands. It should not be required for portable fuse-overlay cache-hit launches.
 
 Dev: Should `latest` name the cache?
 Domain expert: No. The image cache identity is the resolved digest; the original tag is only metadata.
@@ -221,13 +221,13 @@ Dev: Must users prepare image caches before running?
 Domain expert: No. Lazy image ingestion prepares the image cache on first run if needed.
 
 Dev: Is Buildah required for every microvm run?
-Domain expert: No. A cache hit run does not require Buildah; Buildah is required only when image ingestion is needed.
+Domain expert: No. A portable fuse-overlay cache-hit run does not require Buildah; Buildah is required when image ingestion is needed or when the selected storage backend is btrfs-snapshot.
 
 Dev: Can a microvm cache miss require sudo?
 Domain expert: No. Rootless image ingestion means cache-miss preparation is part of the normal rootless user experience.
 
 Dev: Should only `buildah mount` run inside `buildah unshare`?
-Domain expert: No. Use one Buildah ingestion transaction so image resolution, mounting, copying, finalization, and cleanup share the same rootless namespace context.
+Domain expert: No. Use one Buildah ingestion transaction so image resolution, mounting, copying, finalization, and cleanup share the same rootless namespace context. The btrfs task snapshot/delete path should also run through `buildah unshare` for the same rootless namespace reason.
 
 Dev: Is the image cache per workspace?
 Domain expert: No. The global image cache is per user and digest-addressed; mutable persistent cache disks stay per workspace.

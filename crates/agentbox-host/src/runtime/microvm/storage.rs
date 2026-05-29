@@ -56,7 +56,7 @@ pub(crate) struct HostStorageCommands;
 
 impl StorageCommands for HostStorageCommands {
     fn btrfs_snapshot_available(&self) -> bool {
-        command_available("btrfs")
+        command_available("buildah") && command_available("btrfs")
     }
 
     fn reflink_copy_available(&self) -> bool {
@@ -72,22 +72,10 @@ impl StorageCommands for HostStorageCommands {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create '{}'", parent.display()))?;
         }
-        let output = Command::new("btrfs")
-            .arg("subvolume")
-            .arg("snapshot")
-            .arg(source)
-            .arg(destination)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|err| match err.kind() {
-                std::io::ErrorKind::NotFound => {
-                    anyhow!("btrfs is not installed or not available on PATH")
-                }
-                _ => err.into(),
-            })
+        let output = buildah_unshare_btrfs_subvolume("snapshot", &[source, destination])
             .with_context(|| {
                 format!(
-                    "failed to run btrfs snapshot rootfs materialization from '{}' to '{}'",
+                    "failed to run namespace-aware btrfs snapshot rootfs materialization from '{}' to '{}'",
                     source.display(),
                     destination.display()
                 )
@@ -96,7 +84,7 @@ impl StorageCommands for HostStorageCommands {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "btrfs subvolume snapshot failed from '{}' to '{}': {}",
+                "buildah unshare btrfs subvolume snapshot failed from '{}' to '{}': {}",
                 source.display(),
                 destination.display(),
                 stderr.trim()
@@ -106,21 +94,10 @@ impl StorageCommands for HostStorageCommands {
     }
 
     fn delete_btrfs_subvolume(&self, subvolume: &Path) -> Result<()> {
-        let output = Command::new("btrfs")
-            .arg("subvolume")
-            .arg("delete")
-            .arg(subvolume)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|err| match err.kind() {
-                std::io::ErrorKind::NotFound => {
-                    anyhow!("btrfs is not installed or not available on PATH")
-                }
-                _ => err.into(),
-            })
-            .with_context(|| {
+        let output =
+            buildah_unshare_btrfs_subvolume("delete", &[subvolume]).with_context(|| {
                 format!(
-                    "failed to run btrfs subvolume delete for '{}'",
+                    "failed to run namespace-aware btrfs subvolume delete for '{}'",
                     subvolume.display()
                 )
             })?;
@@ -128,7 +105,7 @@ impl StorageCommands for HostStorageCommands {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "btrfs subvolume delete failed for '{}': {}",
+                "buildah unshare btrfs subvolume delete failed for '{}': {}",
                 subvolume.display(),
                 stderr.trim()
             );
@@ -323,7 +300,7 @@ impl TaskRootfsHandle {
     pub(crate) fn preserve_debug_hint(&self) -> Option<String> {
         match self.storage_backend {
             MaterializedStorageBackend::BtrfsSnapshot => Some(format!(
-                "btrfs snapshot task rootfs is preserved; delete it with `btrfs subvolume delete '{}'` before deleting '{}'",
+                "btrfs snapshot task rootfs is preserved; delete it with `buildah unshare btrfs subvolume delete '{}'` before deleting '{}'",
                 self.root.display(),
                 self.task_dir.display()
             )),
@@ -358,13 +335,13 @@ impl StorageManager {
                 Ok(StorageBackend::Auto)
             }
             MicrovmStoragePolicy::Auto => Err(anyhow!(
-                "experimental microvm storage auto requires btrfs for snapshots or fuse-overlayfs on PATH"
+                "experimental microvm storage auto requires buildah+btrfs for snapshots or fuse-overlayfs on PATH"
             )),
             MicrovmStoragePolicy::BtrfsSnapshot if commands.btrfs_snapshot_available() => {
                 Ok(StorageBackend::BtrfsSnapshot)
             }
             MicrovmStoragePolicy::BtrfsSnapshot => Err(anyhow!(
-                "experimental microvm storage --storage btrfs-snapshot requires btrfs on PATH"
+                "experimental microvm storage --storage btrfs-snapshot requires buildah and btrfs on PATH"
             )),
             MicrovmStoragePolicy::Reflink if commands.reflink_copy_available() => {
                 Ok(StorageBackend::Reflink)
@@ -561,6 +538,23 @@ fn cleanup_after_materialization_failure(
             "failed to clean partial microvm task rootfs after materialization error: {err:#}"
         )),
     }
+}
+
+fn buildah_unshare_btrfs_subvolume(action: &str, paths: &[&Path]) -> Result<std::process::Output> {
+    Command::new("buildah")
+        .arg("unshare")
+        .arg("btrfs")
+        .arg("subvolume")
+        .arg(action)
+        .args(paths)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => anyhow!(
+                "buildah is not installed or not available on PATH; btrfs-snapshot storage requires buildah unshare"
+            ),
+            _ => err.into(),
+        })
 }
 
 fn command_available(command: &str) -> bool {
@@ -791,6 +785,11 @@ mod tests {
             self
         }
 
+        fn fail_btrfs_delete(self, message: &'static str) -> Self {
+            self.btrfs_delete_errors.borrow_mut().push_back(message);
+            self
+        }
+
         fn fail_reflink(self, message: &'static str) -> Self {
             self.reflink_errors.borrow_mut().push_back(message);
             self
@@ -983,7 +982,7 @@ mod tests {
             &FakeStorageCommands::missing(),
         )
         .expect_err("auto should fail when no CoW backend is available");
-        assert!(format!("{missing_error:#}").contains("requires btrfs"));
+        assert!(format!("{missing_error:#}").contains("buildah+btrfs"));
     }
 
     #[test]
@@ -1270,6 +1269,41 @@ mod tests {
     }
 
     #[test]
+    fn btrfs_snapshot_cleanup_delete_failure_preserves_task_state_for_manual_recovery() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let entry = cached_entry(&temp);
+        let commands =
+            FakeStorageCommands::available().fail_btrfs_delete("operation not permitted");
+        let manager = StorageManager::new(temp.path().join("workspace-state"));
+        let handle = manager
+            .materialize(
+                &entry,
+                StorageBackend::BtrfsSnapshot,
+                "task-clean-btrfs-fail",
+                false,
+                &commands,
+            )
+            .expect("btrfs snapshot rootfs should materialize");
+        fs::write(handle.task_dir().join("launch.conf"), "config")
+            .expect("launch config should be written");
+        let root = handle.root.clone();
+        let task_dir = handle.task_dir().to_path_buf();
+
+        let cleanup_error = handle
+            .cleanup_state(&commands)
+            .expect_err("failed btrfs delete should stop cleanup");
+
+        assert!(format!("{cleanup_error:#}").contains("failed to delete btrfs snapshot"));
+        assert!(format!("{cleanup_error:#}").contains("operation not permitted"));
+        assert!(
+            commands
+                .calls()
+                .contains(&StorageCall::DeleteBtrfsSubvolume(root))
+        );
+        assert!(task_dir.join("launch.conf").exists());
+    }
+
+    #[test]
     fn fuse_overlay_unmount_failure_prevents_task_dir_removal() {
         let temp = tempfile::tempdir().expect("tempdir should be created");
         let entry = cached_entry(&temp);
@@ -1365,7 +1399,7 @@ mod tests {
 
         assert!(root.exists());
         assert!(task_dir.exists());
-        assert!(hint.contains("btrfs subvolume delete"));
+        assert!(hint.contains("buildah unshare btrfs subvolume delete"));
         assert!(
             !commands
                 .calls()
