@@ -99,6 +99,10 @@ _Avoid_: port publishing in v1
 The network path for a microvm task. The default should use libkrun-provided networking rather than adding a host-side helper process.
 _Avoid_: passt by default
 
+**libkrun port publishing**:
+The default libkrun runtime's inbound network exposure from a host address or port to a guest task port. It is separate from microvm networking and uses the host runtime's publish-spec language.
+_Avoid_: port bind, microvm port publishing
+
 
 **libkrun FFI boundary**:
 The host-side Rust boundary that calls libkrun directly for microvm task launch. Microvm starts with a narrow hand-written FFI surface wrapped by safe host code, rather than generated broad bindings.
@@ -213,6 +217,9 @@ Domain expert: No. A guest-init override is important for debugging direct runti
 
 Dev: Does v1 need `--publish` port forwarding?
 Domain expert: No. Use outbound-first networking for v1; general port publishing can come later.
+
+Dev: Does libkrun port publishing also change microvm networking?
+Domain expert: No. Libkrun port publishing belongs to the default Podman-backed libkrun runtime; microvm keeps its outbound-first networking scope until a separate direct-libkrun decision changes it.
 
 Dev: Can microvm boot arbitrary OCI images?
 Domain expert: Not in v1. It requires an agentbox-compatible image with the guest init contract already present.

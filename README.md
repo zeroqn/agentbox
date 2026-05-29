@@ -322,6 +322,7 @@ Run:
 ./result/bin/agentbox libkrun
 ./result/bin/agentbox libkrun --mem 8
 ./result/bin/agentbox libkrun --tsi
+./result/bin/agentbox libkrun --publish 127.0.0.1:8080:8080
 ```
 
 `agentbox` with no subcommand defaults to libkrun. Runtime-specific libkrun
@@ -359,6 +360,7 @@ krun.disk.1.id=agentbox-containers
 krun.disk.1.readonly=false
 krun.use_passt=1
 --device /dev/net/tun:/dev/net/tun
+--publish <publish-spec>
 ```
 
 By default, agentbox sizes libkrun memory to 80% of host memory, rounded down to
@@ -376,6 +378,14 @@ default non-root `dev` task shell can use nested KVM.
 
 By default, libkrun mode uses passt networking through `krun.use_passt=1`. Pass
 `agentbox libkrun --tsi` to switch to the older TSI/proxy environment path.
+Publish inbound ports with repeatable `agentbox libkrun --publish <SPEC>` or
+`agentbox libkrun -p <SPEC>`. `<SPEC>` is passed through to Podman using
+Podman's publish syntax, for example `8080:80`, `127.0.0.1:8080:80`,
+`127.0.0.1::80`, `8080:80/udp`, or `8000-8010:80-90`. Agentbox does not
+rewrite the host bind address; include `127.0.0.1:` when the published port
+should be loopback-only. Port publishing requires default passt networking and
+is rejected with `--tsi`. It applies only to interactive libkrun tasks, not
+`resize` or `reset-nix` maintenance runs.
 
 During libkrun guest bootstrap, `agentbox-guest-init` sets
 `kernel.dmesg_restrict=1` so kernel logs are root-only inside the guest; the
@@ -457,9 +467,9 @@ first refuses to proceed if Podman reports any running container with a matching
 if present and creates a fresh default btrfs image. Non-file paths at the managed
 image location are refused instead of removed.
 
-No live auto-resize, state migration, snapshot/rollback UX, host-port helper UX,
-rootful nested Podman workflow, or container-mode nested-Podman support is
-implemented.
+No live auto-resize, state migration, snapshot/rollback UX, direct microvm
+host-port helper UX, rootful nested Podman workflow, or container-mode
+nested-Podman support is implemented.
 
 Manual host smoke checklist for the nested rootless Podman runtime:
 
@@ -649,8 +659,8 @@ Current implemented milestone:
   preparation against the attached disks, then drops to the host/dev identity and
   execs the default `fish -l` shell.
 
-Current limitations: networking relies on libkrun's no-passt/TSI default path, inbound
-port publishing is intentionally unavailable, terminal resize has only the
+Current limitations: networking relies on libkrun's no-passt/TSI default path, direct
+microvm inbound port publishing is intentionally unavailable, terminal resize has only the
 narrow default virtio-console hook wired so far, and real VM smoke validation is
 still pending. See `docs/microvm-smoke.md` for the manual smoke checklist and
 current not-tested items.

@@ -26,6 +26,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox libkrun --mem 8
   agentbox libkrun resize --target nix --size 128G
   agentbox libkrun reset-nix --force
+  agentbox libkrun --publish 127.0.0.1:8080:8080
   agentbox libkrun --guest-init ./agentbox-guest-init
   agentbox container
   agentbox container sidecar

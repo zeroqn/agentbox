@@ -25,6 +25,7 @@ pub(crate) struct LibkrunTaskPodmanSpec<'a> {
     pub(crate) ram_mib: u32,
     pub(crate) cpu_count: Option<u32>,
     pub(crate) tsi: bool,
+    pub(crate) publish_specs: &'a [String],
     pub(crate) guest_profile: bool,
     pub(crate) guest_debug: bool,
     pub(crate) enter_as_root: bool,
@@ -62,6 +63,7 @@ pub(crate) fn build_libkrun_task_run_args(spec: LibkrunTaskPodmanSpec<'_>) -> Re
     run.option(CORE, "--tmpfs", CONTAINER_TMP_TMPFS);
     cpu::append_cpu_annotation(&mut run, spec.cpu_count);
     network::append_mode_args(&mut run, spec.tsi);
+    network::append_publish_args(&mut run, spec.publish_specs);
     diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
     guest_init::append_guest_init_override_args(&mut run, spec.guest_init_override);
     run.arg(CORE, spec.image);

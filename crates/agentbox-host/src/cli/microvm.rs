@@ -11,7 +11,7 @@ use crate::runtime::parse_mem_gib_arg;
   - each run gets a clean task rootfs materialized from the immutable image rootfs cache
   - --preserve-debug keeps the task rootfs and launch config for inspection after failures
   - persistent /nix and container-store disk images are reused per workspace
-  - no inbound port publishing is available in this experimental mode
+  - no direct microvm inbound port publishing is available in this experimental mode
   - outbound networking uses libkrun's current default path and needs real-VM smoke validation
   - terminal resize has the default virtio-console hook wired, but still needs real-VM smoke validation"
 )]

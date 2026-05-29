@@ -98,10 +98,58 @@ fn cli_accepts_libkrun_options_under_libkrun_subcommand() {
                 tsi: true,
                 mem_gib: Some(8),
                 guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
+                publish: Vec::new(),
             },
             command: None,
         })
     );
+}
+
+#[test]
+fn cli_accepts_repeatable_libkrun_publish_options() {
+    let cli = Cli::try_parse_from([
+        "agentbox",
+        "libkrun",
+        "--publish",
+        "8080:80",
+        "-p",
+        "127.0.0.1:8443:443/tcp",
+        "-p",
+        "8000-8010:80-90",
+    ])
+    .expect("libkrun publish options should parse under libkrun subcommand");
+
+    assert_eq!(
+        cli.runtime_command_or_default(),
+        RuntimeCommand::Libkrun(LibkrunCommand {
+            run_options: LibkrunOptions {
+                publish: vec![
+                    "8080:80".to_owned(),
+                    "127.0.0.1:8443:443/tcp".to_owned(),
+                    "8000-8010:80-90".to_owned(),
+                ],
+                ..Default::default()
+            },
+            command: None,
+        })
+    );
+}
+
+#[test]
+fn cli_rejects_empty_libkrun_publish_spec() {
+    let err = Cli::try_parse_from(["agentbox", "libkrun", "--publish", "   "])
+        .expect_err("empty publish spec should not parse");
+
+    assert_eq!(err.kind(), ErrorKind::ValueValidation);
+    assert!(err.to_string().contains("publish spec must not be empty"));
+}
+
+#[test]
+fn cli_keeps_publish_under_explicit_libkrun_subcommand() {
+    let err = Cli::try_parse_from(["agentbox", "--publish", "8080:80"])
+        .expect_err("publish should not be a top-level flag");
+
+    assert_eq!(err.kind(), ErrorKind::UnknownArgument);
 }
 
 #[test]
@@ -184,6 +232,7 @@ fn cli_accepts_libkrun_run_options_before_resize_for_resize_vm() {
                 tsi: false,
                 mem_gib: Some(4),
                 guest_init: Some(Path::new("./agentbox-guest-init").to_path_buf()),
+                publish: Vec::new(),
             },
             command: Some(LibkrunSubcommand::Resize(LibkrunResizeOptions {
                 target: LibkrunResizeTarget::Nix,
@@ -231,7 +280,7 @@ fn cli_microvm_help_mentions_experimental() {
         "--preserve-debug",
         "persistent /nix",
         "container-store disk",
-        "no inbound port publishing",
+        "no direct microvm inbound port publishing",
         "terminal resize",
         "outbound networking",
     ] {

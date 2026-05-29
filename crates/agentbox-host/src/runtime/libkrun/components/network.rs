@@ -19,3 +19,9 @@ pub(crate) fn append_mode_args(run: &mut RunSpec, tsi: bool) {
         run.option(NETWORK_OWNER, "--annotation", LIBKRUN_USE_PASST_ANNOTATION);
     }
 }
+
+pub(crate) fn append_publish_args(run: &mut RunSpec, publish_specs: &[String]) {
+    for spec in publish_specs {
+        run.option(NETWORK_OWNER, "--publish", spec);
+    }
+}

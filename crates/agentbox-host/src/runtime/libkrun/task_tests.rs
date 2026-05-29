@@ -240,6 +240,21 @@ fn libkrun_tsi_proxy_env_is_owned_by_network_owner() {
 }
 
 #[test]
+fn libkrun_publish_args_are_repeatable_and_owned_by_network_owner() {
+    let args = build_run_args(TaskOptions {
+        publish_specs: vec!["8080:80".to_owned(), "127.0.0.1:8443:443/tcp".to_owned()],
+        ..Default::default()
+    });
+
+    assert!(args.contains_option_from(network::NETWORK_OWNER, "--publish", "8080:80"));
+    assert!(args.contains_option_from(
+        network::NETWORK_OWNER,
+        "--publish",
+        "127.0.0.1:8443:443/tcp"
+    ));
+}
+
+#[test]
 fn libkrun_guest_diagnostics_are_owned_by_guest_diagnostics() {
     let args = build_run_args(TaskOptions {
         guest_profile: true,
@@ -348,6 +363,7 @@ struct TaskOptions {
     guest_debug: bool,
     enter_as_root: bool,
     guest_init: Option<GuestInitOverrideMount>,
+    publish_specs: Vec<String>,
 }
 
 impl Default for TaskOptions {
@@ -359,6 +375,7 @@ impl Default for TaskOptions {
             guest_debug: false,
             enter_as_root: false,
             guest_init: None,
+            publish_specs: Vec::new(),
         }
     }
 }
@@ -496,6 +513,7 @@ fn task_spec(
     let guest_init_override = options
         .guest_init
         .map(|mount| Box::leak(Box::new(mount)) as &'static GuestInitOverrideMount);
+    let publish_specs = Box::leak(options.publish_specs.into_boxed_slice());
 
     crate::runtime::libkrun::task::LibkrunTaskPodmanSpec {
         image: crate::DEFAULT_IMAGE,
@@ -509,6 +527,7 @@ fn task_spec(
         ram_mib: 8192,
         cpu_count: options.cpu_count,
         tsi: options.tsi,
+        publish_specs,
         guest_profile: options.guest_profile,
         guest_debug: options.guest_debug,
         enter_as_root: options.enter_as_root,

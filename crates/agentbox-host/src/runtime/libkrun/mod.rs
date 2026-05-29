@@ -9,7 +9,7 @@ pub(crate) use components::disk::raw_btrfs;
 pub(crate) use components::memory::parse_mem_gib_arg;
 pub(crate) use resize::parse_raw_image_size_arg;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::env;
 use std::process::{ExitCode, Stdio};
 
@@ -26,6 +26,8 @@ use components::memory::resolve_libkrun_ram_mib;
 use task::{LibkrunTaskPodmanSpec, build_libkrun_task_podman_args};
 
 pub(crate) fn run(common: CommonOptions, command: LibkrunCommand) -> Result<ExitCode> {
+    validate_command_options(&command)?;
+
     match command.command {
         Some(LibkrunSubcommand::Resize(resize_options)) => {
             resize::run(common, command.run_options, resize_options)
@@ -35,7 +37,16 @@ pub(crate) fn run(common: CommonOptions, command: LibkrunCommand) -> Result<Exit
     }
 }
 
+fn validate_command_options(command: &LibkrunCommand) -> Result<()> {
+    if command.command.is_some() && !command.run_options.publish.is_empty() {
+        bail!("agentbox libkrun --publish is only supported for interactive libkrun tasks");
+    }
+    Ok(())
+}
+
 fn run_task(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> {
+    validate_task_options(&options)?;
+
     let cwd = env::current_dir()
         .context("failed to resolve current directory")?
         .canonicalize()
@@ -70,6 +81,7 @@ fn run_task(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> 
             ram_mib,
             cpu_count,
             tsi: options.tsi,
+            publish_specs: &options.publish,
             guest_profile: common.profile,
             guest_debug: common.debug,
             enter_as_root: common.root,
@@ -85,14 +97,57 @@ fn run_task(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> 
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }
 
+fn validate_task_options(options: &LibkrunOptions) -> Result<()> {
+    if options.tsi && !options.publish.is_empty() {
+        bail!("agentbox libkrun --publish requires default passt networking; remove --tsi");
+    }
+    Ok(())
+}
+
 fn current_host_ids() -> (u32, u32) {
     (unsafe { libc::getuid() }, unsafe { libc::getgid() })
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::cli::{LibkrunCommand, LibkrunOptions, LibkrunResetNixOptions, LibkrunSubcommand};
+
     #[test]
     fn current_host_ids_are_available_for_kvm_drop_contract() {
         let (_uid, _gid) = crate::runtime::libkrun::current_host_ids();
+    }
+
+    #[test]
+    fn publish_rejects_tsi_before_task_setup() {
+        let err = crate::runtime::libkrun::validate_task_options(&LibkrunOptions {
+            tsi: true,
+            publish: vec!["8080:80".to_owned()],
+            ..Default::default()
+        })
+        .expect_err("publish with tsi should be rejected");
+
+        assert_eq!(
+            err.to_string(),
+            "agentbox libkrun --publish requires default passt networking; remove --tsi"
+        );
+    }
+
+    #[test]
+    fn publish_rejects_maintenance_subcommands_before_runtime_setup() {
+        let err = crate::runtime::libkrun::validate_command_options(&LibkrunCommand {
+            run_options: LibkrunOptions {
+                publish: vec!["8080:80".to_owned()],
+                ..Default::default()
+            },
+            command: Some(LibkrunSubcommand::ResetNix(LibkrunResetNixOptions {
+                force: true,
+            })),
+        })
+        .expect_err("publish should be rejected for maintenance subcommands");
+
+        assert_eq!(
+            err.to_string(),
+            "agentbox libkrun --publish is only supported for interactive libkrun tasks"
+        );
     }
 }

@@ -37,6 +37,16 @@ pub struct LibkrunOptions {
         long_help = "Bind-mount the host agentbox-guest-init binary read-only over the in-image guest-init path while preserving the normal image entrypoint and arguments. This lets guest-init fixes be tested without rebuilding the container image."
     )]
     pub guest_init: Option<PathBuf>,
+
+    #[arg(
+        short = 'p',
+        long = "publish",
+        value_name = "SPEC",
+        value_parser = parse_publish_arg,
+        help = "Publish a host port to the libkrun guest task",
+        long_help = "Publish a host port to the libkrun guest task. SPEC uses Podman's publish syntax, such as 8080:80, 127.0.0.1:8080:80, 127.0.0.1::80, 8080:80/udp, or 8000-8010:80-90. May be repeated. This option requires default passt networking and is not supported with --tsi."
+    )]
+    pub publish: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -76,4 +86,12 @@ pub struct LibkrunResetNixOptions {
 pub enum LibkrunResizeTarget {
     Nix,
     Containers,
+}
+
+fn parse_publish_arg(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        Err("publish spec must not be empty".to_owned())
+    } else {
+        Ok(value.to_owned())
+    }
 }
