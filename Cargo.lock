@@ -256,7 +256,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "loftd-init"
+name = "loftd-guest-init"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -30,23 +30,23 @@ The loftd boundary that prevents the host CLI/runtime from depending directly on
 _Avoid_: banning guest Podman tooling
 
 **dynamic loftd build**:
-The packaging boundary where loftd and loftd-init are normal dynamically linked Rust binaries instead of static artifacts. Dynamic system/package libraries such as libkrun are expected to be supplied by the package or development shell.
+The packaging boundary where loftd and loftd-guest-init are normal dynamically linked Rust binaries instead of static artifacts. Dynamic system/package libraries such as libkrun are expected to be supplied by the package or development shell.
 _Avoid_: static loftd artifact
 
-**loftd-init**:
+**loftd-guest-init**:
 The future canonical guest init binary for loftd microvm task environments, extracted from agentbox guest init while preserving the same guest bootstrap role.
 _Avoid_: agentbox-guest-init as the long-term loftd init name
 
 **loftd contract naming**:
-The runtime contract naming convention where loftd and loftd-init use `LOFTD_*` environment variables, status names, and log identity. Loftd-init does not accept legacy `AGENTBOX_*` aliases.
-_Avoid_: compatibility aliases in loftd-init
+The runtime contract naming convention where loftd and loftd-guest-init use `LOFTD_*` environment variables, status names, and log identity. Loftd-guest-init does not accept legacy `AGENTBOX_*` aliases.
+_Avoid_: compatibility aliases in loftd-guest-init
 
 **compatibility handoff**:
-The transition boundary where existing agentbox microvm behavior remains available until loftd and loftd-init are complete, after which agentbox may delegate to loftd or remove the microvm command.
+The transition boundary where existing agentbox microvm behavior remains available until loftd and loftd-guest-init are complete, after which agentbox may delegate to loftd or remove the microvm command.
 _Avoid_: early removal of agentbox microvm
 
 **structure-preserving extraction**:
-The extraction style where loftd mirrors agentbox-host's crate and module layout, and loftd-init mirrors agentbox-guest-init's crate and module layout, while changing ownership and binary identity. It preserves reviewability rather than redesigning the architecture during extraction.
+The extraction style where loftd mirrors agentbox-host's crate and module layout, and loftd-guest-init mirrors agentbox-guest-init's crate and module layout, while changing ownership and binary identity. It preserves reviewability rather than redesigning the architecture during extraction.
 _Avoid_: opportunistic rearchitecture during extraction
 
 **loftd state root**:
@@ -66,7 +66,7 @@ A shared guest disk that survives across microvm tasks to preserve expensive dev
 _Avoid_: persistent root filesystem
 
 **guest container tooling**:
-Rootless container tools available inside the guest development environment. They remain part of loftd-init because the Podman restriction applies to the loftd host run path, not to developer tools inside the guest.
+Rootless container tools available inside the guest development environment. They remain part of loftd-guest-init because the Podman restriction applies to the loftd host run path, not to developer tools inside the guest.
 _Avoid_: host runtime dependency
 
 **container store**:
@@ -105,7 +105,7 @@ An OCI image that contains the guest init contract required to boot an agentbox 
 _Avoid_: arbitrary image support in v1
 
 **loftd-compatible image**:
-An OCI image that contains the loftd-init guest contract required to boot a loftd microvm task environment. Loftd defaults to loftd image identities rather than agentbox image identities.
+An OCI image that contains the loftd-guest-init guest contract required to boot a loftd microvm task environment. Loftd defaults to loftd image identities rather than agentbox image identities.
 _Avoid_: agentbox image as loftd default
 
 

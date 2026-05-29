@@ -10,7 +10,7 @@ pub(crate) fn entrypoint() -> anyhow::Result<()> {
         GuestInitCommand::Enter(command) => {
             let resolved = command.resolved_command();
             bail!(
-                "loftd-init guest bootstrap is not implemented yet (requested command: {})",
+                "loftd-guest-init guest bootstrap is not implemented yet (requested command: {})",
                 resolved.join(" ")
             )
         }

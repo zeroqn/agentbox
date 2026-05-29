@@ -3,13 +3,13 @@ members = [
   "crates/agentbox-host",
   "crates/agentbox-guest-init",
   "crates/loftd",
-  "crates/loftd-init",
+  "crates/loftd-guest-init",
 ]
 default-members = [
   "crates/agentbox-host",
   "crates/agentbox-guest-init",
   "crates/loftd",
-  "crates/loftd-init",
+  "crates/loftd-guest-init",
 ]
 resolver = "3"
 

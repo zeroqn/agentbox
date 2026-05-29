@@ -8,7 +8,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --storage auto\n  loftd --guest-init ./loftd-init\n  loftd --profile --debug\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd"
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --storage auto\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile --debug\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -58,7 +58,7 @@ pub(crate) struct Cli {
     #[arg(
         long = "guest-init",
         value_name = "PATH",
-        help = "Override loftd-init in the microvm image"
+        help = "Override loftd-guest-init in the microvm image"
     )]
     guest_init: Option<PathBuf>,
 
@@ -168,7 +168,7 @@ mod tests {
             "--mem",
             "8",
             "--guest-init",
-            "./loftd-init",
+            "./loftd-guest-init",
             "--preserve-debug",
             "--root",
             "--profile",
@@ -179,7 +179,10 @@ mod tests {
 
         assert_eq!(options.storage, StoragePolicy::FuseOverlay);
         assert_eq!(options.mem_gib, Some(8));
-        assert_eq!(options.guest_init.as_deref(), Some("./loftd-init".as_ref()));
+        assert_eq!(
+            options.guest_init.as_deref(),
+            Some("./loftd-guest-init".as_ref())
+        );
         assert!(options.preserve_debug);
         assert!(options.root);
         assert!(options.profile);

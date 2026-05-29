@@ -1,11 +1,11 @@
 [package]
-name = "loftd-init"
+name = "loftd-guest-init"
 version.workspace = true
 edition.workspace = true
 publish = false
 
 [[bin]]
-name = "loftd-init"
+name = "loftd-guest-init"
 path = "src/main.rs"
 
 [dependencies]

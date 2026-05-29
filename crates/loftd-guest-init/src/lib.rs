@@ -7,7 +7,7 @@ pub fn entrypoint() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("loftd-init: {err:#}");
+            eprintln!("loftd-guest-init: {err:#}");
             ExitCode::from(1)
         }
     }

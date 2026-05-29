@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser, PartialEq, Eq)]
 #[command(
-    name = "loftd-init",
+    name = "loftd-guest-init",
     version,
     about = "Initialize a loftd direct-libkrun microvm guest"
 )]
@@ -45,8 +45,9 @@ mod tests {
 
     #[test]
     fn parses_enter_command() {
-        let cli = GuestInitCli::try_parse_from(["loftd-init", "enter", "bash", "-lc", "echo ok"])
-            .expect("enter command should parse");
+        let cli =
+            GuestInitCli::try_parse_from(["loftd-guest-init", "enter", "bash", "-lc", "echo ok"])
+                .expect("enter command should parse");
 
         let GuestInitCommand::Enter(command) = cli.command;
         assert_eq!(command.resolved_command(), ["bash", "-lc", "echo ok"]);
@@ -54,7 +55,7 @@ mod tests {
 
     #[test]
     fn enter_defaults_to_login_fish() {
-        let cli = GuestInitCli::try_parse_from(["loftd-init", "enter"])
+        let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "enter"])
             .expect("enter command should parse");
 
         let GuestInitCommand::Enter(command) = cli.command;
@@ -63,7 +64,7 @@ mod tests {
 
     #[test]
     fn does_not_accept_legacy_agentbox_runtime_surface() {
-        let err = GuestInitCli::try_parse_from(["loftd-init", "microvm", "enter"])
+        let err = GuestInitCli::try_parse_from(["loftd-guest-init", "microvm", "enter"])
             .expect_err("legacy runtime names should not parse");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
