@@ -7,6 +7,7 @@ mod config;
 mod naming;
 mod runtime;
 mod state;
+mod task_rootfs;
 
 use cli::Cli;
 

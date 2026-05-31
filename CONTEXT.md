@@ -111,7 +111,7 @@ _Avoid_: agentbox image as loftd default
 
 
 **cache hit run**:
-A microvm task launch where the digest-addressed image cache already exists. A cache hit run should not require Buildah for image ingestion, but the btrfs snapshot storage backend may still use `buildah unshare` for namespace-sensitive snapshot/delete operations.
+A microvm task launch where the digest-addressed image cache already exists. A cache hit run should not require Buildah for image ingestion, but the btrfs snapshot task rootfs backend may still use `buildah unshare` for namespace-sensitive snapshot/delete operations.
 _Avoid_: Buildah required for every backend
 
 **lazy image ingestion**:
@@ -131,7 +131,7 @@ The single rootless user-namespace operation that resolves, mounts, copies, fina
 _Avoid_: split namespace ingestion
 
 **loftd image ingestion boundary**:
-The host preparation boundary where loftd may use Buildah to resolve and cache OCI-image root filesystems, while keeping Podman out of the host run path. Buildah may reuse the user's normal containers configuration, such as `~/.config/containers`; a cache-hit loftd launch should not require Podman and should avoid Buildah unless the selected storage backend needs a namespace-sensitive operation.
+The host preparation boundary where loftd may use Buildah to resolve and cache OCI-image root filesystems, while keeping Podman out of the host run path. Buildah may reuse the user's normal containers configuration, such as `~/.config/containers`; a cache-hit loftd launch should not require Podman and should avoid Buildah unless the selected task rootfs backend needs a namespace-sensitive operation.
 _Avoid_: Podman-backed loftd launch
 
 **loftd image refresh**:
@@ -139,7 +139,7 @@ The explicit image-refresh path where loftd may pull the canonical loftd image t
 _Avoid_: Podman pull for loftd
 
 **rootless user contract**:
-The expectation that normal agentbox commands run without sudo from the user's perspective. Microvm storage setup may have optional preparation paths, but normal task launch should remain rootless or use a portable fallback.
+The expectation that normal agentbox and loftd commands run without sudo from the user's perspective. Microvm storage setup may have optional preparation paths, but normal task launch should remain rootless or fail with a clear diagnostic.
 _Avoid_: sudo-only runtime
 
 
@@ -181,32 +181,32 @@ _Avoid_: tag identity
 The cleanup policy for a microvm task root filesystem. Task root filesystems are deleted after normal task exit by default, with explicit preservation for debugging.
 _Avoid_: persistent task rootfs by default
 
-**storage backend**:
-The host-side mechanism used to materialize a clean task root filesystem from an OCI-image-derived cache. A storage backend must preserve the clean task root filesystem contract without falling back to a plain recursive file copy.
-_Avoid_: plain copy fallback
+**task rootfs backend**:
+The host-side mechanism used to materialize a clean task root filesystem from an OCI-image-derived cache. A task rootfs backend must preserve the clean task root filesystem contract without falling back to a plain recursive file copy.
+_Avoid_: generic container storage
 
 
 **reflink fast path**:
-A **storage backend** that materializes a task root filesystem by requiring a copy-on-write clone operation such as `cp -a --reflink=always`. It fails when reflinks are unavailable rather than silently performing a byte-for-byte file copy.
-_Avoid_: reflink auto fallback
+An agentbox-era explicit materialization path that requires a copy-on-write clone operation such as `cp -a --reflink=always`. It is not part of loftd's initial task rootfs backend set.
+_Avoid_: loftd reflink backend by default
 
-**btrfs snapshot fast path**:
-A btrfs-specific **storage backend** that gives each task a writable snapshot derived from a snapshot-capable cached root filesystem. It runs snapshot/delete through `buildah unshare`; rootless cleanup also depends on the host btrfs mount allowing user-owned subvolume removal with `user_subvol_rm_allowed`. It is the preferred automatic fast path when available and the host mount policy supports it.
-_Avoid_: btrfs name for generic copies
+**btrfs snapshot default**:
+The default loftd **task rootfs backend**. It gives each task a writable btrfs snapshot derived from a snapshot-capable cached root filesystem. If btrfs snapshot storage is unavailable, loftd should fail clearly unless the user explicitly chooses another backend.
+_Avoid_: automatic storage probing
 
 
 
 **packaged helper dependency**:
-A host helper that agentbox should provide through its package or development shell when possible. For microvm, `fuse-overlayfs` is a packaged helper dependency for the fuse-overlay fallback.
+A host helper that agentbox should provide through its package or development shell when possible. For microvm, `fuse-overlayfs` is a packaged helper dependency for the fuse-overlay explicit fallback.
 _Avoid_: hidden manual install requirement
 
-**fuse-overlay fallback**:
-The portable fallback storage backend for microvm task root filesystems when the btrfs snapshot fast path is unavailable or not requested. It uses a real overlay view to preserve rootless copy-on-write behavior even though it adds a host helper dependency.
-_Avoid_: plain copy fallback
+**fuse-overlay explicit fallback**:
+A non-btrfs **task rootfs backend** that a user may explicitly choose when btrfs snapshot storage is unavailable or undesired. It uses a real overlay view to preserve rootless copy-on-write behavior even though it adds a host helper dependency.
+_Avoid_: silent automatic fallback
 
-**portable fallback**:
-A non-btrfs **storage backend** used when the **btrfs snapshot fast path** is unavailable or not requested. For microvm v1, this means the **fuse-overlay fallback**.
-_Avoid_: mandatory fallback
+**task rootfs backend selection**:
+The loftd policy where the task rootfs backend is selected deliberately through loftd configuration or a CLI override. Loftd's initial backend set is **btrfs snapshot default** and **fuse-overlay explicit fallback**; it does not include `auto` or `reflink`.
+_Avoid_: container storage driver selection
 
 ## Example dialogue
 
@@ -214,10 +214,10 @@ Dev: Should this task use a named VM instance?
 Domain expert: No. A microvm is task-based: each task gets a clean root filesystem derived from the image cache.
 
 Dev: Is btrfs required?
-Domain expert: No. Microvm can use a btrfs snapshot fast path when available and a fuse-overlay fallback otherwise. Reflink is an explicit opt-in storage backend, not part of automatic selection.
+Domain expert: Loftd defaults to btrfs snapshot storage and fails clearly if it cannot use it. Fuse-overlay is available only when the user explicitly chooses it through configuration or a CLI override.
 
 Dev: Is Buildah forbidden?
-Domain expert: Not for image ingestion or namespace-sensitive btrfs snapshot/delete commands. It should not be required for portable fuse-overlay cache-hit launches. Btrfs-snapshot cleanup may still require the host btrfs mount option `user_subvol_rm_allowed` for rootless subvolume deletion.
+Domain expert: Not for image ingestion or namespace-sensitive btrfs snapshot/delete commands. Btrfs-snapshot cleanup may still require the host btrfs mount option `user_subvol_rm_allowed` for rootless subvolume deletion.
 
 Dev: Should `latest` name the cache?
 Domain expert: No. The image cache identity is the resolved digest; the original tag is only metadata.
@@ -280,7 +280,7 @@ Dev: Must users prepare image caches before running?
 Domain expert: No. Lazy image ingestion prepares the image cache on first run if needed.
 
 Dev: Is Buildah required for every microvm run?
-Domain expert: No. A portable fuse-overlay cache-hit run does not require Buildah; Buildah is required when image ingestion is needed or when the selected storage backend is btrfs-snapshot. Btrfs-snapshot cleanup also expects the backing btrfs mount to allow rootless subvolume removal with `user_subvol_rm_allowed`.
+Domain expert: No. A portable fuse-overlay cache-hit run does not require Buildah; Buildah is required when image ingestion is needed or when the selected task rootfs backend is btrfs-snapshot. Btrfs-snapshot cleanup also expects the backing btrfs mount to allow rootless subvolume removal with `user_subvol_rm_allowed`.
 
 Dev: Can a microvm cache miss require sudo?
 Domain expert: No. Rootless image ingestion means cache-miss preparation is part of the normal rootless user experience.
@@ -294,11 +294,11 @@ Domain expert: No. The global image cache is per user and digest-addressed; muta
 Dev: Should a `btrfs` storage option exist?
 Domain expert: No. Use the precise `btrfs-snapshot` name for real snapshot-backed task roots, and do not label generic rootfs copies as btrfs.
 
-Dev: Should the portable fallback be a plain copied rootfs?
-Domain expert: No. The portable fallback is a real fuse-overlay fallback: it accepts a host helper to keep rootless copy-on-write behavior.
+Dev: Should the explicit storage fallback be a plain copied rootfs?
+Domain expert: No. The explicit storage fallback is a real fuse-overlay view: it accepts a host helper to keep rootless copy-on-write behavior.
 
-Dev: Should reflink materialization silently fall back to regular file copies?
-Domain expert: No. Reflink is explicit opt-in, requires copy-on-write clone support, and fails when reflinks are unavailable.
+Dev: Should loftd include a reflink task rootfs backend?
+Domain expert: No. Loftd starts with btrfs-snapshot as the default and fuse-overlay as the explicit fallback; reflink remains outside the initial loftd backend set.
 
 Dev: Should users manually install fuse-overlayfs?
 Domain expert: Prefer no. Treat it as a packaged helper dependency when possible, with a clear error outside packaged environments.

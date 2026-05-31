@@ -1,8 +1,6 @@
 use anyhow::{Result, anyhow};
-use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::config;
 use crate::naming::derive_workspace_slug;
 
 const APP_DIR_NAME: &str = "loftd";
@@ -31,28 +29,14 @@ impl StateLayout {
     }
 }
 
-pub(crate) fn resolve_state_layout(cwd: &Path) -> Result<StateLayout> {
-    let xdg_state_home = env::var_os("XDG_STATE_HOME").map(PathBuf::from);
-    let xdg_config_home = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
-    let home_dir = env::var_os("HOME").map(PathBuf::from);
-
-    resolve_state_layout_from_env(
-        cwd,
-        xdg_state_home.as_deref(),
-        xdg_config_home.as_deref(),
-        home_dir.as_deref(),
-    )
-}
-
-fn resolve_state_layout_from_env(
+pub(crate) fn resolve_state_layout_from_parts(
     cwd: &Path,
     xdg_state_home: Option<&Path>,
-    xdg_config_home: Option<&Path>,
     home_dir: Option<&Path>,
+    state_location_override: Option<&Path>,
 ) -> Result<StateLayout> {
     let default_location_root = default_state_location_root(xdg_state_home, home_dir)?;
-    let location_root = config::state::read_state_location_override(xdg_config_home, home_dir)?
-        .unwrap_or(default_location_root);
+    let location_root = state_location_override.unwrap_or(default_location_root.as_path());
 
     let app_dir = location_root.join(APP_DIR_NAME);
     Ok(StateLayout::new(
@@ -76,8 +60,7 @@ fn default_state_location_root(
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{default_state_location_root, resolve_state_layout_from_env};
-    use std::fs;
+    use crate::state::{default_state_location_root, resolve_state_layout_from_parts};
     use std::path::Path;
 
     #[test]
@@ -101,11 +84,11 @@ mod tests {
 
     #[test]
     fn resolve_state_layout_uses_default_xdg_state_root() {
-        let layout = resolve_state_layout_from_env(
+        let layout = resolve_state_layout_from_parts(
             Path::new("/tmp/project"),
             Some(Path::new("/tmp/xdg-state")),
-            Some(Path::new("/tmp/xdg-config")),
             Some(Path::new("/tmp/home")),
+            None,
         )
         .expect("layout should resolve");
 
@@ -123,23 +106,11 @@ mod tests {
 
     #[test]
     fn resolve_state_layout_honors_config_override_and_appends_loftd() {
-        let dir = tempfile::tempdir().expect("tempdir should be created");
-        let config_home = dir.path().join("config");
-        let state_home = dir.path().join("state");
-        let home = dir.path().join("home");
-
-        fs::create_dir_all(config_home.join("loftd")).expect("config dir should exist");
-        fs::write(
-            config_home.join("loftd").join("loftd.toml"),
-            "[state]\nlocation = \"/tmp/custom-root/\"\n",
-        )
-        .expect("config file should be written");
-
-        let layout = resolve_state_layout_from_env(
+        let layout = resolve_state_layout_from_parts(
             Path::new("/tmp/project"),
-            Some(&state_home),
-            Some(&config_home),
-            Some(&home),
+            Some(Path::new("/tmp/xdg-state")),
+            Some(Path::new("/tmp/home")),
+            Some(Path::new("/tmp/custom-root/")),
         )
         .expect("layout should resolve");
 
@@ -158,19 +129,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir should be created");
         let workspace = dir.path().join("project");
         let state_home = dir.path().join("state");
-        let config_home = dir.path().join("config");
         let home = dir.path().join("home");
 
-        fs::create_dir_all(workspace.join(".agentbox").join("nix"))
+        std::fs::create_dir_all(workspace.join(".agentbox").join("nix"))
             .expect("legacy state should be created");
 
-        let layout = resolve_state_layout_from_env(
-            &workspace,
-            Some(&state_home),
-            Some(&config_home),
-            Some(&home),
-        )
-        .expect("layout should resolve");
+        let layout =
+            resolve_state_layout_from_parts(&workspace, Some(&state_home), Some(&home), None)
+                .expect("layout should resolve");
 
         assert_eq!(layout.root_dir(), &state_home.join("loftd").join("project"));
         assert_ne!(layout.root_dir(), workspace.join(".agentbox"));

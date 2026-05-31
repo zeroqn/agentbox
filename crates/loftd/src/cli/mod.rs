@@ -1,26 +1,28 @@
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use std::path::PathBuf;
 
-use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
+use crate::task_rootfs::TaskRootfsBackend;
 
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
 #[command(
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --storage auto\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile --debug\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd"
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile --debug\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd"
 )]
 pub(crate) struct Cli {
     #[arg(
         long,
         env = "LOFTD_IMAGE",
+        conflicts_with = "pull_latest",
         help = "Container image to run",
-        long_help = "Container image to run. If omitted, loftd prefers localhost/loftd:latest and falls back to ghcr.io/zeroqn/loftd:latest. Can also be set with LOFTD_IMAGE."
+        long_help = "Container image to run. If omitted, loftd prefers localhost/loftd:latest and can fall back to ghcr.io/zeroqn/loftd:latest in a future image-ingestion slice. Can also be set with LOFTD_IMAGE."
     )]
     image: Option<String>,
 
     #[arg(
         long,
+        conflicts_with = "image",
         help = "Refresh and use ghcr.io/zeroqn/loftd:latest for this run",
         long_help = "Refresh and use ghcr.io/zeroqn/loftd:latest for this run when --image is not set. The future runtime implementation will perform this refresh through Buildah, not host Podman."
     )]
@@ -48,12 +50,13 @@ pub(crate) struct Cli {
     root: bool,
 
     #[arg(
-        long = "storage",
-        value_enum,
-        default_value = "auto",
-        help = "Select the microvm task rootfs storage backend"
+        long = "rootfs-backend",
+        value_name = "BACKEND",
+        value_parser = parse_rootfs_backend_arg,
+        help = "Override the task rootfs backend for this run",
+        long_help = "Override the task rootfs backend for this run. Allowed values are btrfs-snapshot and fuse-overlay. If omitted, loftd uses [task-rootfs].backend from loftd.toml or defaults to btrfs-snapshot."
     )]
-    storage: StoragePolicy,
+    rootfs_backend: Option<TaskRootfsBackend>,
 
     #[arg(
         long = "guest-init",
@@ -78,11 +81,11 @@ impl Cli {
     pub(crate) fn into_runtime_options(self) -> RuntimeOptions {
         RuntimeOptions {
             image: self.image,
-            image_resolution: resolve_image_strategy(self.pull_latest),
+            pull_latest: self.pull_latest,
             debug: self.debug,
             profile: self.profile,
             root: self.root,
-            storage: self.storage,
+            rootfs_backend: self.rootfs_backend,
             guest_init: self.guest_init,
             preserve_debug: self.preserve_debug,
             mem_gib: self.mem_gib,
@@ -93,30 +96,14 @@ impl Cli {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeOptions {
     pub(crate) image: Option<String>,
-    pub(crate) image_resolution: ImageResolutionStrategy,
+    pub(crate) pull_latest: bool,
     pub(crate) debug: bool,
     pub(crate) profile: bool,
     pub(crate) root: bool,
-    pub(crate) storage: StoragePolicy,
+    pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) preserve_debug: bool,
     pub(crate) mem_gib: Option<u32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum StoragePolicy {
-    Auto,
-    #[value(name = "btrfs-snapshot")]
-    BtrfsSnapshot,
-    Reflink,
-    #[value(name = "fuse-overlay")]
-    FuseOverlay,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ImageResolutionStrategy {
-    PullLatestGhcr,
-    PreferLocalhostFallback,
 }
 
 pub(crate) fn parse_mem_gib_arg(value: &str) -> Result<u32, String> {
@@ -131,39 +118,22 @@ pub(crate) fn parse_mem_gib_arg(value: &str) -> Result<u32, String> {
     Ok(mem_gib)
 }
 
-fn resolve_image_strategy(pull_latest: bool) -> ImageResolutionStrategy {
-    if pull_latest {
-        ImageResolutionStrategy::PullLatestGhcr
-    } else {
-        ImageResolutionStrategy::PreferLocalhostFallback
-    }
-}
-
-pub(crate) fn selected_image_reference(
-    explicit_image: Option<&str>,
-    strategy: ImageResolutionStrategy,
-) -> &str {
-    match explicit_image {
-        Some(image) => image,
-        None => match strategy {
-            ImageResolutionStrategy::PullLatestGhcr => DEFAULT_FALLBACK_IMAGE,
-            ImageResolutionStrategy::PreferLocalhostFallback => DEFAULT_IMAGE,
-        },
-    }
+fn parse_rootfs_backend_arg(value: &str) -> Result<TaskRootfsBackend, String> {
+    TaskRootfsBackend::parse_config_value(value)
 }
 
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use crate::cli::{Cli, ImageResolutionStrategy, StoragePolicy, selected_image_reference};
-    use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
+    use crate::cli::Cli;
+    use crate::task_rootfs::TaskRootfsBackend;
 
     #[test]
     fn parses_single_runtime_options_without_subcommand() {
         let cli = Cli::try_parse_from([
             "loftd",
-            "--storage",
+            "--rootfs-backend",
             "fuse-overlay",
             "--mem",
             "8",
@@ -177,7 +147,7 @@ mod tests {
         .expect("single runtime options should parse");
         let options = cli.into_runtime_options();
 
-        assert_eq!(options.storage, StoragePolicy::FuseOverlay);
+        assert_eq!(options.rootfs_backend, Some(TaskRootfsBackend::FuseOverlay));
         assert_eq!(options.mem_gib, Some(8));
         assert_eq!(
             options.guest_init.as_deref(),
@@ -199,26 +169,39 @@ mod tests {
     }
 
     #[test]
-    fn pull_latest_selects_ghcr_default_without_host_podman() {
+    fn pull_latest_records_canonical_refresh_intent() {
         let cli = Cli::try_parse_from(["loftd", "--pull-latest"]).expect("pull flag should parse");
         let options = cli.into_runtime_options();
 
-        assert_eq!(
-            options.image_resolution,
-            ImageResolutionStrategy::PullLatestGhcr
-        );
-        assert_eq!(
-            selected_image_reference(options.image.as_deref(), options.image_resolution),
-            DEFAULT_FALLBACK_IMAGE
-        );
+        assert!(options.pull_latest);
+        assert_eq!(options.image, None);
     }
 
     #[test]
-    fn default_image_prefers_local_loftd_reference() {
-        assert_eq!(
-            selected_image_reference(None, ImageResolutionStrategy::PreferLocalhostFallback),
-            DEFAULT_IMAGE
-        );
+    fn image_and_pull_latest_are_mutually_exclusive() {
+        let err = Cli::try_parse_from(["loftd", "--image", "example/loftd:dev", "--pull-latest"])
+            .expect_err("explicit image and canonical refresh should conflict");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn rootfs_backend_rejects_removed_values() {
+        let auto_err = Cli::try_parse_from(["loftd", "--rootfs-backend", "auto"])
+            .expect_err("auto backend should fail");
+        let reflink_err = Cli::try_parse_from(["loftd", "--rootfs-backend", "reflink"])
+            .expect_err("reflink backend should fail");
+
+        assert_eq!(auto_err.kind(), clap::error::ErrorKind::ValueValidation);
+        assert_eq!(reflink_err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn legacy_storage_flag_is_not_accepted() {
+        let err = Cli::try_parse_from(["loftd", "--storage", "auto"])
+            .expect_err("storage flag should not exist");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]

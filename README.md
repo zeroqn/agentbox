@@ -704,6 +704,63 @@ command and point permission-denied cleanup failures at the btrfs
 
 ---
 
+### 4) Loftd extraction (in progress)
+
+`loftd` is the extracted direct-libkrun microvm runtime owner. The current
+implementation builds a typed launch plan and then stops with a clear
+not-implemented runtime error; it does not yet ingest images, materialize task
+root filesystems, or boot libkrun.
+
+Run/help:
+
+```bash
+./result/bin/loftd --help
+./result/bin/loftd --rootfs-backend btrfs-snapshot
+./result/bin/loftd --rootfs-backend fuse-overlay
+./result/bin/loftd --pull-latest
+./result/bin/loftd --image ghcr.io/example/loftd:dev
+```
+
+Image selection is explicit in the launch plan: no image option prefers
+`localhost/loftd:latest` for the future local-first path, `--pull-latest`
+selects and refreshes `ghcr.io/zeroqn/loftd:latest`, and `--image` uses exactly
+the supplied image reference. `--image` and `--pull-latest` are mutually
+exclusive.
+
+Loftd uses **task rootfs backend** terminology for the host-side mechanism that
+will materialize the clean task root filesystem. The default backend is
+`btrfs-snapshot`. There is no `auto` backend and no initial loftd `reflink`
+backend; choose `fuse-overlay` explicitly when the portable overlay path is
+wanted.
+
+Loftd config lives at:
+
+```text
+$XDG_CONFIG_HOME/loftd/loftd.toml
+```
+
+or, when `XDG_CONFIG_HOME` is unset:
+
+```text
+$HOME/.config/loftd/loftd.toml
+```
+
+Supported launch-planning keys are:
+
+```toml
+[state]
+location = "/home/dev/loftd-state"
+
+[task-rootfs]
+backend = "btrfs-snapshot" # or "fuse-overlay"
+```
+
+`[state].location` changes the base loftd state location; loftd appends
+`/loftd/<workspace-slug>`. `--rootfs-backend` overrides
+`[task-rootfs].backend` for a single run.
+
+---
+
 ## Persistent host mounts
 
 Each run ensures and mounts:
