@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 mod cli;
@@ -15,6 +16,17 @@ const DEFAULT_IMAGE: &str = "localhost/loftd:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/loftd:latest";
 
 pub fn entrypoint() -> ExitCode {
+    let args = std::env::args_os().collect::<Vec<_>>();
+    if is_internal_invocation(&args) {
+        return match run_internal(args.into_iter().skip(2).collect()) {
+            Ok(code) => code,
+            Err(err) => {
+                eprintln!("loftd internal: {err:#}");
+                ExitCode::from(1)
+            }
+        };
+    }
+
     let cli = Cli::parse();
 
     match run(cli) {
@@ -28,6 +40,15 @@ pub fn entrypoint() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     runtime::run(cli)
+}
+
+fn is_internal_invocation(args: &[OsString]) -> bool {
+    args.get(1).and_then(|arg| arg.to_str()) == Some("internal")
+}
+
+fn run_internal(args: Vec<OsString>) -> Result<ExitCode> {
+    runtime::run_internal(args)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

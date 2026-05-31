@@ -48,10 +48,11 @@ managed sidecar.
 - `fuse-overlayfs` (required for `agentbox container` sidecar mode and for
   `agentbox microvm --storage fuse-overlay`; included by the
   `.#agentbox-prebuilt` package runtime environment)
-- `buildah` for experimental `agentbox microvm` cache misses or future cache
-  refreshes, and for `agentbox microvm --storage btrfs-snapshot` task-rootfs
-  snapshot/delete operations; included by the Nix `.#agentbox` and
-  `.#agentbox-prebuilt` package runtime environments. Cache-miss ingestion is
+- `buildah` for experimental `agentbox microvm` cache misses, for `agentbox
+  microvm --storage btrfs-snapshot` task-rootfs snapshot/delete operations, and
+  for loftd's default `btrfs-snapshot` Buildah image-source transaction;
+  included by the Nix `.#agentbox` and `.#agentbox-prebuilt` package runtime
+  environments. Agentbox cache-miss ingestion is
   rootless and runs as one `buildah unshare` transaction so Buildah storage,
   mount, copy, and cleanup share the same user namespace; the Rust ingestion
   child creates a btrfs subvolume cache rootfs when supported, then copies with
@@ -707,9 +708,10 @@ command and point permission-denied cleanup failures at the btrfs
 ### 4) Loftd extraction (in progress)
 
 `loftd` is the extracted direct-libkrun microvm runtime owner. The current
-implementation builds a typed launch plan and then stops with a clear
-not-implemented runtime error; it does not yet ingest images, materialize task
-root filesystems, or boot libkrun.
+implementation builds a typed launch plan, uses Buildah as the durable OCI image
+source for the default btrfs path, materializes a per-task btrfs snapshot
+rootfs, and then stops before libkrun boot. Direct libkrun boot and the explicit
+`fuse-overlay` backend are still future slices.
 
 Run/help:
 
@@ -721,17 +723,22 @@ Run/help:
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
 ```
 
-Image selection is explicit in the launch plan: no image option prefers
-`localhost/loftd:latest` for the future local-first path, `--pull-latest`
-selects and refreshes `ghcr.io/zeroqn/loftd:latest`, and `--image` uses exactly
-the supplied image reference. `--image` and `--pull-latest` are mutually
-exclusive.
+Image selection is materialized through Buildah for the btrfs-snapshot path: with no
+image option, loftd first inspects `localhost/loftd:latest` and uses it with
+`--pull=never` when present, otherwise loftd uses `ghcr.io/zeroqn/loftd:latest`
+with `--pull=missing`. `--pull-latest` uses the canonical image with
+`--pull=always`, and `--image` uses exactly the supplied image reference with
+`--pull=missing`. `--image` and `--pull-latest` are mutually exclusive.
 
 Loftd uses **task rootfs backend** terminology for the host-side mechanism that
-will materialize the clean task root filesystem. The default backend is
-`btrfs-snapshot`. There is no `auto` backend and no initial loftd `reflink`
-backend; choose `fuse-overlay` explicitly when the portable overlay path is
-wanted.
+materializes the clean task root filesystem. The default backend is
+`btrfs-snapshot`: one `buildah unshare` transaction creates a temporary Buildah
+working container, mounts the selected image rootfs, validates exactly one
+executable `loftd-guest-init`, snapshots the mounted rootfs into loftd task
+state, and removes the Buildah working container. There is no `auto` backend,
+no initial loftd `reflink` backend, and no copy/reflink fallback for the default
+btrfs path; choose `fuse-overlay` explicitly when the future portable overlay
+path is wanted.
 
 Loftd config lives at:
 

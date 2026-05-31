@@ -111,28 +111,28 @@ _Avoid_: agentbox image as loftd default
 
 
 **cache hit run**:
-A microvm task launch where the digest-addressed image cache already exists. A cache hit run should not require Buildah for image ingestion, but the btrfs snapshot task rootfs backend may still use `buildah unshare` for namespace-sensitive snapshot/delete operations.
-_Avoid_: Buildah required for every backend
+A microvm task launch where the selected OCI image is already available in the durable image source. A cache hit run should not pull image data, but the btrfs snapshot task rootfs backend may still use Buildah to mount the image rootfs source and create the task rootfs snapshot.
+_Avoid_: image pull on every launch
 
 **lazy image ingestion**:
-The default cache behavior where the first microvm run for an image prepares the digest-addressed image cache if it is missing. Separate cache-management commands are optional future ergonomics, not required for v1 launch.
+The default source behavior where the first microvm run for an image ensures the selected OCI image is available in the durable image source if it is missing. Separate cache-management commands are optional future ergonomics, not required for v1 launch.
 _Avoid_: mandatory prepare step
 
 **image ingestion**:
-The host-side preparation step that resolves an OCI image into a cached root filesystem for later microvm task use. Buildah is acceptable here because it owns the image cache transaction, distinct from the VM launch itself.
-_Avoid_: VM launch
+The host-side preparation step that ensures the selected OCI image is available as a durable image source for later microvm task use. For loftd's btrfs snapshot default, ingestion should avoid duplicating the image rootfs into a separate loftd-owned extracted cache.
+_Avoid_: VM launch, duplicated extracted rootfs by default
 
 **rootless image ingestion**:
 The expectation that a microvm cache miss can prepare the image cache without sudo. Host image ingestion may use rootless Buildah/user-namespace mechanisms, but it remains part of the normal rootless user experience.
 _Avoid_: sudo-only cache miss
 
-**Buildah ingestion transaction**:
-The single rootless user-namespace operation that resolves, mounts, copies, finalizes, and cleans up an OCI image during microvm image ingestion. Keeping the whole sequence together avoids mismatched Buildah storage and mount namespaces.
-_Avoid_: split namespace ingestion
+**Buildah image-source transaction**:
+The single rootless user-namespace operation that resolves an OCI image, mounts a Buildah working rootfs, validates compatibility, and hands a snapshot-capable source to task rootfs materialization. Keeping the sequence together avoids mismatched Buildah storage and mount namespaces.
+_Avoid_: split namespace image-source handling
 
-**loftd image ingestion boundary**:
-The host preparation boundary where loftd may use Buildah to resolve and cache OCI-image root filesystems, while keeping Podman out of the host run path. Buildah may reuse the user's normal containers configuration, such as `~/.config/containers`; a cache-hit loftd launch should not require Podman and should avoid Buildah unless the selected task rootfs backend needs a namespace-sensitive operation.
-_Avoid_: Podman-backed loftd launch
+**loftd image source boundary**:
+The host preparation boundary where loftd may use Buildah to resolve and expose OCI-image root filesystems while keeping Podman out of the host run path. Buildah may reuse the user's normal containers configuration, such as `~/.config/containers`; a cache-hit btrfs-snapshot loftd launch may still use Buildah to mount the image rootfs source and create the task rootfs snapshot, but should not pull image data unless refresh is requested or the image is missing.
+_Avoid_: Podman-backed loftd launch, duplicated extracted image rootfs by default
 
 **loftd image refresh**:
 The explicit image-refresh path where loftd may pull the canonical loftd image through Buildah, including `--pull-latest`. It preserves user ergonomics without reintroducing Podman-backed image operations.
@@ -168,13 +168,17 @@ _Avoid_: manual linker setup as normal path
 The critical execution path that starts a task environment. For **microvm**, the run path uses direct libkrun VM APIs rather than Podman, crun, or runc.
 
 
-**global image cache**:
-A per-user cache of digest-addressed OCI image root filesystems that can be reused across workspaces. It is separate from workspace-scoped persistent cache disks because image cache entries are content-addressed and immutable-ish.
+**durable image source**:
+A per-user source of OCI image root filesystems that can be reused across workspaces. For loftd's btrfs-snapshot default, Buildah's image storage is the preferred durable image source instead of a duplicated loftd-owned extracted rootfs cache.
 _Avoid_: per-workspace image extraction by default
 
-**image cache identity**:
-The stable identity used for a cached OCI-image root filesystem. Microvm image caches are identified by resolved image digest rather than mutable image tag.
+**image source identity**:
+The stable identity used for an OCI-image-derived root filesystem source. Image sources are identified by resolved image digest rather than mutable image tag.
 _Avoid_: tag identity
+
+**cached image rootfs**:
+A workspace-independent extracted filesystem tree or subvolume derived from a compatible OCI image. It is not the preferred loftd btrfs-snapshot default path when Buildah's durable image source can be snapshotted directly.
+_Avoid_: default duplicated image rootfs cache
 
 
 **task rootfs lifecycle**:
@@ -182,7 +186,7 @@ The cleanup policy for a microvm task root filesystem. Task root filesystems are
 _Avoid_: persistent task rootfs by default
 
 **task rootfs backend**:
-The host-side mechanism used to materialize a clean task root filesystem from an OCI-image-derived cache. A task rootfs backend must preserve the clean task root filesystem contract without falling back to a plain recursive file copy.
+The host-side mechanism used to materialize a clean task root filesystem from an OCI-image-derived source. A task rootfs backend must preserve the clean task root filesystem contract without falling back to a plain recursive file copy.
 _Avoid_: generic container storage
 
 
@@ -191,8 +195,8 @@ An agentbox-era explicit materialization path that requires a copy-on-write clon
 _Avoid_: loftd reflink backend by default
 
 **btrfs snapshot default**:
-The default loftd **task rootfs backend**. It gives each task a writable btrfs snapshot derived from a snapshot-capable cached root filesystem. If btrfs snapshot storage is unavailable, loftd should fail clearly unless the user explicitly chooses another backend.
-_Avoid_: automatic storage probing
+The default loftd **task rootfs backend**. It gives each task a writable btrfs snapshot derived from a Buildah-mounted, snapshot-capable OCI image root filesystem. If btrfs snapshot storage is unavailable, loftd should fail clearly unless the user explicitly chooses another backend.
+_Avoid_: automatic storage probing, recursive rootfs copy fallback
 
 
 
@@ -217,10 +221,10 @@ Dev: Is btrfs required?
 Domain expert: Loftd defaults to btrfs snapshot storage and fails clearly if it cannot use it. Fuse-overlay is available only when the user explicitly chooses it through configuration or a CLI override.
 
 Dev: Is Buildah forbidden?
-Domain expert: Not for image ingestion or namespace-sensitive btrfs snapshot/delete commands. Btrfs-snapshot cleanup may still require the host btrfs mount option `user_subvol_rm_allowed` for rootless subvolume deletion.
+Domain expert: Not for image ingestion, image-source mounting, or namespace-sensitive btrfs snapshot/delete commands. Btrfs-snapshot cleanup may still require the host btrfs mount option `user_subvol_rm_allowed` for rootless subvolume deletion.
 
 Dev: Should `latest` name the cache?
-Domain expert: No. The image cache identity is the resolved digest; the original tag is only metadata.
+Domain expert: No. The image source identity is the resolved digest; the original tag is only metadata.
 
 Dev: Does microvm run the image entrypoint by default?
 Domain expert: No. A microvm task opens a task shell by default; image entrypoint semantics can be a later explicit mode.
@@ -277,19 +281,19 @@ Dev: Can microvm boot arbitrary OCI images?
 Domain expert: Not in v1. It requires an agentbox-compatible image with the guest init contract already present.
 
 Dev: Must users prepare image caches before running?
-Domain expert: No. Lazy image ingestion prepares the image cache on first run if needed.
+Domain expert: No. Lazy image ingestion ensures the durable image source on first run if needed.
 
 Dev: Is Buildah required for every microvm run?
-Domain expert: No. A portable fuse-overlay cache-hit run does not require Buildah; Buildah is required when image ingestion is needed or when the selected task rootfs backend is btrfs-snapshot. Btrfs-snapshot cleanup also expects the backing btrfs mount to allow rootless subvolume removal with `user_subvol_rm_allowed`.
+Domain expert: No. A cache hit should not pull image data. A portable fuse-overlay cache-hit run may avoid Buildah if it has a durable extracted lowerdir, while the btrfs-snapshot path may still use Buildah to mount the durable image source and snapshot a task rootfs. Btrfs-snapshot cleanup also expects the backing btrfs mount to allow rootless subvolume removal with `user_subvol_rm_allowed`.
 
 Dev: Can a microvm cache miss require sudo?
 Domain expert: No. Rootless image ingestion means cache-miss preparation is part of the normal rootless user experience.
 
 Dev: Should only `buildah mount` run inside `buildah unshare`?
-Domain expert: No. Use one Buildah ingestion transaction so image resolution, mounting, copying, finalization, and cleanup share the same rootless namespace context. The btrfs task snapshot/delete path should also run through `buildah unshare`, and permission-denied delete failures should tell users to enable `user_subvol_rm_allowed` on the relevant btrfs mount rather than silently falling back to recursive cleanup.
+Domain expert: No. Use one Buildah image-source transaction so image resolution, mounting, compatibility validation, task-rootfs snapshot creation, and cleanup share the same rootless namespace context. The btrfs task snapshot/delete path should also run through `buildah unshare`, and permission-denied delete failures should tell users to enable `user_subvol_rm_allowed` on the relevant btrfs mount rather than silently falling back to recursive cleanup.
 
 Dev: Is the image cache per workspace?
-Domain expert: No. The global image cache is per user and digest-addressed; mutable persistent cache disks stay per workspace.
+Domain expert: No. The durable image source is per user and digest-addressed; mutable persistent cache disks stay per workspace.
 
 Dev: Should a `btrfs` storage option exist?
 Domain expert: No. Use the precise `btrfs-snapshot` name for real snapshot-backed task roots, and do not label generic rootfs copies as btrfs.
@@ -305,3 +309,6 @@ Domain expert: Prefer no. Treat it as a packaged helper dependency when possible
 
 Dev: Should v1 implement the whole microvm design in one pass?
 Domain expert: No. Use milestone delivery: prove CLI, storage, direct boot, cache disks, then usability hardening in vertical slices.
+
+Dev: Should loftd duplicate Buildah's btrfs image rootfs into a separate loftd-owned cached image rootfs by default?
+Domain expert: No. For the btrfs-snapshot default, prefer Buildah as the durable image source and create the task rootfs snapshot directly from a Buildah-mounted rootfs when the btrfs preconditions are met.
