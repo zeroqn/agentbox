@@ -28,6 +28,59 @@ pub(crate) enum CleanupResult {
     Preserved(PathBuf),
 }
 
+pub(crate) struct TaskRootfsLease<C: BtrfsRootfsCommands> {
+    handle: Option<TaskRootfsHandle>,
+    commands: C,
+}
+
+impl<C: BtrfsRootfsCommands> TaskRootfsLease<C> {
+    pub(crate) fn new(handle: TaskRootfsHandle, commands: C) -> Self {
+        Self {
+            handle: Some(handle),
+            commands,
+        }
+    }
+
+    pub(crate) fn handle(&self) -> &TaskRootfsHandle {
+        self.handle
+            .as_ref()
+            .expect("task rootfs lease must hold handle until cleanup or preserve")
+    }
+
+    pub(crate) fn cleanup(mut self) -> Result<CleanupResult> {
+        let handle = self
+            .handle
+            .take()
+            .expect("task rootfs lease must hold handle until cleanup");
+        handle.cleanup_state(&self.commands)
+    }
+
+    pub(crate) fn preserve(mut self) -> CleanupResult {
+        let handle = self
+            .handle
+            .take()
+            .expect("task rootfs lease must hold handle until preserve");
+        CleanupResult::Preserved(handle.rootfs_path)
+    }
+}
+
+impl<C: BtrfsRootfsCommands> Drop for TaskRootfsLease<C> {
+    fn drop(&mut self) {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        if handle.preserve_debug {
+            return;
+        }
+        if let Err(err) = cleanup_task_dir(&handle.task_dir, &self.commands) {
+            eprintln!(
+                "loftd: best-effort task rootfs cleanup failed for '{}': {err:#}",
+                handle.task_dir.display()
+            );
+        }
+    }
+}
+
 impl TaskRootfsHandle {
     pub(crate) fn task_id(&self) -> &str {
         &self.task_id

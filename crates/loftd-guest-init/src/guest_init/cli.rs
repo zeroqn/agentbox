@@ -24,10 +24,14 @@ pub(in crate::guest_init) struct EnterCommand {
 
 impl EnterCommand {
     pub(in crate::guest_init) fn resolved_command(&self) -> Vec<String> {
-        if self.command.is_empty() {
+        let command = self
+            .command
+            .strip_prefix(&["--".to_owned()])
+            .unwrap_or(&self.command);
+        if command.is_empty() {
             vec!["fish".to_owned(), "-l".to_owned()]
         } else {
-            self.command.clone()
+            command.to_vec()
         }
     }
 }
@@ -56,6 +60,15 @@ mod tests {
     #[test]
     fn enter_defaults_to_login_fish() {
         let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "enter"])
+            .expect("enter command should parse");
+
+        let GuestInitCommand::Enter(command) = cli.command;
+        assert_eq!(command.resolved_command(), ["fish", "-l"]);
+    }
+
+    #[test]
+    fn enter_allows_explicit_delimiter_before_command() {
+        let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "enter", "--", "fish", "-l"])
             .expect("enter command should parse");
 
         let GuestInitCommand::Enter(command) = cli.command;

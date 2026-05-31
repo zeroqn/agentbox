@@ -60,10 +60,12 @@ managed sidecar.
   non-reflink filesystems keep the portable fallback. Existing digest-keyed
   microvm cache hits do not require Buildah unless the selected storage backend
   is `btrfs-snapshot`.
-- `libkrun.so` at runtime for experimental `agentbox microvm` direct boot. The
-  normal host binary does not link to libkrun at build time; the Nix `.#agentbox`
-  package wraps the binary with this repo's libkrun/libkrunfw library path, and
-  source/debug builds can set `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1`.
+- `libkrun.so` at runtime for experimental `agentbox microvm` and `loftd`
+  direct boot. The normal host binaries do not link to libkrun at build time;
+  the Nix `.#agentbox` package wraps the binary with this repo's
+  libkrun/libkrunfw library path, and source/debug builds can set
+  `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for agentbox microvm or
+  `LOFTD_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for loftd.
 - `btrfs`, `mkfs.btrfs`, and `blkid` on the host for microvm btrfs-snapshot
   storage, first-time libkrun/microvm raw-image creation, and reuse validation
   (`btrfs-progs` + `util-linux`; included in `nix develop`, and `btrfs` is
@@ -710,8 +712,12 @@ command and point permission-denied cleanup failures at the btrfs
 `loftd` is the extracted direct-libkrun microvm runtime owner. The current
 implementation builds a typed launch plan, uses Buildah as the durable OCI image
 source for the default btrfs path, materializes a per-task btrfs snapshot
-rootfs, and then stops before libkrun boot. Direct libkrun boot and the explicit
-`fuse-overlay` backend are still future slices.
+rootfs, prepares loftd-owned persistent raw btrfs disks for `/nix` and rootless
+container storage, starts a same-binary `loftd internal libkrun-enter` helper to
+call libkrun, and enters the guest through `loftd-guest-init enter`. The parent
+process owns task-rootfs cleanup, with best-effort cleanup on unwind and
+`--preserve-debug` for manual inspection. The explicit `fuse-overlay` backend is
+still a future slice.
 
 Run/help:
 
@@ -739,6 +745,21 @@ state, and removes the Buildah working container. There is no `auto` backend,
 no initial loftd `reflink` backend, and no copy/reflink fallback for the default
 btrfs path; choose `fuse-overlay` explicitly when the future portable overlay
 path is wanted.
+
+On a successful btrfs-snapshot run, loftd then resolves the image's executable
+`loftd-guest-init`, writes a private hex-encoded `launch.conf` under the task
+state directory, and supervises `loftd internal libkrun-enter <launch.conf>`.
+The helper dynamically loads `libkrun.so.1` or `libkrun.so` (or
+`LOFTD_LIBKRUN_LIBRARY` when set), attaches the task rootfs, the `/workspace`
+virtiofs mount, and two writable persistent disks:
+
+- `loftd-nix.raw` exposed to the guest as `LOFTD_NIX` / `loftd-nix` for `/nix`;
+- `loftd-containers.raw` exposed as `LOFTD_CONTAINERS` / `loftd-containers` for
+  rootless container storage.
+
+`loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, mounts
+the workspace before identity drop, prepares the persistent cache disks, exports
+the shell environment, and runs `fish -l` by default.
 
 Loftd config lives at:
 

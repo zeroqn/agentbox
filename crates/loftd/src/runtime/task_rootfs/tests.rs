@@ -243,6 +243,76 @@ fn cleanup_delete_failure_preserves_state_for_manual_recovery() {
 }
 
 #[test]
+fn lease_explicit_cleanup_reports_delete_failure() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let task_dir = temp.path().join("task-clean");
+    let rootfs_path = task_dir.join(BTRFS_ROOTFS_DIR);
+    fs::create_dir_all(&rootfs_path).expect("rootfs should exist");
+    let handle = TaskRootfsHandle {
+        task_id: "task-clean".to_owned(),
+        task_dir: task_dir.clone(),
+        rootfs_path,
+        backend: TaskRootfsBackend::BtrfsSnapshot,
+        selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
+        image_digest: None,
+        preserve_debug: false,
+    };
+    let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
+
+    let error = TaskRootfsLease::new(handle, commands)
+        .cleanup()
+        .expect_err("explicit cleanup failure should be reportable");
+
+    assert!(format!("{error:#}").contains("failed to delete btrfs snapshot"));
+    assert!(task_dir.exists());
+}
+
+#[test]
+fn lease_drop_fallback_is_best_effort_and_non_panicking() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let task_dir = temp.path().join("task-drop");
+    let rootfs_path = task_dir.join(BTRFS_ROOTFS_DIR);
+    fs::create_dir_all(&rootfs_path).expect("rootfs should exist");
+    let handle = TaskRootfsHandle {
+        task_id: "task-drop".to_owned(),
+        task_dir: task_dir.clone(),
+        rootfs_path,
+        backend: TaskRootfsBackend::BtrfsSnapshot,
+        selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
+        image_digest: None,
+        preserve_debug: false,
+    };
+    let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
+
+    drop(TaskRootfsLease::new(handle, commands));
+
+    assert!(task_dir.exists(), "failed drop cleanup preserves state");
+}
+
+#[test]
+fn lease_preserve_debug_disables_automatic_cleanup() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let task_dir = temp.path().join("task-preserved");
+    let rootfs_path = task_dir.join(BTRFS_ROOTFS_DIR);
+    fs::create_dir_all(&rootfs_path).expect("rootfs should exist");
+    let handle = TaskRootfsHandle {
+        task_id: "task-preserved".to_owned(),
+        task_dir: task_dir.clone(),
+        rootfs_path: rootfs_path.clone(),
+        backend: TaskRootfsBackend::BtrfsSnapshot,
+        selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
+        image_digest: None,
+        preserve_debug: true,
+    };
+    let commands = FakeBtrfsRootfsCommands::new();
+
+    let result = TaskRootfsLease::new(handle, commands).preserve();
+
+    assert_eq!(result, CleanupResult::Preserved(rootfs_path));
+    assert!(task_dir.exists());
+}
+
+#[test]
 fn snapshot_mounted_rootfs_uses_btrfs_snapshot_command() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let source = temp.path().join("source");
