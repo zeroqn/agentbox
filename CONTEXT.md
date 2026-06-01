@@ -112,6 +112,10 @@ _Avoid_: arbitrary image support in v1
 An OCI image that contains the loftd-guest-init guest contract required to boot a loftd microvm task environment. Loftd defaults to loftd image identities rather than agentbox image identities.
 _Avoid_: agentbox image as loftd default
 
+**container flake output**:
+The canonical Nix flake image output for the current extracted runtime owner. During loftd extraction, `.#container` names the loftd-compatible image, while `.#agentbox-container` names the legacy agentbox-compatible image variant.
+_Avoid_: using `.#container` for the agentbox image after loftd owns the canonical image identity
+
 
 
 **cache hit run**:

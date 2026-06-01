@@ -67,7 +67,7 @@
           podman = pkgs.podman.override {
             inherit crun;
           };
-          agentboxImage = import ./nix/image/container.nix {
+          mkImage = imageVariant: import ./nix/image/container.nix {
             inherit
               pkgs
               pkgsMaster
@@ -80,9 +80,12 @@
               libkrun
               podman
               crun
+              imageVariant
               ;
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
+          loftdImage = mkImage "loftd";
+          agentboxImage = mkImage "agentbox";
         in
         {
           default = rustPackages.rustPackage;
@@ -94,11 +97,12 @@
           agentbox = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;
+          agentbox-container = agentboxImage;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
           crun = crun;
           podman = podman;
-          container = agentboxImage;
+          container = loftdImage;
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
         }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {
@@ -110,8 +114,8 @@
         { pkgs, pkgsMaster, system, ... }:
         let
           packages = self.packages.${system};
-          imageChecks = import ./nix/image/checks.nix {
-            inherit pkgs pkgsMaster;
+          mkImageChecks = imageVariant: import ./nix/image/checks.nix {
+            inherit pkgs pkgsMaster imageVariant;
             ohMyCodex = packages.oh-my-codex;
             opencode = packages.opencode;
             piCodingAgent = packages.pi-coding-agent;
@@ -123,9 +127,12 @@
             crun = packages.crun;
             agentboxMuslPackage = packages.agentbox-musl;
           };
+          loftdImageChecks = mkImageChecks "loftd";
+          agentboxImageChecks = mkImageChecks "agentbox";
         in
         {
-          container-nix-db-metadata = imageChecks.imageConfigNixDbRefs;
+          container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
+          agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
         }
       );
 

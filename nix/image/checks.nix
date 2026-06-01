@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, imageVariant }:
 
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
@@ -8,7 +8,7 @@ let
     starshipConfig = configPayloads.starshipConfig;
   };
   imageConfig = import ./config.nix {
-    inherit pkgs ohMyCodex agentboxMuslPackage configPayloads layers;
+    inherit pkgs ohMyCodex agentboxMuslPackage configPayloads layers imageVariant;
   };
 
   storePathPattern = "[0-9a-df-np-sv-z]{32}-[^/\":, ]+";
@@ -63,7 +63,7 @@ let
   refsText = refs: builtins.concatStringsSep "\n" refs;
   indentedRefsText = refs: builtins.concatStringsSep "\n" (map (ref: "  ${ref}") refs);
   missingRefsMessage = ''
-    agentbox image config references store paths outside the generated image Nix DB metadata.
+    ${imageVariant} image config references store paths outside the generated image Nix DB metadata.
     These paths can be pulled in by Docker config/env references without being registered in /nix/var/nix/db.
 
     Missing from pkgs.closureInfo { rootPaths = layers.imageContents; }:
@@ -73,16 +73,16 @@ let
     It does not inspect, repair, or mutate the host Nix DB.
   '';
 
-  imageConfigRefsFile = pkgs.writeText "agentbox-image-config-refs.txt" (
+  imageConfigRefsFile = pkgs.writeText "${imageVariant}-image-config-refs.txt" (
     refsText imageConfigRefs
   );
-  imageNixDbStorePathsFile = pkgs.writeText "agentbox-image-nix-db-store-paths.txt" (
+  imageNixDbStorePathsFile = pkgs.writeText "${imageVariant}-image-nix-db-store-paths.txt" (
     builtins.unsafeDiscardStringContext imageNixDbStorePathsText
   );
-  missingRefsFile = pkgs.writeText "agentbox-image-config-missing-refs.txt" (
+  missingRefsFile = pkgs.writeText "${imageVariant}-image-config-missing-refs.txt" (
     builtins.unsafeDiscardStringContext (refsText missingImageConfigNixDbRefs)
   );
-  missingRefsMessageFile = pkgs.writeText "agentbox-image-config-missing-refs-message.txt" (
+  missingRefsMessageFile = pkgs.writeText "${imageVariant}-image-config-missing-refs-message.txt" (
     builtins.unsafeDiscardStringContext missingRefsMessage
   );
 in
@@ -95,7 +95,7 @@ in
     missingRefsMessage
     ;
 
-  imageConfigNixDbRefs = pkgs.runCommand "agentbox-image-config-nix-db-refs-check"
+  imageConfigNixDbRefs = pkgs.runCommand "${imageVariant}-image-config-nix-db-refs-check"
     {
       nativeBuildInputs = [
         pkgs.coreutils

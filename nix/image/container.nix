@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, imageVariant }:
 let
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   layers = import ./layers.nix {
@@ -7,7 +7,7 @@ let
     starshipConfig = configPayloads.starshipConfig;
   };
   imageConfig = import ./config.nix {
-    inherit pkgs ohMyCodex agentboxMuslPackage configPayloads layers;
+    inherit pkgs ohMyCodex agentboxMuslPackage configPayloads layers imageVariant;
   };
   imageChecks = import ./checks.nix {
     inherit
@@ -23,10 +23,11 @@ let
       podman
       crun
       agentboxMuslPackage
+      imageVariant
       ;
   };
   image = pkgs.dockerTools.buildLayeredImage {
-    name = "localhost/agentbox";
+    name = "localhost/${imageVariant}";
     tag = "latest";
     maxLayers = layers.agentboxImageMaxLayers;
     contents = layers.imageContents;
@@ -87,7 +88,7 @@ if imageChecks.missingImageConfigNixDbRefs != [ ] then
 else
   image.overrideAttrs (old: {
     buildCommand = ''
-      echo "checking agentbox image config Nix DB metadata coverage"
+      echo "checking ${imageVariant} image config Nix DB metadata coverage"
       test -e ${imageChecks.imageConfigNixDbRefs}/passed
     '' + (old.buildCommand or "");
   })

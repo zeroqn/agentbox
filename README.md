@@ -142,6 +142,7 @@ nix build .#crun
 nix build .#podman
 nix build .#container-lib-policy-seccomp-json
 nix build .#container
+nix build .#agentbox-container
 ```
 
 ### Build outputs
@@ -172,15 +173,19 @@ nix build .#container
 - `.#container-lib-policy-seccomp-json`: install the pinned
   `containers/container-libs` `common/pkg/seccomp/seccomp.json` policy at
   `share/containers/seccomp.json` for downstream flakes or image reuse.
-- `.#container`: Podman image archive.
+- `.#container`: loftd-compatible Podman image archive named `localhost/loftd:latest`.
+- `.#agentbox-container`: agentbox-compatible Podman image archive named
+  `localhost/agentbox:latest` for the existing `agentbox` runtime variants.
 
 ### Nix store / DB diagnostics
 
-`nix build .#container` depends on a static image metadata linter before
-running the layered image build command. To run only that linter:
+`nix build .#container` and `nix build .#agentbox-container` each depend on
+a static image metadata linter before running the layered image build command.
+To run only those linters:
 
 ```bash
 nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).container-nix-db-metadata
+nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).agentbox-container-nix-db-metadata
 ```
 
 The check compares store paths referenced by the image Docker config/env against
@@ -222,7 +227,7 @@ nix develop --command cargo run -p agentbox-host -- --help
 Build image + binary, then run the default libkrun mode:
 
 ```bash
-nix build .#container
+nix build .#agentbox-container
 podman load < result
 nix build .#agentbox
 ./result/bin/agentbox
@@ -246,7 +251,7 @@ seccomp_profile = "/nix/store/...-container-lib-policy-seccomp-json-.../share/co
 This makes inner Podman use the packaged policy by default while still allowing
 per-user containers config to override it. To refresh the policy, update the
 `containerLibPolicySeccompJson` revision/hash in `nix/pins.nix`, then rebuild
-`.#container-lib-policy-seccomp-json` and `.#container`.
+`.#container-lib-policy-seccomp-json`, `.#container`, and `.#agentbox-container`.
 
 Force GHCR latest:
 
@@ -737,9 +742,11 @@ Run/help:
 Image selection is materialized through Buildah for the btrfs-snapshot path: with no
 image option, loftd first inspects `localhost/loftd:latest` and uses it with
 `--pull=never` when present, otherwise loftd uses `ghcr.io/zeroqn/loftd:latest`
-with `--pull=missing`. `--pull-latest` uses the canonical image with
-`--pull=always`, and `--image` uses exactly the supplied image reference with
-`--pull=missing`. `--image` and `--pull-latest` are mutually exclusive.
+with `--pull=missing`. The flake's canonical `.#container` output builds that
+local `localhost/loftd:latest` image with `loftd-guest-init enter` as its guest
+contract. `--pull-latest` uses the canonical image with `--pull=always`, and
+`--image` uses exactly the supplied image reference with `--pull=missing`.
+`--image` and `--pull-latest` are mutually exclusive.
 
 Loftd uses **task rootfs backend** terminology for the host-side mechanism that
 materializes the clean task root filesystem. The default backend is

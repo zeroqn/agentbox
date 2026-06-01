@@ -36,6 +36,20 @@ fn flake_exposes_container_lib_seccomp_policy_package() {
 }
 
 #[test]
+fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
+    for required in [
+        r#"loftdImage = mkImage "loftd";"#,
+        r#"agentboxImage = mkImage "agentbox";"#,
+        "container = loftdImage;",
+        "agentbox-container = agentboxImage;",
+        "container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;",
+        "agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;",
+    ] {
+        assert!(FLAKE_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn seccomp_policy_package_fetches_pinned_raw_container_libs_file() {
     for required in [
         "containerLibPolicySeccompJson = {",
@@ -87,10 +101,21 @@ fn image_includes_seccomp_policy_data_without_adding_it_to_path() {
 }
 
 #[test]
-fn image_entrypoint_invokes_guest_init_default_enter_directly() {
-    assert!(IMAGE_CONFIG_NIX.contains(
-        r#"Entrypoint = [ "${agentboxMuslPackage}/bin/agentbox-guest-init" "default" "enter" "--" ];"#
-    ));
+fn image_config_defines_loftd_and_agentbox_entrypoint_variants() {
+    for required in [
+        r#"loftd = {"#,
+        r#""${agentboxMuslPackage}/bin/loftd-guest-init""#,
+        r#"agentbox = {"#,
+        r#""${agentboxMuslPackage}/bin/agentbox-guest-init""#,
+        r#""default""#,
+        r#"Entrypoint = variant.entrypoint;"#,
+        r#"name = "localhost/${imageVariant}";"#,
+    ] {
+        assert!(
+            IMAGE_CONFIG_NIX.contains(required) || CONTAINER_NIX.contains(required),
+            "missing {required}"
+        );
+    }
     assert!(CONTAINER_NIX.contains("builtins.toJSON imageConfig"));
     assert!(!IMAGE_CONFIG_NIX.contains("agentbox-entrypoint"));
 }
@@ -419,7 +444,8 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
     for required in [
         "checks = systems.forAllSystems",
         "import ./nix/image/checks.nix",
-        "container-nix-db-metadata = imageChecks.imageConfigNixDbRefs;",
+        "container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;",
+        "agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;",
     ] {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
@@ -449,7 +475,7 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
         "if imageChecks.missingImageConfigNixDbRefs != [ ] then",
         "builtins.throw imageChecks.missingRefsMessage",
         "image.overrideAttrs",
-        "checking agentbox image config Nix DB metadata coverage",
+        "checking ${imageVariant} image config Nix DB metadata coverage",
         "test -e ${imageChecks.imageConfigNixDbRefs}/passed",
         "'' + (old.buildCommand or \"\");",
     ] {
