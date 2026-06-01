@@ -77,6 +77,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
                 task_rootfs: lease.handle().rootfs_path(),
                 workspace_source: &plan.workspace_dir,
                 guest_init_exec: &guest_init.guest_exec_path,
+                guest_command: &plan.guest_command,
                 mem_gib: plan.mem_gib,
                 debug: plan.debug,
                 profile: plan.profile,

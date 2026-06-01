@@ -606,6 +606,7 @@ mod tests {
             task_rootfs: Path::new("/rootfs"),
             workspace_source: Path::new("/workspace-src"),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
             mem_gib: Some(4),
             debug: false,
             profile: false,

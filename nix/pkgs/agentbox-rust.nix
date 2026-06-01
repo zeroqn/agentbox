@@ -37,6 +37,7 @@ let
 
     postInstall = ''
       wrapProgram "$out/bin/agentbox" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
+      wrapProgram "$out/bin/loftd" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
     '';
   };
 
@@ -58,6 +59,22 @@ let
     };
 
     CARGO_BUILD_TARGET = muslTarget;
+    cargoBuildFlags = [
+      "--package"
+      "agentbox-host"
+      "--package"
+      "agentbox-guest-init"
+      "--package"
+      "loftd-guest-init"
+    ];
+    cargoTestFlags = [
+      "--package"
+      "agentbox-host"
+      "--package"
+      "agentbox-guest-init"
+      "--package"
+      "loftd-guest-init"
+    ];
   };
 in
 {

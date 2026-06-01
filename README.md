@@ -152,7 +152,11 @@ nix build .#container
   `fuse-overlayfs` and `buildah` into the runtime environment for
   `agentbox container` sidecar mode and experimental `agentbox microvm`
   cache misses.
-- `.#agentbox-musl`: static host binary.
+- `.#agentbox-musl`: static/musl `agentbox`, `agentbox-guest-init`, and
+  `loftd-guest-init` binaries for image/guest use. It intentionally does not
+  build or expose `bin/loftd`; the host `loftd` binary is always dynamically
+  linked so it can load `libkrun.so`/`libkrunfw.so` from the package or dev
+  shell runtime library path.
 - `.#reasonix`: build the pinned DeepSeek-Reasonix CLI from the release source rev.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
@@ -707,17 +711,17 @@ command and point permission-denied cleanup failures at the btrfs
 
 ---
 
-### 4) Loftd extraction (in progress)
+### 4) Loftd extraction (Phase 4 complete)
 
-`loftd` is the extracted direct-libkrun microvm runtime owner. The current
-implementation builds a typed launch plan, uses Buildah as the durable OCI image
-source for the default btrfs path, materializes a per-task btrfs snapshot
-rootfs, prepares loftd-owned persistent raw btrfs disks for `/nix` and rootless
-container storage, starts a same-binary `loftd internal libkrun-enter` helper to
-call libkrun, and enters the guest through `loftd-guest-init enter`. The parent
-process owns task-rootfs cleanup, with best-effort cleanup on unwind and
-`--preserve-debug` for manual inspection. The explicit `fuse-overlay` backend is
-still a future slice.
+`loftd` is the extracted direct-libkrun microvm runtime owner. Phase 4 is
+complete: the implementation builds a typed launch plan, uses Buildah as the
+durable OCI image source for the default btrfs path, materializes a per-task
+btrfs snapshot rootfs, prepares loftd-owned persistent raw btrfs disks for
+`/nix` and rootless container storage, starts a same-binary
+`loftd internal libkrun-enter` helper to call libkrun, and enters the guest
+through `loftd-guest-init enter`. The parent process owns task-rootfs cleanup,
+with best-effort cleanup on unwind and `--preserve-debug` for manual inspection.
+The explicit `fuse-overlay` backend is still a future slice.
 
 Run/help:
 
@@ -727,6 +731,7 @@ Run/help:
 ./result/bin/loftd --rootfs-backend fuse-overlay
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
+./result/bin/loftd -- bash -lc 'echo ok'
 ```
 
 Image selection is materialized through Buildah for the btrfs-snapshot path: with no
@@ -759,7 +764,16 @@ virtiofs mount, and two writable persistent disks:
 
 `loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, mounts
 the workspace before identity drop, prepares the persistent cache disks, exports
-the shell environment, and runs `fish -l` by default.
+the shell environment, and runs `fish -l` by default. For deterministic smoke
+tests, `loftd -- <command>` preserves the same guest bootstrap path but replaces
+the final guest command with the explicit argv after `--`.
+
+Phase 4 completion was validated with targeted `loftd` and `loftd-guest-init`
+unit tests plus a focused local-image libkrun smoke test. The smoke used a local
+`localhost/loftd:latest` image and verified Buildah-backed btrfs rootfs
+materialization, persistent disk preparation, launch-config handoff, and a
+successful libkrun guest-init entry. Full public-image publication and broader
+guest-bootstrap hardening are follow-on work.
 
 Loftd config lives at:
 

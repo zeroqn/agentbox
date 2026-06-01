@@ -20,6 +20,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) task_rootfs_backend: TaskRootfsBackend,
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) mem_gib: Option<u32>,
+    pub(crate) guest_command: Vec<String>,
     pub(crate) debug: bool,
     pub(crate) profile: bool,
     pub(crate) root: bool,
@@ -77,6 +78,7 @@ impl LaunchPlan {
             task_rootfs_backend,
             guest_init: options.guest_init,
             mem_gib: options.mem_gib,
+            guest_command: options.guest_command,
             debug: options.debug,
             profile: options.profile,
             root: options.root,
@@ -141,6 +143,7 @@ mod tests {
             guest_init: None,
             preserve_debug: false,
             mem_gib: None,
+            guest_command: Vec::new(),
         }
     }
 
@@ -286,6 +289,7 @@ mod tests {
         let mut options = runtime_options();
         options.guest_init = Some(Path::new("./loftd-guest-init").to_path_buf());
         options.mem_gib = Some(8);
+        options.guest_command = vec!["bash".to_owned(), "-lc".to_owned(), "echo ok".to_owned()];
         options.debug = true;
         options.profile = true;
         options.root = true;
@@ -305,6 +309,7 @@ mod tests {
             Some(Path::new("./loftd-guest-init").to_path_buf())
         );
         assert_eq!(plan.mem_gib, Some(8));
+        assert_eq!(plan.guest_command, ["bash", "-lc", "echo ok"]);
         assert!(plan.debug);
         assert!(plan.profile);
         assert!(plan.root);

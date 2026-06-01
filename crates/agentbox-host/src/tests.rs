@@ -163,6 +163,7 @@ fn nix_agentbox_packages_provide_microvm_storage_helpers_at_runtime() {
         "\"PATH\"",
         "runtimeWrapperArgs",
         "wrapProgram \"$out/bin/agentbox\"",
+        "wrapProgram \"$out/bin/loftd\"",
     ] {
         assert!(AGENTBOX_RUST_NIX.contains(required), "missing {required}");
     }
@@ -180,6 +181,30 @@ fn nix_agentbox_packages_provide_microvm_storage_helpers_at_runtime() {
             "missing {required}"
         );
     }
+}
+
+#[test]
+fn musl_package_keeps_loftd_host_out_of_static_output() {
+    let musl_package = AGENTBOX_RUST_NIX
+        .split("agentboxMuslPackage =")
+        .nth(1)
+        .and_then(|tail| tail.split("in\n{").next())
+        .expect("agentboxMuslPackage should exist");
+
+    for required in [
+        "\"--package\"\n      \"agentbox-host\"",
+        "\"--package\"\n      \"agentbox-guest-init\"",
+        "\"--package\"\n      \"loftd-guest-init\"",
+        "cargoBuildFlags = [",
+        "cargoTestFlags = [",
+    ] {
+        assert!(musl_package.contains(required), "missing {required}");
+    }
+
+    assert!(
+        !musl_package.contains("\"loftd\""),
+        "static musl package must not build or expose the dynamic-only loftd host binary"
+    );
 }
 
 #[test]

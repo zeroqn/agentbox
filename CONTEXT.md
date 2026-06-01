@@ -29,9 +29,13 @@ _Avoid_: preserving agentbox runtime selection in loftd
 The loftd boundary that prevents the host CLI/runtime from depending directly on Podman for launch behavior. This exclusion does not ban rootless Podman preparation inside the guest environment.
 _Avoid_: banning guest Podman tooling
 
-**dynamic loftd build**:
-The packaging boundary where loftd and loftd-guest-init are normal dynamically linked Rust binaries instead of static artifacts. Dynamic system/package libraries such as libkrun are expected to be supplied by the package or development shell.
-_Avoid_: static loftd artifact
+**dynamic loftd host build**:
+The packaging boundary where the host `loftd` binary is dynamically linked because it loads direct-libkrun runtime libraries supplied by the package or development shell.
+_Avoid_: static loftd host artifact
+
+**static loftd guest init build**:
+The packaging boundary where `loftd-guest-init` is a static/musl guest bootstrap binary because it runs inside the guest and does not load direct-libkrun host runtime libraries.
+_Avoid_: dynamically linked loftd-guest-init image artifact
 
 **loftd-guest-init**:
 The future canonical guest init binary for loftd microvm task environments, extracted from agentbox guest init while preserving the same guest bootstrap role.

@@ -32,6 +32,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) task_rootfs: &'a Path,
     pub(crate) workspace_source: &'a Path,
     pub(crate) guest_init_exec: &'a str,
+    pub(crate) guest_command: &'a [String],
     pub(crate) mem_gib: Option<u32>,
     pub(crate) debug: bool,
     pub(crate) profile: bool,
@@ -75,6 +76,7 @@ impl LaunchConfig {
             env.push((GUEST_DEBUG_ENV.to_owned(), "1".to_owned()));
         }
         env.extend(spec.extra_env);
+        let argv = guest_init_argv(spec.guest_command);
 
         Ok(Self {
             task_rootfs: spec.task_rootfs.to_path_buf(),
@@ -88,13 +90,7 @@ impl LaunchConfig {
             vcpus: spec.vcpus,
             workdir: WORKSPACE_TARGET.to_owned(),
             exec_path: spec.guest_init_exec.to_owned(),
-            argv: vec![
-                "loftd-guest-init".to_owned(),
-                "enter".to_owned(),
-                "--".to_owned(),
-                "fish".to_owned(),
-                "-l".to_owned(),
-            ],
+            argv,
             env,
         })
     }
@@ -309,6 +305,20 @@ fn resolve_ram_mib(mem_gib: Option<u32>) -> Result<u32> {
         .ok_or_else(|| anyhow!("loftd --mem is too large for libkrun ram_mib"))
 }
 
+fn guest_init_argv(guest_command: &[String]) -> Vec<String> {
+    let command = if guest_command.is_empty() {
+        vec!["fish".to_owned(), "-l".to_owned()]
+    } else {
+        guest_command.to_vec()
+    };
+
+    ["loftd-guest-init", "enter", "--"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(command)
+        .collect()
+}
+
 fn push_field(out: &mut String, key: &str, value: &str) {
     out.push_str(key);
     out.push('=');
@@ -356,6 +366,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             workspace_source: Path::new("/workspace-src"),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
             mem_gib: Some(4),
             debug: true,
             profile: true,
@@ -398,11 +409,38 @@ mod tests {
     }
 
     #[test]
+    fn launch_config_uses_explicit_guest_command() {
+        let command = vec!["bash".to_owned(), "-lc".to_owned(), "echo ok".to_owned()];
+        let config = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            workspace_source: Path::new("/workspace-src"),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &command,
+            mem_gib: Some(4),
+            debug: false,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect("launch config should build");
+
+        assert_eq!(
+            config.argv,
+            ["loftd-guest-init", "enter", "--", "bash", "-lc", "echo ok"]
+        );
+    }
+
+    #[test]
     fn launch_config_round_trips_through_hex_line_format() {
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
             workspace_source: Path::new("/workspace-src"),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
             mem_gib: Some(2),
             debug: false,
             profile: false,

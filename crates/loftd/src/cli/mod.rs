@@ -8,7 +8,7 @@ use crate::task_rootfs::TaskRootfsBackend;
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile --debug\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd"
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile --debug\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -75,6 +75,15 @@ pub(crate) struct Cli {
         help = "Set microvm memory in GiB"
     )]
     mem_gib: Option<u32>,
+
+    #[arg(
+        value_name = "COMMAND",
+        last = true,
+        num_args = 1..,
+        allow_hyphen_values = true,
+        help = "Run command inside the guest instead of the default fish login shell"
+    )]
+    guest_command: Vec<String>,
 }
 
 impl Cli {
@@ -89,6 +98,7 @@ impl Cli {
             guest_init: self.guest_init,
             preserve_debug: self.preserve_debug,
             mem_gib: self.mem_gib,
+            guest_command: self.guest_command,
         }
     }
 }
@@ -104,6 +114,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) preserve_debug: bool,
     pub(crate) mem_gib: Option<u32>,
+    pub(crate) guest_command: Vec<String>,
 }
 
 pub(crate) fn parse_mem_gib_arg(value: &str) -> Result<u32, String> {
@@ -157,6 +168,24 @@ mod tests {
         assert!(options.root);
         assert!(options.profile);
         assert!(options.debug);
+        assert!(options.guest_command.is_empty());
+    }
+
+    #[test]
+    fn parses_explicit_guest_command_after_delimiter() {
+        let cli = Cli::try_parse_from(["loftd", "--", "bash", "-lc", "echo ok"])
+            .expect("guest command should parse after delimiter");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
+    }
+
+    #[test]
+    fn bare_words_are_not_guest_commands() {
+        let err = Cli::try_parse_from(["loftd", "microvm"])
+            .expect_err("guest commands must use an explicit delimiter");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]
