@@ -36,6 +36,7 @@ let
     };
 
     postInstall = ''
+      install -Dm755 "$out/bin/loftd" "$out/libexec/loftd"
       wrapProgram "$out/bin/agentbox" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
       wrapProgram "$out/bin/loftd" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
     '';

@@ -113,7 +113,7 @@ fn publish_alpha_release_uploads_agentbox_and_flake_locked_loftd_assets() {
         "agentbox_asset_name=\"agentbox-${arch}-unknown-linux-musl\"",
         "loftd_asset_name=\"loftd-${arch}-linux-flake-locked\"",
         "install -m 0755 result-agentbox-musl/bin/agentbox",
-        "raw_loftd_path=\"result-loftd/bin/.loftd-wrapped\"",
+        "raw_loftd_path=\"result-loftd/libexec/loftd\"",
         "refusing to publish loftd wrapper script",
         "refusing to publish non-ELF loftd asset",
         "readelf -h \"${raw_loftd_path}\" > /dev/null",
@@ -134,6 +134,7 @@ fn publish_alpha_release_uploads_agentbox_and_flake_locked_loftd_assets() {
     }
 
     assert!(!PUBLISH_ALPHA_RELEASE_YML.contains(".#loftd-musl"));
+    assert!(!PUBLISH_ALPHA_RELEASE_YML.contains(".loftd-wrapped"));
     assert!(
         !PUBLISH_ALPHA_RELEASE_YML
             .contains("install -m 0755 result-loftd/bin/loftd \"dist/${loftd_asset_name}\"")
@@ -160,6 +161,17 @@ fn publish_alpha_release_notes_escape_markdown_backticks_for_shell_heredoc() {
         r"\`${{ steps.prep.outputs.release_tag }}\`",
     ] {
         assert!(release_notes.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn loftd_package_exposes_stable_raw_elf_payload_for_release_workflow() {
+    for required in [
+        "nativeBuildInputs = [ pkgs.makeWrapper ];",
+        "install -Dm755 \"$out/bin/loftd\" \"$out/libexec/loftd\"",
+        "wrapProgram \"$out/bin/loftd\"",
+    ] {
+        assert!(AGENTBOX_RUST_NIX.contains(required), "missing {required}");
     }
 }
 

@@ -42,7 +42,7 @@ jobs:
           mkdir -p dist
           install -m 0755 result-agentbox-musl/bin/agentbox "dist/${agentbox_asset_name}"
 
-          raw_loftd_path="result-loftd/bin/.loftd-wrapped"
+          raw_loftd_path="result-loftd/libexec/loftd"
           test -x "${raw_loftd_path}"
           if [ "$(dd if="${raw_loftd_path}" bs=2 count=1 2>/dev/null)" = "#!" ]; then
             echo "refusing to publish loftd wrapper script as ${loftd_asset_name}" >&2

@@ -150,7 +150,9 @@ nix build .#container
 - `.#agentbox`: compile from source.
 - `.#loftd`: compile from source as the dynamic host `loftd` package. It uses
   the same Rust package output as `.#agentbox`, which wraps both host binaries
-  with this flake's runtime library path.
+  with this flake's runtime library path. The stable raw release payload is
+  also available at `libexec/loftd`; `bin/loftd` remains the wrapped CLI for
+  normal use.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
   `fuse-overlayfs` and `buildah` into the runtime environment for
