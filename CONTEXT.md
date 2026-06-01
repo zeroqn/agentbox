@@ -33,6 +33,10 @@ _Avoid_: banning guest Podman tooling
 The packaging boundary where the host `loftd` binary is dynamically linked because it loads direct-libkrun runtime libraries supplied by the package or development shell.
 _Avoid_: static loftd host artifact
 
+**loftd prebuilt**:
+The flake-locked Nix package for a pinned raw-ELF `loftd-<arch>-linux-flake-locked` release asset, wrapped by this repo with the runtime tools and `libkrun`/`libkrunfw` library path needed by the dynamic loftd host build.
+_Avoid_: static/standalone host loftd; pinned wrapper script
+
 **static loftd guest init build**:
 The packaging boundary where `loftd-guest-init` is a static/musl guest bootstrap binary because it runs inside the guest and does not load direct-libkrun host runtime libraries.
 _Avoid_: dynamically linked loftd-guest-init image artifact

@@ -41,10 +41,22 @@ jobs:
 
           mkdir -p dist
           install -m 0755 result-agentbox-musl/bin/agentbox "dist/${agentbox_asset_name}"
-          install -m 0755 result-loftd/bin/loftd "dist/${loftd_asset_name}"
+
+          raw_loftd_path="result-loftd/bin/.loftd-wrapped"
+          test -x "${raw_loftd_path}"
+          if [ "$(dd if="${raw_loftd_path}" bs=2 count=1 2>/dev/null)" = "#!" ]; then
+            echo "refusing to publish loftd wrapper script as ${loftd_asset_name}" >&2
+            exit 1
+          fi
+          if [ "$(dd if="${raw_loftd_path}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
+            echo "refusing to publish non-ELF loftd asset ${loftd_asset_name}" >&2
+            exit 1
+          fi
+          readelf -h "${raw_loftd_path}" > /dev/null
+          install -m 0755 "${raw_loftd_path}" "dist/${loftd_asset_name}"
 
           "dist/${agentbox_asset_name}" --help > /dev/null
-          "dist/${loftd_asset_name}" --help > /dev/null
+          result-loftd/bin/loftd --help > /dev/null
 
           sha256sum "dist/${agentbox_asset_name}" > "dist/${agentbox_asset_name}.sha256"
           sha256sum "dist/${loftd_asset_name}" > "dist/${loftd_asset_name}.sha256"
@@ -74,7 +86,7 @@ jobs:
 
           Assets:
           - \`${{ steps.prep.outputs.agentbox_asset_name }}\`: portable static/musl agentbox CLI.
-          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: dynamically linked, flake-locked loftd artifact. It is not a standalone portable binary and may rely on the exact Nix store closure produced by this repository's flake lock. Prefer \`nix build .#loftd\` or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
+          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: raw dynamically linked, flake-locked loftd ELF. It is not a standalone portable binary and may rely on the exact Nix store closure produced by this repository's flake lock. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
 
           The \`alpha\` prerelease is reused on every push to main.
           The matching \`${{ steps.prep.outputs.release_tag }}\` prerelease is the revision-addressed binary set for this exact revision.

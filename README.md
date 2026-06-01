@@ -133,6 +133,7 @@ env -u LD_PRELOAD some-foreign-binary --flag
 ```bash
 nix build .#loftd
 nix build .#agentbox-prebuilt
+nix build .#loftd-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
 nix build .#reasonix
@@ -155,6 +156,10 @@ nix build .#container
   `fuse-overlayfs` and `buildah` into the runtime environment for
   `agentbox container` sidecar mode and experimental `agentbox microvm`
   cache misses.
+- `.#loftd-prebuilt`: install a pinned published raw-ELF `loftd` asset and
+  wrap it with this flake's runtime tools and `libkrun`/`libkrunfw` library
+  path. During bootstrap it may intentionally fail with a clear not-pinned
+  message until the next raw-ELF `sha-*` release is published and pinned.
 - `.#agentbox-musl`: static/musl `agentbox`, `agentbox-guest-init`, and
   `loftd-guest-init` binaries for image/guest use. It intentionally does not
   build or expose `bin/loftd`; the host `loftd` binary is always dynamically
@@ -949,10 +954,11 @@ Main-branch CI also publishes prerelease binary assets:
 Older `sha-*` prereleases are pruned (retains newest 20).
 
 The `agentbox-<arch>-unknown-linux-musl` asset is the portable static/musl
-agentbox CLI. The `loftd-<arch>-linux-flake-locked` asset is dynamically linked
-and intentionally non-standalone: it can rely on the exact Nix store closure
-from this flake lock. For ordinary loftd usage, prefer `nix build .#loftd` or
-the published `ghcr.io/<repo-owner>/loftd` image.
+agentbox CLI. The `loftd-<arch>-linux-flake-locked` asset is a raw dynamically
+linked ELF and intentionally non-standalone: it can rely on the exact Nix store
+closure from this flake lock. For ordinary loftd usage, prefer
+`nix build .#loftd`, `nix build .#loftd-prebuilt` after a raw-ELF release is
+pinned, or the published `ghcr.io/<repo-owner>/loftd` image.
 
 ---
 
@@ -962,6 +968,13 @@ Refresh pinned prebuilt release in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-agentbox-prebuilt.sh
+```
+
+Refresh pinned loftd prebuilt release metadata in `nix/pins.nix` after a
+raw-ELF `sha-*` release exists. The updater rejects wrapper-script assets:
+
+```bash
+nix develop --command ./scripts/update-loftd-prebuilt.sh
 ```
 
 Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:

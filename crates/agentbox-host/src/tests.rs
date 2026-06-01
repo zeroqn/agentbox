@@ -1,4 +1,6 @@
 const FLAKE_NIX: &str = include_str!("../../../flake.nix");
+const README_MD: &str = include_str!("../../../README.md");
+const CONTEXT_MD: &str = include_str!("../../../CONTEXT.md");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
 const CONTAINER_NIX: &str = include_str!("../../../nix/image/container.nix");
 const IMAGE_CONFIG_NIX: &str = include_str!("../../../nix/image/config.nix");
@@ -11,6 +13,8 @@ const REASONIX_NIX: &str = include_str!("../../../nix/pkgs/reasonix.nix");
 const UPDATE_REASONIX_SH: &str = include_str!("../../../scripts/update-reasonix.sh");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
 const AGENTBOX_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/agentbox-prebuilt.nix");
+const LOFTD_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/loftd-prebuilt.nix");
+const UPDATE_LOFTD_PREBUILT_SH: &str = include_str!("../../../scripts/update-loftd-prebuilt.sh");
 const PUBLISH_ALPHA_RELEASE_YML: &str =
     include_str!("../../../.github/workflows/publish_alpha_release.yml");
 const PUBLISH_IMAGE_YML: &str = include_str!("../../../.github/workflows/publish_image.yml");
@@ -66,6 +70,8 @@ fn flake_exposes_single_loftd_container_output() {
     for required in [
         r#"loftdImage = mkImage "loftd";"#,
         "loftd = rustPackages.rustPackage;",
+        "prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix",
+        "loftd-prebuilt = prebuiltLoftd;",
         "container = loftdImage;",
         "container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;",
     ] {
@@ -107,14 +113,19 @@ fn publish_alpha_release_uploads_agentbox_and_flake_locked_loftd_assets() {
         "agentbox_asset_name=\"agentbox-${arch}-unknown-linux-musl\"",
         "loftd_asset_name=\"loftd-${arch}-linux-flake-locked\"",
         "install -m 0755 result-agentbox-musl/bin/agentbox",
-        "install -m 0755 result-loftd/bin/loftd",
+        "raw_loftd_path=\"result-loftd/bin/.loftd-wrapped\"",
+        "refusing to publish loftd wrapper script",
+        "refusing to publish non-ELF loftd asset",
+        "readelf -h \"${raw_loftd_path}\" > /dev/null",
+        "install -m 0755 \"${raw_loftd_path}\"",
         "\"dist/${agentbox_asset_name}\" --help > /dev/null",
-        "\"dist/${loftd_asset_name}\" --help > /dev/null",
+        "result-loftd/bin/loftd --help > /dev/null",
         "LOFTD_ASSET_PATH",
         "LOFTD_CHECKSUM_PATH",
-        "dynamically linked, flake-locked loftd artifact",
+        "raw dynamically linked, flake-locked loftd ELF",
         "It is not a standalone portable binary",
         r"Prefer \`nix build .#loftd\`",
+        r"\`nix build .#loftd-prebuilt\` once pinned",
     ] {
         assert!(
             PUBLISH_ALPHA_RELEASE_YML.contains(required),
@@ -123,6 +134,11 @@ fn publish_alpha_release_uploads_agentbox_and_flake_locked_loftd_assets() {
     }
 
     assert!(!PUBLISH_ALPHA_RELEASE_YML.contains(".#loftd-musl"));
+    assert!(
+        !PUBLISH_ALPHA_RELEASE_YML
+            .contains("install -m 0755 result-loftd/bin/loftd \"dist/${loftd_asset_name}\"")
+    );
+    assert!(!PUBLISH_ALPHA_RELEASE_YML.contains("\"dist/${loftd_asset_name}\" --help > /dev/null"));
 }
 
 #[test]
@@ -138,6 +154,7 @@ fn publish_alpha_release_notes_escape_markdown_backticks_for_shell_heredoc() {
         r"\`${{ steps.prep.outputs.agentbox_asset_name }}\`",
         r"\`${{ steps.prep.outputs.loftd_asset_name }}\`",
         r"\`nix build .#loftd\`",
+        r"\`nix build .#loftd-prebuilt\`",
         r"\`ghcr.io/<repo-owner>/loftd\`",
         r"\`alpha\`",
         r"\`${{ steps.prep.outputs.release_tag }}\`",
@@ -309,6 +326,90 @@ fn nix_agentbox_packages_provide_microvm_storage_helpers_at_runtime() {
             AGENTBOX_PREBUILT_NIX.contains(required),
             "missing {required}"
         );
+    }
+}
+
+#[test]
+fn loftd_prebuilt_package_uses_raw_elf_with_flake_runtime_wrappers() {
+    for required in [
+        "loftdPrebuiltRelease = {",
+        "systems = { };",
+        "sha-065f52f4fca8",
+        "no system hash is pinned until the workflow",
+    ] {
+        assert!(PINS_NIX.contains(required), "missing {required}");
+    }
+
+    for required in [
+        "{ pkgs, pins, libkrun ? null, libkrunfw ? null }:",
+        "loftdPrebuiltRelease = pins.loftdPrebuiltRelease;",
+        "loftd-<arch>-linux-flake-locked",
+        "pkgs.buildah",
+        "pkgs.btrfs-progs",
+        "pkgs.fuse-overlayfs",
+        "\"LD_LIBRARY_PATH\"",
+        "pkgs.lib.getLib libkrun",
+        "pkgs.lib.getLib libkrunfw",
+        "magic=\"$(dd if=\"$src\" bs=4 count=1",
+        "\"7f454c46\"",
+        "readelf -h \"$src\" >/dev/null",
+        "install -Dm755 \"$src\" \"$out/libexec/loftd\"",
+        "makeWrapper \"$out/libexec/loftd\" \"$out/bin/loftd\"",
+        "Current published loftd assets may still be wrapper scripts",
+        "scripts/update-loftd-prebuilt.sh after a raw-ELF sha-* release is published",
+        "mainProgram = \"loftd\";",
+        "sourceProvenance = [ pkgs.lib.sourceTypes.binaryNativeCode ];",
+    ] {
+        assert!(LOFTD_PREBUILT_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn loftd_prebuilt_updater_rejects_wrapper_assets_and_updates_loftd_pin() {
+    for required in [
+        "Usage: update-loftd-prebuilt.sh",
+        "loftd-x86_64-linux-flake-locked",
+        "loftd-aarch64-linux-flake-locked",
+        "newest sha-* prerelease containing the selected loftd asset",
+        "upstream asset blocker",
+        "wrapper script, not raw ELF",
+        "not an ELF payload",
+        "b\"\\x7fELF\"",
+        "sha256-",
+        "loftdPrebuiltRelease",
+        "systems = { };",
+        "failed to locate loftdPrebuiltRelease.systems block",
+    ] {
+        assert!(
+            UPDATE_LOFTD_PREBUILT_SH.contains(required),
+            "missing {required}"
+        );
+    }
+
+    assert!(!UPDATE_LOFTD_PREBUILT_SH.contains("agentboxPrebuiltRelease"));
+}
+
+#[test]
+fn loftd_prebuilt_docs_define_phase_one_bootstrap_contract() {
+    for required in [
+        "nix build .#loftd-prebuilt",
+        "`.#loftd-prebuilt`: install a pinned published raw-ELF `loftd` asset",
+        "During bootstrap it may intentionally fail with a clear not-pinned",
+        "raw dynamically\nlinked ELF",
+        "after a raw-ELF release is",
+        "nix develop --command ./scripts/update-loftd-prebuilt.sh",
+        "rejects wrapper-script assets",
+    ] {
+        assert!(README_MD.contains(required), "missing {required}");
+    }
+
+    for required in [
+        "**loftd prebuilt**:",
+        "pinned raw-ELF `loftd-<arch>-linux-flake-locked` release asset",
+        "wrapped by this repo with the runtime tools",
+        "_Avoid_: static/standalone host loftd; pinned wrapper script",
+    ] {
+        assert!(CONTEXT_MD.contains(required), "missing {required}");
     }
 }
 

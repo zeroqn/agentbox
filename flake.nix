@@ -52,6 +52,14 @@
           libkrun = import ./nix/pkgs/libkrun.nix {
             inherit pkgs libkrunfw;
           };
+          prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix {
+            inherit
+              pkgs
+              pins
+              libkrun
+              libkrunfw
+              ;
+          };
           rustPackages = import ./nix/pkgs/agentbox-rust.nix {
             inherit
               self
@@ -96,6 +104,7 @@
           agentbox = rustPackages.rustPackage;
           loftd = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
+          loftd-prebuilt = prebuiltLoftd;
           agentbox-musl = rustPackages.agentboxMuslPackage;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
