@@ -22,25 +22,40 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
-      - name: Build agentbox musl binary
-        run: nix build .#agentbox-musl
+      - name: Build release binaries
+        run: |
+          set -euo pipefail
 
-      - name: Prepare release artifacts
+          nix build .#agentbox-musl -o result-agentbox-musl
+          nix build .#loftd -o result-loftd
+
+      - name: Prepare and smoke-test release artifacts
         id: prep
         run: |
           set -euo pipefail
 
-          asset_name="agentbox-$(uname -m)-unknown-linux-musl"
+          arch="$(uname -m)"
+          agentbox_asset_name="agentbox-${arch}-unknown-linux-musl"
+          loftd_asset_name="loftd-${arch}-linux-flake-locked"
           release_tag="sha-$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
 
           mkdir -p dist
-          install -m 0755 result/bin/agentbox "dist/${asset_name}"
-          sha256sum "dist/${asset_name}" > "dist/${asset_name}.sha256"
+          install -m 0755 result-agentbox-musl/bin/agentbox "dist/${agentbox_asset_name}"
+          install -m 0755 result-loftd/bin/loftd "dist/${loftd_asset_name}"
+
+          "dist/${agentbox_asset_name}" --help > /dev/null
+          "dist/${loftd_asset_name}" --help > /dev/null
+
+          sha256sum "dist/${agentbox_asset_name}" > "dist/${agentbox_asset_name}.sha256"
+          sha256sum "dist/${loftd_asset_name}" > "dist/${loftd_asset_name}.sha256"
 
           {
-            echo "asset_name=${asset_name}"
-            echo "asset_path=dist/${asset_name}"
-            echo "checksum_path=dist/${asset_name}.sha256"
+            echo "agentbox_asset_name=${agentbox_asset_name}"
+            echo "agentbox_asset_path=dist/${agentbox_asset_name}"
+            echo "agentbox_checksum_path=dist/${agentbox_asset_name}.sha256"
+            echo "loftd_asset_name=${loftd_asset_name}"
+            echo "loftd_asset_path=dist/${loftd_asset_name}"
+            echo "loftd_checksum_path=dist/${loftd_asset_name}.sha256"
             echo "release_tag=${release_tag}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -48,15 +63,21 @@ jobs:
         run: |
           set -euo pipefail
 
+          revision_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+
           cat > release-notes.md <<EOF_NOTES
           Rolling alpha build from main.
 
-          - Commit: ${GITHUB_SHA}
-          - Commit URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}
+          - Revision: ${GITHUB_SHA}
+          - Revision URL: ${revision_url}
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
+          Assets:
+          - \`${{ steps.prep.outputs.agentbox_asset_name }}\`: portable static/musl agentbox CLI.
+          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: dynamically linked, flake-locked loftd artifact. It is not a standalone portable binary and may rely on the exact Nix store closure produced by this repository's flake lock. Prefer \`nix build .#loftd\` or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
+
           The \`alpha\` prerelease is reused on every push to main.
-          The matching \`${{ steps.prep.outputs.release_tag }}\` prerelease is the commit-addressed binary for this exact commit.
+          The matching \`${{ steps.prep.outputs.release_tag }}\` prerelease is the revision-addressed binary set for this exact revision.
           EOF_NOTES
 
       - name: Create or update rolling alpha release
@@ -101,20 +122,26 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          ASSET_PATH: ${{ steps.prep.outputs.asset_path }}
-          CHECKSUM_PATH: ${{ steps.prep.outputs.checksum_path }}
+          AGENTBOX_ASSET_PATH: ${{ steps.prep.outputs.agentbox_asset_path }}
+          AGENTBOX_CHECKSUM_PATH: ${{ steps.prep.outputs.agentbox_checksum_path }}
+          LOFTD_ASSET_PATH: ${{ steps.prep.outputs.loftd_asset_path }}
+          LOFTD_CHECKSUM_PATH: ${{ steps.prep.outputs.loftd_checksum_path }}
           RELEASE_TAG: ${{ steps.prep.outputs.release_tag }}
         run: |
           set -euo pipefail
 
           gh release upload alpha \
-            "${ASSET_PATH}" \
-            "${CHECKSUM_PATH}" \
+            "${AGENTBOX_ASSET_PATH}" \
+            "${AGENTBOX_CHECKSUM_PATH}" \
+            "${LOFTD_ASSET_PATH}" \
+            "${LOFTD_CHECKSUM_PATH}" \
             --clobber
 
           gh release upload "${RELEASE_TAG}" \
-            "${ASSET_PATH}" \
-            "${CHECKSUM_PATH}" \
+            "${AGENTBOX_ASSET_PATH}" \
+            "${AGENTBOX_CHECKSUM_PATH}" \
+            "${LOFTD_ASSET_PATH}" \
+            "${LOFTD_CHECKSUM_PATH}" \
             --clobber
 
       - name: Prune old sha releases

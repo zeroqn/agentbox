@@ -131,7 +131,7 @@ env -u LD_PRELOAD some-foreign-binary --flag
 ## Build
 
 ```bash
-nix build .#agentbox
+nix build .#loftd
 nix build .#agentbox-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
@@ -147,6 +147,9 @@ nix build .#container
 ### Build outputs
 
 - `.#agentbox`: compile from source.
+- `.#loftd`: compile from source as the dynamic host `loftd` package. It uses
+  the same Rust package output as `.#agentbox`, which wraps both host binaries
+  with this flake's runtime library path.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
   `fuse-overlayfs` and `buildah` into the runtime environment for
@@ -222,13 +225,13 @@ Show CLI help:
 nix develop --command cargo run -p agentbox-host -- --help
 ```
 
-Build image + binary, then run the default libkrun mode:
+Build image + loftd binary, then show the loftd CLI:
 
 ```bash
 nix build .#container
 podman load < result
-nix build .#agentbox
-./result/bin/agentbox
+nix build .#loftd
+./result/bin/loftd --help
 ```
 
 Image selection behavior:
@@ -923,22 +926,33 @@ shell as root, but does not otherwise change the persistent host mount layout.
 
 On push to `main`, push to `dev`, and tag pushes, CI publishes to:
 
-- `ghcr.io/<repo-owner>/agentbox:latest` (main only)
-- `ghcr.io/<repo-owner>/agentbox:dev` (dev only)
-- `ghcr.io/<repo-owner>/agentbox:<git-tag>` (tag only)
-- `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
+- `ghcr.io/<repo-owner>/loftd:latest` (main only)
+- `ghcr.io/<repo-owner>/loftd:dev` (dev only)
+- `ghcr.io/<repo-owner>/loftd:<git-tag>` (tag only)
+- `ghcr.io/<repo-owner>/loftd:sha-<12-char-commit>`
+- `ghcr.io/<repo-owner>/agentbox:*` with the same tags as a compatibility
+  alias for existing agentbox users.
 
-The published image keeps the musl `agentbox` binary in its own top image layer
-so GHCR can reuse lower blobs when only the CLI binary changes.
+Both image names point at the same shared loftd-compatible image built from
+`.#container`; CI does not build a separate agentbox image. The shared image
+contains both `loftd-guest-init` and `agentbox-guest-init`, so loftd uses the
+canonical image entrypoint while agentbox explicitly enters through its
+compatibility guest init path.
 
 ### Prebuilt binaries (GitHub Releases)
 
-Main-branch CI also publishes musl binaries as prereleases:
+Main-branch CI also publishes prerelease binary assets:
 
 - rolling `alpha`
 - commit-specific `sha-<12-char-commit>`
 
 Older `sha-*` prereleases are pruned (retains newest 20).
+
+The `agentbox-<arch>-unknown-linux-musl` asset is the portable static/musl
+agentbox CLI. The `loftd-<arch>-linux-flake-locked` asset is dynamically linked
+and intentionally non-standalone: it can rely on the exact Nix store closure
+from this flake lock. For ordinary loftd usage, prefer `nix build .#loftd` or
+the published `ghcr.io/<repo-owner>/loftd` image.
 
 ---
 

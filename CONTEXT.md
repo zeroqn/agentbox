@@ -117,6 +117,11 @@ The single Nix flake image output for the current extracted runtime owner. Durin
 _Avoid_: reintroducing a duplicate agentbox image build target
 
 
+**shared image publication**:
+The release policy where one canonical loftd-compatible `.#container` image is built once and published under both `ghcr.io/<owner>/loftd` and `ghcr.io/<owner>/agentbox`. The agentbox name is a compatibility alias for existing agentbox users, not a separate image build.
+_Avoid_: duplicate agentbox image build
+
+
 
 **cache hit run**:
 A microvm task launch where the selected OCI image is already available in the durable image source. A cache hit run should not pull image data, but the btrfs snapshot task rootfs backend may still use Buildah to mount the image rootfs source and create the task rootfs snapshot.

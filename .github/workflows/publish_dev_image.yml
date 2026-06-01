@@ -1,4 +1,4 @@
-name: Publish agentbox Dev Image
+name: Publish shared loftd Dev Image
 
 on:
   push:
@@ -17,9 +17,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-      - name: Build agentbox-musl standalone
-        run: nix build .#agentbox-musl
-      - name: Build agentbox container archive
+      - name: Build loftd container archive
         run: nix build .#container --print-out-paths > container-path.txt
       - name: Free runner disk before loading image
         run: |
@@ -29,19 +27,28 @@ jobs:
           df -h
       - name: Load container archive
         run: docker load --input "$(cat container-path.txt)"
-      - name: Verify agentbox binary in image
-        run: docker run --rm localhost/agentbox:latest agentbox --help > /dev/null
+      - name: Verify shared guest init payloads in image
+        run: |
+          set -euo pipefail
+
+          docker image inspect localhost/loftd:latest > /dev/null
+          docker run --rm --entrypoint /bin/loftd-guest-init localhost/loftd:latest --help > /dev/null
+          docker run --rm --entrypoint /bin/agentbox-guest-init localhost/loftd:latest --help > /dev/null
       - name: Compute image tags
         id: image_meta
         run: |
           set -euo pipefail
 
           owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          image="ghcr.io/${owner}/agentbox"
           short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
 
           {
-            echo "image=${image}"
+            echo "loftd_image=ghcr.io/${owner}/loftd"
+            echo "agentbox_image=ghcr.io/${owner}/agentbox"
+            echo "short_sha=${short_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
             echo "tag1=dev"
             echo "tag2=sha-${short_sha}"
           } >> "${GITHUB_OUTPUT}"
@@ -55,16 +62,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          source_image="localhost/agentbox:latest"
-          target_image="${{ steps.image_meta.outputs.image }}"
-
-          docker tag "${source_image}" "${target_image}:${{ steps.image_meta.outputs.tag1 }}"
-          docker tag "${source_image}" "${target_image}:${{ steps.image_meta.outputs.tag2 }}"
-      - name: Push image to GHCR
+          source_image="localhost/loftd:latest"
+          for target_image in \
+            "${{ steps.image_meta.outputs.loftd_image }}" \
+            "${{ steps.image_meta.outputs.agentbox_image }}"
+          do
+            docker tag "${source_image}" "${target_image}:${{ steps.image_meta.outputs.tag1 }}"
+            docker tag "${source_image}" "${target_image}:${{ steps.image_meta.outputs.tag2 }}"
+          done
+      - name: Push images to GHCR
         run: |
           set -euo pipefail
 
-          target_image="${{ steps.image_meta.outputs.image }}"
-
-          docker push "${target_image}:${{ steps.image_meta.outputs.tag1 }}"
-          docker push "${target_image}:${{ steps.image_meta.outputs.tag2 }}"
+          for target_image in \
+            "${{ steps.image_meta.outputs.loftd_image }}" \
+            "${{ steps.image_meta.outputs.agentbox_image }}"
+          do
+            docker push "${target_image}:${{ steps.image_meta.outputs.tag1 }}"
+            docker push "${target_image}:${{ steps.image_meta.outputs.tag2 }}"
+          done

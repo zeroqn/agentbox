@@ -11,6 +11,11 @@ const REASONIX_NIX: &str = include_str!("../../../nix/pkgs/reasonix.nix");
 const UPDATE_REASONIX_SH: &str = include_str!("../../../scripts/update-reasonix.sh");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
 const AGENTBOX_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/agentbox-prebuilt.nix");
+const PUBLISH_ALPHA_RELEASE_YML: &str =
+    include_str!("../../../.github/workflows/publish_alpha_release.yml");
+const PUBLISH_IMAGE_YML: &str = include_str!("../../../.github/workflows/publish_image.yml");
+const PUBLISH_DEV_IMAGE_YML: &str =
+    include_str!("../../../.github/workflows/publish_dev_image.yml");
 const GUEST_DEFAULT_RUNTIME: &str =
     include_str!("../../agentbox-guest-init/src/guest_init/runtime/default.rs");
 const GUEST_CONTAINER_RUNTIME: &str =
@@ -22,6 +27,27 @@ fn nix_list_body<'a>(source: &'a str, list_name: &str) -> &'a str {
         .nth(1)
         .and_then(|tail| tail.split("];").next())
         .unwrap_or_else(|| panic!("{list_name} list should exist"))
+}
+
+fn heredoc_body<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    source
+        .split(start)
+        .nth(1)
+        .and_then(|tail| tail.split(end).next())
+        .unwrap_or_else(|| panic!("{start} heredoc should exist"))
+}
+
+fn assert_no_unescaped_backticks(source: &str) {
+    let mut escaped = false;
+    for character in source.chars() {
+        if character == '`' && !escaped {
+            panic!("unescaped backtick would execute as shell command substitution");
+        }
+        escaped = character == '\\' && !escaped;
+        if character != '\\' {
+            escaped = false;
+        }
+    }
 }
 
 #[test]
@@ -39,6 +65,7 @@ fn flake_exposes_container_lib_seccomp_policy_package() {
 fn flake_exposes_single_loftd_container_output() {
     for required in [
         r#"loftdImage = mkImage "loftd";"#,
+        "loftd = rustPackages.rustPackage;",
         "container = loftdImage;",
         "container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;",
     ] {
@@ -47,6 +74,76 @@ fn flake_exposes_single_loftd_container_output() {
     assert!(!FLAKE_NIX.contains("agentboxImage = mkImage"));
     assert!(!FLAKE_NIX.contains("agentbox-container ="));
     assert!(!FLAKE_NIX.contains("agentbox-container-nix-db-metadata"));
+    assert!(!FLAKE_NIX.contains("loftd-musl"));
+}
+
+#[test]
+fn publish_image_workflows_publish_shared_loftd_and_agentbox_names() {
+    for workflow in [PUBLISH_IMAGE_YML, PUBLISH_DEV_IMAGE_YML] {
+        for required in [
+            "nix build .#container --print-out-paths > container-path.txt",
+            "docker image inspect localhost/loftd:latest > /dev/null",
+            "docker run --rm --entrypoint /bin/loftd-guest-init localhost/loftd:latest --help > /dev/null",
+            "docker run --rm --entrypoint /bin/agentbox-guest-init localhost/loftd:latest --help > /dev/null",
+            "loftd_image=ghcr.io/${owner}/loftd",
+            "agentbox_image=ghcr.io/${owner}/agentbox",
+            "source_image=\"localhost/loftd:latest\"",
+            "${{ steps.image_meta.outputs.loftd_image }}",
+            "${{ steps.image_meta.outputs.agentbox_image }}",
+        ] {
+            assert!(workflow.contains(required), "missing {required}");
+        }
+
+        assert!(!workflow.contains("nix build .#agentbox-musl"));
+        assert!(!workflow.contains("localhost/agentbox:latest"));
+    }
+}
+
+#[test]
+fn publish_alpha_release_uploads_agentbox_and_flake_locked_loftd_assets() {
+    for required in [
+        "nix build .#agentbox-musl -o result-agentbox-musl",
+        "nix build .#loftd -o result-loftd",
+        "agentbox_asset_name=\"agentbox-${arch}-unknown-linux-musl\"",
+        "loftd_asset_name=\"loftd-${arch}-linux-flake-locked\"",
+        "install -m 0755 result-agentbox-musl/bin/agentbox",
+        "install -m 0755 result-loftd/bin/loftd",
+        "\"dist/${agentbox_asset_name}\" --help > /dev/null",
+        "\"dist/${loftd_asset_name}\" --help > /dev/null",
+        "LOFTD_ASSET_PATH",
+        "LOFTD_CHECKSUM_PATH",
+        "dynamically linked, flake-locked loftd artifact",
+        "It is not a standalone portable binary",
+        r"Prefer \`nix build .#loftd\`",
+    ] {
+        assert!(
+            PUBLISH_ALPHA_RELEASE_YML.contains(required),
+            "missing {required}"
+        );
+    }
+
+    assert!(!PUBLISH_ALPHA_RELEASE_YML.contains(".#loftd-musl"));
+}
+
+#[test]
+fn publish_alpha_release_notes_escape_markdown_backticks_for_shell_heredoc() {
+    let release_notes = heredoc_body(
+        PUBLISH_ALPHA_RELEASE_YML,
+        "cat > release-notes.md <<EOF_NOTES",
+        "EOF_NOTES",
+    );
+
+    assert_no_unescaped_backticks(release_notes);
+    for required in [
+        r"\`${{ steps.prep.outputs.agentbox_asset_name }}\`",
+        r"\`${{ steps.prep.outputs.loftd_asset_name }}\`",
+        r"\`nix build .#loftd\`",
+        r"\`ghcr.io/<repo-owner>/loftd\`",
+        r"\`alpha\`",
+        r"\`${{ steps.prep.outputs.release_tag }}\`",
+    ] {
+        assert!(release_notes.contains(required), "missing {required}");
+    }
 }
 
 #[test]

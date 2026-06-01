@@ -94,6 +94,7 @@
           reasonix = reasonix;
           symposium = symposium;
           agentbox = rustPackages.rustPackage;
+          loftd = rustPackages.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           agentbox-musl = rustPackages.agentboxMuslPackage;
           libkrunfw = libkrunfw;
