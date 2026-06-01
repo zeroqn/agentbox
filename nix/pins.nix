@@ -125,8 +125,13 @@
     # Metadata only during bootstrap: sha-065f52f4fca8 currently publishes a
     # loftd wrapper script, so no system hash is pinned until the workflow
     # publishes a verified raw-ELF loftd asset.
-    tag = "sha-065f52f4fca8";
-    systems = { };
+    tag = "sha-fd80698f8109";
+    systems = {
+      x86_64-linux = {
+        asset = "loftd-x86_64-linux-flake-locked";
+        hash = "sha256-R1psZNFq3EH6EzTTb1nRngGSxZLiaYAnXbgk+hBmuj4=";
+      };
+    };
   };
 
   rtkPrebuiltRelease = {
