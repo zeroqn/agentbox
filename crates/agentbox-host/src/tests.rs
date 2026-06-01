@@ -33,6 +33,14 @@ fn nix_list_body<'a>(source: &'a str, list_name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{list_name} list should exist"))
 }
 
+fn nix_top_level_attr_body<'a>(source: &'a str, attr_name: &str) -> &'a str {
+    source
+        .split(&format!("  {attr_name} = {{\n"))
+        .nth(1)
+        .and_then(|tail| tail.split("\n  };").next())
+        .unwrap_or_else(|| panic!("{attr_name} attrset should exist"))
+}
+
 fn heredoc_body<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
     source
         .split(start)
@@ -343,14 +351,23 @@ fn nix_agentbox_packages_provide_microvm_storage_helpers_at_runtime() {
 
 #[test]
 fn loftd_prebuilt_package_uses_raw_elf_with_flake_runtime_wrappers() {
+    let loftd_pin = nix_top_level_attr_body(PINS_NIX, "loftdPrebuiltRelease");
+
     for required in [
-        "loftdPrebuiltRelease = {",
-        "systems = { };",
-        "sha-065f52f4fca8",
-        "no system hash is pinned until the workflow",
+        "owner = \"zeroqn\";",
+        "repo = \"agentbox\";",
+        "tag = \"sha-",
+        "systems = {",
+        "x86_64-linux = {",
+        "asset = \"loftd-x86_64-linux-flake-locked\";",
+        "hash = \"sha256-",
     ] {
-        assert!(PINS_NIX.contains(required), "missing {required}");
+        assert!(loftd_pin.contains(required), "missing {required}");
     }
+    assert!(
+        !loftd_pin.contains("systems = { };"),
+        "loftd prebuilt pin should not remain in bootstrap-empty state"
+    );
 
     for required in [
         "{ pkgs, pins, libkrun ? null, libkrunfw ? null }:",
@@ -406,9 +423,9 @@ fn loftd_prebuilt_docs_define_phase_one_bootstrap_contract() {
     for required in [
         "nix build .#loftd-prebuilt",
         "`.#loftd-prebuilt`: install a pinned published raw-ELF `loftd` asset",
-        "During bootstrap it may intentionally fail with a clear not-pinned",
+        "If a system lacks a pinned raw-ELF asset",
         "raw dynamically\nlinked ELF",
-        "after a raw-ELF release is",
+        "raw-ELF `sha-*` release",
         "nix develop --command ./scripts/update-loftd-prebuilt.sh",
         "rejects wrapper-script assets",
     ] {

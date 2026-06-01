@@ -160,8 +160,9 @@ nix build .#container
   cache misses.
 - `.#loftd-prebuilt`: install a pinned published raw-ELF `loftd` asset and
   wrap it with this flake's runtime tools and `libkrun`/`libkrunfw` library
-  path. During bootstrap it may intentionally fail with a clear not-pinned
-  message until the next raw-ELF `sha-*` release is published and pinned.
+  path. If a system lacks a pinned raw-ELF asset, it fails with a clear
+  not-pinned message until a matching raw-ELF `sha-*` release is published and
+  pinned.
 - `.#agentbox-musl`: static/musl `agentbox`, `agentbox-guest-init`, and
   `loftd-guest-init` binaries for image/guest use. It intentionally does not
   build or expose `bin/loftd`; the host `loftd` binary is always dynamically
@@ -959,8 +960,8 @@ The `agentbox-<arch>-unknown-linux-musl` asset is the portable static/musl
 agentbox CLI. The `loftd-<arch>-linux-flake-locked` asset is a raw dynamically
 linked ELF and intentionally non-standalone: it can rely on the exact Nix store
 closure from this flake lock. For ordinary loftd usage, prefer
-`nix build .#loftd`, `nix build .#loftd-prebuilt` after a raw-ELF release is
-pinned, or the published `ghcr.io/<repo-owner>/loftd` image.
+`nix build .#loftd`, `nix build .#loftd-prebuilt` for pinned systems, or the
+published `ghcr.io/<repo-owner>/loftd` image.
 
 ---
 
@@ -972,8 +973,8 @@ Refresh pinned prebuilt release in `nix/pins.nix`:
 nix develop --command ./scripts/update-agentbox-prebuilt.sh
 ```
 
-Refresh pinned loftd prebuilt release metadata in `nix/pins.nix` after a
-raw-ELF `sha-*` release exists. The updater rejects wrapper-script assets:
+Refresh pinned loftd prebuilt release metadata in `nix/pins.nix` from a
+raw-ELF `sha-*` release. The updater rejects wrapper-script assets:
 
 ```bash
 nix develop --command ./scripts/update-loftd-prebuilt.sh

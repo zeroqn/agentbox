@@ -122,9 +122,8 @@
   loftdPrebuiltRelease = {
     owner = "zeroqn";
     repo = "agentbox";
-    # Metadata only during bootstrap: sha-065f52f4fca8 currently publishes a
-    # loftd wrapper script, so no system hash is pinned until the workflow
-    # publishes a verified raw-ELF loftd asset.
+    # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script
+    # assets and only records raw-ELF loftd release payloads.
     tag = "sha-fd80698f8109";
     systems = {
       x86_64-linux = {
