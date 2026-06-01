@@ -142,7 +142,6 @@ nix build .#crun
 nix build .#podman
 nix build .#container-lib-policy-seccomp-json
 nix build .#container
-nix build .#agentbox-container
 ```
 
 ### Build outputs
@@ -173,19 +172,18 @@ nix build .#agentbox-container
 - `.#container-lib-policy-seccomp-json`: install the pinned
   `containers/container-libs` `common/pkg/seccomp/seccomp.json` policy at
   `share/containers/seccomp.json` for downstream flakes or image reuse.
-- `.#container`: loftd-compatible Podman image archive named `localhost/loftd:latest`.
-- `.#agentbox-container`: agentbox-compatible Podman image archive named
-  `localhost/agentbox:latest` for the existing `agentbox` runtime variants.
+- `.#container`: loftd-compatible Podman image archive named
+  `localhost/loftd:latest`. This is the only container image build target; it
+  packages both `loftd-guest-init` and `agentbox-guest-init`, so agentbox also
+  uses it by default.
 
 ### Nix store / DB diagnostics
 
-`nix build .#container` and `nix build .#agentbox-container` each depend on
-a static image metadata linter before running the layered image build command.
-To run only those linters:
+`nix build .#container` depends on a static image metadata linter before
+running the layered image build command. To run only that linter:
 
 ```bash
 nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).container-nix-db-metadata
-nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).agentbox-container-nix-db-metadata
 ```
 
 The check compares store paths referenced by the image Docker config/env against
@@ -227,7 +225,7 @@ nix develop --command cargo run -p agentbox-host -- --help
 Build image + binary, then run the default libkrun mode:
 
 ```bash
-nix build .#agentbox-container
+nix build .#container
 podman load < result
 nix build .#agentbox
 ./result/bin/agentbox
@@ -235,8 +233,8 @@ nix build .#agentbox
 
 Image selection behavior:
 
-- default: `localhost/agentbox:latest`
-- fallback: `ghcr.io/zeroqn/agentbox:latest`
+- default: `localhost/loftd:latest`
+- fallback: `ghcr.io/zeroqn/loftd:latest`
 
 ### Packaged seccomp policy
 
@@ -251,7 +249,7 @@ seccomp_profile = "/nix/store/...-container-lib-policy-seccomp-json-.../share/co
 This makes inner Podman use the packaged policy by default while still allowing
 per-user containers config to override it. To refresh the policy, update the
 `containerLibPolicySeccompJson` revision/hash in `nix/pins.nix`, then rebuild
-`.#container-lib-policy-seccomp-json`, `.#container`, and `.#agentbox-container`.
+`.#container-lib-policy-seccomp-json` and `.#container`.
 
 Force GHCR latest:
 
@@ -340,11 +338,14 @@ Run:
 `agentbox` with no subcommand defaults to libkrun. Runtime-specific libkrun
 options are accepted under the `libkrun` subcommand.
 
-Inside the image, the configured entrypoint is `agentbox-guest-init default enter --`.
-That default guest entrypoint selects the explicit `libkrun` guest
-runtime when agentbox passes `AGENTBOX_LIBKRUN_*` environment flags; otherwise
-it falls back to the explicit `container` guest runtime. The explicit
-`agentbox-guest-init container enter` path does not switch to libkrun.
+Inside the shared loftd image, the configured image entrypoint is
+`loftd-guest-init enter --`. Agentbox does not depend on that image
+entrypoint: it explicitly starts `/bin/agentbox-guest-init default enter --`
+from the same image. That default agentbox guest entrypoint selects the
+explicit `libkrun` guest runtime when agentbox passes `AGENTBOX_LIBKRUN_*`
+environment flags; otherwise it falls back to the explicit `container` guest
+runtime. The explicit `agentbox-guest-init container enter` path does not
+switch to libkrun.
 
 On first run, agentbox creates two sparse btrfs raw images:
 

@@ -36,17 +36,17 @@ fn flake_exposes_container_lib_seccomp_policy_package() {
 }
 
 #[test]
-fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
+fn flake_exposes_single_loftd_container_output() {
     for required in [
         r#"loftdImage = mkImage "loftd";"#,
-        r#"agentboxImage = mkImage "agentbox";"#,
         "container = loftdImage;",
-        "agentbox-container = agentboxImage;",
         "container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;",
-        "agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;",
     ] {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
+    assert!(!FLAKE_NIX.contains("agentboxImage = mkImage"));
+    assert!(!FLAKE_NIX.contains("agentbox-container ="));
+    assert!(!FLAKE_NIX.contains("agentbox-container-nix-db-metadata"));
 }
 
 #[test]
@@ -101,14 +101,12 @@ fn image_includes_seccomp_policy_data_without_adding_it_to_path() {
 }
 
 #[test]
-fn image_config_defines_loftd_and_agentbox_entrypoint_variants() {
+fn image_config_defines_loftd_entrypoint_and_shared_agentbox_payload() {
     for required in [
-        r#"loftd = {"#,
+        r#"if imageVariant == "loftd" then"#,
         r#""${agentboxMuslPackage}/bin/loftd-guest-init""#,
-        r#"agentbox = {"#,
-        r#""${agentboxMuslPackage}/bin/agentbox-guest-init""#,
-        r#""default""#,
-        r#"Entrypoint = variant.entrypoint;"#,
+        r#"Entrypoint = entrypoint;"#,
+        r#"Env = commonEnv ++ agentboxEnv;"#,
         r#"name = "localhost/${imageVariant}";"#,
     ] {
         assert!(
@@ -117,6 +115,15 @@ fn image_config_defines_loftd_and_agentbox_entrypoint_variants() {
         );
     }
     assert!(CONTAINER_NIX.contains("builtins.toJSON imageConfig"));
+    assert!(CONTAINER_NIX.contains("./bin"));
+    assert!(CONTAINER_NIX.contains(
+        "ln -sfn ${agentboxMuslPackage}/bin/agentbox-guest-init ./bin/agentbox-guest-init"
+    ));
+    assert!(
+        CONTAINER_NIX
+            .contains("ln -sfn ${agentboxMuslPackage}/bin/loftd-guest-init ./bin/loftd-guest-init")
+    );
+    assert!(!IMAGE_CONFIG_NIX.contains(r#"imageVariant == "agentbox""#));
     assert!(!IMAGE_CONFIG_NIX.contains("agentbox-entrypoint"));
 }
 
@@ -445,10 +452,10 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
         "checks = systems.forAllSystems",
         "import ./nix/image/checks.nix",
         "container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;",
-        "agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;",
     ] {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
+    assert!(!FLAKE_NIX.contains("agentbox-container-nix-db-metadata"));
 
     for required in [
         "storeRefsIn = text:",

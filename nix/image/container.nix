@@ -37,6 +37,7 @@ let
       mkdir -p \
         ./etc \
         ./etc/containers \
+        ./bin \
         ./home/dev/.cache \
         ./home/dev/.codex \
         ./root \
@@ -72,6 +73,8 @@ let
       if ! grep -q '^nixbld:' ./etc/group; then
         printf 'nixbld:x:${toString layers.nixBuilderGroupId}:${layers.nixBuilderGroupMembers}\n' >> ./etc/group
       fi
+      ln -sfn ${agentboxMuslPackage}/bin/agentbox-guest-init ./bin/agentbox-guest-init
+      ln -sfn ${agentboxMuslPackage}/bin/loftd-guest-init ./bin/loftd-guest-init
       cat >> ./etc/passwd <<'EOF_PASSWD'
       ${layers.nixBuilderPasswdEntries}
       EOF_PASSWD

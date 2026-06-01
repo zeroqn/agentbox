@@ -52,7 +52,7 @@ nix build .#container
 To run the CLI from a built artifact:
 
 ```bash
-AGENTBOX_IMAGE=localhost/agentbox:latest ./result/bin/agentbox
+AGENTBOX_IMAGE=localhost/loftd:latest ./result/bin/agentbox
 ```
 
 To exercise host overlay mode:

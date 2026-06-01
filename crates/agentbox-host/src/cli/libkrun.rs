@@ -34,7 +34,7 @@ pub struct LibkrunOptions {
         long = "guest-init",
         value_name = "PATH",
         help = "Override agentbox-guest-init in libkrun mode for guest debugging",
-        long_help = "Bind-mount the host agentbox-guest-init binary read-only over the in-image guest-init path while preserving the normal image entrypoint and arguments. This lets guest-init fixes be tested without rebuilding the container image."
+        long_help = "Bind-mount the host agentbox-guest-init binary read-only over /bin/agentbox-guest-init in the selected image while preserving the normal agentbox guest-init arguments. This lets guest-init fixes be tested without rebuilding the container image."
     )]
     pub guest_init: Option<PathBuf>,
 

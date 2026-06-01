@@ -316,7 +316,7 @@ fn libkrun_task_args_omit_cpu_annotation_when_cpu_count_is_unresolved() {
 }
 
 #[test]
-fn libkrun_task_args_can_override_guest_init_without_changing_entrypoint() {
+fn libkrun_task_args_can_override_stable_guest_init_entrypoint() {
     let guest_init = guest_init_override();
     let args = build_args(TaskOptions {
         guest_init: Some(guest_init),
@@ -324,12 +324,10 @@ fn libkrun_task_args_can_override_guest_init_without_changing_entrypoint() {
     });
     let joined = args.join("\n");
 
-    assert!(joined.contains(
-        "--volume\n/tmp/agentbox-guest-init:/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"
-    ));
-    assert!(!args.contains(&"--entrypoint".to_owned()));
+    assert!(joined.contains("--volume\n/tmp/agentbox-guest-init:/bin/agentbox-guest-init:ro"));
+    assert!(joined.contains("--entrypoint\n/bin/agentbox-guest-init"));
     assert!(joined.contains(&format!(
-        "{}\n{}\n-l",
+        "{}\ndefault\nenter\n--\n{}\n-l",
         crate::DEFAULT_IMAGE,
         INTERACTIVE_SHELL
     )));
@@ -489,7 +487,12 @@ fn expected_args(options: ExpectedOptions) -> Vec<String> {
     }
 
     args.extend([
+        "--entrypoint".to_owned(),
+        "/bin/agentbox-guest-init".to_owned(),
         crate::DEFAULT_IMAGE.to_owned(),
+        "default".to_owned(),
+        "enter".to_owned(),
+        "--".to_owned(),
         INTERACTIVE_SHELL.to_owned(),
         "-l".to_owned(),
     ]);
@@ -568,8 +571,7 @@ fn raw_container_disk() -> RawContainerDisk {
 fn guest_init_override() -> GuestInitOverrideMount {
     GuestInitOverrideMount {
         source: PathBuf::from("/tmp/agentbox-guest-init"),
-        mount_arg: "/tmp/agentbox-guest-init:/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"
-            .to_owned(),
-        target: "/nix/store/hash-agentbox/bin/agentbox-guest-init".to_owned(),
+        mount_arg: "/tmp/agentbox-guest-init:/bin/agentbox-guest-init:ro".to_owned(),
+        target: "/bin/agentbox-guest-init".to_owned(),
     }
 }

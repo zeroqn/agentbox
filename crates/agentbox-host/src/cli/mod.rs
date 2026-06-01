@@ -37,8 +37,8 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox --profile --debug
   agentbox --root
   agentbox --root container
-  agentbox --image ghcr.io/example/agentbox:dev container
-  AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
+  agentbox --image ghcr.io/example/loftd:dev container
+  AGENTBOX_IMAGE=ghcr.io/example/loftd:dev agentbox"
 )]
 pub struct Cli {
     #[arg(
@@ -46,15 +46,15 @@ pub struct Cli {
         env = "AGENTBOX_IMAGE",
         global = true,
         help = "Container image to run",
-        long_help = "Container image to run. If omitted, agentbox prefers localhost/agentbox:latest and falls back to ghcr.io/zeroqn/agentbox:latest. Can also be set with AGENTBOX_IMAGE."
+        long_help = "Container image to run. If omitted, agentbox prefers localhost/loftd:latest and falls back to ghcr.io/zeroqn/loftd:latest. Can also be set with AGENTBOX_IMAGE."
     )]
     image: Option<String>,
 
     #[arg(
         long,
         global = true,
-        help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run",
-        long_help = "Pull and use ghcr.io/zeroqn/agentbox:latest for this run when --image is not set."
+        help = "Pull and use ghcr.io/zeroqn/loftd:latest for this run",
+        long_help = "Pull and use ghcr.io/zeroqn/loftd:latest for this run when --image is not set."
     )]
     pull_latest: bool,
 

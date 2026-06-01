@@ -82,7 +82,7 @@ pub(crate) fn run(
     let target_path = managed_disk_path(state_layout.root_dir(), target);
 
     ensure_no_live_raw_disk_users(&target_path, "resize", &HostPodmanOutputRunner)?;
-    let image_guest_init_target = resolve_libkrun_guest_init_target(&image)?;
+    let image_guest_init_target = resolve_libkrun_guest_init_target();
     let guest_init_override = run_options
         .guest_init
         .as_deref()
@@ -377,7 +377,7 @@ mod tests {
             tsi: false,
             guest_profile: false,
             guest_debug: false,
-            guest_init_target: "/nix/store/hash-agentbox/bin/agentbox-guest-init",
+            guest_init_target: "/bin/agentbox-guest-init",
             guest_init_override: None,
         })
         .unwrap();
@@ -388,7 +388,7 @@ mod tests {
         assert!(!args.contains(&"-it".to_owned()));
         assert!(joined.contains("--userns\nkeep-id"));
         assert!(joined.contains("--user\n0:0"));
-        assert!(joined.contains("--entrypoint\n/nix/store/hash-agentbox/bin/agentbox-guest-init"));
+        assert!(joined.contains("--entrypoint\n/bin/agentbox-guest-init"));
         assert!(joined.contains(&format!(
             "{}\nlibkrun\nresize\n--target\nnix",
             crate::DEFAULT_IMAGE
@@ -404,10 +404,8 @@ mod tests {
         let disk = test_disk(LibkrunResizeTarget::Containers);
         let override_mount = GuestInitOverrideMount {
             source: PathBuf::from("/tmp/agentbox-guest-init"),
-            mount_arg:
-                "/tmp/agentbox-guest-init:/nix/store/hash-agentbox/bin/agentbox-guest-init:ro"
-                    .to_owned(),
-            target: "/nix/store/hash-agentbox/bin/agentbox-guest-init".to_owned(),
+            mount_arg: "/tmp/agentbox-guest-init:/bin/agentbox-guest-init:ro".to_owned(),
+            target: "/bin/agentbox-guest-init".to_owned(),
         };
 
         let args = build_libkrun_resize_podman_args(LibkrunResizePodmanSpec {
@@ -428,7 +426,7 @@ mod tests {
         let joined = args.join("\n");
 
         assert!(joined.contains(&format!("--volume\n{}", override_mount.mount_arg)));
-        assert!(joined.contains("--entrypoint\n/nix/store/hash-agentbox/bin/agentbox-guest-init"));
+        assert!(joined.contains("--entrypoint\n/bin/agentbox-guest-init"));
         assert!(joined.contains(&format!(
             "{}\nlibkrun\nresize\n--target\ncontainers",
             crate::DEFAULT_IMAGE

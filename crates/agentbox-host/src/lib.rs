@@ -13,8 +13,9 @@ use cli::Cli;
 use podman::process::set_podman_debug;
 use runtime::microvm::supervisor::MICROVM_HELPER_ARG;
 
-const DEFAULT_IMAGE: &str = "localhost/agentbox:latest";
-const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/agentbox:latest";
+const DEFAULT_IMAGE: &str = "localhost/loftd:latest";
+const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/loftd:latest";
+const AGENTBOX_GUEST_INIT_ENTRYPOINT: &str = "/bin/agentbox-guest-init";
 const CONTAINER_WORKDIR: &str = "/workspace";
 const HOST_NIX_UPPER_DIR: &str = "nix-upper";
 const HOST_NIX_WORK_DIR: &str = "nix-work";

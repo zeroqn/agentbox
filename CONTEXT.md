@@ -105,16 +105,16 @@ _Avoid_: image entrypoint by default
 
 
 **agentbox-compatible image**:
-An OCI image that contains the guest init contract required to boot an agentbox task environment. Microvm v1 requires an agentbox-compatible image rather than adapting arbitrary OCI images at ingestion time.
+An OCI image that contains the guest init contract required to boot an agentbox task environment. During loftd extraction, the canonical loftd image is also agentbox-compatible by packaging `agentbox-guest-init` at a stable in-image path.
 _Avoid_: arbitrary image support in v1
 
 **loftd-compatible image**:
-An OCI image that contains the loftd-guest-init guest contract required to boot a loftd microvm task environment. Loftd defaults to loftd image identities rather than agentbox image identities.
-_Avoid_: agentbox image as loftd default
+An OCI image that contains the loftd-guest-init guest contract required to boot a loftd microvm task environment. The canonical loftd image may also carry agentbox compatibility payloads so both CLIs share one image build.
+_Avoid_: separate agentbox image builds when the loftd image can carry the shared guest payload
 
 **container flake output**:
-The canonical Nix flake image output for the current extracted runtime owner. During loftd extraction, `.#container` names the loftd-compatible image, while `.#agentbox-container` names the legacy agentbox-compatible image variant.
-_Avoid_: using `.#container` for the agentbox image after loftd owns the canonical image identity
+The single Nix flake image output for the current extracted runtime owner. During loftd extraction, `.#container` names the loftd-compatible image and agentbox consumes that same image by explicitly entering through `agentbox-guest-init`; there is no separate `.#agentbox-container` build target.
+_Avoid_: reintroducing a duplicate agentbox image build target
 
 
 
@@ -286,7 +286,7 @@ Dev: Does libkrun port publishing also change microvm networking?
 Domain expert: No. Libkrun port publishing belongs to the default Podman-backed libkrun runtime; microvm keeps its outbound-first networking scope until a separate direct-libkrun decision changes it.
 
 Dev: Can microvm boot arbitrary OCI images?
-Domain expert: Not in v1. It requires an agentbox-compatible image with the guest init contract already present.
+Domain expert: Not in v1. It requires a compatible image with the required guest init contract already present; the canonical loftd image carries both loftd and agentbox guest-init contracts during extraction.
 
 Dev: Must users prepare image caches before running?
 Domain expert: No. Lazy image ingestion ensures the durable image source on first run if needed.
