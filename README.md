@@ -735,11 +735,12 @@ command and point permission-denied cleanup failures at the btrfs
 complete: the implementation builds a typed launch plan, uses Buildah as the
 durable OCI image source for the default btrfs path, materializes a per-task
 btrfs snapshot rootfs, prepares loftd-owned persistent raw btrfs disks for
-`/nix` and rootless container storage, starts a same-binary
-`loftd internal libkrun-enter` helper to call libkrun, and enters the guest
-through `loftd-guest-init enter`. The parent process owns task-rootfs cleanup,
-with best-effort cleanup on unwind and `--preserve-debug` for manual inspection.
-The explicit `fuse-overlay` backend is still a future slice.
+`/nix` and rootless container storage, starts a same-binary helper through
+`buildah unshare <loftd-exe> internal libkrun-enter <launch.conf>` to call
+libkrun, and enters the guest through `loftd-guest-init enter`. The parent
+process owns task-rootfs cleanup, with best-effort cleanup on unwind and
+`--preserve-debug` for manual inspection. The explicit `fuse-overlay` backend is
+still a future slice.
 
 Run/help:
 
@@ -773,10 +774,15 @@ path is wanted.
 
 On a successful btrfs-snapshot run, loftd then resolves the image's executable
 `loftd-guest-init`, writes a private hex-encoded `launch.conf` under the task
-state directory, and supervises `loftd internal libkrun-enter <launch.conf>`.
-The helper dynamically loads `libkrun.so.1` or `libkrun.so` (or
-`LOFTD_LIBKRUN_LIBRARY` when set), attaches the task rootfs, the `/workspace`
-virtiofs mount, and two writable persistent disks:
+state directory, and supervises
+`buildah unshare <loftd-exe> internal libkrun-enter <launch.conf>`. Buildah is
+used only as the rootless UID/GID namespace adapter for the helper, matching
+the namespace used to materialize the image-derived btrfs rootfs; it is not used
+as the container runtime, and this path does not rely on Podman, idmapped
+mounts, or relaxed guest-init ownership repair. The helper dynamically loads
+`libkrun.so.1` or `libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), attaches
+the task rootfs, the `/workspace` virtiofs mount, and two writable persistent
+disks:
 
 - `loftd-nix.raw` exposed to the guest as `LOFTD_NIX` / `loftd-nix` for `/nix`;
 - `loftd-containers.raw` exposed as `LOFTD_CONTAINERS` / `loftd-containers` for

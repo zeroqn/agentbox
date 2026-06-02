@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
@@ -6,6 +7,8 @@ use crate::runtime::ffi::{DirectLibkrunLauncher, DynamicLibkrunApi};
 use crate::runtime::launch_config::LaunchConfig;
 
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-enter";
+const BUILDAH_PROGRAM: &str = "buildah";
+const BUILDAH_UNSHARE_ARG: &str = "unshare";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ChildStatus {
@@ -46,35 +49,60 @@ impl Supervisor for HostSupervisor {
 }
 
 fn run_helper_process(config_path: &Path) -> Result<ChildStatus> {
-    let status =
-        Command::new(std::env::current_exe().context("failed to resolve loftd executable")?)
-            .arg("internal")
-            .arg(LIBKRUN_ENTER_HELPER_ARG)
-            .arg(config_path)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .with_context(|| {
-                format!(
-                    "failed to start loftd libkrun helper for '{}'",
-                    config_path.display()
-                )
-            })?;
+    let executable = std::env::current_exe()
+        .context("failed to resolve loftd executable for buildah unshare libkrun helper")?;
+    let mut command = build_helper_command(&executable, config_path).into_command();
+    let status = command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| {
+            format!(
+                "failed to start buildah unshare loftd libkrun helper for '{}'; btrfs-snapshot direct-libkrun launches require buildah",
+                config_path.display()
+            )
+        })?;
     Ok(match status.code() {
         Some(code) => ChildStatus::exited(code),
         None => ChildStatus::signaled(),
     })
 }
 
-pub(crate) fn run_internal(args: Vec<std::ffi::OsString>) -> Result<()> {
-    let [subcommand, config_path]: [std::ffi::OsString; 2] =
-        args.try_into().map_err(|args: Vec<_>| {
-            anyhow!(
-                "expected internal {LIBKRUN_ENTER_HELPER_ARG} <launch.conf>, got {} argument(s)",
-                args.len()
-            )
-        })?;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HelperCommandSpec {
+    program: OsString,
+    args: Vec<OsString>,
+}
+
+impl HelperCommandSpec {
+    fn into_command(self) -> Command {
+        let mut command = Command::new(self.program);
+        command.args(self.args);
+        command
+    }
+}
+
+fn build_helper_command(executable: &Path, config_path: &Path) -> HelperCommandSpec {
+    HelperCommandSpec {
+        program: OsString::from(BUILDAH_PROGRAM),
+        args: vec![
+            OsString::from(BUILDAH_UNSHARE_ARG),
+            executable.as_os_str().to_os_string(),
+            OsString::from("internal"),
+            OsString::from(LIBKRUN_ENTER_HELPER_ARG),
+            config_path.as_os_str().to_os_string(),
+        ],
+    }
+}
+
+pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
+    let [subcommand, config_path]: [OsString; 2] = args.try_into().map_err(|args: Vec<_>| {
+        anyhow!(
+            "expected internal {LIBKRUN_ENTER_HELPER_ARG} <launch.conf>, got {} argument(s)",
+            args.len()
+        )
+    })?;
     if subcommand.to_str() != Some(LIBKRUN_ENTER_HELPER_ARG) {
         anyhow::bail!(
             "unknown loftd internal command '{}'; expected {LIBKRUN_ENTER_HELPER_ARG}",
@@ -110,5 +138,25 @@ mod tests {
         let err = run_internal(vec!["btrfs-rootfs".into(), "/tmp/x".into()])
             .expect_err("wrong subcommand");
         assert!(format!("{err:#}").contains("unknown loftd internal command"));
+    }
+
+    #[test]
+    fn libkrun_helper_launches_through_buildah_unshare() {
+        let spec = build_helper_command(
+            Path::new("/nix/store/hash-loftd/bin/loftd"),
+            Path::new("/tmp/loftd-task/launch.conf"),
+        );
+
+        assert_eq!(spec.program, OsString::from("buildah"));
+        assert_eq!(
+            spec.args,
+            vec![
+                OsString::from("unshare"),
+                OsString::from("/nix/store/hash-loftd/bin/loftd"),
+                OsString::from("internal"),
+                OsString::from("libkrun-enter"),
+                OsString::from("/tmp/loftd-task/launch.conf"),
+            ]
+        );
     }
 }
