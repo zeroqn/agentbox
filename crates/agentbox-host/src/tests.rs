@@ -358,7 +358,7 @@ fn nix_agentbox_packages_provide_microvm_storage_helpers_at_runtime() {
 }
 
 #[test]
-fn loftd_prebuilt_package_rejects_legacy_pin_and_patches_neutral_elf() {
+fn loftd_prebuilt_package_pins_and_patches_neutral_elf() {
     let loftd_pin = nix_top_level_attr_body(PINS_NIX, "loftdPrebuiltRelease");
 
     for required in [
@@ -367,7 +367,7 @@ fn loftd_prebuilt_package_rejects_legacy_pin_and_patches_neutral_elf() {
         "tag = \"sha-",
         "systems = {",
         "x86_64-linux = {",
-        "asset = \"loftd-x86_64-linux-flake-locked\";",
+        "asset = \"loftd-x86_64-unknown-linux-gnu\";",
         "hash = \"sha256-",
     ] {
         assert!(loftd_pin.contains(required), "missing {required}");
@@ -380,7 +380,6 @@ fn loftd_prebuilt_package_rejects_legacy_pin_and_patches_neutral_elf() {
     for required in [
         "{ pkgs, pins, libkrun ? null, libkrunfw ? null }:",
         "loftdPrebuiltRelease = pins.loftdPrebuiltRelease;",
-        r#"legacyFlakeLockedAsset = pkgs.lib.hasSuffix "-linux-flake-locked" assetInfo.asset;"#,
         "throw ''",
         "loftd-<arch>-unknown-linux-gnu",
         "pkgs.autoPatchelfHook",
@@ -397,7 +396,6 @@ fn loftd_prebuilt_package_rejects_legacy_pin_and_patches_neutral_elf() {
         "readelf -h \"$src\" >/dev/null",
         "install -Dm755 \"$src\" \"$out/libexec/loftd\"",
         "makeWrapper \"$out/libexec/loftd\" \"$out/bin/loftd\"",
-        "legacy asset ${assetInfo.asset}",
         "Do not pin wrapper-script release assets",
         "after a neutral sha-* release is published",
         "mainProgram = \"loftd\";",
@@ -413,7 +411,6 @@ fn loftd_prebuilt_updater_rejects_legacy_store_refs_and_updates_loftd_pin() {
         "Usage: update-loftd-prebuilt.sh",
         "loftd-x86_64-unknown-linux-gnu",
         "loftd-aarch64-unknown-linux-gnu",
-        "*-linux-flake-locked",
         "newest sha-* prerelease containing the selected loftd asset",
         "upstream asset blocker",
         "wrapper script, not raw ELF",
@@ -453,7 +450,6 @@ fn loftd_prebuilt_docs_define_neutral_asset_contract() {
         "**loftd prebuilt**:",
         "pinned neutral dynamic Linux `loftd-<arch>-unknown-linux-gnu` release asset",
         "Nix patches ordinary ELF runtime dependencies",
-        "_Avoid_: flake-locked release asset; static/standalone host loftd; pinned wrapper script",
     ] {
         assert!(CONTEXT_MD.contains(required), "missing {required}");
     }
@@ -465,9 +461,8 @@ fn loftd_prebuilt_adr_records_neutral_asset_decision() {
         "# Neutral loftd prebuilt release assets",
         "Status: accepted",
         "loftd-<arch>-unknown-linux-gnu",
-        "not standalone portable executables and not flake-locked Nix outputs",
+        "not standalone portable executables",
         "autoPatchelfHook",
-        "Reject legacy `loftd-<arch>-linux-flake-locked` pins before fetching them",
         "concrete
   `/nix/store/<hash>-...` references",
         "Use `unsafeDiscardReferences`: rejected",
