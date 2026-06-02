@@ -124,7 +124,7 @@
     repo = "agentbox";
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script
     # assets and only records raw-ELF loftd release payloads.
-    tag = "sha-fd80698f8109";
+    tag = "sha-af9fc36f42c5";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-linux-flake-locked";
