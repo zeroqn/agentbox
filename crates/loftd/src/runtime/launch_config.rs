@@ -312,7 +312,7 @@ fn guest_init_argv(guest_command: &[String]) -> Vec<String> {
         guest_command.to_vec()
     };
 
-    ["loftd-guest-init", "enter", "--"]
+    ["enter", "--"]
         .into_iter()
         .map(str::to_owned)
         .chain(command)
@@ -390,10 +390,7 @@ mod tests {
             config.exec_path,
             "/nix/store/hash-loftd/bin/loftd-guest-init"
         );
-        assert_eq!(
-            config.argv,
-            ["loftd-guest-init", "enter", "--", "fish", "-l"]
-        );
+        assert_eq!(config.argv, ["enter", "--", "fish", "-l"]);
         assert!(config.env_contains("LOFTD_HOST_UID", "1000"));
         assert!(config.env_contains("LOFTD_HOST_GID", "1001"));
         assert!(config.env_contains("LOFTD_WORKSPACE_TAG", "loftd-workspace"));
@@ -428,10 +425,7 @@ mod tests {
         })
         .expect("launch config should build");
 
-        assert_eq!(
-            config.argv,
-            ["loftd-guest-init", "enter", "--", "bash", "-lc", "echo ok"]
-        );
+        assert_eq!(config.argv, ["enter", "--", "bash", "-lc", "echo ok"]);
     }
 
     #[test]

@@ -94,7 +94,6 @@ impl MicrovmLaunchConfig {
             workdir: CONTAINER_WORKDIR.to_owned(),
             exec_path: spec.guest_init_exec.to_owned(),
             argv: vec![
-                "agentbox-guest-init".to_owned(),
                 "microvm".to_owned(),
                 "enter".to_owned(),
                 "--".to_owned(),
@@ -402,17 +401,7 @@ mod tests {
             config.exec_path,
             "/nix/store/hash-agentbox/bin/agentbox-guest-init"
         );
-        assert_eq!(
-            config.argv,
-            [
-                "agentbox-guest-init",
-                "microvm",
-                "enter",
-                "--",
-                "fish",
-                "-l"
-            ]
-        );
+        assert_eq!(config.argv, ["microvm", "enter", "--", "fish", "-l"]);
         assert!(config.env_contains("AGENTBOX_HOST_UID", "1000"));
         assert!(config.env_contains("AGENTBOX_HOST_GID", "1001"));
         assert!(config.env_contains("AGENTBOX_MICROVM_WORKSPACE_TAG", "agentbox-workspace"));
