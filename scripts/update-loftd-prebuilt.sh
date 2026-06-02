@@ -13,8 +13,8 @@ usage() {
 Usage: update-loftd-prebuilt.sh [--tag <release-tag>] [--system <system>]
 
 Refresh the pinned loftd prebuilt release metadata in nix/pins.nix by querying
-GitHub Releases, rejecting wrapper-script payloads, and recomputing the binary
-SRI hash.
+GitHub Releases, rejecting legacy/concrete-store-referencing payloads, and
+recomputing the binary SRI hash.
 
 Defaults:
   --tag     newest sha-* prerelease containing the selected loftd asset
@@ -53,16 +53,21 @@ done
 
 case "$system" in
   x86_64-linux)
-    asset_name="loftd-x86_64-linux-flake-locked"
+    asset_name="loftd-x86_64-unknown-linux-gnu"
     ;;
   aarch64-linux)
-    asset_name="loftd-aarch64-linux-flake-locked"
+    asset_name="loftd-aarch64-unknown-linux-gnu"
     ;;
   *)
     echo "unsupported system: $system" >&2
     exit 1
     ;;
 esac
+
+if [[ "$asset_name" == *-linux-flake-locked ]]; then
+  echo "internal error: refusing legacy loftd flake-locked asset name: $asset_name" >&2
+  exit 1
+fi
 
 releases_api="https://api.github.com/repos/$owner/$repo/releases?per_page=100"
 
@@ -110,6 +115,7 @@ PY
 
 python3 - "$asset_path" "$asset_name" "$release_tag" <<'PY'
 import pathlib
+import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
@@ -123,6 +129,10 @@ if data.startswith(b"#!"):
 if data[:4] != b"\x7fELF":
     raise SystemExit(
         f"upstream asset blocker: {asset_name} in {release_tag} is not an ELF payload"
+    )
+if re.search(rb"/nix/store/[0-9a-df-np-sv-z]{32}-", data):
+    raise SystemExit(
+        f"upstream asset blocker: {asset_name} in {release_tag} contains concrete /nix/store references; publish a neutral loftd asset"
     )
 PY
 

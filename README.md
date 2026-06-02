@@ -158,11 +158,12 @@ nix build .#container
   `fuse-overlayfs` and `buildah` into the runtime environment for
   `agentbox container` sidecar mode and experimental `agentbox microvm`
   cache misses.
-- `.#loftd-prebuilt`: install a pinned published raw-ELF `loftd` asset and
-  wrap it with this flake's runtime tools and `libkrun`/`libkrunfw` library
-  path. If a system lacks a pinned raw-ELF asset, it fails with a clear
-  not-pinned message until a matching raw-ELF `sha-*` release is published and
-  pinned.
+- `.#loftd-prebuilt`: install a pinned published neutral dynamic Linux `loftd`
+  asset, patch ordinary ELF runtime dependencies with Nix, and wrap it with
+  this flake's runtime tools and `libkrun`/`libkrunfw` library path. If a system
+  lacks a neutral pinned asset, or is still pinned to a legacy flake-locked
+  asset, it fails with a clear diagnostic until a matching neutral `sha-*`
+  release is published and pinned.
 - `.#agentbox-musl`: static/musl `agentbox`, `agentbox-guest-init`, and
   `loftd-guest-init` binaries for image/guest use. It intentionally does not
   build or expose `bin/loftd`; the host `loftd` binary is always dynamically
@@ -957,11 +958,14 @@ Main-branch CI also publishes prerelease binary assets:
 Older `sha-*` prereleases are pruned (retains newest 20).
 
 The `agentbox-<arch>-unknown-linux-musl` asset is the portable static/musl
-agentbox CLI. The `loftd-<arch>-linux-flake-locked` asset is a raw dynamically
-linked ELF and intentionally non-standalone: it can rely on the exact Nix store
-closure from this flake lock. For ordinary loftd usage, prefer
-`nix build .#loftd`, `nix build .#loftd-prebuilt` for pinned systems, or the
-published `ghcr.io/<repo-owner>/loftd` image.
+agentbox CLI. The `loftd-<arch>-unknown-linux-gnu` asset is a neutral dynamic
+Linux ELF packaging input and intentionally non-standalone: it must not contain
+release-builder `/nix/store/<hash>-...` references, and Nix packaging patches
+its ordinary ELF runtime dependencies before wrapping the libkrun/runtime-tool
+environment.
+For ordinary loftd usage, prefer `nix build .#loftd`, `nix build
+.#loftd-prebuilt` for pinned systems, or the published
+`ghcr.io/<repo-owner>/loftd` image.
 
 ---
 
@@ -973,8 +977,10 @@ Refresh pinned prebuilt release in `nix/pins.nix`:
 nix develop --command ./scripts/update-agentbox-prebuilt.sh
 ```
 
-Refresh pinned loftd prebuilt release metadata in `nix/pins.nix` from a
-raw-ELF `sha-*` release. The updater rejects wrapper-script assets:
+Refresh pinned loftd prebuilt release metadata in `nix/pins.nix` from a neutral
+raw-ELF `sha-*` release. The updater rejects wrapper-script assets, legacy
+flake-locked names, and payloads containing concrete
+`/nix/store/<hash>-...` references:
 
 ```bash
 nix develop --command ./scripts/update-loftd-prebuilt.sh

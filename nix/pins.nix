@@ -122,8 +122,9 @@
   loftdPrebuiltRelease = {
     owner = "zeroqn";
     repo = "agentbox";
-    # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script
-    # assets and only records raw-ELF loftd release payloads.
+    # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
+    # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
+    # release payloads.
     tag = "sha-af9fc36f42c5";
     systems = {
       x86_64-linux = {

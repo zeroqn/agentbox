@@ -36,8 +36,13 @@ jobs:
 
           arch="$(uname -m)"
           agentbox_asset_name="agentbox-${arch}-unknown-linux-musl"
-          loftd_asset_name="loftd-${arch}-linux-flake-locked"
+          loftd_asset_name="loftd-${arch}-unknown-linux-gnu"
           release_tag="sha-$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
+
+          if [[ "${loftd_asset_name}" == *-linux-flake-locked ]]; then
+            echo "refusing legacy loftd flake-locked asset name: ${loftd_asset_name}" >&2
+            exit 1
+          fi
 
           mkdir -p dist
           install -m 0755 result-agentbox-musl/bin/agentbox "dist/${agentbox_asset_name}"
@@ -54,6 +59,28 @@ jobs:
           fi
           readelf -h "${raw_loftd_path}" > /dev/null
           install -m 0755 "${raw_loftd_path}" "dist/${loftd_asset_name}"
+
+          case "${arch}" in
+            x86_64)
+              neutral_loader="/lib64/ld-linux-x86-64.so.2"
+              ;;
+            aarch64)
+              neutral_loader="/lib/ld-linux-aarch64.so.1"
+              ;;
+            *)
+              echo "unsupported loftd release architecture for neutral loader: ${arch}" >&2
+              exit 1
+              ;;
+          esac
+
+          nix --extra-experimental-features 'nix-command flakes' shell nixpkgs#patchelf -c \
+            patchelf --set-interpreter "${neutral_loader}" --set-rpath "" "dist/${loftd_asset_name}"
+          readelf -h "dist/${loftd_asset_name}" > /dev/null
+
+          if LC_ALL=C grep -aEq '/nix/store/[0-9a-df-np-sv-z]{32}-' "dist/${loftd_asset_name}"; then
+            echo "refusing to publish loftd asset ${loftd_asset_name}: neutral asset still contains concrete /nix/store/<hash>- references" >&2
+            exit 1
+          fi
 
           "dist/${agentbox_asset_name}" --help > /dev/null
           result-loftd/bin/loftd --help > /dev/null
@@ -86,7 +113,7 @@ jobs:
 
           Assets:
           - \`${{ steps.prep.outputs.agentbox_asset_name }}\`: portable static/musl agentbox CLI.
-          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: raw dynamically linked, flake-locked loftd ELF. It is not a standalone portable binary and may rely on the exact Nix store closure produced by this repository's flake lock. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
+          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: neutral dynamically linked loftd ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wraps the libkrun/runtime-tool environment. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
 
           The \`alpha\` prerelease is reused on every push to main.
           The matching \`${{ steps.prep.outputs.release_tag }}\` prerelease is the revision-addressed binary set for this exact revision.
