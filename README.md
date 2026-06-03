@@ -752,6 +752,13 @@ Run/help:
 ./result/bin/loftd -- bash -lc 'echo ok'
 ```
 
+For host-side timing diagnostics, `loftd --debug --profile` emits a
+`loftd host profile` report to stderr for completed btrfs-snapshot host phases
+such as launch-plan build, task rootfs materialization, persistent disk
+preparation, guest-init lookup, launch config build, helper session, and task
+state cleanup. `--profile` without `--debug` does not print the host report, so
+stdout remains reserved for guest command output.
+
 Image selection is materialized through Buildah for the btrfs-snapshot path: with no
 image option, loftd first inspects `localhost/loftd:latest` and uses it with
 `--pull=never` when present, otherwise loftd uses `ghcr.io/zeroqn/loftd:latest`
