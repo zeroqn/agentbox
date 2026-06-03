@@ -121,9 +121,9 @@ The canonical Nix flake image output for the current extracted runtime owner. Du
 _Avoid_: using `.#container` for the agentbox image after loftd owns the canonical image identity
 
 
-**shared image publication**:
-The release policy where one canonical loftd-compatible `.#container` image is built once and published under both `ghcr.io/<owner>/loftd` and `ghcr.io/<owner>/agentbox`. The agentbox name is a compatibility alias for existing agentbox users, not a separate image build.
-_Avoid_: duplicate agentbox image build
+**separate image publication**:
+The release policy where agentbox-compatible images and loftd-compatible images keep distinct published identities. Agentbox image names are not compatibility aliases for loftd images while loftd is incomplete.
+_Avoid_: shared image publication; publishing loftd-compatible images as agentbox images
 
 
 

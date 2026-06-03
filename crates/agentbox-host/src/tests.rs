@@ -94,24 +94,31 @@ fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
 }
 
 #[test]
-fn publish_image_workflows_publish_shared_loftd_and_agentbox_names() {
+fn publish_image_workflows_publish_separate_loftd_and_agentbox_names() {
     for workflow in [PUBLISH_IMAGE_YML, PUBLISH_DEV_IMAGE_YML] {
         for required in [
-            "nix build .#container --print-out-paths > container-path.txt",
+            "nix build .#agentbox-container -o result-agentbox-container --print-out-paths > agentbox-container-path.txt",
+            "nix build .#container -o result-loftd-container --print-out-paths > loftd-container-path.txt",
+            "docker load --input \"$(cat agentbox-container-path.txt)\"",
+            "docker load --input \"$(cat loftd-container-path.txt)\"",
+            "docker image inspect localhost/agentbox:latest > /dev/null",
+            "docker run --rm --entrypoint /bin/agentbox-guest-init localhost/agentbox:latest --help > /dev/null",
             "docker image inspect localhost/loftd:latest > /dev/null",
             "docker run --rm --entrypoint /bin/loftd-guest-init localhost/loftd:latest --help > /dev/null",
-            "docker run --rm --entrypoint /bin/agentbox-guest-init localhost/loftd:latest --help > /dev/null",
             "loftd_image=ghcr.io/${owner}/loftd",
             "agentbox_image=ghcr.io/${owner}/agentbox",
-            "source_image=\"localhost/loftd:latest\"",
-            "${{ steps.image_meta.outputs.loftd_image }}",
-            "${{ steps.image_meta.outputs.agentbox_image }}",
+            "docker tag localhost/agentbox:latest \"${{ steps.image_meta.outputs.agentbox_image }}:${{ steps.image_meta.outputs.tag1 }}\"",
+            "docker tag localhost/agentbox:latest \"${{ steps.image_meta.outputs.agentbox_image }}:${{ steps.image_meta.outputs.tag2 }}\"",
+            "docker tag localhost/loftd:latest \"${{ steps.image_meta.outputs.loftd_image }}:${{ steps.image_meta.outputs.tag1 }}\"",
+            "docker tag localhost/loftd:latest \"${{ steps.image_meta.outputs.loftd_image }}:${{ steps.image_meta.outputs.tag2 }}\"",
+            "docker push \"${target_image}:${{ steps.image_meta.outputs.tag1 }}\"",
+            "docker push \"${target_image}:${{ steps.image_meta.outputs.tag2 }}\"",
         ] {
             assert!(workflow.contains(required), "missing {required}");
         }
 
         assert!(!workflow.contains("nix build .#agentbox-musl"));
-        assert!(!workflow.contains("localhost/agentbox:latest"));
+        assert!(!workflow.contains("source_image=\"localhost/loftd:latest\""));
     }
 }
 

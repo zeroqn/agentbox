@@ -938,20 +938,21 @@ shell as root, but does not otherwise change the persistent host mount layout.
 
 ### Container image (GitHub Actions)
 
-On push to `main`, push to `dev`, and tag pushes, CI publishes to:
+On push to `main`, push to `dev`, and tag pushes, CI publishes separate images:
 
+- `ghcr.io/<repo-owner>/agentbox:latest` (main only)
+- `ghcr.io/<repo-owner>/agentbox:dev` (dev only)
+- `ghcr.io/<repo-owner>/agentbox:<git-tag>` (tag only)
+- `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
 - `ghcr.io/<repo-owner>/loftd:latest` (main only)
 - `ghcr.io/<repo-owner>/loftd:dev` (dev only)
 - `ghcr.io/<repo-owner>/loftd:<git-tag>` (tag only)
 - `ghcr.io/<repo-owner>/loftd:sha-<12-char-commit>`
-- `ghcr.io/<repo-owner>/agentbox:*` with the same tags as a compatibility
-  alias for existing agentbox users.
 
-Both image names point at the same shared loftd-compatible image built from
-`.#container`; CI does not build a separate agentbox image. The shared image
-contains both `loftd-guest-init` and `agentbox-guest-init`, so loftd uses the
-canonical image entrypoint while agentbox explicitly enters through its
-compatibility guest init path.
+The agentbox image is built from `.#agentbox-container` and verifies
+`agentbox-guest-init`. The loftd image is built from `.#container` and verifies
+`loftd-guest-init`. Agentbox image names are not aliases for loftd image names
+while loftd remains incomplete.
 
 ### Prebuilt binaries (GitHub Releases)
 
