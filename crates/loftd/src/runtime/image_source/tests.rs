@@ -108,6 +108,23 @@ impl ChildBuildahCommands for FakeChildBuildahCommands {
                 "{{.FromImageDigest}}",
                 "fake-container",
             ] => Ok("sha256:feedface\n".to_owned()),
+            [
+                "inspect",
+                "--format",
+                OCI_PROCESS_CONFIG_TEMPLATE,
+                "fake-container",
+            ] => Ok(
+                concat!(
+                    "oci_env.0=504154483d2f6e69782f73746f72652f666973682f62696e\n",
+                    "oci_cmd.0=66697368\n",
+                    "oci_cmd.1=2d6c\n",
+                    "oci_entrypoint.0=2f6e69782f73746f72652f686173682d6c6f6674642f62696e2f6c6f6674642d67756573742d696e6974\n",
+                    "oci_entrypoint.1=656e746572\n",
+                    "oci_entrypoint.2=2d2d\n",
+                    "oci_workdir=2f776f726b73706163652f70726f6a656374\n"
+                )
+                .to_owned(),
+            ),
             ["mount", "fake-container"] => Ok(format!("{}\n", self.mount_root.display())),
             ["umount", "fake-container"] => Ok(String::new()),
             ["rm", "fake-container"] => Ok(String::new()),
@@ -264,6 +281,66 @@ fn materializer_output_accepts_missing_digest() {
     assert_eq!(rootfs.selected_reference, "localhost/loftd:latest");
     assert_eq!(rootfs.image_digest, None);
     assert_eq!(rootfs.rootfs_path, Path::new("/tmp/rootfs"));
+    assert_eq!(rootfs.process_config, OciProcessConfig::default());
+}
+
+#[test]
+fn materializer_output_parses_oci_process_config_fields() {
+    let rootfs = parse_materializer_output(
+        concat!(
+            "selected_image=localhost/loftd:latest\n",
+            "image_digest=sha256:feedface\n",
+            "rootfs_path=/tmp/rootfs\n",
+            "oci_env.1=484f4d453d2f686f6d652f646576\n",
+            "oci_env.0=504154483d2f6e69782f73746f72652f666973682f62696e\n",
+            "oci_cmd.0=66697368\n",
+            "oci_cmd.1=2d6c\n",
+            "oci_entrypoint.0=2f6e69782f73746f72652f686173682d6c6f6674642f62696e2f6c6f6674642d67756573742d696e6974\n",
+            "oci_entrypoint.1=656e746572\n",
+            "oci_entrypoint.2=2d2d\n",
+            "oci_workdir=2f776f726b7370616365\n",
+        ),
+    )
+    .expect("metadata output should parse");
+
+    assert_eq!(
+        rootfs.process_config,
+        OciProcessConfig {
+            env: vec![
+                "PATH=/nix/store/fish/bin".to_owned(),
+                "HOME=/home/dev".to_owned()
+            ],
+            cmd: vec!["fish".to_owned(), "-l".to_owned()],
+            entrypoint: vec![
+                "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                "enter".to_owned(),
+                "--".to_owned()
+            ],
+            working_dir: Some("/workspace".to_owned()),
+        }
+    );
+}
+
+#[test]
+fn materializer_output_rejects_malformed_known_oci_fields() {
+    assert!(
+        parse_materializer_output(
+            "selected_image=localhost/loftd:latest\nrootfs_path=/tmp/rootfs\noci_env.x=61\n",
+        )
+        .is_err()
+    );
+    assert!(
+        parse_materializer_output(
+            "selected_image=localhost/loftd:latest\nrootfs_path=/tmp/rootfs\noci_cmd.0=6\n",
+        )
+        .is_err()
+    );
+    assert!(
+        parse_materializer_output(
+            "selected_image=localhost/loftd:latest\nrootfs_path=/tmp/rootfs\noci_workdir=2f\noci_workdir=2f\n",
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -320,6 +397,12 @@ fn internal_child_snapshots_buildah_mount_and_cleans_container_on_success() {
                 "{{.FromImageDigest}}",
                 "fake-container"
             ],
+            vec![
+                "inspect",
+                "--format",
+                OCI_PROCESS_CONFIG_TEMPLATE,
+                "fake-container"
+            ],
             vec!["mount", "fake-container"],
             vec!["umount", "fake-container"],
             vec!["rm", "fake-container"],
@@ -351,6 +434,12 @@ fn internal_child_cleans_container_on_compatibility_failure() {
                 "inspect",
                 "--format",
                 "{{.FromImageDigest}}",
+                "fake-container"
+            ],
+            vec![
+                "inspect",
+                "--format",
+                OCI_PROCESS_CONFIG_TEMPLATE,
                 "fake-container"
             ],
             vec!["mount", "fake-container"],

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -13,6 +14,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
 const GUEST_INIT_BASENAME: &str = "loftd-guest-init";
 const INTERNAL_BTRFS_ROOTFS_COMMAND: &str = "btrfs-rootfs";
+const OCI_PROCESS_CONFIG_TEMPLATE: &str = r#"{{range $index, $value := .OCIv1.Config.Env}}{{printf "oci_env.%d=%x\n" $index $value}}{{end}}{{range $index, $value := .OCIv1.Config.Cmd}}{{printf "oci_cmd.%d=%x\n" $index $value}}{{end}}{{range $index, $value := .OCIv1.Config.Entrypoint}}{{printf "oci_entrypoint.%d=%x\n" $index $value}}{{end}}{{if .OCIv1.Config.WorkingDir}}{{printf "oci_workdir=%x\n" .OCIv1.Config.WorkingDir}}{{end}}"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BuildahPullPolicy {
@@ -42,6 +44,15 @@ pub(crate) struct ImageSourceRootfs {
     pub(crate) selected_reference: String,
     pub(crate) image_digest: Option<String>,
     pub(crate) rootfs_path: PathBuf,
+    pub(crate) process_config: OciProcessConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct OciProcessConfig {
+    pub(crate) env: Vec<String>,
+    pub(crate) cmd: Vec<String>,
+    pub(crate) entrypoint: Vec<String>,
+    pub(crate) working_dir: Option<String>,
 }
 
 pub(crate) trait BuildahCommands {
@@ -158,16 +169,36 @@ fn parse_materializer_output(output: &str) -> Result<ImageSourceRootfs> {
     let mut selected_reference = None;
     let mut image_digest = None;
     let mut rootfs_path = None;
+    let mut env = BTreeMap::new();
+    let mut cmd = BTreeMap::new();
+    let mut entrypoint = BTreeMap::new();
+    let mut working_dir = None;
 
     for line in output.lines() {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        match key {
-            "selected_image" if !value.is_empty() => selected_reference = Some(value.to_owned()),
-            "image_digest" if digest_is_known(value) => image_digest = Some(value.to_owned()),
-            "rootfs_path" if !value.is_empty() => rootfs_path = Some(PathBuf::from(value)),
-            _ => {}
+        if let Some(index) = key.strip_prefix("oci_env.") {
+            env.insert(parse_oci_index(key, index)?, decode_hex_field(key, value)?);
+        } else if let Some(index) = key.strip_prefix("oci_cmd.") {
+            cmd.insert(parse_oci_index(key, index)?, decode_hex_field(key, value)?);
+        } else if let Some(index) = key.strip_prefix("oci_entrypoint.") {
+            entrypoint.insert(parse_oci_index(key, index)?, decode_hex_field(key, value)?);
+        } else {
+            match key {
+                "selected_image" if !value.is_empty() => {
+                    selected_reference = Some(value.to_owned());
+                }
+                "image_digest" if digest_is_known(value) => image_digest = Some(value.to_owned()),
+                "rootfs_path" if !value.is_empty() => rootfs_path = Some(PathBuf::from(value)),
+                "oci_workdir" => {
+                    if working_dir.is_some() {
+                        bail!("Buildah materializer repeated {key}");
+                    }
+                    working_dir = Some(decode_hex_field(key, value)?);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -177,7 +208,35 @@ fn parse_materializer_output(output: &str) -> Result<ImageSourceRootfs> {
         image_digest,
         rootfs_path: rootfs_path
             .ok_or_else(|| anyhow!("Buildah materializer did not report task rootfs path"))?,
+        process_config: OciProcessConfig {
+            env: env.into_values().collect(),
+            cmd: cmd.into_values().collect(),
+            entrypoint: entrypoint.into_values().collect(),
+            working_dir,
+        },
     })
+}
+
+fn parse_oci_index(key: &str, value: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .with_context(|| format!("Buildah materializer field {key} has invalid index"))
+}
+
+fn decode_hex_field(key: &str, encoded: &str) -> Result<String> {
+    if !encoded.len().is_multiple_of(2) {
+        bail!("Buildah materializer field {key} has odd-length hex");
+    }
+    let bytes = encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair)?;
+            Ok(u8::from_str_radix(text, 16)?)
+        })
+        .collect::<std::result::Result<Vec<_>, anyhow::Error>>()?;
+    String::from_utf8(bytes)
+        .with_context(|| format!("Buildah materializer field {key} is not UTF-8"))
 }
 
 fn digest_is_known(value: &str) -> bool {
@@ -249,6 +308,7 @@ fn run_btrfs_rootfs_child_with_commands(
         "{{.FromImageDigest}}",
         container.id(),
     ])?);
+    let process_config = inspect_oci_process_config(buildah, container.id())?;
     let mounted_rootfs = PathBuf::from(trim_required(
         buildah.run(&["mount", container.id()])?,
         "buildah mount did not return a mounted rootfs path",
@@ -274,7 +334,51 @@ fn run_btrfs_rootfs_child_with_commands(
         println!("image_digest={digest}");
     }
     println!("rootfs_path={}", destination.display());
+    print_oci_process_config(&process_config);
     Ok(())
+}
+
+fn inspect_oci_process_config(
+    buildah: &impl ChildBuildahCommands,
+    container_id: &str,
+) -> Result<OciProcessConfig> {
+    let output = buildah.run(&[
+        "inspect",
+        "--format",
+        OCI_PROCESS_CONFIG_TEMPLATE,
+        container_id,
+    ])?;
+    parse_oci_process_config_output(&output)
+}
+
+fn parse_oci_process_config_output(output: &str) -> Result<OciProcessConfig> {
+    parse_materializer_output(&format!(
+        "selected_image=placeholder\nrootfs_path=/placeholder\n{output}"
+    ))
+    .map(|rootfs| rootfs.process_config)
+}
+
+fn print_oci_process_config(config: &OciProcessConfig) {
+    for (index, value) in config.env.iter().enumerate() {
+        println!("oci_env.{index}={}", encode_hex(value));
+    }
+    for (index, value) in config.cmd.iter().enumerate() {
+        println!("oci_cmd.{index}={}", encode_hex(value));
+    }
+    for (index, value) in config.entrypoint.iter().enumerate() {
+        println!("oci_entrypoint.{index}={}", encode_hex(value));
+    }
+    if let Some(working_dir) = &config.working_dir {
+        println!("oci_workdir={}", encode_hex(working_dir));
+    }
+}
+
+fn encode_hex(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.as_bytes() {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 fn run_buildah(args: &[&str]) -> Result<String> {

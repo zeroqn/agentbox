@@ -88,9 +88,10 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
                 .context("failed to prepare loftd persistent dev cache disks")
             {
                 Ok(disks) => match profiler.measure_result("guest_init_resolution", || {
-                    guest_init::resolve_guest_init(
+                    guest_init::resolve_guest_init_with_entrypoint(
                         lease.handle().rootfs_path(),
                         plan.guest_init.as_deref(),
+                        lease.handle().process_config().entrypoint.as_slice(),
                     )
                 }) {
                     Ok(guest_init) => match profiler.measure_result("launch_config_build", || {
@@ -99,6 +100,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
                             workspace_source: &plan.workspace_dir,
                             guest_init_exec: &guest_init.guest_exec_path,
                             guest_command: &plan.guest_command,
+                            image_process_config: lease.handle().process_config(),
                             mem_gib: plan.mem_gib,
                             debug: plan.debug,
                             profile: plan.profile,

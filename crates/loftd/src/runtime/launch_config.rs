@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::runtime::image_source::OciProcessConfig;
+
 pub(crate) const WORKSPACE_TAG: &str = "loftd-workspace";
 pub(crate) const WORKSPACE_TARGET: &str = "/workspace";
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
@@ -33,6 +35,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) workspace_source: &'a Path,
     pub(crate) guest_init_exec: &'a str,
     pub(crate) guest_command: &'a [String],
+    pub(crate) image_process_config: &'a OciProcessConfig,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) debug: bool,
     pub(crate) profile: bool,
@@ -60,23 +63,33 @@ pub(crate) struct LaunchConfig {
 impl LaunchConfig {
     pub(crate) fn build_for_task(spec: LaunchSpec<'_>) -> Result<Self> {
         let ram_mib = resolve_ram_mib(spec.mem_gib)?;
-        let mut env = vec![
+        let required_env = vec![
             (HOST_UID_ENV.to_owned(), spec.host_uid.to_string()),
             (HOST_GID_ENV.to_owned(), spec.host_gid.to_string()),
             (WORKSPACE_TAG_ENV.to_owned(), WORKSPACE_TAG.to_owned()),
             (WORKSPACE_TARGET_ENV.to_owned(), WORKSPACE_TARGET.to_owned()),
         ];
+        let mut env = merge_env(&spec.image_process_config.env, required_env)?;
         if spec.root {
-            env.push((ENTER_AS_ROOT_ENV.to_owned(), "1".to_owned()));
+            insert_env(&mut env, ENTER_AS_ROOT_ENV, "1");
         }
         if spec.profile {
-            env.push((GUEST_PROFILE_ENV.to_owned(), "1".to_owned()));
+            insert_env(&mut env, GUEST_PROFILE_ENV, "1");
         }
         if spec.debug {
-            env.push((GUEST_DEBUG_ENV.to_owned(), "1".to_owned()));
+            insert_env(&mut env, GUEST_DEBUG_ENV, "1");
         }
-        env.extend(spec.extra_env);
-        let argv = guest_init_argv(spec.guest_command);
+        for (key, value) in spec.extra_env {
+            env.insert(key.clone(), value.clone());
+        }
+        let argv = guest_init_argv(spec.guest_command, &spec.image_process_config.cmd);
+        let workdir = spec
+            .image_process_config
+            .working_dir
+            .as_deref()
+            .filter(|working_dir| !working_dir.is_empty())
+            .unwrap_or(WORKSPACE_TARGET)
+            .to_owned();
 
         Ok(Self {
             task_rootfs: spec.task_rootfs.to_path_buf(),
@@ -88,10 +101,10 @@ impl LaunchConfig {
             disks: spec.disks,
             ram_mib,
             vcpus: spec.vcpus,
-            workdir: WORKSPACE_TARGET.to_owned(),
+            workdir,
             exec_path: spec.guest_init_exec.to_owned(),
             argv,
-            env,
+            env: env.into_iter().collect(),
         })
     }
 
@@ -305,9 +318,37 @@ fn resolve_ram_mib(mem_gib: Option<u32>) -> Result<u32> {
         .ok_or_else(|| anyhow!("loftd --mem is too large for libkrun ram_mib"))
 }
 
-fn guest_init_argv(guest_command: &[String]) -> Vec<String> {
+fn merge_env(
+    image_env: &[String],
+    required_env: Vec<(String, String)>,
+) -> Result<BTreeMap<String, String>> {
+    let mut env = BTreeMap::new();
+    for entry in image_env {
+        let (key, value) = entry
+            .split_once('=')
+            .ok_or_else(|| anyhow!("loftd image env entry '{entry}' is missing '='"))?;
+        if key.is_empty() {
+            anyhow::bail!("loftd image env entry '{entry}' has an empty key");
+        }
+        env.insert(key.to_owned(), value.to_owned());
+    }
+    for (key, value) in required_env {
+        env.insert(key, value);
+    }
+    Ok(env)
+}
+
+fn insert_env(env: &mut BTreeMap<String, String>, key: &str, value: &str) {
+    env.insert(key.to_owned(), value.to_owned());
+}
+
+fn guest_init_argv(guest_command: &[String], image_cmd: &[String]) -> Vec<String> {
     let command = if guest_command.is_empty() {
-        vec!["fish".to_owned(), "-l".to_owned()]
+        if image_cmd.is_empty() {
+            vec!["fish".to_owned(), "-l".to_owned()]
+        } else {
+            image_cmd.to_vec()
+        }
     } else {
         guest_command.to_vec()
     };
@@ -362,11 +403,13 @@ mod tests {
 
     #[test]
     fn launch_config_defaults_to_guest_init_enter_fish_shell() {
+        let image_process_config = OciProcessConfig::default();
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
             workspace_source: Path::new("/workspace-src"),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
+            image_process_config: &image_process_config,
             mem_gib: Some(4),
             debug: true,
             profile: true,
@@ -408,11 +451,13 @@ mod tests {
     #[test]
     fn launch_config_uses_explicit_guest_command() {
         let command = vec!["bash".to_owned(), "-lc".to_owned(), "echo ok".to_owned()];
+        let image_process_config = OciProcessConfig::default();
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
             workspace_source: Path::new("/workspace-src"),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &command,
+            image_process_config: &image_process_config,
             mem_gib: Some(4),
             debug: false,
             profile: false,
@@ -430,11 +475,18 @@ mod tests {
 
     #[test]
     fn launch_config_round_trips_through_hex_line_format() {
+        let image_process_config = OciProcessConfig {
+            env: vec!["PATH=/nix/store/fish/bin".to_owned()],
+            cmd: vec!["fish".to_owned(), "-l".to_owned()],
+            entrypoint: Vec::new(),
+            working_dir: Some("/workspace/project".to_owned()),
+        };
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
             workspace_source: Path::new("/workspace-src"),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
+            image_process_config: &image_process_config,
             mem_gib: Some(2),
             debug: false,
             profile: false,
@@ -463,6 +515,9 @@ mod tests {
         assert_eq!(parsed, config);
         assert!(parsed.env_contains("LOFTD_ENTER_AS_ROOT", "1"));
         assert!(parsed.env_contains("LOFTD_CONTAINERS_STORAGE", "1"));
+        assert!(parsed.env_contains("PATH", "/nix/store/fish/bin"));
+        assert_eq!(parsed.argv, ["enter", "--", "fish", "-l"]);
+        assert_eq!(parsed.workdir, "/workspace/project");
         assert_eq!(parsed.disks[0].id, "loftd-nix");
         assert_eq!(
             parsed.disks[1].path,
@@ -475,5 +530,107 @@ mod tests {
         assert!(LaunchConfig::parse("unknown=61\n").is_err());
         assert!(LaunchConfig::parse("task_rootfs=6\n").is_err());
         assert!(LaunchConfig::parse("task_rootfs=2f\n").is_err());
+    }
+
+    #[test]
+    fn image_env_is_merged_with_runtime_env_without_duplicates() {
+        let image_process_config = OciProcessConfig {
+            env: vec![
+                "PATH=/nix/store/fish/bin".to_owned(),
+                "LOFTD_HOST_UID=image".to_owned(),
+                "LOFTD_CONTAINERS_STORAGE=image".to_owned(),
+            ],
+            ..OciProcessConfig::default()
+        };
+
+        let config = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            workspace_source: Path::new("/workspace-src"),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            debug: false,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: vec![("LOFTD_CONTAINERS_STORAGE".to_owned(), "disk".to_owned())],
+        })
+        .expect("launch config should build");
+
+        assert!(config.env_contains("PATH", "/nix/store/fish/bin"));
+        assert!(config.env_contains("LOFTD_HOST_UID", "1000"));
+        assert!(config.env_contains("LOFTD_CONTAINERS_STORAGE", "disk"));
+        assert_eq!(
+            config
+                .env
+                .iter()
+                .filter(|(key, _)| key == "LOFTD_HOST_UID")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn malformed_image_env_is_rejected() {
+        let missing_equals = OciProcessConfig {
+            env: vec!["PATH".to_owned()],
+            ..OciProcessConfig::default()
+        };
+        let empty_key = OciProcessConfig {
+            env: vec!["=value".to_owned()],
+            ..OciProcessConfig::default()
+        };
+
+        for image_process_config in [&missing_equals, &empty_key] {
+            let err = LaunchConfig::build_for_task(LaunchSpec {
+                task_rootfs: Path::new("/state/task/rootfs"),
+                workspace_source: Path::new("/workspace-src"),
+                guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+                guest_command: &[],
+                image_process_config,
+                mem_gib: Some(4),
+                debug: false,
+                profile: false,
+                root: false,
+                host_uid: 1000,
+                host_gid: 1001,
+                vcpus: 2,
+                disks: Vec::new(),
+                extra_env: Vec::new(),
+            })
+            .expect_err("malformed image env should fail");
+            assert!(err.to_string().contains("loftd image env entry"));
+        }
+    }
+
+    #[test]
+    fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
+        let image_process_config = OciProcessConfig {
+            cmd: vec!["bash".to_owned(), "-lc".to_owned(), "echo image".to_owned()],
+            ..OciProcessConfig::default()
+        };
+        let config = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            workspace_source: Path::new("/workspace-src"),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            debug: false,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect("launch config should build");
+
+        assert_eq!(config.argv, ["enter", "--", "bash", "-lc", "echo image"]);
     }
 }

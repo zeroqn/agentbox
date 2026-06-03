@@ -607,6 +607,7 @@ mod tests {
             workspace_source: Path::new("/workspace-src"),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
+            image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),
             mem_gib: Some(4),
             debug: false,
             profile: false,

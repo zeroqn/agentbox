@@ -11,18 +11,76 @@ pub(crate) struct ResolvedGuestInit {
     pub(crate) guest_exec_path: String,
 }
 
-pub(crate) fn resolve_guest_init(
+pub(crate) fn resolve_guest_init_with_entrypoint(
     task_rootfs: &Path,
     override_path: Option<&Path>,
+    image_entrypoint: &[String],
 ) -> Result<ResolvedGuestInit> {
     let target = find_loftd_guest_init(task_rootfs)?;
     if let Some(override_path) = override_path {
         copy_guest_init_override(override_path, &target)?;
+        return Ok(ResolvedGuestInit {
+            guest_exec_path: guest_path(task_rootfs, &target)?,
+            host_path: target,
+        });
     }
+
+    if !image_entrypoint.is_empty() {
+        return resolve_guest_init_entrypoint(task_rootfs, image_entrypoint);
+    }
+
     Ok(ResolvedGuestInit {
         guest_exec_path: guest_path(task_rootfs, &target)?,
         host_path: target,
     })
+}
+
+fn resolve_guest_init_entrypoint(
+    task_rootfs: &Path,
+    image_entrypoint: &[String],
+) -> Result<ResolvedGuestInit> {
+    match image_entrypoint {
+        [exec_path, enter, separator] if enter == "enter" && separator == "--" => {
+            let guest_path = Path::new(exec_path);
+            if !guest_path.is_absolute() {
+                bail!(
+                    "loftd image entrypoint '{}' is not absolute; direct-libkrun requires an absolute {GUEST_INIT_BASENAME} entrypoint",
+                    exec_path
+                );
+            }
+            if guest_path.file_name().and_then(|name| name.to_str()) != Some(GUEST_INIT_BASENAME) {
+                bail!(
+                    "loftd image entrypoint '{}' does not point to {GUEST_INIT_BASENAME}",
+                    exec_path
+                );
+            }
+            let host_path = task_rootfs.join(
+                guest_path
+                    .strip_prefix("/")
+                    .context("absolute guest-init path should strip root prefix")?,
+            );
+            if !is_executable_file(&host_path) {
+                bail!(
+                    "loftd image entrypoint '{}' does not resolve to an executable file in task rootfs '{}'",
+                    exec_path,
+                    task_rootfs.display()
+                );
+            }
+            Ok(ResolvedGuestInit {
+                host_path,
+                guest_exec_path: exec_path.to_owned(),
+            })
+        }
+        [_, enter, separator, extra @ ..] if enter == "enter" && separator == "--" => {
+            bail!(
+                "loftd image entrypoint has unsupported extra args after 'enter --': {:?}",
+                extra
+            )
+        }
+        _ => bail!(
+            "loftd image entrypoint is not compatible with direct-libkrun; expected [*/{GUEST_INIT_BASENAME}, \"enter\", \"--\"]"
+        ),
+    }
 }
 
 fn find_loftd_guest_init(task_rootfs: &Path) -> Result<PathBuf> {
@@ -128,7 +186,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir should be created");
         let host_path = write_guest_init(temp.path(), "hash-loftd");
 
-        let resolved = resolve_guest_init(temp.path(), None).expect("guest init should resolve");
+        let resolved = resolve_guest_init_with_entrypoint(temp.path(), None, &[])
+            .expect("guest init should resolve");
 
         assert_eq!(resolved.host_path, host_path);
         assert_eq!(
@@ -140,11 +199,12 @@ mod tests {
     #[test]
     fn rejects_zero_or_multiple_guest_init_matches() {
         let temp = tempfile::tempdir().expect("tempdir should be created");
-        assert!(resolve_guest_init(temp.path(), None).is_err());
+        assert!(resolve_guest_init_with_entrypoint(temp.path(), None, &[]).is_err());
 
         write_guest_init(temp.path(), "hash-one");
         write_guest_init(temp.path(), "hash-two");
-        let err = resolve_guest_init(temp.path(), None).expect_err("multiple matches fail");
+        let err = resolve_guest_init_with_entrypoint(temp.path(), None, &[])
+            .expect_err("multiple matches fail");
         assert!(err.to_string().contains("ambiguous"));
     }
 
@@ -158,8 +218,8 @@ mod tests {
         fs::set_permissions(&override_path, fs::Permissions::from_mode(0o751))
             .expect("override mode should be set");
 
-        let resolved =
-            resolve_guest_init(temp.path(), Some(&override_path)).expect("override should resolve");
+        let resolved = resolve_guest_init_with_entrypoint(temp.path(), Some(&override_path), &[])
+            .expect("override should resolve");
 
         assert_eq!(resolved.host_path, target);
         assert_eq!(
@@ -177,6 +237,80 @@ mod tests {
                 .mode()
                 & 0o777,
             0o751
+        );
+    }
+
+    #[test]
+    fn compatible_image_entrypoint_is_used_as_guest_init_exec() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        write_guest_init(temp.path(), "hash-loftd");
+
+        let resolved = resolve_guest_init_with_entrypoint(
+            temp.path(),
+            None,
+            &[
+                "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                "enter".to_owned(),
+                "--".to_owned(),
+            ],
+        )
+        .expect("compatible entrypoint should resolve");
+
+        assert_eq!(
+            resolved.guest_exec_path,
+            "/nix/store/hash-loftd/bin/loftd-guest-init"
+        );
+    }
+
+    #[test]
+    fn incompatible_image_entrypoint_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        write_guest_init(temp.path(), "hash-loftd");
+
+        let cases = [
+            vec!["/bin/bash".to_owned()],
+            vec![
+                "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                "enter".to_owned(),
+                "--".to_owned(),
+                "fish".to_owned(),
+            ],
+            vec![
+                "loftd-guest-init".to_owned(),
+                "enter".to_owned(),
+                "--".to_owned(),
+            ],
+        ];
+
+        for entrypoint in cases {
+            assert!(
+                resolve_guest_init_with_entrypoint(temp.path(), None, &entrypoint).is_err(),
+                "entrypoint should fail: {entrypoint:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn guest_init_override_ignores_image_entrypoint_executable() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let target = write_guest_init(temp.path(), "hash-loftd");
+        let override_path = temp.path().join("override-loftd-guest-init");
+        fs::write(&override_path, "#!/bin/sh\necho override\n")
+            .expect("override should be written");
+        fs::set_permissions(&override_path, fs::Permissions::from_mode(0o755))
+            .expect("override mode should be set");
+
+        let resolved = resolve_guest_init_with_entrypoint(
+            temp.path(),
+            Some(&override_path),
+            &["/bin/not-loftd".to_owned()],
+        )
+        .expect("override should win over incompatible image entrypoint");
+
+        assert_eq!(resolved.host_path, target);
+        assert_eq!(
+            fs::read_to_string(&resolved.host_path).expect("target should be readable"),
+            "#!/bin/sh\necho override\n"
         );
     }
 }

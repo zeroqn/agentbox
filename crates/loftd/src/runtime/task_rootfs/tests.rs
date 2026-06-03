@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::image_source::BuildahCommands;
+use crate::runtime::image_source::{BuildahCommands, OciProcessConfig};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -77,7 +77,7 @@ impl FakeBuildahCommands {
     fn success(rootfs_path: &Path, selected_image: &str) -> Self {
         Self {
             output: RefCell::new(Ok(format!(
-                "selected_image={selected_image}\nimage_digest=sha256:feedface\nrootfs_path={}\n",
+                "selected_image={selected_image}\nimage_digest=sha256:feedface\nrootfs_path={}\noci_env.0=504154483d2f6e69782f73746f72652f666973682f62696e\n",
                 rootfs_path.display()
             ))),
             calls: RefCell::new(Vec::new()),
@@ -159,6 +159,10 @@ fn manager_materializes_btrfs_task_rootfs_handle_from_buildah_source() {
     assert_eq!(handle.backend(), TaskRootfsBackend::BtrfsSnapshot);
     assert_eq!(handle.selected_image_reference(), DEFAULT_IMAGE);
     assert_eq!(handle.image_digest(), Some("sha256:feedface"));
+    assert_eq!(
+        handle.process_config().env,
+        vec!["PATH=/nix/store/fish/bin".to_owned()]
+    );
 }
 
 #[test]
@@ -227,6 +231,7 @@ fn cleanup_delete_failure_preserves_state_for_manual_recovery() {
         backend: TaskRootfsBackend::BtrfsSnapshot,
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
+        process_config: OciProcessConfig::default(),
         preserve_debug: false,
     };
     let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
@@ -255,6 +260,7 @@ fn lease_explicit_cleanup_reports_delete_failure() {
         backend: TaskRootfsBackend::BtrfsSnapshot,
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
+        process_config: OciProcessConfig::default(),
         preserve_debug: false,
     };
     let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
@@ -280,6 +286,7 @@ fn lease_drop_fallback_is_best_effort_and_non_panicking() {
         backend: TaskRootfsBackend::BtrfsSnapshot,
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
+        process_config: OciProcessConfig::default(),
         preserve_debug: false,
     };
     let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
@@ -302,6 +309,7 @@ fn lease_preserve_debug_disables_automatic_cleanup() {
         backend: TaskRootfsBackend::BtrfsSnapshot,
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
+        process_config: OciProcessConfig::default(),
         preserve_debug: true,
     };
     let commands = FakeBtrfsRootfsCommands::new();

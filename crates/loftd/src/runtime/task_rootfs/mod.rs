@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::runtime::image_source::{self, BuildahCommands};
+use crate::runtime::image_source::{self, BuildahCommands, OciProcessConfig};
 use crate::runtime::launch_plan::ImageSelection;
 use crate::task_rootfs::TaskRootfsBackend;
 
@@ -19,6 +19,7 @@ pub(crate) struct TaskRootfsHandle {
     backend: TaskRootfsBackend,
     selected_image_reference: String,
     image_digest: Option<String>,
+    process_config: OciProcessConfig,
     preserve_debug: bool,
 }
 
@@ -106,6 +107,10 @@ impl TaskRootfsHandle {
         self.image_digest.as_deref()
     }
 
+    pub(crate) fn process_config(&self) -> &OciProcessConfig {
+        &self.process_config
+    }
+
     pub(crate) fn cleanup_state(
         self,
         commands: &impl BtrfsRootfsCommands,
@@ -162,6 +167,7 @@ impl TaskRootfsManager {
             backend: TaskRootfsBackend::BtrfsSnapshot,
             selected_image_reference: source_rootfs.selected_reference,
             image_digest: source_rootfs.image_digest,
+            process_config: source_rootfs.process_config,
             preserve_debug,
         })
     }
