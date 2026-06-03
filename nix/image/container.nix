@@ -5,6 +5,7 @@ let
     inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent reasonix rtkPrebuilt containerLibPolicySeccompJson libkrun podman crun agentboxMuslPackage;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
+    inherit imageVariant;
   };
   imageConfig = import ./config.nix {
     inherit pkgs ohMyCodex agentboxMuslPackage configPayloads layers imageVariant;
@@ -90,5 +91,7 @@ else
     buildCommand = ''
       echo "checking ${imageVariant} image config Nix DB metadata coverage"
       test -e ${imageChecks.imageConfigNixDbRefs}/passed
+      echo "checking ${imageVariant} image wrapper contracts"
+      test -e ${imageChecks.wrapperContracts}/passed
     '' + (old.buildCommand or "");
   })

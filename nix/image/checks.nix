@@ -6,6 +6,7 @@ let
     inherit pkgs pkgsMaster ohMyCodex opencode piCodingAgent reasonix rtkPrebuilt containerLibPolicySeccompJson libkrun podman crun agentboxMuslPackage;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
+    inherit imageVariant;
   };
   imageConfig = import ./config.nix {
     inherit pkgs ohMyCodex agentboxMuslPackage configPayloads layers imageVariant;
@@ -85,6 +86,39 @@ let
   missingRefsMessageFile = pkgs.writeText "${imageVariant}-image-config-missing-refs-message.txt" (
     builtins.unsafeDiscardStringContext missingRefsMessage
   );
+
+  wrapperContracts = pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
+    {
+      nativeBuildInputs = [ pkgs.gnugrep ];
+    }
+    ''
+      set -euo pipefail
+
+      ${if imageVariant == "loftd" then ''
+        grep -F 'LOFTD_NIX_OVERLAY' ${layers.nixCommandCompat}/bin/nix
+        grep -F 'loftd-guest-init internal nix wait' ${layers.nixCommandCompat}/bin/nix
+        grep -F 'LOFTD_CONTAINERS_STORAGE' ${layers.podmanCommandCompat}/bin/podman
+        grep -F 'loftd-guest-init internal podman wait' ${layers.podmanCommandCompat}/bin/podman
+        grep -F 'loftd-guest-init internal podman service-wait' ${layers.dockerCommandCompat}/bin/docker
+        grep -F 'loftd-guest-init internal podman service-wait' ${layers.dockerComposeCommandCompat}/bin/docker-compose
+        grep -F 'loftd-nix-store-db-check' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
+        grep -F '/run/loftd/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
+        ! grep -F 'AGENTBOX_LIBKRUN' ${layers.nixCommandCompat}/bin/nix
+        ! grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
+      '' else ''
+        grep -F 'AGENTBOX_LIBKRUN_NIX_OVERLAY' ${layers.nixCommandCompat}/bin/nix
+        grep -F 'agentbox-guest-init libkrun nix wait' ${layers.nixCommandCompat}/bin/nix
+        grep -F 'AGENTBOX_LIBKRUN_CONTAINERS_STORAGE' ${layers.podmanCommandCompat}/bin/podman
+        grep -F 'agentbox-guest-init libkrun podman wait' ${layers.podmanCommandCompat}/bin/podman
+        grep -F 'agentbox-guest-init libkrun podman service-wait' ${layers.dockerCommandCompat}/bin/docker
+        grep -F 'agentbox-guest-init libkrun podman service-wait' ${layers.dockerComposeCommandCompat}/bin/docker-compose
+        grep -F 'agentbox-nix-store-db-check' ${layers.nixStoreDbCheck}/bin/agentbox-nix-store-db-check
+        grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/agentbox-nix-store-db-check
+      ''}
+
+      mkdir -p "$out"
+      touch "$out/passed"
+    '';
 in
 {
   inherit
@@ -93,6 +127,7 @@ in
     imageNixDbStorePaths
     missingImageConfigNixDbRefs
     missingRefsMessage
+    wrapperContracts
     ;
 
   imageConfigNixDbRefs = pkgs.runCommand "${imageVariant}-image-config-nix-db-refs-check"

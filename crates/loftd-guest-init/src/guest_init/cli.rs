@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser, PartialEq, Eq)]
 #[command(
@@ -14,6 +14,8 @@ pub(in crate::guest_init) struct GuestInitCli {
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum GuestInitCommand {
     Enter(EnterCommand),
+    #[command(hide = true)]
+    Internal(InternalCommand),
 }
 
 #[derive(Debug, Args, Clone, PartialEq, Eq)]
@@ -36,15 +38,67 @@ impl EnterCommand {
     }
 }
 
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) struct InternalCommand {
+    #[command(subcommand)]
+    pub(in crate::guest_init) command: InternalSubcommand,
+}
+
+#[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) enum InternalSubcommand {
+    Nix(NixCommand),
+    Podman(PodmanCommand),
+    Resize(ResizeCommand),
+}
+
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) struct NixCommand {
+    #[command(subcommand)]
+    pub(in crate::guest_init) command: NixSubcommand,
+}
+
+#[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) enum NixSubcommand {
+    Prep,
+    Wait,
+}
+
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) struct PodmanCommand {
+    #[command(subcommand)]
+    pub(in crate::guest_init) command: PodmanSubcommand,
+}
+
+#[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) enum PodmanSubcommand {
+    Prep,
+    Wait,
+    ServiceWait,
+}
+
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use crate::guest_init::cli::{GuestInitCli, GuestInitCommand};
+    use crate::guest_init::cli::{
+        GuestInitCli, GuestInitCommand, InternalSubcommand, NixSubcommand, PodmanSubcommand,
+    };
 
     #[test]
     fn command_help_renders() {
         GuestInitCli::command().debug_assert();
+    }
+
+    #[test]
+    fn public_help_hides_internal_worker_namespace() {
+        let mut help = Vec::new();
+        GuestInitCli::command()
+            .write_long_help(&mut help)
+            .expect("help should render");
+        let help = String::from_utf8(help).expect("help should be utf8");
+
+        assert!(help.contains("enter"));
+        assert!(!help.contains("internal"));
     }
 
     #[test]
@@ -53,7 +107,9 @@ mod tests {
             GuestInitCli::try_parse_from(["loftd-guest-init", "enter", "bash", "-lc", "echo ok"])
                 .expect("enter command should parse");
 
-        let GuestInitCommand::Enter(command) = cli.command;
+        let GuestInitCommand::Enter(command) = cli.command else {
+            panic!("expected enter command");
+        };
         assert_eq!(command.resolved_command(), ["bash", "-lc", "echo ok"]);
     }
 
@@ -62,7 +118,9 @@ mod tests {
         let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "enter"])
             .expect("enter command should parse");
 
-        let GuestInitCommand::Enter(command) = cli.command;
+        let GuestInitCommand::Enter(command) = cli.command else {
+            panic!("expected enter command");
+        };
         assert_eq!(command.resolved_command(), ["fish", "-l"]);
     }
 
@@ -71,15 +129,76 @@ mod tests {
         let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "enter", "--", "fish", "-l"])
             .expect("enter command should parse");
 
-        let GuestInitCommand::Enter(command) = cli.command;
+        let GuestInitCommand::Enter(command) = cli.command else {
+            panic!("expected enter command");
+        };
         assert_eq!(command.resolved_command(), ["fish", "-l"]);
     }
 
     #[test]
-    fn does_not_accept_legacy_agentbox_runtime_surface() {
-        let err = GuestInitCli::try_parse_from(["loftd-guest-init", "microvm", "enter"])
-            .expect_err("legacy runtime names should not parse");
+    fn parses_hidden_internal_worker_commands() {
+        let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "internal", "nix", "prep"])
+            .expect("internal nix prep should parse");
+        let GuestInitCommand::Internal(internal) = cli.command else {
+            panic!("expected internal command");
+        };
+        let InternalSubcommand::Nix(nix) = internal.command else {
+            panic!("expected nix command");
+        };
+        assert_eq!(nix.command, NixSubcommand::Prep);
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        let cli = GuestInitCli::try_parse_from([
+            "loftd-guest-init",
+            "internal",
+            "podman",
+            "service-wait",
+        ])
+        .expect("internal podman service-wait should parse");
+        let GuestInitCommand::Internal(internal) = cli.command else {
+            panic!("expected internal command");
+        };
+        let InternalSubcommand::Podman(podman) = internal.command else {
+            panic!("expected podman command");
+        };
+        assert_eq!(podman.command, PodmanSubcommand::ServiceWait);
     }
+
+    #[test]
+    fn parses_hidden_internal_resize_command() {
+        let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "internal", "resize", "nix"])
+            .expect("internal resize should parse");
+        let GuestInitCommand::Internal(internal) = cli.command else {
+            panic!("expected internal command");
+        };
+        let InternalSubcommand::Resize(resize) = internal.command else {
+            panic!("expected resize command");
+        };
+        assert_eq!(resize.target, crate::guest_init::cli::ResizeTarget::Nix);
+    }
+
+    #[test]
+    fn does_not_accept_legacy_agentbox_runtime_surface() {
+        for args in [
+            ["loftd-guest-init", "microvm", "enter"],
+            ["loftd-guest-init", "libkrun", "enter"],
+            ["loftd-guest-init", "default", "enter"],
+            ["loftd-guest-init", "container", "enter"],
+        ] {
+            let err = GuestInitCli::try_parse_from(args)
+                .expect_err("legacy runtime names should not parse");
+            assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) struct ResizeCommand {
+    #[arg(value_enum)]
+    pub(in crate::guest_init) target: ResizeTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(in crate::guest_init) enum ResizeTarget {
+    Nix,
+    Containers,
 }

@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, fishConfig, starshipConfig }:
+{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, reasonix, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, fishConfig, starshipConfig, imageVariant ? "agentbox" }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -71,7 +71,7 @@ let
       -- \
       ${pkgs.rust-analyzer}/bin/rust-analyzer "$@"
   '';
-  nixCommandCompat = pkgs.writeShellScriptBin "nix" ''
+  agentboxNixCommandCompat = pkgs.writeShellScriptBin "nix" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
@@ -86,7 +86,22 @@ let
     fi
     exec ${pkgs.nix}/bin/nix "$@"
   '';
-  podmanCommandCompat = pkgs.writeShellScriptBin "podman" ''
+  loftdNixCommandCompat = pkgs.writeShellScriptBin "nix" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    if [ "''${LOFTD_NIX_OVERLAY:-}" = "1" ]; then
+      export NIX_REMOTE="''${NIX_REMOTE:-unix:///nix/var/nix/daemon-socket/socket}"
+      loftd_nix_ready_marker="/tmp/loftd-nix-daemon-ready-$(${pkgs.coreutils}/bin/id -u)"
+      if [ ! -e "$loftd_nix_ready_marker" ]; then
+        ${agentboxMuslPackage}/bin/loftd-guest-init internal nix wait
+        ${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json >/dev/null
+        : > "$loftd_nix_ready_marker"
+      fi
+    fi
+    exec ${pkgs.nix}/bin/nix "$@"
+  '';
+  agentboxPodmanCommandCompat = pkgs.writeShellScriptBin "podman" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
@@ -95,8 +110,17 @@ let
     fi
     exec ${podman}/bin/podman "$@"
   '';
+  loftdPodmanCommandCompat = pkgs.writeShellScriptBin "podman" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    if [ "''${LOFTD_CONTAINERS_STORAGE:-}" = "1" ]; then
+      ${agentboxMuslPackage}/bin/loftd-guest-init internal podman wait
+    fi
+    exec ${podman}/bin/podman "$@"
+  '';
 
-  dockerCommandCompat = pkgs.writeShellScriptBin "docker" ''
+  agentboxDockerCommandCompat = pkgs.writeShellScriptBin "docker" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
@@ -105,8 +129,17 @@ let
     fi
     exec ${podman}/bin/podman "$@"
   '';
+  loftdDockerCommandCompat = pkgs.writeShellScriptBin "docker" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    if [ "''${LOFTD_CONTAINERS_STORAGE:-}" = "1" ]; then
+      ${agentboxMuslPackage}/bin/loftd-guest-init internal podman service-wait
+    fi
+    exec ${podman}/bin/podman "$@"
+  '';
 
-  dockerComposeCommandCompat = pkgs.writeShellScriptBin "docker-compose" ''
+  agentboxDockerComposeCommandCompat = pkgs.writeShellScriptBin "docker-compose" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
@@ -115,8 +148,33 @@ let
     fi
     exec ${pkgs.docker-compose}/bin/docker-compose "$@"
   '';
+  loftdDockerComposeCommandCompat = pkgs.writeShellScriptBin "docker-compose" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    if [ "''${LOFTD_CONTAINERS_STORAGE:-}" = "1" ]; then
+      ${agentboxMuslPackage}/bin/loftd-guest-init internal podman service-wait
+    fi
+    exec ${pkgs.docker-compose}/bin/docker-compose "$@"
+  '';
 
-  nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs; };
+  commandCompat = if imageVariant == "loftd" then {
+    nix = loftdNixCommandCompat;
+    podman = loftdPodmanCommandCompat;
+    docker = loftdDockerCommandCompat;
+    dockerCompose = loftdDockerComposeCommandCompat;
+  } else {
+    nix = agentboxNixCommandCompat;
+    podman = agentboxPodmanCommandCompat;
+    docker = agentboxDockerCommandCompat;
+    dockerCompose = agentboxDockerComposeCommandCompat;
+  };
+  nixCommandCompat = commandCompat.nix;
+  podmanCommandCompat = commandCompat.podman;
+  dockerCommandCompat = commandCompat.docker;
+  dockerComposeCommandCompat = commandCompat.dockerCompose;
+
+  nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs imageVariant; };
 
   sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''
     LISTEN_PORT="$1"

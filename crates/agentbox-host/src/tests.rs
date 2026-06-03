@@ -508,12 +508,12 @@ fn image_layers_include_guest_init_config_payloads() {
 #[test]
 fn podman_wrapper_waits_only_for_libkrun_container_storage() {
     let start = LAYERS
-        .find("podmanCommandCompat =")
-        .expect("podman wrapper should exist");
+        .find("agentboxPodmanCommandCompat =")
+        .expect("agentbox podman wrapper should exist");
     let end = LAYERS[start..]
-        .find("dockerCommandCompat =")
+        .find("loftdPodmanCommandCompat =")
         .map(|offset| start + offset)
-        .expect("podman wrapper should end before docker wrapper");
+        .expect("agentbox podman wrapper should end before loftd podman wrapper");
     let wrapper = &LAYERS[start..end];
 
     assert!(wrapper.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
@@ -535,12 +535,12 @@ fn podman_wrapper_waits_only_for_libkrun_container_storage() {
 #[test]
 fn docker_wrapper_waits_for_podman_and_execs_podman_compat() {
     let start = LAYERS
-        .find("dockerCommandCompat =")
-        .expect("docker wrapper should exist");
+        .find("agentboxDockerCommandCompat =")
+        .expect("agentbox docker wrapper should exist");
     let end = LAYERS[start..]
-        .find("dockerComposeCommandCompat =")
+        .find("loftdDockerCommandCompat =")
         .map(|offset| start + offset)
-        .expect("docker wrapper should end before compose wrapper");
+        .expect("agentbox docker wrapper should end before loftd docker wrapper");
     let wrapper = &LAYERS[start..end];
 
     assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker""#));
@@ -556,12 +556,12 @@ fn docker_wrapper_waits_for_podman_and_execs_podman_compat() {
 #[test]
 fn docker_compose_wrapper_waits_for_podman_and_uses_docker_compose() {
     let start = LAYERS
-        .find("dockerComposeCommandCompat =")
-        .expect("docker-compose wrapper should exist");
+        .find("agentboxDockerComposeCommandCompat =")
+        .expect("agentbox docker-compose wrapper should exist");
     let end = LAYERS[start..]
-        .find("sidecarProxyWrapper =")
+        .find("loftdDockerComposeCommandCompat =")
         .map(|offset| start + offset)
-        .expect("docker-compose wrapper should end before sidecar wrapper");
+        .expect("agentbox docker-compose wrapper should end before loftd compose wrapper");
     let wrapper = &LAYERS[start..end];
 
     assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker-compose""#));
@@ -569,6 +569,24 @@ fn docker_compose_wrapper_waits_for_podman_and_uses_docker_compose() {
     assert!(wrapper.contains(r#"exec ${pkgs.docker-compose}/bin/docker-compose "$@""#));
     assert!(!wrapper.contains("agentbox-guest-init libkrun podman wait"));
     assert!(!wrapper.contains("agentbox-guest-init libkrun docker"));
+}
+
+#[test]
+fn loftd_wrappers_use_loftd_internal_wait_contracts() {
+    for required in [
+        "loftdNixCommandCompat = pkgs.writeShellScriptBin \"nix\"",
+        "LOFTD_NIX_OVERLAY",
+        "loftd-guest-init internal nix wait",
+        "loftdPodmanCommandCompat = pkgs.writeShellScriptBin \"podman\"",
+        "LOFTD_CONTAINERS_STORAGE",
+        "loftd-guest-init internal podman wait",
+        "loftdDockerCommandCompat = pkgs.writeShellScriptBin \"docker\"",
+        "loftd-guest-init internal podman service-wait",
+        "loftdDockerComposeCommandCompat = pkgs.writeShellScriptBin \"docker-compose\"",
+        "loftd_nix_ready_marker",
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
 }
 
 #[test]
@@ -752,12 +770,13 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
 #[test]
 fn image_includes_manual_nix_store_db_checker() {
     for required in [
-        r#"pkgs.writeShellScriptBin "agentbox-nix-store-db-check""#,
+        r#"toolName = if imageVariant == "loftd" then "loftd-nix-store-db-check" else "agentbox-nix-store-db-check""#,
         "nix path-info --all",
         "nix-store --verify-path",
         "! -name .links",
         "! -name '*.lock'",
-        "/run/agentbox/nix-disk/upper",
+        r#"runDir = if imageVariant == "loftd" then "/run/loftd" else "/run/agentbox""#,
+        r#"libkrun_upper_dir="${runDir}/nix-disk/upper""#,
         "/store/",
         "/var/nix",
         "store object present in libkrun upperdir",
@@ -782,7 +801,7 @@ fn image_includes_manual_nix_store_db_checker() {
     }
 
     for required in [
-        "nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs; };",
+        "nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs imageVariant; };",
         "nixStoreDbCheck",
     ] {
         assert!(LAYERS.contains(required), "missing {required}");

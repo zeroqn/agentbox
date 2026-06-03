@@ -29,6 +29,13 @@ let
     "AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"
   ];
 
+  loftdEnv = [
+    "LOFTD_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
+    "LOFTD_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"
+    "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
+    "LOFTD_REAL_PODMAN=${layers.realPodmanBin}"
+  ];
+
   variants = {
     loftd = {
       entrypoint = [
@@ -36,7 +43,7 @@ let
         "enter"
         "--"
       ];
-      env = [ ];
+      env = loftdEnv;
     };
     agentbox = {
       entrypoint = [

@@ -142,7 +142,9 @@
         in
         {
           container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
+          container-wrapper-contracts = loftdImageChecks.wrapperContracts;
           agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
+          agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
         }
       );
 
