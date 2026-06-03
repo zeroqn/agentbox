@@ -29,18 +29,30 @@ let
     "AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"
   ];
 
-  entrypoint =
-    if imageVariant == "loftd" then
-      [
+  variants = {
+    loftd = {
+      entrypoint = [
         "${agentboxMuslPackage}/bin/loftd-guest-init"
         "enter"
         "--"
-      ]
-    else
-      throw "unknown image variant: ${imageVariant}";
+      ];
+      env = [ ];
+    };
+    agentbox = {
+      entrypoint = [
+        "${agentboxMuslPackage}/bin/agentbox-guest-init"
+        "default"
+        "enter"
+        "--"
+      ];
+      env = agentboxEnv;
+    };
+  };
+
+  variant = variants.${imageVariant} or (throw "unknown image variant: ${imageVariant}");
 in
 {
-  Entrypoint = entrypoint;
+  Entrypoint = variant.entrypoint;
   WorkingDir = "/workspace";
-  Env = commonEnv ++ agentboxEnv;
+  Env = commonEnv ++ variant.env;
 }

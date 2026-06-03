@@ -11,9 +11,7 @@ use crate::runtime::libkrun::components::guest_init::GuestInitOverrideMount;
 use crate::runtime::libkrun::components::{
     cpu, guest_init, host_identity, memory, nested, network, oci,
 };
-use crate::{
-    AGENTBOX_GUEST_INIT_ENTRYPOINT, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL,
-};
+use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
 pub(crate) struct LibkrunTaskPodmanSpec<'a> {
     pub(crate) image: &'a str,
@@ -68,9 +66,8 @@ pub(crate) fn build_libkrun_task_run_args(spec: LibkrunTaskPodmanSpec<'_>) -> Re
     network::append_publish_args(&mut run, spec.publish_specs);
     diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
     guest_init::append_guest_init_override_args(&mut run, spec.guest_init_override);
-    run.option(CORE, "--entrypoint", AGENTBOX_GUEST_INIT_ENTRYPOINT);
     run.arg(CORE, spec.image);
-    run.args(CORE, ["default", "enter", "--", INTERACTIVE_SHELL, "-l"]);
+    run.args(CORE, [INTERACTIVE_SHELL, "-l"]);
 
     Ok(run.render())
 }

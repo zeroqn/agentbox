@@ -93,6 +93,7 @@
             agentboxMuslPackage = rustPackages.agentboxMuslPackage;
           };
           loftdImage = mkImage "loftd";
+          agentboxImage = mkImage "agentbox";
         in
         {
           default = rustPackages.rustPackage;
@@ -106,6 +107,7 @@
           agentbox-prebuilt = prebuiltAgentbox;
           loftd-prebuilt = prebuiltLoftd;
           agentbox-musl = rustPackages.agentboxMuslPackage;
+          agentbox-container = agentboxImage;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
           crun = crun;
@@ -136,9 +138,11 @@
             agentboxMuslPackage = packages.agentbox-musl;
           };
           loftdImageChecks = mkImageChecks "loftd";
+          agentboxImageChecks = mkImageChecks "agentbox";
         in
         {
           container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
+          agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
         }
       );
 

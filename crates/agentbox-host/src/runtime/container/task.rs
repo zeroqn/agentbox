@@ -4,9 +4,7 @@ use crate::podman::run::{CORE, RunArgs, RunSpec};
 use crate::runtime::components::volumes::TaskVolumeMounts;
 use crate::runtime::components::{diagnostics, identity, volumes};
 use crate::runtime::container::nix_sidecar::{SidecarNixRuntime, append_task_sidecar_nix_args};
-use crate::{
-    AGENTBOX_GUEST_INIT_ENTRYPOINT, CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL,
-};
+use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
 pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) image: &'a str,
@@ -41,9 +39,8 @@ fn build_container_task_run_args(spec: ContainerTaskPodmanSpec<'_>) -> Result<Ru
     run.option(CORE, "--tmpfs", CONTAINER_TMP_TMPFS);
     append_task_sidecar_nix_args(&mut run, spec.nix_runtime)?;
     diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
-    run.option(CORE, "--entrypoint", AGENTBOX_GUEST_INIT_ENTRYPOINT);
     run.arg(CORE, spec.image);
-    run.args(CORE, ["default", "enter", "--", INTERACTIVE_SHELL, "-l"]);
+    run.args(CORE, [INTERACTIVE_SHELL, "-l"]);
 
     Ok(run.render())
 }
@@ -360,12 +357,7 @@ mod tests {
             "io.agentbox.role=task",
             "--label",
             "io.agentbox.sidecar=agentbox-nix-sidecar-abc",
-            "--entrypoint",
-            "/bin/agentbox-guest-init",
             crate::DEFAULT_IMAGE,
-            "default",
-            "enter",
-            "--",
             INTERACTIVE_SHELL,
             "-l",
         ]

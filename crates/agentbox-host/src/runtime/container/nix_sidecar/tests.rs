@@ -97,7 +97,7 @@ fn sidecar_state_without_mount_or_runtime_mode_defaults_to_direct_native() {
     .expect("state directory should be created");
     fs::write(
         &paths.state_file,
-        "image=localhost/loftd:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\n",
+        "image=localhost/agentbox:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\n",
     )
     .expect("legacy state should be written");
 
@@ -121,7 +121,7 @@ fn legacy_libkrun_state_parses_as_non_native_config() {
     .expect("state directory should be created");
     fs::write(
         &paths.state_file,
-        "image=localhost/loftd:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\nruntime_mode=libkrun\nnetwork_mode=tsi\n",
+        "image=localhost/agentbox:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\nruntime_mode=libkrun\nnetwork_mode=tsi\n",
     )
     .expect("legacy state should be written");
 
@@ -142,7 +142,7 @@ fn stale_incomplete_sidecar_state_is_auto_cleared() {
             .expect("state file should have parent directory"),
     )
     .expect("state directory should be created");
-    fs::write(&paths.state_file, "image=localhost/loftd:latest\n")
+    fs::write(&paths.state_file, "image=localhost/agentbox:latest\n")
         .expect("stale state should be written");
 
     let parsed = state::read_sidecar_state(&paths).expect("state read should succeed");
@@ -166,7 +166,7 @@ fn invalid_mount_mode_state_is_auto_cleared() {
     .expect("state directory should be created");
     fs::write(
         &paths.state_file,
-        "image=localhost/loftd:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\nmount_mode=unsupported\n",
+        "image=localhost/agentbox:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\nmount_mode=unsupported\n",
     )
     .expect("invalid state should be written");
 
@@ -194,7 +194,7 @@ fn invalid_proxy_port_state_is_auto_cleared() {
     .expect("state directory should be created");
     fs::write(
         &paths.state_file,
-        "image=localhost/loftd:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\nproxy_port=not-a-port\n",
+        "image=localhost/agentbox:latest\nimage_id=sha256:abc\nimage_mount_path=/tmp/podman/mount\nsidecar_name=agentbox-nix-sidecar-abc\nproxy_port=not-a-port\n",
     )
     .expect("invalid state should be written");
 
