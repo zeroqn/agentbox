@@ -197,6 +197,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_explicit_guest_command_after_options_and_delimiter() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "--guest-init",
+            "/tmp/loftd-guest-init",
+            "--log-level",
+            "debug",
+            "--profile",
+            "--",
+            "sh",
+            "/workspace/probe.sh",
+        ])
+        .expect("guest command should parse after options and delimiter");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(
+            options.guest_init.as_deref(),
+            Some("/tmp/loftd-guest-init".as_ref())
+        );
+        assert_eq!(options.log_settings.level, LogLevel::Debug);
+        assert!(options.profile);
+        assert_eq!(options.guest_command, ["sh", "/workspace/probe.sh"]);
+    }
+
+    #[test]
     fn bare_words_are_not_guest_commands() {
         let err = Cli::try_parse_from(["loftd", "microvm"])
             .expect_err("guest commands must use an explicit delimiter");

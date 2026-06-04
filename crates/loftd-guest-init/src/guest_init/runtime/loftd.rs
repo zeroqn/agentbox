@@ -20,6 +20,8 @@ const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
 pub(in crate::guest_init) enum LoftdEnterOperation {
     ReadEnv,
     MountBindMounts,
+    EnsureTmpTmpfs,
+    EnsureTunDevice,
     ResolveIdentity,
     DeriveShellEnvironment,
     ExportShellEnvironment,
@@ -39,6 +41,8 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
     vec![
         LoftdEnterOperation::ReadEnv,
         LoftdEnterOperation::MountBindMounts,
+        LoftdEnterOperation::EnsureTmpTmpfs,
+        LoftdEnterOperation::EnsureTunDevice,
         LoftdEnterOperation::ResolveIdentity,
         LoftdEnterOperation::DeriveShellEnvironment,
         LoftdEnterOperation::ExportShellEnvironment,
@@ -92,6 +96,10 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
         ensure_bind_mounts_mounted(&env_contract.mounts)
     })?;
     debug_breadcrumb("mount-bind-mounts complete");
+    profiler.measure_result("ensure-tmp-tmpfs", ensure_tmp_tmpfs_mounted)?;
+    profiler.measure_result("ensure-tun-device", || {
+        crate::guest_init::components::rootless::kernel::prepare_tun_device()
+    })?;
     debug_breadcrumb("resolve-identity starting");
     let identity = profiler.measure_result("resolve-identity", || {
         resolve_identity(
@@ -314,6 +322,12 @@ enum BindMountPlan {
     Mount,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TmpTmpfsPlan {
+    Mount,
+    Remount,
+}
+
 fn ensure_bind_mounts_mounted(bind_mounts: &[BindMount]) -> Result<()> {
     let mounts = fs::read_to_string("/proc/mounts").context("failed to read /proc/mounts")?;
     for bind_mount in bind_mounts {
@@ -375,6 +389,68 @@ fn mount_bind_mount(tag: &str, target: &Path) -> Result<()> {
     .with_context(|| format!("failed to mount loftd bind virtiofs tag {tag}"))
 }
 
+fn ensure_tmp_tmpfs_mounted() -> Result<()> {
+    let tmp = Path::new("/tmp");
+    fs::create_dir_all(tmp).context("failed to create loftd /tmp mount target")?;
+    let mounts = fs::read_to_string("/proc/mounts").context("failed to read /proc/mounts")?;
+    match tmp_tmpfs_plan(&mounts, tmp)? {
+        TmpTmpfsPlan::Mount => mount_tmp_tmpfs(tmp),
+        TmpTmpfsPlan::Remount => remount_tmp_tmpfs(tmp),
+    }
+}
+
+fn tmp_tmpfs_plan(mounts: &str, target: &Path) -> Result<TmpTmpfsPlan> {
+    let target = target.display().to_string();
+    for line in mounts.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(source) = fields.next() else {
+            continue;
+        };
+        let Some(mountpoint) = fields.next() else {
+            continue;
+        };
+        let Some(fs_type) = fields.next() else {
+            continue;
+        };
+        if mountpoint == target {
+            if source == "tmpfs" && fs_type == "tmpfs" {
+                return Ok(TmpTmpfsPlan::Remount);
+            }
+            bail!(
+                "loftd /tmp target {target} is already mounted from {source} as {fs_type}, not tmpfs"
+            );
+        }
+    }
+    Ok(TmpTmpfsPlan::Mount)
+}
+
+fn mount_tmp_tmpfs(target: &Path) -> Result<()> {
+    command::run(
+        "mount",
+        &[
+            "-t",
+            "tmpfs",
+            "tmpfs",
+            "-o",
+            "rw,exec,mode=1777",
+            &target.display().to_string(),
+        ],
+    )
+    .context("failed to mount loftd /tmp tmpfs")
+}
+
+fn remount_tmp_tmpfs(target: &Path) -> Result<()> {
+    command::run(
+        "mount",
+        &[
+            "-o",
+            "remount,rw,exec,mode=1777",
+            &target.display().to_string(),
+        ],
+    )
+    .context("failed to remount loftd /tmp tmpfs")
+}
+
 fn debug_breadcrumb(message: &str) {
     if std::env::var("LOFTD_GUEST_DEBUG").ok().as_deref() == Some("1") {
         eprintln!("loftd-guest-init: debug: {message}");
@@ -411,6 +487,18 @@ mod tests {
 
         assert!(
             pos(LoftdEnterOperation::MountBindMounts) < pos(LoftdEnterOperation::ResolveIdentity)
+        );
+        assert!(
+            pos(LoftdEnterOperation::MountBindMounts) < pos(LoftdEnterOperation::EnsureTmpTmpfs)
+        );
+        assert!(
+            pos(LoftdEnterOperation::MountBindMounts) < pos(LoftdEnterOperation::EnsureTunDevice)
+        );
+        assert!(
+            pos(LoftdEnterOperation::EnsureTmpTmpfs) < pos(LoftdEnterOperation::ResolveIdentity)
+        );
+        assert!(
+            pos(LoftdEnterOperation::EnsureTunDevice) < pos(LoftdEnterOperation::ResolveIdentity)
         );
         assert!(pos(LoftdEnterOperation::MountBindMounts) < pos(LoftdEnterOperation::StartNixPrep));
         assert!(
@@ -589,5 +677,26 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn tmp_tmpfs_plan_mounts_absent_tmp_and_remounts_existing_tmpfs() {
+        assert_eq!(
+            tmp_tmpfs_plan("", Path::new("/tmp")).expect("missing /tmp mount should mount"),
+            TmpTmpfsPlan::Mount
+        );
+        assert_eq!(
+            tmp_tmpfs_plan("tmpfs /tmp tmpfs rw,nosuid,nodev 0 0\n", Path::new("/tmp"))
+                .expect("existing tmpfs should remount with loftd options"),
+            TmpTmpfsPlan::Remount
+        );
+    }
+
+    #[test]
+    fn tmp_tmpfs_plan_rejects_non_tmpfs_mountpoint() {
+        let err = tmp_tmpfs_plan("other /tmp virtiofs rw 0 0\n", Path::new("/tmp"))
+            .expect_err("non-tmpfs /tmp mount should fail");
+
+        assert!(format!("{err:#}").contains("not tmpfs"));
     }
 }

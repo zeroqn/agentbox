@@ -16,6 +16,7 @@ pub const CARGO_TAG: &str = "loftd-cargo";
 pub const CARGO_TARGET: &str = "/home/dev/.cargo";
 pub const SCCACHE_TAG: &str = "loftd-sccache";
 pub const SCCACHE_TARGET: &str = "/home/dev/.cache/sccache";
+const SCCACHE_DIR_ENV: &str = "SCCACHE_DIR";
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
 const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
 const WORKSPACE_TAG_ENV: &str = "LOFTD_WORKSPACE_TAG";
@@ -27,6 +28,11 @@ const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
 const IMAGE_PATH_ENV: &str = "PATH";
 const KRUN_CONFIG_ENV: &str = "KRUN_CONFIG";
 pub(crate) const LOFTD_KRUN_CONFIG_PATH: &str = "/.loftd_config.json";
+const KIB: u64 = 1024;
+const MIB_PER_GIB: u32 = 1024;
+const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
+const MAX_GIB_FOR_KRUN_RAM_MIB: u32 = u32::MAX / MIB_PER_GIB;
+const HOST_MEMINFO: &str = "/proc/meminfo";
 const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
     "LOFTD_FISH_CONFIG_SOURCE",
     "LOFTD_STARSHIP_CONFIG_SOURCE",
@@ -92,6 +98,7 @@ impl LaunchConfig {
             (MOUNT_COUNT_ENV.to_owned(), spec.mounts.len().to_string()),
             (WORKSPACE_TAG_ENV.to_owned(), workspace.tag.clone()),
             (WORKSPACE_TARGET_ENV.to_owned(), workspace.target.clone()),
+            (SCCACHE_DIR_ENV.to_owned(), SCCACHE_TARGET.to_owned()),
         ];
         for (index, mount) in spec.mounts.iter().enumerate() {
             required_env.push((format!("LOFTD_MOUNT_{index}_TAG"), mount.tag.clone()));
@@ -511,12 +518,80 @@ pub(crate) fn resolve_cpu_count() -> Result<u8> {
 }
 
 fn resolve_ram_mib(mem_gib: Option<u32>) -> Result<u32> {
-    let gib = mem_gib.unwrap_or(4);
+    match mem_gib {
+        Some(gib) => mem_gib_to_mib(gib),
+        None => {
+            let meminfo = fs::read_to_string(HOST_MEMINFO)
+                .with_context(|| format!("failed to read host memory from {HOST_MEMINFO}"))?;
+            default_ram_mib_from_meminfo(&meminfo)
+        }
+    }
+}
+
+fn default_ram_mib_from_meminfo(meminfo: &str) -> Result<u32> {
+    let host_bytes = parse_meminfo_total_bytes(meminfo)?;
+    let default_gib = default_mem_gib_from_host_bytes(host_bytes)?;
+    mem_gib_to_mib(default_gib)
+}
+
+fn mem_gib_to_mib(gib: u32) -> Result<u32> {
+    validate_mem_gib(gib)?;
+    gib.checked_mul(1024)
+        .ok_or_else(|| anyhow!("loftd --mem is too large for libkrun ram_mib"))
+}
+
+fn validate_mem_gib(gib: u32) -> Result<()> {
     if gib == 0 {
         anyhow::bail!("loftd --mem must be at least 1 GiB");
     }
-    gib.checked_mul(1024)
-        .ok_or_else(|| anyhow!("loftd --mem is too large for libkrun ram_mib"))
+    if gib > MAX_GIB_FOR_KRUN_RAM_MIB {
+        anyhow::bail!("loftd --mem must be at most {MAX_GIB_FOR_KRUN_RAM_MIB} GiB");
+    }
+    Ok(())
+}
+
+fn default_mem_gib_from_host_bytes(host_bytes: u64) -> Result<u32> {
+    let eighty_percent_bytes = (host_bytes / 5)
+        .saturating_mul(4)
+        .saturating_add((host_bytes % 5).saturating_mul(4) / 5);
+    let default_gib = eighty_percent_bytes / BYTES_PER_GIB;
+
+    if default_gib == 0 {
+        anyhow::bail!("host memory is too small to derive a loftd --mem default of at least 1 GiB");
+    }
+
+    let default_gib = u32::try_from(default_gib)
+        .context("host memory is too large to fit loftd --mem default")?;
+    validate_mem_gib(default_gib)?;
+    Ok(default_gib)
+}
+
+fn parse_meminfo_total_bytes(meminfo: &str) -> Result<u64> {
+    let mem_total_line = meminfo
+        .lines()
+        .find(|line| line.starts_with("MemTotal:"))
+        .ok_or_else(|| {
+            anyhow!("host memory detection failed: MemTotal missing from {HOST_MEMINFO}")
+        })?;
+
+    let mut fields = mem_total_line.split_whitespace();
+    let _label = fields.next();
+    let value = fields
+        .next()
+        .ok_or_else(|| anyhow!("host memory detection failed: MemTotal value missing"))?;
+    let unit = fields
+        .next()
+        .ok_or_else(|| anyhow!("host memory detection failed: MemTotal unit missing"))?;
+
+    if unit != "kB" {
+        anyhow::bail!("host memory detection failed: expected MemTotal in kB, got {unit}");
+    }
+
+    let kib = value
+        .parse::<u64>()
+        .with_context(|| format!("host memory detection failed: invalid MemTotal value {value}"))?;
+    kib.checked_mul(KIB)
+        .ok_or_else(|| anyhow!("host memory detection failed: MemTotal overflows bytes"))
 }
 
 fn bootstrap_env(
@@ -734,6 +809,7 @@ mod tests {
         );
         assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TAG", "loftd-workspace"));
         assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TARGET", "/workspace"));
+        assert!(config.guest_config_env_contains("SCCACHE_DIR", "/home/dev/.cache/sccache"));
         assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
         assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
         assert!(
@@ -885,6 +961,35 @@ mod tests {
         assert!(LaunchConfig::parse("unknown=61\n").is_err());
         assert!(LaunchConfig::parse("task_rootfs=6\n").is_err());
         assert!(LaunchConfig::parse("task_rootfs=2f\n").is_err());
+    }
+
+    #[test]
+    fn default_ram_mib_floors_eighty_percent_of_host_memory_to_whole_gib() {
+        let ten_gib_meminfo = "MemTotal:       10485760 kB\n";
+        assert_eq!(
+            default_ram_mib_from_meminfo(ten_gib_meminfo)
+                .expect("10 GiB host should derive 8 GiB default"),
+            8192
+        );
+
+        let two_gib_meminfo = "MemTotal:       2097152 kB\n";
+        assert_eq!(
+            default_ram_mib_from_meminfo(two_gib_meminfo)
+                .expect("2 GiB host should derive 1 GiB default"),
+            1024
+        );
+    }
+
+    #[test]
+    fn default_ram_mib_rejects_unusable_host_memory() {
+        assert!(default_ram_mib_from_meminfo("MemTotal:       1048576 kB\n").is_err());
+        assert!(default_ram_mib_from_meminfo("MemFree:        10485760 kB\n").is_err());
+    }
+
+    #[test]
+    fn explicit_ram_mib_still_overrides_host_default() {
+        assert_eq!(resolve_ram_mib(Some(4)).expect("explicit memory"), 4096);
+        assert!(resolve_ram_mib(Some(0)).is_err());
     }
 
     #[test]

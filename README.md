@@ -753,6 +753,12 @@ Run/help:
 ./result/bin/loftd -- bash -lc 'echo ok'
 ```
 
+When `--mem` is omitted, loftd now sizes the direct-libkrun VM to 80% of host
+memory rounded down to whole GiB, matching agentbox libkrun mode. Pass
+`loftd --mem <GiB>` to override that default. Guest bootstrap also sets
+`SCCACHE_DIR=/home/dev/.cache/sccache`, backed by loftd's shared state
+`sccache` bind mount.
+
 For host-side and direct-libkrun diagnostics, use `--log-level` with one of
 `off`, `error`, `warn`, `info`, `debug`, or `trace`. The same effective level is
 used by the parent process, the `buildah unshare` helper, and libkrun logging;
@@ -808,11 +814,18 @@ disks:
   rootless container storage.
 
 `loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, mounts
-the declared virtiofs tags before identity drop, prepares the persistent cache
-disks, exports the shell environment, and runs `fish -l` by default. For
-deterministic smoke tests, `loftd -- <command>` preserves the same guest
-bootstrap path but replaces the final guest command with the explicit argv after
-`--`.
+the declared virtiofs tags before identity drop, ensures `/tmp` is a tmpfs with
+`rw,exec,mode=1777`, verifies `/dev/net/tun` is the expected character device
+`10:200`, makes it mode `0666`, probes it with `TUNSETIFF`, prepares the
+persistent cache disks, exports the shell environment, and runs `fish -l` by
+default. For deterministic smoke tests, `loftd -- <command>` preserves the same
+guest bootstrap path but replaces the final guest command with the explicit argv
+after `--`.
+
+Nested KVM is intentionally deferred for loftd direct-libkrun mode. This pass
+does not create `/dev/kvm` manually and does not claim nested virtualization
+support; future nested support should make `/dev/kvm` appear through the
+libkrun/runtime stack after nested virtualization is correctly enabled.
 
 Phase 4 completion was validated with targeted `loftd` and `loftd-guest-init`
 unit tests plus a focused local-image libkrun smoke test. The smoke used a local
