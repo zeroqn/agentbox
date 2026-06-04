@@ -115,16 +115,18 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         let rc = self.api.add_virtio_console_default(ctx_id, 0, 1, 2)?;
         check_setup("krun_add_virtio_console_default", rc)?;
         tracing::debug!(ctx_id, "krun_add_virtio_console_default: complete");
-        tracing::debug!(ctx_id, tag = %config.workspace.tag, source = %config.workspace.source.display(), target = %config.workspace.target, "krun_add_virtiofs3: begin");
-        let rc = self.api.add_virtiofs3(
-            ctx_id,
-            &config.workspace.tag,
-            &config.workspace.source,
-            DAX_SHM_SIZE,
-            READ_WRITE,
-        )?;
-        check_setup("krun_add_virtiofs3", rc)?;
-        tracing::debug!(ctx_id, "krun_add_virtiofs3: complete");
+        for mount in &config.mounts {
+            tracing::debug!(ctx_id, tag = %mount.tag, source = %mount.source.display(), target = %mount.target, "krun_add_virtiofs3: begin");
+            let rc = self.api.add_virtiofs3(
+                ctx_id,
+                &mount.tag,
+                &mount.source,
+                DAX_SHM_SIZE,
+                READ_WRITE,
+            )?;
+            check_setup("krun_add_virtiofs3", rc)?;
+            tracing::debug!(ctx_id, tag = %mount.tag, "krun_add_virtiofs3: complete");
+        }
         tracing::debug!(ctx_id, workdir = %config.workdir, "krun_set_workdir: begin");
         let rc = self.api.set_workdir(ctx_id, &config.workdir)?;
         check_setup("krun_set_workdir", rc)?;
@@ -497,7 +499,10 @@ fn dlerror_string() -> String {
 mod tests {
     use super::*;
     use crate::logging::LogLevel;
-    use crate::runtime::launch_config::{DiskAttachment, LaunchSpec};
+    use crate::runtime::launch_config::{
+        BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment, LaunchSpec,
+        PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+    };
     use std::cell::RefCell;
     use std::path::Path;
     use std::rc::Rc;
@@ -660,7 +665,7 @@ mod tests {
     fn config() -> LaunchConfig {
         LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),
@@ -686,6 +691,36 @@ mod tests {
             extra_env: Vec::new(),
         })
         .expect("config should build")
+    }
+
+    fn test_mounts() -> Vec<BindMount> {
+        vec![
+            BindMount {
+                source: Path::new("/workspace-src").to_path_buf(),
+                tag: WORKSPACE_TAG.to_owned(),
+                target: WORKSPACE_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/home/host/.codex").to_path_buf(),
+                tag: CODEX_TAG.to_owned(),
+                target: CODEX_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/home/host/.pi").to_path_buf(),
+                tag: PI_TAG.to_owned(),
+                target: PI_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/state/project/cargo").to_path_buf(),
+                tag: CARGO_TAG.to_owned(),
+                target: CARGO_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/state/sccache").to_path_buf(),
+                tag: SCCACHE_TAG.to_owned(),
+                target: SCCACHE_TARGET.to_owned(),
+            },
+        ]
     }
 
     #[test]
@@ -746,9 +781,49 @@ mod tests {
                 false,
             )
         );
-        assert_eq!(calls[9], Call::SetWorkdir(7, "/workspace".to_owned()));
+        assert_eq!(
+            calls[9],
+            Call::AddVirtiofs3(
+                7,
+                "loftd-codex".to_owned(),
+                "/home/host/.codex".to_owned(),
+                0,
+                false,
+            )
+        );
         assert_eq!(
             calls[10],
+            Call::AddVirtiofs3(
+                7,
+                "loftd-pi".to_owned(),
+                "/home/host/.pi".to_owned(),
+                0,
+                false,
+            )
+        );
+        assert_eq!(
+            calls[11],
+            Call::AddVirtiofs3(
+                7,
+                "loftd-cargo".to_owned(),
+                "/state/project/cargo".to_owned(),
+                0,
+                false,
+            )
+        );
+        assert_eq!(
+            calls[12],
+            Call::AddVirtiofs3(
+                7,
+                "loftd-sccache".to_owned(),
+                "/state/sccache".to_owned(),
+                0,
+                false,
+            )
+        );
+        assert_eq!(calls[13], Call::SetWorkdir(7, "/workspace".to_owned()));
+        assert_eq!(
+            calls[14],
             Call::SetExec(
                 7,
                 "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
@@ -761,10 +836,10 @@ mod tests {
                 vec![("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
             )
         );
-        assert_eq!(calls[11], Call::StartEnter(7));
+        assert_eq!(calls[15], Call::StartEnter(7));
         assert_eq!(
             calls.len(),
-            12,
+            16,
             "v1 must not call krun_set_env or passt APIs"
         );
     }
@@ -780,6 +855,23 @@ mod tests {
         assert!(format!("{err:#}").contains("libkrun setup failed"));
         let calls = calls.borrow();
         assert!(calls.contains(&Call::FreeCtx(7)));
+        assert!(!calls.contains(&Call::StartEnter(7)));
+    }
+
+    #[test]
+    fn virtiofs_registration_failure_frees_context_before_exec() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let err = DirectLibkrunLauncher::new(FakeLibkrunApi::failing(
+            calls.clone(),
+            "krun_add_virtiofs3",
+        ))
+        .start_enter(&config())
+        .expect_err("virtiofs setup failure should fail");
+
+        assert!(format!("{err:#}").contains("libkrun setup failed"));
+        let calls = calls.borrow();
+        assert!(calls.contains(&Call::FreeCtx(7)));
+        assert!(!calls.iter().any(|call| matches!(call, Call::SetExec(..))));
         assert!(!calls.contains(&Call::StartEnter(7)));
     }
 

@@ -800,7 +800,7 @@ the namespace used to materialize the image-derived btrfs rootfs; it is not used
 as the container runtime, and this path does not rely on Podman, idmapped
 mounts, or relaxed guest-init ownership repair. The helper dynamically loads
 `libkrun.so.1` or `libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), attaches
-the task rootfs, the `/workspace` virtiofs mount, and two writable persistent
+the task rootfs, the fixed host virtiofs mounts, and two writable persistent
 disks:
 
 - `loftd-nix.raw` exposed to the guest as `LOFTD_NIX` / `loftd-nix` for `/nix`;
@@ -808,10 +808,11 @@ disks:
   rootless container storage.
 
 `loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, mounts
-the workspace before identity drop, prepares the persistent cache disks, exports
-the shell environment, and runs `fish -l` by default. For deterministic smoke
-tests, `loftd -- <command>` preserves the same guest bootstrap path but replaces
-the final guest command with the explicit argv after `--`.
+the declared virtiofs tags before identity drop, prepares the persistent cache
+disks, exports the shell environment, and runs `fish -l` by default. For
+deterministic smoke tests, `loftd -- <command>` preserves the same guest
+bootstrap path but replaces the final guest command with the explicit argv after
+`--`.
 
 Phase 4 completion was validated with targeted `loftd` and `loftd-guest-init`
 unit tests plus a focused local-image libkrun smoke test. The smoke used a local
@@ -852,11 +853,14 @@ backend = "btrfs-snapshot" # or "fuse-overlay"
 
 Each run ensures and mounts:
 
+- current workspace -> `/workspace`
 - `~/.codex` -> `/home/dev/.codex`
 - `~/.pi` -> `/home/dev/.pi`
 - `<state-root>/cargo` -> `/home/dev/.cargo`
+- `<loftd-state>/sccache` -> `/home/dev/.cache/sccache`
 
-This keeps Codex, Pi, and Cargo state outside the repo.
+This keeps Codex, Pi, Cargo, and compiler-cache state outside the repo while
+matching the existing agentbox task-volume contract.
 
 ---
 

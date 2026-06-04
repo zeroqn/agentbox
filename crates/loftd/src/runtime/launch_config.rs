@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,10 +8,19 @@ use crate::runtime::image_source::OciProcessConfig;
 
 pub(crate) const WORKSPACE_TAG: &str = "loftd-workspace";
 pub(crate) const WORKSPACE_TARGET: &str = "/workspace";
+pub const CODEX_TAG: &str = "loftd-codex";
+pub const CODEX_TARGET: &str = "/home/dev/.codex";
+pub const PI_TAG: &str = "loftd-pi";
+pub const PI_TARGET: &str = "/home/dev/.pi";
+pub const CARGO_TAG: &str = "loftd-cargo";
+pub const CARGO_TARGET: &str = "/home/dev/.cargo";
+pub const SCCACHE_TAG: &str = "loftd-sccache";
+pub const SCCACHE_TARGET: &str = "/home/dev/.cache/sccache";
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
 const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
 const WORKSPACE_TAG_ENV: &str = "LOFTD_WORKSPACE_TAG";
 const WORKSPACE_TARGET_ENV: &str = "LOFTD_WORKSPACE_TARGET";
+const MOUNT_COUNT_ENV: &str = "LOFTD_MOUNT_COUNT";
 const ENTER_AS_ROOT_ENV: &str = "LOFTD_ENTER_AS_ROOT";
 const GUEST_PROFILE_ENV: &str = "LOFTD_GUEST_PROFILE";
 const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
@@ -26,10 +35,10 @@ const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WorkspaceMount {
-    pub(crate) source: PathBuf,
-    pub(crate) tag: String,
-    pub(crate) target: String,
+pub struct BindMount {
+    pub source: PathBuf,
+    pub tag: String,
+    pub target: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +51,7 @@ pub(crate) struct DiskAttachment {
 #[derive(Debug, Clone)]
 pub(crate) struct LaunchSpec<'a> {
     pub(crate) task_rootfs: &'a Path,
-    pub(crate) workspace_source: &'a Path,
+    pub mounts: &'a [BindMount],
     pub(crate) guest_init_exec: &'a str,
     pub(crate) guest_command: &'a [String],
     pub(crate) image_process_config: &'a OciProcessConfig,
@@ -60,7 +69,7 @@ pub(crate) struct LaunchSpec<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LaunchConfig {
     pub(crate) task_rootfs: PathBuf,
-    pub(crate) workspace: WorkspaceMount,
+    pub mounts: Vec<BindMount>,
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) ram_mib: u32,
     pub(crate) vcpus: u8,
@@ -75,12 +84,19 @@ pub(crate) struct LaunchConfig {
 impl LaunchConfig {
     pub(crate) fn build_for_task(spec: LaunchSpec<'_>) -> Result<Self> {
         let ram_mib = resolve_ram_mib(spec.mem_gib)?;
-        let required_env = vec![
+        validate_mounts(spec.mounts)?;
+        let workspace = workspace_mount(spec.mounts)?;
+        let mut required_env = vec![
             (HOST_UID_ENV.to_owned(), spec.host_uid.to_string()),
             (HOST_GID_ENV.to_owned(), spec.host_gid.to_string()),
-            (WORKSPACE_TAG_ENV.to_owned(), WORKSPACE_TAG.to_owned()),
-            (WORKSPACE_TARGET_ENV.to_owned(), WORKSPACE_TARGET.to_owned()),
+            (MOUNT_COUNT_ENV.to_owned(), spec.mounts.len().to_string()),
+            (WORKSPACE_TAG_ENV.to_owned(), workspace.tag.clone()),
+            (WORKSPACE_TARGET_ENV.to_owned(), workspace.target.clone()),
         ];
+        for (index, mount) in spec.mounts.iter().enumerate() {
+            required_env.push((format!("LOFTD_MOUNT_{index}_TAG"), mount.tag.clone()));
+            required_env.push((format!("LOFTD_MOUNT_{index}_TARGET"), mount.target.clone()));
+        }
         let mut guest_config_env = bootstrap_env(&spec.image_process_config.env, required_env)?;
         if spec.root {
             insert_env(&mut guest_config_env, ENTER_AS_ROOT_ENV, "1");
@@ -105,11 +121,7 @@ impl LaunchConfig {
 
         Ok(Self {
             task_rootfs: spec.task_rootfs.to_path_buf(),
-            workspace: WorkspaceMount {
-                source: spec.workspace_source.to_path_buf(),
-                tag: WORKSPACE_TAG.to_owned(),
-                target: WORKSPACE_TARGET.to_owned(),
-            },
+            mounts: spec.mounts.to_vec(),
             disks: spec.disks,
             ram_mib,
             vcpus: spec.vcpus,
@@ -176,13 +188,24 @@ impl LaunchConfig {
             "task_rootfs",
             &self.task_rootfs.display().to_string(),
         );
-        push_field(
-            &mut out,
-            "workspace_source",
-            &self.workspace.source.display().to_string(),
-        );
-        push_field(&mut out, "workspace_tag", &self.workspace.tag);
-        push_field(&mut out, "workspace_target", &self.workspace.target);
+        if let Ok(workspace) = workspace_mount(&self.mounts) {
+            push_field(
+                &mut out,
+                "workspace_source",
+                &workspace.source.display().to_string(),
+            );
+            push_field(&mut out, "workspace_tag", &workspace.tag);
+            push_field(&mut out, "workspace_target", &workspace.target);
+        }
+        for (index, mount) in self.mounts.iter().enumerate() {
+            push_field(
+                &mut out,
+                &format!("mount.{index}.source"),
+                &mount.source.display().to_string(),
+            );
+            push_field(&mut out, &format!("mount.{index}.tag"), &mount.tag);
+            push_field(&mut out, &format!("mount.{index}.target"), &mount.target);
+        }
         push_field(&mut out, "ram_mib", &self.ram_mib.to_string());
         push_field(&mut out, "vcpus", &self.vcpus.to_string());
         push_field(&mut out, "log_level", self.log_level.as_str());
@@ -222,6 +245,7 @@ impl LaunchConfig {
         let mut argv = BTreeMap::new();
         let mut env = BTreeMap::new();
         let mut guest_config_env = BTreeMap::new();
+        let mut mounts: BTreeMap<usize, PartialBindMount> = BTreeMap::new();
         let mut disks: BTreeMap<usize, PartialDiskAttachment> = BTreeMap::new();
 
         for (line_index, line) in text.lines().enumerate() {
@@ -237,7 +261,18 @@ impl LaunchConfig {
                     line_index + 1
                 )
             })?;
-            if let Some(rest) = key.strip_prefix("disk.") {
+            if let Some(rest) = key.strip_prefix("mount.") {
+                let (index, field) = rest.split_once('.').ok_or_else(|| {
+                    anyhow!("loftd launch config mount entry {key} is missing field")
+                })?;
+                let mount = mounts.entry(parse_index(key, index)?).or_default();
+                match field {
+                    "source" => mount.source = Some(PathBuf::from(value)),
+                    "tag" => mount.tag = Some(value),
+                    "target" => mount.target = Some(value),
+                    _ => anyhow::bail!("loftd launch config contains unknown key {key}"),
+                }
+            } else if let Some(rest) = key.strip_prefix("disk.") {
                 let (index, field) = rest.split_once('.').ok_or_else(|| {
                     anyhow!("loftd launch config disk entry {key} is missing field")
                 })?;
@@ -309,13 +344,10 @@ impl LaunchConfig {
         let log_level_text = required("log_level")?;
         let log_level = LogLevel::parse_name(&log_level_text)
             .ok_or_else(|| anyhow!("loftd launch config log_level is invalid"))?;
+        let mounts = parse_mounts(&fields, mounts)?;
         Ok(Self {
             task_rootfs: PathBuf::from(required("task_rootfs")?),
-            workspace: WorkspaceMount {
-                source: PathBuf::from(required("workspace_source")?),
-                tag: required("workspace_tag")?,
-                target: required("workspace_target")?,
-            },
+            mounts,
             disks: disks
                 .into_iter()
                 .map(|(index, disk)| disk.finish(index))
@@ -328,6 +360,29 @@ impl LaunchConfig {
             argv: argv.into_values().collect(),
             env: env.into_values().collect(),
             guest_config_env: guest_config_env.into_values().collect(),
+        })
+    }
+}
+
+#[derive(Default)]
+struct PartialBindMount {
+    source: Option<PathBuf>,
+    tag: Option<String>,
+    target: Option<String>,
+}
+
+impl PartialBindMount {
+    fn finish(self, index: usize) -> Result<BindMount> {
+        Ok(BindMount {
+            source: self
+                .source
+                .ok_or_else(|| anyhow!("loftd launch config mount.{index} missing source"))?,
+            tag: self
+                .tag
+                .ok_or_else(|| anyhow!("loftd launch config mount.{index} missing tag"))?,
+            target: self
+                .target
+                .ok_or_else(|| anyhow!("loftd launch config mount.{index} missing target"))?,
         })
     }
 }
@@ -353,6 +408,94 @@ impl PartialDiskAttachment {
                 .ok_or_else(|| anyhow!("loftd launch config disk.{index} missing read_only"))?,
         })
     }
+}
+
+fn parse_mounts(
+    fields: &BTreeMap<String, String>,
+    indexed_mounts: BTreeMap<usize, PartialBindMount>,
+) -> Result<Vec<BindMount>> {
+    let has_indexed_mounts = !indexed_mounts.is_empty();
+    let mounts = if !has_indexed_mounts {
+        vec![BindMount {
+            source: PathBuf::from(required_field(fields, "workspace_source")?),
+            tag: required_field(fields, "workspace_tag")?,
+            target: required_field(fields, "workspace_target")?,
+        }]
+    } else {
+        indexed_mounts
+            .into_iter()
+            .map(|(index, mount)| mount.finish(index))
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    if has_indexed_mounts && has_legacy_workspace_fields(fields) {
+        let legacy = BindMount {
+            source: PathBuf::from(required_field(fields, "workspace_source")?),
+            tag: required_field(fields, "workspace_tag")?,
+            target: required_field(fields, "workspace_target")?,
+        };
+        let workspace = workspace_mount(&mounts)?;
+        if *workspace != legacy {
+            anyhow::bail!(
+                "loftd launch config workspace compatibility fields disagree with indexed mounts"
+            );
+        }
+    }
+
+    validate_mounts(&mounts)?;
+    Ok(mounts)
+}
+
+fn has_legacy_workspace_fields(fields: &BTreeMap<String, String>) -> bool {
+    fields.contains_key("workspace_source")
+        || fields.contains_key("workspace_tag")
+        || fields.contains_key("workspace_target")
+}
+
+fn required_field(fields: &BTreeMap<String, String>, key: &str) -> Result<String> {
+    fields
+        .get(key)
+        .cloned()
+        .ok_or_else(|| anyhow!("loftd launch config missing required key {key}"))
+}
+
+fn workspace_mount(mounts: &[BindMount]) -> Result<&BindMount> {
+    mounts
+        .iter()
+        .find(|mount| mount.target == WORKSPACE_TARGET)
+        .ok_or_else(|| anyhow!("loftd launch config requires a {WORKSPACE_TARGET} mount"))
+}
+
+pub fn validate_mounts(mounts: &[BindMount]) -> Result<()> {
+    if mounts.is_empty() {
+        anyhow::bail!("loftd launch config requires at least one bind mount");
+    }
+    let mut tags = BTreeSet::new();
+    let mut targets = BTreeSet::new();
+    for mount in mounts {
+        if mount.tag.trim().is_empty() {
+            anyhow::bail!("loftd bind mount tag cannot be empty");
+        }
+        if !Path::new(&mount.target).is_absolute() {
+            anyhow::bail!(
+                "loftd bind mount target '{}' must be absolute",
+                mount.target
+            );
+        }
+        if mount.target.contains(".config/codex")
+            || mount.source.to_string_lossy().contains(".config/codex")
+        {
+            anyhow::bail!("loftd bind mounts must not include .config/codex");
+        }
+        if !tags.insert(mount.tag.as_str()) {
+            anyhow::bail!("loftd bind mount tag '{}' is duplicated", mount.tag);
+        }
+        if !targets.insert(mount.target.as_str()) {
+            anyhow::bail!("loftd bind mount target '{}' is duplicated", mount.target);
+        }
+    }
+    workspace_mount(mounts)?;
+    Ok(())
 }
 
 pub(crate) fn resolve_cpu_count() -> Result<u8> {
@@ -505,12 +648,42 @@ mod tests {
     use std::path::Path;
     use tempfile::tempdir;
 
+    fn test_mounts() -> Vec<BindMount> {
+        vec![
+            BindMount {
+                source: Path::new("/workspace-src").to_path_buf(),
+                tag: WORKSPACE_TAG.to_owned(),
+                target: WORKSPACE_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/home/host/.codex").to_path_buf(),
+                tag: CODEX_TAG.to_owned(),
+                target: CODEX_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/home/host/.pi").to_path_buf(),
+                tag: PI_TAG.to_owned(),
+                target: PI_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/state/project/cargo").to_path_buf(),
+                tag: CARGO_TAG.to_owned(),
+                target: CARGO_TARGET.to_owned(),
+            },
+            BindMount {
+                source: Path::new("/state/sccache").to_path_buf(),
+                tag: SCCACHE_TAG.to_owned(),
+                target: SCCACHE_TARGET.to_owned(),
+            },
+        ]
+    }
+
     #[test]
     fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         let image_process_config = OciProcessConfig::default();
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -527,9 +700,10 @@ mod tests {
         .expect("launch config should build");
 
         assert_eq!(config.task_rootfs, Path::new("/state/task/rootfs"));
-        assert_eq!(config.workspace.source, Path::new("/workspace-src"));
-        assert_eq!(config.workspace.tag, "loftd-workspace");
-        assert_eq!(config.workspace.target, "/workspace");
+        assert_eq!(config.mounts[0].source, Path::new("/workspace-src"));
+        assert_eq!(config.mounts[0].tag, "loftd-workspace");
+        assert_eq!(config.mounts[0].target, "/workspace");
+        assert_eq!(config.mounts.len(), 5);
         assert_eq!(config.ram_mib, 4096);
         assert_eq!(config.vcpus, 2);
         assert_eq!(config.log_level, LogLevel::Debug);
@@ -545,6 +719,19 @@ mod tests {
         );
         assert!(config.guest_config_env_contains("LOFTD_HOST_UID", "1000"));
         assert!(config.guest_config_env_contains("LOFTD_HOST_GID", "1001"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_COUNT", "5"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_0_TAG", "loftd-workspace"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_0_TARGET", "/workspace"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_1_TAG", "loftd-codex"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_1_TARGET", "/home/dev/.codex"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_2_TAG", "loftd-pi"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_2_TARGET", "/home/dev/.pi"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_3_TAG", "loftd-cargo"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_3_TARGET", "/home/dev/.cargo"));
+        assert!(config.guest_config_env_contains("LOFTD_MOUNT_4_TAG", "loftd-sccache"));
+        assert!(
+            config.guest_config_env_contains("LOFTD_MOUNT_4_TARGET", "/home/dev/.cache/sccache")
+        );
         assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TAG", "loftd-workspace"));
         assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TARGET", "/workspace"));
         assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
@@ -553,7 +740,9 @@ mod tests {
             config
                 .guest_config_env
                 .iter()
-                .all(|(key, _)| !key.starts_with("AGENTBOX_"))
+                .all(|(key, value)| !key.starts_with("AGENTBOX_")
+                    && !value.contains("/workspace-src")
+                    && !value.contains(".config/codex"))
         );
     }
 
@@ -563,7 +752,7 @@ mod tests {
         let image_process_config = OciProcessConfig::default();
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &command,
             image_process_config: &image_process_config,
@@ -592,7 +781,7 @@ mod tests {
         };
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -622,6 +811,7 @@ mod tests {
         let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
 
         assert_eq!(parsed, config);
+        assert_eq!(parsed.mounts, test_mounts());
         assert_eq!(
             parsed.env,
             [("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
@@ -636,6 +826,58 @@ mod tests {
             parsed.disks[1].path,
             Path::new("/state/loftd-containers.raw")
         );
+    }
+
+    #[test]
+    fn launch_config_legacy_workspace_fields_fall_back_to_single_workspace_mount() {
+        let mut text = String::new();
+        push_field(&mut text, "task_rootfs", "/state/task/rootfs");
+        push_field(&mut text, "workspace_source", "/workspace-src");
+        push_field(&mut text, "workspace_tag", "loftd-workspace");
+        push_field(&mut text, "workspace_target", "/workspace");
+        push_field(&mut text, "ram_mib", "4096");
+        push_field(&mut text, "vcpus", "2");
+        push_field(&mut text, "log_level", "off");
+        push_field(&mut text, "workdir", "/workspace");
+        push_field(&mut text, "exec_path", "/loftd-guest-init");
+
+        let parsed = LaunchConfig::parse(&text).expect("legacy config should parse");
+
+        assert_eq!(
+            parsed.mounts,
+            [BindMount {
+                source: Path::new("/workspace-src").to_path_buf(),
+                tag: WORKSPACE_TAG.to_owned(),
+                target: WORKSPACE_TARGET.to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn launch_config_rejects_config_codex_mounts() {
+        let mut mounts = test_mounts();
+        mounts[1].source = Path::new("/home/host/.config/codex").to_path_buf();
+        let image_process_config = OciProcessConfig::default();
+
+        let err = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            mounts: &mounts,
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            log_level: LogLevel::Off,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect_err("config codex source should be rejected");
+
+        assert!(format!("{err:#}").contains(".config/codex"));
     }
 
     #[test]
@@ -666,7 +908,7 @@ mod tests {
 
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -728,7 +970,7 @@ mod tests {
         let image_process_config = OciProcessConfig::default();
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -747,7 +989,7 @@ mod tests {
 
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -777,7 +1019,7 @@ mod tests {
         };
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: rootfs.path(),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -823,7 +1065,7 @@ mod tests {
         for image_process_config in [&missing_equals, &empty_key] {
             let err = LaunchConfig::build_for_task(LaunchSpec {
                 task_rootfs: Path::new("/state/task/rootfs"),
-                workspace_source: Path::new("/workspace-src"),
+                mounts: &test_mounts(),
                 guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
                 guest_command: &[],
                 image_process_config,
@@ -850,7 +1092,7 @@ mod tests {
         };
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
-            workspace_source: Path::new("/workspace-src"),
+            mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,

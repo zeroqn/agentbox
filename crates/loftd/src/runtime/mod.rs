@@ -24,7 +24,9 @@ use supervisor::{HostSupervisor, Supervisor};
 use task_rootfs::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
 
 pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
-    let cwd = env::current_dir()?;
+    let cwd = env::current_dir()?
+        .canonicalize()
+        .context("failed to canonicalize current directory for loftd workspace mount")?;
     let mut profiler = LoftdHostProfiler::new(host_profile_enabled(&options));
     let plan =
         profiler.measure_result("launch_plan_build", || LaunchPlan::from_env(options, cwd))?;
@@ -40,6 +42,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
         state_root = %plan.state_layout.root_dir().display(),
         image_cache = %plan.image_cache_dir.display(),
         sccache = %plan.sccache_dir.display(),
+        mounts = plan.bind_mounts.len(),
         workspace_slug = %plan.workspace_slug,
         config = %plan.config_diagnostics.config_path.display(),
         loaded = plan.config_diagnostics.config_loaded,
@@ -94,7 +97,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
                     Ok(guest_init) => match profiler.measure_result("launch_config_build", || {
                         launch_config::LaunchConfig::build_for_task(launch_config::LaunchSpec {
                             task_rootfs: lease.handle().rootfs_path(),
-                            workspace_source: &plan.workspace_dir,
+                            mounts: &plan.bind_mounts,
                             guest_init_exec: &guest_init.guest_exec_path,
                             guest_command: &plan.guest_command,
                             image_process_config: lease.handle().process_config(),
@@ -116,6 +119,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
                                 ram_mib = config.ram_mib,
                                 vcpus = config.vcpus,
                                 workspace = %plan.workspace_dir.display(),
+                                mounts = config.mounts.len(),
                                 "loftd libkrun launch"
                             );
 

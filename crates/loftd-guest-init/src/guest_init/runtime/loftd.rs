@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +11,7 @@ use crate::guest_init::{command, process, profile};
 
 const WORKSPACE_TAG_ENV: &str = "LOFTD_WORKSPACE_TAG";
 const WORKSPACE_TARGET_ENV: &str = "LOFTD_WORKSPACE_TARGET";
+const MOUNT_COUNT_ENV: &str = "LOFTD_MOUNT_COUNT";
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
 const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
 
@@ -17,7 +19,7 @@ const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) enum LoftdEnterOperation {
     ReadEnv,
-    MountWorkspace,
+    MountBindMounts,
     ResolveIdentity,
     DeriveShellEnvironment,
     ExportShellEnvironment,
@@ -36,7 +38,7 @@ pub(in crate::guest_init) enum LoftdEnterOperation {
 pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperation> {
     vec![
         LoftdEnterOperation::ReadEnv,
-        LoftdEnterOperation::MountWorkspace,
+        LoftdEnterOperation::MountBindMounts,
         LoftdEnterOperation::ResolveIdentity,
         LoftdEnterOperation::DeriveShellEnvironment,
         LoftdEnterOperation::ExportShellEnvironment,
@@ -54,12 +56,17 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EnterEnv {
-    workspace_tag: String,
-    workspace_target: PathBuf,
+    mounts: Vec<BindMount>,
     enter_as_root: bool,
     host_uid: Option<u32>,
     host_gid: Option<u32>,
     loftd: LoftdEnv,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BindMount {
+    tag: String,
+    target: PathBuf,
 }
 
 trait EnvSource {
@@ -80,11 +87,11 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     debug_breadcrumb("read-env starting");
     let env_contract = profiler.measure_result("read-env", || EnterEnv::from_env(&ProcessEnv))?;
     debug_breadcrumb("read-env complete");
-    debug_breadcrumb("mount-workspace starting");
-    profiler.measure_result("mount-workspace", || {
-        ensure_workspace_mounted(&env_contract.workspace_tag, &env_contract.workspace_target)
+    debug_breadcrumb("mount-bind-mounts starting");
+    profiler.measure_result("mount-bind-mounts", || {
+        ensure_bind_mounts_mounted(&env_contract.mounts)
     })?;
-    debug_breadcrumb("mount-workspace complete");
+    debug_breadcrumb("mount-bind-mounts complete");
     debug_breadcrumb("resolve-identity starting");
     let identity = profiler.measure_result("resolve-identity", || {
         resolve_identity(
@@ -156,25 +163,77 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 
 impl EnterEnv {
     fn from_env(env: &impl EnvSource) -> Result<Self> {
-        let workspace_tag = env
-            .var(WORKSPACE_TAG_ENV)
-            .ok_or_else(|| anyhow!("{WORKSPACE_TAG_ENV} is required for loftd enter"))?;
-        let workspace_target = env
-            .var(WORKSPACE_TARGET_ENV)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/workspace"));
-        if !workspace_target.is_absolute() {
-            bail!("{WORKSPACE_TARGET_ENV} must be an absolute path");
-        }
         Ok(Self {
-            workspace_tag,
-            workspace_target,
+            mounts: bind_mounts_from_env(env)?,
             enter_as_root: env.var(ENTER_AS_ROOT_ENV).as_deref() == Some("1"),
             host_uid: parse_optional_u32(env, HOST_UID_ENV)?,
             host_gid: parse_optional_u32(env, HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
         })
     }
+}
+
+fn bind_mounts_from_env(env: &impl EnvSource) -> Result<Vec<BindMount>> {
+    let mounts = if let Some(count) = env.var(MOUNT_COUNT_ENV) {
+        let count = count
+            .parse::<usize>()
+            .with_context(|| format!("invalid numeric value in {MOUNT_COUNT_ENV}"))?;
+        let mut mounts = Vec::with_capacity(count);
+        for index in 0..count {
+            let tag_name = format!("LOFTD_MOUNT_{index}_TAG");
+            let target_name = format!("LOFTD_MOUNT_{index}_TARGET");
+            let tag = env
+                .var(&tag_name)
+                .ok_or_else(|| anyhow!("{tag_name} is required for loftd enter"))?;
+            let target = env
+                .var(&target_name)
+                .map(PathBuf::from)
+                .ok_or_else(|| anyhow!("{target_name} is required for loftd enter"))?;
+            mounts.push(BindMount { tag, target });
+        }
+        mounts
+    } else {
+        let tag = env
+            .var(WORKSPACE_TAG_ENV)
+            .ok_or_else(|| anyhow!("{WORKSPACE_TAG_ENV} is required for loftd enter"))?;
+        let target = env
+            .var(WORKSPACE_TARGET_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/workspace"));
+        vec![BindMount { tag, target }]
+    };
+    validate_bind_mounts(&mounts)?;
+    Ok(mounts)
+}
+
+fn validate_bind_mounts(mounts: &[BindMount]) -> Result<()> {
+    if mounts.is_empty() {
+        bail!("loftd enter requires at least one bind mount");
+    }
+    let mut tags = BTreeSet::new();
+    let mut targets = BTreeSet::new();
+    for mount in mounts {
+        if mount.tag.trim().is_empty() {
+            bail!("loftd bind mount tag cannot be empty");
+        }
+        if !mount.target.is_absolute() {
+            bail!(
+                "loftd bind mount target '{}' must be absolute",
+                mount.target.display()
+            );
+        }
+        if mount.target.to_string_lossy().contains(".config/codex") {
+            bail!("loftd bind mounts must not include .config/codex");
+        }
+        if !tags.insert(mount.tag.as_str()) {
+            bail!("loftd bind mount tag '{}' is duplicated", mount.tag);
+        }
+        let target = mount.target.display().to_string();
+        if !targets.insert(target.clone()) {
+            bail!("loftd bind mount target '{target}' is duplicated");
+        }
+    }
+    Ok(())
 }
 
 fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
@@ -250,38 +309,40 @@ fn resolve_shell(command: &[String]) -> PathBuf {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum WorkspaceMountPlan {
+enum BindMountPlan {
     AlreadyMounted,
     Mount,
 }
 
-fn ensure_workspace_mounted(tag: &str, target: &Path) -> Result<()> {
-    if !target.is_absolute() {
-        bail!(
-            "loftd workspace target '{}' must be absolute",
-            target.display()
-        );
+fn ensure_bind_mounts_mounted(bind_mounts: &[BindMount]) -> Result<()> {
+    let mounts = fs::read_to_string("/proc/mounts").context("failed to read /proc/mounts")?;
+    for bind_mount in bind_mounts {
+        ensure_bind_mount_mounted(&mounts, bind_mount)?;
     }
+    Ok(())
+}
+
+fn ensure_bind_mount_mounted(mounts: &str, bind_mount: &BindMount) -> Result<()> {
+    let target = &bind_mount.target;
     if target.exists() && !target.is_dir() {
         bail!(
-            "loftd workspace target '{}' exists but is not a directory",
+            "loftd bind mount target '{}' exists but is not a directory",
             target.display()
         );
     }
     fs::create_dir_all(target).with_context(|| {
         format!(
-            "failed to create loftd workspace target '{}'",
+            "failed to create loftd bind mount target '{}'",
             target.display()
         )
     })?;
-    let mounts = fs::read_to_string("/proc/mounts").context("failed to read /proc/mounts")?;
-    match workspace_mount_plan(&mounts, tag, target)? {
-        WorkspaceMountPlan::AlreadyMounted => Ok(()),
-        WorkspaceMountPlan::Mount => mount_workspace(tag, target),
+    match bind_mount_plan(mounts, &bind_mount.tag, target)? {
+        BindMountPlan::AlreadyMounted => Ok(()),
+        BindMountPlan::Mount => mount_bind_mount(&bind_mount.tag, target),
     }
 }
 
-fn workspace_mount_plan(mounts: &str, tag: &str, target: &Path) -> Result<WorkspaceMountPlan> {
+fn bind_mount_plan(mounts: &str, tag: &str, target: &Path) -> Result<BindMountPlan> {
     let target = target.display().to_string();
     for line in mounts.lines() {
         let mut fields = line.split_whitespace();
@@ -296,22 +357,22 @@ fn workspace_mount_plan(mounts: &str, tag: &str, target: &Path) -> Result<Worksp
         };
         if mountpoint == target {
             if source == tag && fs_type == "virtiofs" {
-                return Ok(WorkspaceMountPlan::AlreadyMounted);
+                return Ok(BindMountPlan::AlreadyMounted);
             }
             bail!(
-                "loftd workspace target {target} is already mounted from {source} as {fs_type}, not virtiofs tag {tag}"
+                "loftd bind mount target {target} is already mounted from {source} as {fs_type}, not virtiofs tag {tag}"
             );
         }
     }
-    Ok(WorkspaceMountPlan::Mount)
+    Ok(BindMountPlan::Mount)
 }
 
-fn mount_workspace(tag: &str, target: &Path) -> Result<()> {
+fn mount_bind_mount(tag: &str, target: &Path) -> Result<()> {
     command::run(
         "mount",
         &["-t", "virtiofs", tag, &target.display().to_string()],
     )
-    .with_context(|| format!("failed to mount loftd workspace virtiofs tag {tag}"))
+    .with_context(|| format!("failed to mount loftd bind virtiofs tag {tag}"))
 }
 
 fn debug_breadcrumb(message: &str) {
@@ -349,9 +410,9 @@ mod tests {
         };
 
         assert!(
-            pos(LoftdEnterOperation::MountWorkspace) < pos(LoftdEnterOperation::ResolveIdentity)
+            pos(LoftdEnterOperation::MountBindMounts) < pos(LoftdEnterOperation::ResolveIdentity)
         );
-        assert!(pos(LoftdEnterOperation::MountWorkspace) < pos(LoftdEnterOperation::StartNixPrep));
+        assert!(pos(LoftdEnterOperation::MountBindMounts) < pos(LoftdEnterOperation::StartNixPrep));
         assert!(
             pos(LoftdEnterOperation::ResolveIdentity) < pos(LoftdEnterOperation::StartPodmanPrep)
         );
@@ -366,13 +427,81 @@ mod tests {
         assert!(
             EnterEnv::from_env(&env(&[(WORKSPACE_TAG_ENV, "loftd-workspace")]))
                 .expect("target should default")
-                .workspace_target
+                .mounts[0]
+                .target
                 .is_absolute()
         );
         assert!(
             EnterEnv::from_env(&env(&[
                 (WORKSPACE_TAG_ENV, "loftd-workspace"),
                 (WORKSPACE_TARGET_ENV, "workspace"),
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn loftd_env_parses_indexed_bind_mount_contract() {
+        let parsed = EnterEnv::from_env(&env(&[
+            (MOUNT_COUNT_ENV, "5"),
+            ("LOFTD_MOUNT_0_TAG", "loftd-workspace"),
+            ("LOFTD_MOUNT_0_TARGET", "/workspace"),
+            ("LOFTD_MOUNT_1_TAG", "loftd-codex"),
+            ("LOFTD_MOUNT_1_TARGET", "/home/dev/.codex"),
+            ("LOFTD_MOUNT_2_TAG", "loftd-pi"),
+            ("LOFTD_MOUNT_2_TARGET", "/home/dev/.pi"),
+            ("LOFTD_MOUNT_3_TAG", "loftd-cargo"),
+            ("LOFTD_MOUNT_3_TARGET", "/home/dev/.cargo"),
+            ("LOFTD_MOUNT_4_TAG", "loftd-sccache"),
+            ("LOFTD_MOUNT_4_TARGET", "/home/dev/.cache/sccache"),
+        ]))
+        .expect("indexed mounts should parse");
+
+        assert_eq!(parsed.mounts.len(), 5);
+        assert_eq!(parsed.mounts[0].tag, "loftd-workspace");
+        assert_eq!(parsed.mounts[0].target, Path::new("/workspace"));
+        assert_eq!(parsed.mounts[1].tag, "loftd-codex");
+        assert_eq!(parsed.mounts[1].target, Path::new("/home/dev/.codex"));
+        assert!(
+            !parsed
+                .mounts
+                .iter()
+                .any(|mount| mount.target.to_string_lossy().contains(".config/codex"))
+        );
+    }
+
+    #[test]
+    fn loftd_env_rejects_bad_indexed_mount_contracts() {
+        assert!(
+            EnterEnv::from_env(&env(&[
+                (MOUNT_COUNT_ENV, "1"),
+                ("LOFTD_MOUNT_0_TAG", "loftd-workspace"),
+            ]))
+            .is_err()
+        );
+        assert!(
+            EnterEnv::from_env(&env(&[
+                (MOUNT_COUNT_ENV, "1"),
+                ("LOFTD_MOUNT_0_TAG", "loftd-workspace"),
+                ("LOFTD_MOUNT_0_TARGET", "workspace"),
+            ]))
+            .is_err()
+        );
+        assert!(
+            EnterEnv::from_env(&env(&[
+                (MOUNT_COUNT_ENV, "2"),
+                ("LOFTD_MOUNT_0_TAG", "loftd-workspace"),
+                ("LOFTD_MOUNT_0_TARGET", "/workspace"),
+                ("LOFTD_MOUNT_1_TAG", "loftd-codex"),
+                ("LOFTD_MOUNT_1_TARGET", "/workspace"),
+            ]))
+            .is_err()
+        );
+        assert!(
+            EnterEnv::from_env(&env(&[
+                (MOUNT_COUNT_ENV, "1"),
+                ("LOFTD_MOUNT_0_TAG", "loftd-config-codex"),
+                ("LOFTD_MOUNT_0_TARGET", "/home/dev/.config/codex"),
             ]))
             .is_err()
         );
@@ -437,23 +566,23 @@ mod tests {
     }
 
     #[test]
-    fn workspace_mount_is_idempotent_for_same_virtiofs_tag() {
+    fn bind_mount_is_idempotent_for_same_virtiofs_tag() {
         assert_eq!(
-            workspace_mount_plan(
+            bind_mount_plan(
                 "loftd-workspace /workspace virtiofs rw 0 0\n",
                 "loftd-workspace",
                 Path::new("/workspace"),
             )
             .expect("same tag mount should be accepted"),
-            WorkspaceMountPlan::AlreadyMounted
+            BindMountPlan::AlreadyMounted
         );
         assert_eq!(
-            workspace_mount_plan("", "loftd-workspace", Path::new("/workspace"))
+            bind_mount_plan("", "loftd-workspace", Path::new("/workspace"))
                 .expect("missing mount should mount"),
-            WorkspaceMountPlan::Mount
+            BindMountPlan::Mount
         );
         assert!(
-            workspace_mount_plan(
+            bind_mount_plan(
                 "other /workspace virtiofs rw 0 0\n",
                 "loftd-workspace",
                 Path::new("/workspace"),

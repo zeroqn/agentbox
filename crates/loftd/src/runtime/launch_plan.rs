@@ -1,11 +1,17 @@
 use anyhow::Result;
 use std::env;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::cli::RuntimeOptions;
 use crate::config;
 use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
+use crate::runtime::launch_config::{
+    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG,
+    SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, validate_mounts,
+};
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -17,6 +23,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) state_layout: StateLayout,
     pub(crate) image_cache_dir: PathBuf,
     pub(crate) sccache_dir: PathBuf,
+    pub bind_mounts: Vec<BindMount>,
     pub(crate) image_selection: ImageSelection,
     pub(crate) task_rootfs_backend: TaskRootfsBackend,
     pub(crate) guest_init: Option<PathBuf>,
@@ -62,6 +69,10 @@ impl LaunchPlan {
         let workspace_slug = derive_workspace_slug(&workspace_dir);
         let image_cache_dir = state_layout.image_cache_dir();
         let sccache_dir = state_layout.sccache_dir();
+        let home_dir = home_dir.ok_or_else(|| {
+            anyhow::anyhow!("HOME is not set; loftd cannot prepare .codex and .pi bind mounts")
+        })?;
+        let bind_mounts = prepare_bind_mounts(&workspace_dir, home_dir, &state_layout)?;
         let task_rootfs_backend = options
             .rootfs_backend
             .or_else(|| config.task_rootfs_backend())
@@ -73,6 +84,7 @@ impl LaunchPlan {
             state_layout,
             image_cache_dir,
             sccache_dir,
+            bind_mounts,
             image_selection: ImageSelection::from_runtime_options(
                 options.image,
                 options.pull_latest,
@@ -91,6 +103,46 @@ impl LaunchPlan {
                 config_loaded: config.loaded(),
             },
         })
+    }
+}
+
+fn prepare_bind_mounts(
+    workspace_dir: &Path,
+    home_dir: &Path,
+    state_layout: &StateLayout,
+) -> Result<Vec<BindMount>> {
+    let codex_dir = home_dir.join(".codex");
+    let pi_dir = home_dir.join(".pi");
+    let cargo_dir = state_layout.root_dir().join("cargo");
+    let sccache_dir = state_layout.sccache_dir();
+
+    fs::create_dir_all(&codex_dir)
+        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", codex_dir.display()))?;
+    fs::create_dir_all(&pi_dir)
+        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", pi_dir.display()))?;
+    fs::create_dir_all(&cargo_dir)
+        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", cargo_dir.display()))?;
+    fs::create_dir_all(&sccache_dir)
+        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", sccache_dir.display()))?;
+    fs::set_permissions(&sccache_dir, fs::Permissions::from_mode(0o700))
+        .map_err(|err| anyhow::anyhow!("failed to chmod 700 '{}': {err}", sccache_dir.display()))?;
+
+    let mounts = vec![
+        bind_mount(workspace_dir, WORKSPACE_TAG, WORKSPACE_TARGET),
+        bind_mount(&codex_dir, CODEX_TAG, CODEX_TARGET),
+        bind_mount(&pi_dir, PI_TAG, PI_TARGET),
+        bind_mount(&cargo_dir, CARGO_TAG, CARGO_TARGET),
+        bind_mount(&sccache_dir, SCCACHE_TAG, SCCACHE_TARGET),
+    ];
+    validate_mounts(&mounts)?;
+    Ok(mounts)
+}
+
+fn bind_mount(source: &Path, tag: &str, target: &str) -> BindMount {
+    BindMount {
+        source: source.to_path_buf(),
+        tag: tag.to_owned(),
+        target: target.to_owned(),
     }
 }
 
@@ -128,6 +180,7 @@ impl ImageSelection {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
     use crate::cli::RuntimeOptions;
@@ -176,6 +229,75 @@ mod tests {
         assert_eq!(plan.log_level, LogLevel::Off);
         assert!(!plan.debug);
         assert!(!plan.config_diagnostics.config_loaded);
+    }
+
+    #[test]
+    fn plan_prepares_existing_agentbox_style_bind_mounts_without_codex_config() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let workspace = dir.path().join("project");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+
+        let plan = LaunchPlan::from_env_values(
+            runtime_options(),
+            workspace.clone(),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(home.as_path()),
+        )
+        .expect("plan should build");
+
+        let mount = |target: &str| {
+            plan.bind_mounts
+                .iter()
+                .find(|mount| mount.target == target)
+                .expect("mount should exist")
+        };
+        assert_eq!(plan.bind_mounts.len(), 5);
+        assert_eq!(mount("/workspace").source, workspace);
+        assert_eq!(mount("/home/dev/.codex").source, home.join(".codex"));
+        assert_eq!(mount("/home/dev/.pi").source, home.join(".pi"));
+        assert_eq!(
+            mount("/home/dev/.cargo").source,
+            plan.state_layout.root_dir().join("cargo")
+        );
+        assert_eq!(
+            mount("/home/dev/.cache/sccache").source,
+            plan.state_layout.sccache_dir()
+        );
+        assert!(home.join(".codex").is_dir());
+        assert!(home.join(".pi").is_dir());
+        assert!(plan.state_layout.root_dir().join("cargo").is_dir());
+        assert_eq!(
+            fs::metadata(plan.state_layout.sccache_dir())
+                .expect("sccache metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert!(
+            !plan
+                .bind_mounts
+                .iter()
+                .any(|mount| mount.target.contains(".config/codex")
+                    || mount.source.to_string_lossy().contains(".config/codex"))
+        );
+    }
+
+    #[test]
+    fn plan_requires_home_for_codex_and_pi_mounts() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let err = LaunchPlan::from_env_values(
+            runtime_options(),
+            PathBuf::from("/tmp/project"),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            None,
+        )
+        .expect_err("HOME should be required");
+
+        assert!(format!("{err:#}").contains("HOME is not set"));
     }
 
     #[test]
