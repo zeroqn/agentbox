@@ -138,9 +138,11 @@ fn run_helper(config_path: &Path) -> Result<()> {
     }
     let config = LaunchConfig::read_from(config_path)?;
     logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))?;
+    let guest_config_path = config.write_guest_config_to_rootfs()?;
     tracing::debug!(
         config_path = %config_path.display(),
         rootfs = %config.task_rootfs.display(),
+        guest_config = %guest_config_path.display(),
         workspace_source = %config.workspace.source.display(),
         workspace_tag = %config.workspace.tag,
         workspace_target = %config.workspace.target,
@@ -150,6 +152,7 @@ fn run_helper(config_path: &Path) -> Result<()> {
         exec_path = %config.exec_path,
         argv_len = config.argv.len(),
         env_len = config.env.len(),
+        guest_config_env_len = config.guest_config_env.len(),
         "loftd internal: launch config loaded"
     );
     tracing::debug!("libkrun API open: begin");

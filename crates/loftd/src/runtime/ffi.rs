@@ -747,7 +747,20 @@ mod tests {
             )
         );
         assert_eq!(calls[9], Call::SetWorkdir(7, "/workspace".to_owned()));
-        assert!(matches!(calls[10], Call::SetExec(7, _, _, _)));
+        assert_eq!(
+            calls[10],
+            Call::SetExec(
+                7,
+                "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                vec![
+                    "enter".to_owned(),
+                    "--".to_owned(),
+                    "fish".to_owned(),
+                    "-l".to_owned()
+                ],
+                vec![("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
+            )
+        );
         assert_eq!(calls[11], Call::StartEnter(7));
         assert_eq!(
             calls.len(),

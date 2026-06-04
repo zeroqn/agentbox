@@ -15,6 +15,15 @@ const WORKSPACE_TARGET_ENV: &str = "LOFTD_WORKSPACE_TARGET";
 const ENTER_AS_ROOT_ENV: &str = "LOFTD_ENTER_AS_ROOT";
 const GUEST_PROFILE_ENV: &str = "LOFTD_GUEST_PROFILE";
 const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
+const IMAGE_PATH_ENV: &str = "PATH";
+const KRUN_CONFIG_ENV: &str = "KRUN_CONFIG";
+pub(crate) const LOFTD_KRUN_CONFIG_PATH: &str = "/.loftd_config.json";
+const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
+    "LOFTD_FISH_CONFIG_SOURCE",
+    "LOFTD_STARSHIP_CONFIG_SOURCE",
+    "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB",
+    "LOFTD_REAL_PODMAN",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorkspaceMount {
@@ -60,6 +69,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) exec_path: String,
     pub(crate) argv: Vec<String>,
     pub(crate) env: Vec<(String, String)>,
+    pub(crate) guest_config_env: Vec<(String, String)>,
 }
 
 impl LaunchConfig {
@@ -71,18 +81,18 @@ impl LaunchConfig {
             (WORKSPACE_TAG_ENV.to_owned(), WORKSPACE_TAG.to_owned()),
             (WORKSPACE_TARGET_ENV.to_owned(), WORKSPACE_TARGET.to_owned()),
         ];
-        let mut env = merge_env(&spec.image_process_config.env, required_env)?;
+        let mut guest_config_env = bootstrap_env(&spec.image_process_config.env, required_env)?;
         if spec.root {
-            insert_env(&mut env, ENTER_AS_ROOT_ENV, "1");
+            insert_env(&mut guest_config_env, ENTER_AS_ROOT_ENV, "1");
         }
         if spec.profile {
-            insert_env(&mut env, GUEST_PROFILE_ENV, "1");
+            insert_env(&mut guest_config_env, GUEST_PROFILE_ENV, "1");
         }
         if spec.log_level.enables_debug() {
-            insert_env(&mut env, GUEST_DEBUG_ENV, "1");
+            insert_env(&mut guest_config_env, GUEST_DEBUG_ENV, "1");
         }
         for (key, value) in spec.extra_env {
-            env.insert(key.clone(), value.clone());
+            guest_config_env.insert(key, value);
         }
         let argv = guest_init_argv(spec.guest_command, &spec.image_process_config.cmd);
         let workdir = spec
@@ -107,15 +117,37 @@ impl LaunchConfig {
             workdir,
             exec_path: spec.guest_init_exec.to_owned(),
             argv,
-            env: env.into_iter().collect(),
+            env: vec![(
+                KRUN_CONFIG_ENV.to_owned(),
+                LOFTD_KRUN_CONFIG_PATH.to_owned(),
+            )],
+            guest_config_env: guest_config_env.into_iter().collect(),
         })
     }
 
     #[cfg(test)]
-    pub(crate) fn env_contains(&self, name: &str, value: &str) -> bool {
-        self.env
+    pub(crate) fn guest_config_env_contains(&self, name: &str, value: &str) -> bool {
+        self.guest_config_env
             .iter()
             .any(|(key, actual)| key == name && actual == value)
+    }
+
+    pub(crate) fn write_guest_config_to_rootfs(&self) -> Result<PathBuf> {
+        let relative_path = LOFTD_KRUN_CONFIG_PATH
+            .strip_prefix('/')
+            .ok_or_else(|| anyhow!("loftd krun config path must be absolute"))?;
+        let path = self.task_rootfs.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create loftd krun config dir '{}'",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(&path, guest_config_json(&self.guest_config_env))
+            .with_context(|| format!("failed to write loftd krun config '{}'", path.display()))?;
+        Ok(path)
     }
 
     pub(crate) fn write_to(&self, path: &Path) -> Result<()> {
@@ -175,6 +207,13 @@ impl LaunchConfig {
         for (index, (key, value)) in self.env.iter().enumerate() {
             push_field(&mut out, &format!("env.{index}"), &format!("{key}={value}"));
         }
+        for (index, (key, value)) in self.guest_config_env.iter().enumerate() {
+            push_field(
+                &mut out,
+                &format!("guest_env.{index}"),
+                &format!("{key}={value}"),
+            );
+        }
         out
     }
 
@@ -182,6 +221,7 @@ impl LaunchConfig {
         let mut fields = BTreeMap::new();
         let mut argv = BTreeMap::new();
         let mut env = BTreeMap::new();
+        let mut guest_config_env = BTreeMap::new();
         let mut disks: BTreeMap<usize, PartialDiskAttachment> = BTreeMap::new();
 
         for (line_index, line) in text.lines().enumerate() {
@@ -223,6 +263,14 @@ impl LaunchConfig {
                     .split_once('=')
                     .ok_or_else(|| anyhow!("loftd launch config env entry {key} is missing '='"))?;
                 env.insert(
+                    parse_index(key, index)?,
+                    (name.to_owned(), actual.to_owned()),
+                );
+            } else if let Some(index) = key.strip_prefix("guest_env.") {
+                let (name, actual) = value.split_once('=').ok_or_else(|| {
+                    anyhow!("loftd launch config guest env entry {key} is missing '='")
+                })?;
+                guest_config_env.insert(
                     parse_index(key, index)?,
                     (name.to_owned(), actual.to_owned()),
                 );
@@ -279,6 +327,7 @@ impl LaunchConfig {
             exec_path: required("exec_path")?,
             argv: argv.into_values().collect(),
             env: env.into_values().collect(),
+            guest_config_env: guest_config_env.into_values().collect(),
         })
     }
 }
@@ -327,7 +376,7 @@ fn resolve_ram_mib(mem_gib: Option<u32>) -> Result<u32> {
         .ok_or_else(|| anyhow!("loftd --mem is too large for libkrun ram_mib"))
 }
 
-fn merge_env(
+fn bootstrap_env(
     image_env: &[String],
     required_env: Vec<(String, String)>,
 ) -> Result<BTreeMap<String, String>> {
@@ -339,12 +388,18 @@ fn merge_env(
         if key.is_empty() {
             anyhow::bail!("loftd image env entry '{entry}' has an empty key");
         }
-        env.insert(key.to_owned(), value.to_owned());
+        if is_allowed_image_env(key) {
+            env.insert(key.to_owned(), value.to_owned());
+        }
     }
     for (key, value) in required_env {
         env.insert(key, value);
     }
     Ok(env)
+}
+
+fn is_allowed_image_env(key: &str) -> bool {
+    key == IMAGE_PATH_ENV || IMAGE_LOFTD_ENV_ALLOWLIST.contains(&key)
 }
 
 fn insert_env(env: &mut BTreeMap<String, String>, key: &str, value: &str) {
@@ -405,10 +460,50 @@ fn parse_index(key: &str, value: &str) -> Result<usize> {
         .with_context(|| format!("loftd launch config index in {key} is invalid"))
 }
 
+fn guest_config_json(env: &[(String, String)]) -> String {
+    let mut out = String::from("{\n  \"Env\": [");
+    for (index, (key, value)) in env.iter().enumerate() {
+        if index == 0 {
+            out.push('\n');
+        } else {
+            out.push_str(",\n");
+        }
+        out.push_str("    \"");
+        push_json_escaped(&mut out, key);
+        out.push('=');
+        push_json_escaped(&mut out, value);
+        out.push('"');
+    }
+    if env.is_empty() {
+        out.push_str("]\n}\n");
+    } else {
+        out.push_str("\n  ]\n}\n");
+    }
+    out
+}
+
+fn push_json_escaped(out: &mut String, value: &str) {
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            ch if ch.is_control() => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
+    use tempfile::tempdir;
 
     #[test]
     fn launch_config_defaults_to_guest_init_enter_fish_shell() {
@@ -444,15 +539,19 @@ mod tests {
             "/nix/store/hash-loftd/bin/loftd-guest-init"
         );
         assert_eq!(config.argv, ["enter", "--", "fish", "-l"]);
-        assert!(config.env_contains("LOFTD_HOST_UID", "1000"));
-        assert!(config.env_contains("LOFTD_HOST_GID", "1001"));
-        assert!(config.env_contains("LOFTD_WORKSPACE_TAG", "loftd-workspace"));
-        assert!(config.env_contains("LOFTD_WORKSPACE_TARGET", "/workspace"));
-        assert!(config.env_contains("LOFTD_GUEST_PROFILE", "1"));
-        assert!(config.env_contains("LOFTD_GUEST_DEBUG", "1"));
+        assert_eq!(
+            config.env,
+            [("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
+        );
+        assert!(config.guest_config_env_contains("LOFTD_HOST_UID", "1000"));
+        assert!(config.guest_config_env_contains("LOFTD_HOST_GID", "1001"));
+        assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TAG", "loftd-workspace"));
+        assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TARGET", "/workspace"));
+        assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
+        assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
         assert!(
             config
-                .env
+                .guest_config_env
                 .iter()
                 .all(|(key, _)| !key.starts_with("AGENTBOX_"))
         );
@@ -523,9 +622,13 @@ mod tests {
         let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
 
         assert_eq!(parsed, config);
-        assert!(parsed.env_contains("LOFTD_ENTER_AS_ROOT", "1"));
-        assert!(parsed.env_contains("LOFTD_CONTAINERS_STORAGE", "1"));
-        assert!(parsed.env_contains("PATH", "/nix/store/fish/bin"));
+        assert_eq!(
+            parsed.env,
+            [("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
+        );
+        assert!(parsed.guest_config_env_contains("LOFTD_ENTER_AS_ROOT", "1"));
+        assert!(parsed.guest_config_env_contains("LOFTD_CONTAINERS_STORAGE", "1"));
+        assert!(parsed.guest_config_env_contains("PATH", "/nix/store/fish/bin"));
         assert_eq!(parsed.argv, ["enter", "--", "fish", "-l"]);
         assert_eq!(parsed.workdir, "/workspace/project");
         assert_eq!(parsed.disks[0].id, "loftd-nix");
@@ -543,11 +646,19 @@ mod tests {
     }
 
     #[test]
-    fn image_env_is_merged_with_runtime_env_without_duplicates() {
+    fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         let image_process_config = OciProcessConfig {
             env: vec![
+                "PATH=/ignored/first".to_owned(),
                 "PATH=/nix/store/fish/bin".to_owned(),
+                "OMX_API_BIN=/nix/store/host-only".to_owned(),
+                "RUSTC_WRAPPER=/nix/store/sccache/bin/sccache".to_owned(),
                 "LOFTD_HOST_UID=image".to_owned(),
+                "LOFTD_FISH_CONFIG_SOURCE=/nix/store/fish-config".to_owned(),
+                "LOFTD_STARSHIP_CONFIG_SOURCE=/nix/store/starship.toml".to_owned(),
+                "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=/nix/store/libhardened_malloc.so".to_owned(),
+                "LOFTD_REAL_PODMAN=/nix/store/podman/bin/podman".to_owned(),
+                "LOFTD_UNRELATED_IMAGE_ENV=ignored".to_owned(),
                 "LOFTD_CONTAINERS_STORAGE=image".to_owned(),
             ],
             ..OciProcessConfig::default()
@@ -571,12 +682,40 @@ mod tests {
         })
         .expect("launch config should build");
 
-        assert!(config.env_contains("PATH", "/nix/store/fish/bin"));
-        assert!(config.env_contains("LOFTD_HOST_UID", "1000"));
-        assert!(config.env_contains("LOFTD_CONTAINERS_STORAGE", "disk"));
+        assert_eq!(
+            config.env,
+            [("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
+        );
+        assert!(config.guest_config_env_contains("PATH", "/nix/store/fish/bin"));
+        assert!(config.guest_config_env_contains("LOFTD_HOST_UID", "1000"));
+        assert!(config.guest_config_env_contains("LOFTD_CONTAINERS_STORAGE", "disk"));
+        assert!(
+            config.guest_config_env_contains("LOFTD_FISH_CONFIG_SOURCE", "/nix/store/fish-config")
+        );
+        assert!(
+            config.guest_config_env_contains(
+                "LOFTD_STARSHIP_CONFIG_SOURCE",
+                "/nix/store/starship.toml"
+            )
+        );
+        assert!(config.guest_config_env_contains(
+            "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB",
+            "/nix/store/libhardened_malloc.so"
+        ));
+        assert!(
+            config.guest_config_env_contains("LOFTD_REAL_PODMAN", "/nix/store/podman/bin/podman")
+        );
+        assert!(
+            !config
+                .guest_config_env
+                .iter()
+                .any(|(key, _)| key == "OMX_API_BIN"
+                    || key == "RUSTC_WRAPPER"
+                    || key == "LOFTD_UNRELATED_IMAGE_ENV")
+        );
         assert_eq!(
             config
-                .env
+                .guest_config_env
                 .iter()
                 .filter(|(key, _)| key == "LOFTD_HOST_UID")
                 .count(),
@@ -604,7 +743,7 @@ mod tests {
             extra_env: Vec::new(),
         })
         .expect("launch config should build");
-        assert!(!config.env_contains("LOFTD_GUEST_DEBUG", "1"));
+        assert!(!config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
 
         let config = LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
@@ -623,7 +762,51 @@ mod tests {
             extra_env: Vec::new(),
         })
         .expect("launch config should build");
-        assert!(config.env_contains("LOFTD_GUEST_DEBUG", "1"));
+        assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
+    }
+
+    #[test]
+    fn writes_loftd_config_json_under_task_rootfs() {
+        let rootfs = tempdir().expect("tempdir should create");
+        let image_process_config = OciProcessConfig {
+            env: vec![
+                "PATH=/nix/store/fish/bin".to_owned(),
+                "LOFTD_FISH_CONFIG_SOURCE=/nix/store/config with \"quote\"".to_owned(),
+            ],
+            ..OciProcessConfig::default()
+        };
+        let config = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: rootfs.path(),
+            workspace_source: Path::new("/workspace-src"),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            log_level: LogLevel::Off,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: vec![(
+                "LOFTD_JSON_TEST".to_owned(),
+                "line\nslash\\tab\t".to_owned(),
+            )],
+        })
+        .expect("launch config should build");
+
+        let path = config
+            .write_guest_config_to_rootfs()
+            .expect("guest config should write");
+        let expected_path = rootfs.path().join(".loftd_config.json");
+        assert_eq!(path, expected_path);
+
+        let json = fs::read_to_string(expected_path).expect("guest config should be readable");
+        assert!(json.starts_with("{\n  \"Env\": ["));
+        assert!(json.contains("\"PATH=/nix/store/fish/bin\""));
+        assert!(json.contains("LOFTD_FISH_CONFIG_SOURCE=/nix/store/config with \\\"quote\\\""));
+        assert!(json.contains("LOFTD_JSON_TEST=line\\nslash\\\\tab\\t"));
     }
 
     #[test]
