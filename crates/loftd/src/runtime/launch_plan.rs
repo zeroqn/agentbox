@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::RuntimeOptions;
 use crate::config;
+use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
@@ -22,6 +23,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) mem_gib: Option<u32>,
     pub(crate) guest_command: Vec<String>,
     pub(crate) debug: bool,
+    pub(crate) log_level: LogLevel,
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) preserve_debug: bool,
@@ -79,7 +81,8 @@ impl LaunchPlan {
             guest_init: options.guest_init,
             mem_gib: options.mem_gib,
             guest_command: options.guest_command,
-            debug: options.debug,
+            debug: options.log_settings.level.enables_debug(),
+            log_level: options.log_settings.level,
             profile: options.profile,
             root: options.root,
             preserve_debug: options.preserve_debug,
@@ -128,6 +131,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cli::RuntimeOptions;
+    use crate::logging::{LogLevel, LogSettings};
     use crate::runtime::launch_plan::{ImageSelection, LaunchPlan};
     use crate::task_rootfs::TaskRootfsBackend;
     use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -137,6 +141,7 @@ mod tests {
             image: None,
             pull_latest: false,
             debug: false,
+            log_settings: LogSettings::resolve(None, false, None),
             profile: false,
             root: false,
             rootfs_backend: None,
@@ -168,7 +173,29 @@ mod tests {
         );
         assert_eq!(plan.image_selection.selected_reference(), DEFAULT_IMAGE);
         assert_eq!(plan.task_rootfs_backend, TaskRootfsBackend::BtrfsSnapshot);
+        assert_eq!(plan.log_level, LogLevel::Off);
+        assert!(!plan.debug);
         assert!(!plan.config_diagnostics.config_loaded);
+    }
+
+    #[test]
+    fn debug_compatibility_sets_effective_log_level_in_plan() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let mut options = runtime_options();
+        options.debug = true;
+        options.log_settings = LogSettings::resolve(None, true, None);
+
+        let plan = LaunchPlan::from_env_values(
+            options,
+            PathBuf::from("/tmp/project"),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.log_level, LogLevel::Debug);
+        assert!(plan.debug);
     }
 
     #[test]
@@ -291,6 +318,7 @@ mod tests {
         options.mem_gib = Some(8);
         options.guest_command = vec!["bash".to_owned(), "-lc".to_owned(), "echo ok".to_owned()];
         options.debug = true;
+        options.log_settings = LogSettings::resolve(None, true, None);
         options.profile = true;
         options.root = true;
         options.preserve_debug = true;

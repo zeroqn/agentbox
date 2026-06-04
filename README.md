@@ -749,15 +749,28 @@ Run/help:
 ./result/bin/loftd --rootfs-backend fuse-overlay
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
+./result/bin/loftd --log-level debug --profile -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
 ```
 
-For host-side timing diagnostics, `loftd --debug --profile` emits a
-`loftd host profile` report to stderr for completed btrfs-snapshot host phases
-such as launch-plan build, task rootfs materialization, persistent disk
-preparation, guest-init lookup, launch config build, helper session, and task
-state cleanup. `--profile` without `--debug` does not print the host report, so
-stdout remains reserved for guest command output.
+For host-side and direct-libkrun diagnostics, use `--log-level` with one of
+`off`, `error`, `warn`, `info`, `debug`, or `trace`. The same effective level is
+used by the parent process, the `buildah unshare` helper, and libkrun logging;
+`debug` and `trace` also set `LOFTD_GUEST_DEBUG=1` so `loftd-guest-init` prints
+early guest-entry breadcrumbs to stderr. `LOFTD_LOG_LEVEL` provides the same
+setting through the environment. When neither `--log-level` nor
+`LOFTD_LOG_LEVEL` is set, `--debug` remains accepted as a compatibility alias
+for `--log-level debug`; otherwise a scalar/global `RUST_LOG` value such as
+`debug` or `trace` can enable loftd tracing. Target-specific `RUST_LOG` filters
+still drive Rust tracing, but are not guessed into a libkrun numeric level.
+
+For timing diagnostics, `loftd --log-level debug --profile` or the compatibility
+form `loftd --debug --profile` emits a `loftd host profile` report to stderr for
+completed btrfs-snapshot host phases such as launch-plan build, task rootfs
+materialization, persistent disk preparation, guest-init lookup, launch config
+build, helper session, and task state cleanup. `--profile` without a debug-or-
+trace effective log level does not print the host report, so stdout remains
+reserved for guest command output.
 
 Image selection is materialized through Buildah for the btrfs-snapshot path: with no
 image option, loftd first inspects `localhost/loftd:latest` and uses it with

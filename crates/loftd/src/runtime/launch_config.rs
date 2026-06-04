@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::logging::LogLevel;
 use crate::runtime::image_source::OciProcessConfig;
 
 pub(crate) const WORKSPACE_TAG: &str = "loftd-workspace";
@@ -37,7 +38,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) guest_command: &'a [String],
     pub(crate) image_process_config: &'a OciProcessConfig,
     pub(crate) mem_gib: Option<u32>,
-    pub(crate) debug: bool,
+    pub(crate) log_level: LogLevel,
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) host_uid: u32,
@@ -54,6 +55,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) ram_mib: u32,
     pub(crate) vcpus: u8,
+    pub(crate) log_level: LogLevel,
     pub(crate) workdir: String,
     pub(crate) exec_path: String,
     pub(crate) argv: Vec<String>,
@@ -76,7 +78,7 @@ impl LaunchConfig {
         if spec.profile {
             insert_env(&mut env, GUEST_PROFILE_ENV, "1");
         }
-        if spec.debug {
+        if spec.log_level.enables_debug() {
             insert_env(&mut env, GUEST_DEBUG_ENV, "1");
         }
         for (key, value) in spec.extra_env {
@@ -101,6 +103,7 @@ impl LaunchConfig {
             disks: spec.disks,
             ram_mib,
             vcpus: spec.vcpus,
+            log_level: spec.log_level,
             workdir,
             exec_path: spec.guest_init_exec.to_owned(),
             argv,
@@ -150,6 +153,7 @@ impl LaunchConfig {
         push_field(&mut out, "workspace_target", &self.workspace.target);
         push_field(&mut out, "ram_mib", &self.ram_mib.to_string());
         push_field(&mut out, "vcpus", &self.vcpus.to_string());
+        push_field(&mut out, "log_level", self.log_level.as_str());
         push_field(&mut out, "workdir", &self.workdir);
         push_field(&mut out, "exec_path", &self.exec_path);
         for (index, disk) in self.disks.iter().enumerate() {
@@ -230,6 +234,7 @@ impl LaunchConfig {
                     | "workspace_target"
                     | "ram_mib"
                     | "vcpus"
+                    | "log_level"
                     | "workdir"
                     | "exec_path"
             ) {
@@ -253,6 +258,9 @@ impl LaunchConfig {
         let vcpus = required("vcpus")?
             .parse::<u8>()
             .context("loftd launch config vcpus is invalid")?;
+        let log_level_text = required("log_level")?;
+        let log_level = LogLevel::parse_name(&log_level_text)
+            .ok_or_else(|| anyhow!("loftd launch config log_level is invalid"))?;
         Ok(Self {
             task_rootfs: PathBuf::from(required("task_rootfs")?),
             workspace: WorkspaceMount {
@@ -266,6 +274,7 @@ impl LaunchConfig {
                 .collect::<Result<Vec<_>>>()?,
             ram_mib,
             vcpus,
+            log_level,
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,
             argv: argv.into_values().collect(),
@@ -411,7 +420,7 @@ mod tests {
             guest_command: &[],
             image_process_config: &image_process_config,
             mem_gib: Some(4),
-            debug: true,
+            log_level: LogLevel::Debug,
             profile: true,
             root: false,
             host_uid: 1000,
@@ -428,6 +437,7 @@ mod tests {
         assert_eq!(config.workspace.target, "/workspace");
         assert_eq!(config.ram_mib, 4096);
         assert_eq!(config.vcpus, 2);
+        assert_eq!(config.log_level, LogLevel::Debug);
         assert_eq!(config.workdir, "/workspace");
         assert_eq!(
             config.exec_path,
@@ -459,7 +469,7 @@ mod tests {
             guest_command: &command,
             image_process_config: &image_process_config,
             mem_gib: Some(4),
-            debug: false,
+            log_level: LogLevel::Off,
             profile: false,
             root: false,
             host_uid: 1000,
@@ -488,7 +498,7 @@ mod tests {
             guest_command: &[],
             image_process_config: &image_process_config,
             mem_gib: Some(2),
-            debug: false,
+            log_level: LogLevel::Off,
             profile: false,
             root: true,
             host_uid: 1000,
@@ -550,7 +560,7 @@ mod tests {
             guest_command: &[],
             image_process_config: &image_process_config,
             mem_gib: Some(4),
-            debug: false,
+            log_level: LogLevel::Off,
             profile: false,
             root: false,
             host_uid: 1000,
@@ -575,6 +585,48 @@ mod tests {
     }
 
     #[test]
+    fn guest_debug_env_follows_effective_log_level() {
+        let image_process_config = OciProcessConfig::default();
+        let config = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            workspace_source: Path::new("/workspace-src"),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            log_level: LogLevel::Info,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect("launch config should build");
+        assert!(!config.env_contains("LOFTD_GUEST_DEBUG", "1"));
+
+        let config = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            workspace_source: Path::new("/workspace-src"),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            log_level: LogLevel::Trace,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect("launch config should build");
+        assert!(config.env_contains("LOFTD_GUEST_DEBUG", "1"));
+    }
+
+    #[test]
     fn malformed_image_env_is_rejected() {
         let missing_equals = OciProcessConfig {
             env: vec!["PATH".to_owned()],
@@ -593,7 +645,7 @@ mod tests {
                 guest_command: &[],
                 image_process_config,
                 mem_gib: Some(4),
-                debug: false,
+                log_level: LogLevel::Off,
                 profile: false,
                 root: false,
                 host_uid: 1000,
@@ -620,7 +672,7 @@ mod tests {
             guest_command: &[],
             image_process_config: &image_process_config,
             mem_gib: Some(4),
-            debug: false,
+            log_level: LogLevel::Off,
             profile: false,
             root: false,
             host_uid: 1000,

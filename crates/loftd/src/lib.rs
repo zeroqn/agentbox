@@ -5,12 +5,13 @@ use std::process::ExitCode;
 
 mod cli;
 mod config;
+mod logging;
 mod naming;
 mod runtime;
 mod state;
 mod task_rootfs;
 
-use cli::Cli;
+use cli::{Cli, RuntimeOptions};
 
 const DEFAULT_IMAGE: &str = "localhost/loftd:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/loftd:latest";
@@ -28,8 +29,13 @@ pub fn entrypoint() -> ExitCode {
     }
 
     let cli = Cli::parse();
+    let options = cli.into_runtime_options();
+    if let Err(err) = logging::init_tracing(&options.log_settings) {
+        eprintln!("loftd: {err:#}");
+        return ExitCode::from(1);
+    }
 
-    match run(cli) {
+    match run(options) {
         Ok(code) => code,
         Err(err) => {
             eprintln!("loftd: {err:#}");
@@ -38,8 +44,8 @@ pub fn entrypoint() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<ExitCode> {
-    runtime::run(cli)
+fn run(options: RuntimeOptions) -> Result<ExitCode> {
+    runtime::run(options)
 }
 
 fn is_internal_invocation(args: &[OsString]) -> bool {

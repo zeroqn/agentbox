@@ -9,11 +9,14 @@ const DAX_SHM_SIZE: u64 = 0;
 const READ_WRITE: bool = false;
 const LIBKRUN_LIBRARY_ENV: &str = "LOFTD_LIBKRUN_LIBRARY";
 const DEFAULT_LIBKRUN_NAMES: [&str; 2] = ["libkrun.so.1", "libkrun.so"];
+const LOFTD_LIBKRUN_LOG_TARGET_STDERR_FD: i32 = 2;
+const LOFTD_LIBKRUN_LOG_STYLE_NEVER: u32 = 2;
+const LOFTD_LIBKRUN_LOG_OPTION_NO_ENV: u32 = 1;
 
 pub(crate) trait LibkrunApi {
     fn create_ctx(&mut self) -> Result<u32>;
     fn free_ctx(&mut self, ctx_id: u32) -> Result<()>;
-    fn set_log_level(&mut self, level: u32) -> Result<i32>;
+    fn init_log(&mut self, level: u32) -> Result<i32>;
     fn set_vm_config(&mut self, ctx_id: u32, vcpus: u8, ram_mib: u32) -> Result<i32>;
     fn set_root(&mut self, ctx_id: u32, root_path: &Path) -> Result<i32>;
     fn add_disk(
@@ -61,10 +64,18 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
     }
 
     pub(crate) fn start_enter(mut self, config: &LaunchConfig) -> Result<()> {
+        tracing::debug!(level = ?config.log_level, libkrun_level = config.log_level.libkrun_level(), "libkrun log init: begin");
+        check_setup(
+            "libkrun_log_init",
+            self.api.init_log(config.log_level.libkrun_level())?,
+        )?;
+        tracing::debug!("libkrun log init: complete");
+        tracing::debug!("krun_create_ctx: begin");
         let ctx_id = self
             .api
             .create_ctx()
             .context("libkrun setup failed: create ctx")?;
+        tracing::debug!(ctx_id, "krun_create_ctx: complete");
         if let Err(err) = self.configure_and_start(ctx_id, config) {
             let _ = self.api.free_ctx(ctx_id);
             return Err(err);
@@ -73,23 +84,38 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
     }
 
     fn configure_and_start(&mut self, ctx_id: u32, config: &LaunchConfig) -> Result<()> {
-        check_setup("krun_set_log_level", self.api.set_log_level(0)?)?;
+        tracing::debug!(
+            ctx_id,
+            vcpus = config.vcpus,
+            ram_mib = config.ram_mib,
+            "krun_set_vm_config: begin"
+        );
         let rc = self
             .api
             .set_vm_config(ctx_id, config.vcpus, config.ram_mib)?;
         check_setup("krun_set_vm_config", rc)?;
+        tracing::debug!(ctx_id, "krun_set_vm_config: complete");
+        tracing::debug!(ctx_id, rootfs = %config.task_rootfs.display(), "krun_set_root: begin");
         let rc = self.api.set_root(ctx_id, &config.task_rootfs)?;
         check_setup("krun_set_root", rc)?;
+        tracing::debug!(ctx_id, "krun_set_root: complete");
         for disk in &config.disks {
+            tracing::debug!(ctx_id, disk_id = %disk.id, disk_path = %disk.path.display(), read_only = disk.read_only, "krun_add_disk: begin");
             let rc = self
                 .api
                 .add_disk(ctx_id, &disk.id, &disk.path, disk.read_only)?;
             check_setup("krun_add_disk", rc)?;
+            tracing::debug!(ctx_id, disk_id = %disk.id, "krun_add_disk: complete");
         }
+        tracing::debug!(ctx_id, "krun_disable_implicit_console: begin");
         let rc = self.api.disable_implicit_console(ctx_id)?;
         check_setup("krun_disable_implicit_console", rc)?;
+        tracing::debug!(ctx_id, "krun_disable_implicit_console: complete");
+        tracing::debug!(ctx_id, "krun_add_virtio_console_default: begin");
         let rc = self.api.add_virtio_console_default(ctx_id, 0, 1, 2)?;
         check_setup("krun_add_virtio_console_default", rc)?;
+        tracing::debug!(ctx_id, "krun_add_virtio_console_default: complete");
+        tracing::debug!(ctx_id, tag = %config.workspace.tag, source = %config.workspace.source.display(), target = %config.workspace.target, "krun_add_virtiofs3: begin");
         let rc = self.api.add_virtiofs3(
             ctx_id,
             &config.workspace.tag,
@@ -98,13 +124,20 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             READ_WRITE,
         )?;
         check_setup("krun_add_virtiofs3", rc)?;
+        tracing::debug!(ctx_id, "krun_add_virtiofs3: complete");
+        tracing::debug!(ctx_id, workdir = %config.workdir, "krun_set_workdir: begin");
         let rc = self.api.set_workdir(ctx_id, &config.workdir)?;
         check_setup("krun_set_workdir", rc)?;
+        tracing::debug!(ctx_id, "krun_set_workdir: complete");
+        tracing::debug!(ctx_id, exec_path = %config.exec_path, argv_len = config.argv.len(), env_len = config.env.len(), "krun_set_exec: begin");
         let rc = self
             .api
             .set_exec(ctx_id, &config.exec_path, &config.argv, &config.env)?;
         check_setup("krun_set_exec", rc)?;
+        tracing::debug!(ctx_id, "krun_set_exec: complete");
+        tracing::debug!(ctx_id, "krun_start_enter: begin");
         let rc = self.api.start_enter(ctx_id)?;
+        tracing::debug!(ctx_id, rc, "krun_start_enter: returned");
         check_start("krun_start_enter", rc)
     }
 }
@@ -124,6 +157,7 @@ fn check_start(name: &str, rc: i32) -> Result<()> {
 }
 
 type KrunSetLogLevel = unsafe extern "C" fn(u32) -> i32;
+type KrunInitLog = unsafe extern "C" fn(i32, u32, u32, u32) -> i32;
 type KrunCreateCtx = unsafe extern "C" fn() -> i32;
 type KrunFreeCtx = unsafe extern "C" fn(u32) -> i32;
 type KrunSetVmConfig = unsafe extern "C" fn(u32, u8, u32) -> i32;
@@ -140,6 +174,7 @@ type KrunStartEnter = unsafe extern "C" fn(u32) -> i32;
 pub(crate) struct DynamicLibkrunApi {
     handle: *mut c_void,
     set_log_level: KrunSetLogLevel,
+    init_log: Option<KrunInitLog>,
     create_ctx: KrunCreateCtx,
     free_ctx: KrunFreeCtx,
     set_vm_config: KrunSetVmConfig,
@@ -191,6 +226,8 @@ impl DynamicLibkrunApi {
                     set_log_level: std::mem::transmute::<*mut c_void, KrunSetLogLevel>(
                         load_symbol(handle, "krun_set_log_level")?,
                     ),
+                    init_log: load_optional_symbol(handle, "krun_init_log")
+                        .map(|symbol| std::mem::transmute::<*mut c_void, KrunInitLog>(symbol)),
                     create_ctx: std::mem::transmute::<*mut c_void, KrunCreateCtx>(load_symbol(
                         handle,
                         "krun_create_ctx",
@@ -297,7 +334,18 @@ impl LibkrunApi for DynamicLibkrunApi {
         Ok(())
     }
 
-    fn set_log_level(&mut self, level: u32) -> Result<i32> {
+    fn init_log(&mut self, level: u32) -> Result<i32> {
+        if let Some(init_log) = self.init_log {
+            // SAFETY: optional function pointer resolved from libkrun with upstream-compatible signature.
+            return Ok(unsafe {
+                init_log(
+                    LOFTD_LIBKRUN_LOG_TARGET_STDERR_FD,
+                    level,
+                    LOFTD_LIBKRUN_LOG_STYLE_NEVER,
+                    LOFTD_LIBKRUN_LOG_OPTION_NO_ENV,
+                )
+            });
+        }
         // SAFETY: function pointer resolved from libkrun with verified signature.
         Ok(unsafe { (self.set_log_level)(level) })
     }
@@ -413,6 +461,13 @@ fn null_terminated_ptrs(values: &[CString]) -> Vec<*const c_char> {
     ptrs
 }
 
+unsafe fn load_optional_symbol(handle: *mut c_void, name: &str) -> Option<*mut c_void> {
+    let c_name = CString::new(name).ok()?;
+    // SAFETY: handle is an open dlopen handle and c_name is NUL-terminated.
+    let symbol = unsafe { libc::dlsym(handle, c_name.as_ptr()) };
+    if symbol.is_null() { None } else { Some(symbol) }
+}
+
 unsafe fn load_symbol(handle: *mut c_void, name: &str) -> Result<*mut c_void> {
     let c_name = CString::new(name)?;
     // SAFETY: handle is an open dlopen handle and c_name is NUL-terminated.
@@ -441,6 +496,7 @@ fn dlerror_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::logging::LogLevel;
     use crate::runtime::launch_config::{DiskAttachment, LaunchSpec};
     use std::cell::RefCell;
     use std::path::Path;
@@ -450,7 +506,7 @@ mod tests {
     enum Call {
         CreateCtx,
         FreeCtx(u32),
-        SetLogLevel(u32),
+        InitLog(u32),
         SetVmConfig(u32, u8, u32),
         SetRoot(u32, String),
         AddDisk(u32, String, String, bool),
@@ -499,9 +555,9 @@ mod tests {
             Ok(())
         }
 
-        fn set_log_level(&mut self, level: u32) -> Result<i32> {
-            self.calls.borrow_mut().push(Call::SetLogLevel(level));
-            Ok(self.rc("krun_set_log_level"))
+        fn init_log(&mut self, level: u32) -> Result<i32> {
+            self.calls.borrow_mut().push(Call::InitLog(level));
+            Ok(self.rc("libkrun_log_init"))
         }
 
         fn set_vm_config(&mut self, ctx_id: u32, vcpus: u8, ram_mib: u32) -> Result<i32> {
@@ -609,7 +665,7 @@ mod tests {
             guest_command: &[],
             image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),
             mem_gib: Some(4),
-            debug: false,
+            log_level: LogLevel::Debug,
             profile: false,
             root: false,
             host_uid: 1000,
@@ -656,8 +712,8 @@ mod tests {
             .expect("launch should succeed");
 
         let calls = calls.borrow();
-        assert_eq!(calls[0], Call::CreateCtx);
-        assert_eq!(calls[1], Call::SetLogLevel(0));
+        assert_eq!(calls[0], Call::InitLog(4));
+        assert_eq!(calls[1], Call::CreateCtx);
         assert_eq!(calls[2], Call::SetVmConfig(7, 2, 4096));
         assert_eq!(calls[3], Call::SetRoot(7, "/rootfs".to_owned()));
         assert_eq!(

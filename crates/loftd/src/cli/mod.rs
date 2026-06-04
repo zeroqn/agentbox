@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+use crate::logging::{LogLevel, LogSettings};
 use crate::task_rootfs::TaskRootfsBackend;
 
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
@@ -31,14 +32,24 @@ pub(crate) struct Cli {
     #[arg(
         long,
         help = "Enable loftd debug logging",
-        long_help = "Enable loftd debug logging for host-side lifecycle diagnostics. This does not enable host Podman because loftd does not use host Podman directly."
+        long_help = "Compatibility flag for loftd debug logging. Equivalent to --log-level debug when --log-level/LOFTD_LOG_LEVEL is not set."
     )]
     debug: bool,
 
     #[arg(
+        long = "log-level",
+        env = "LOFTD_LOG_LEVEL",
+        value_enum,
+        value_name = "LEVEL",
+        help = "Set loftd/libkrun diagnostic log level",
+        long_help = "Set loftd and helper diagnostic log level. Allowed values are off, error, warn, info, debug, and trace. CLI --log-level overrides LOFTD_LOG_LEVEL; --debug remains a compatibility alias for debug when neither is set."
+    )]
+    log_level: Option<LogLevel>,
+
+    #[arg(
         long,
         help = "Enable loftd component timing collection",
-        long_help = "Enable loftd component timing collection. Timing is reported to stderr only when --debug is also set, so normal command stdout remains reserved for command output."
+        long_help = "Enable loftd component timing collection. Timing is reported to stderr only when the effective log level is debug or trace, so normal command stdout remains reserved for command output."
     )]
     profile: bool,
 
@@ -88,10 +99,12 @@ pub(crate) struct Cli {
 
 impl Cli {
     pub(crate) fn into_runtime_options(self) -> RuntimeOptions {
+        let log_settings = LogSettings::from_process_env(self.log_level, self.debug);
         RuntimeOptions {
             image: self.image,
             pull_latest: self.pull_latest,
             debug: self.debug,
+            log_settings,
             profile: self.profile,
             root: self.root,
             rootfs_backend: self.rootfs_backend,
@@ -108,6 +121,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) image: Option<String>,
     pub(crate) pull_latest: bool,
     pub(crate) debug: bool,
+    pub(crate) log_settings: LogSettings,
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
@@ -138,6 +152,7 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::Cli;
+    use crate::logging::LogLevel;
     use crate::task_rootfs::TaskRootfsBackend;
 
     #[test]
@@ -168,6 +183,7 @@ mod tests {
         assert!(options.root);
         assert!(options.profile);
         assert!(options.debug);
+        assert_eq!(options.log_settings.level, LogLevel::Debug);
         assert!(options.guest_command.is_empty());
     }
 
@@ -231,6 +247,33 @@ mod tests {
             .expect_err("storage flag should not exist");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn parses_explicit_log_level() {
+        let cli =
+            Cli::try_parse_from(["loftd", "--log-level", "trace"]).expect("log level should parse");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(options.log_settings.level, LogLevel::Trace);
+    }
+
+    #[test]
+    fn rejects_invalid_log_level() {
+        let err = Cli::try_parse_from(["loftd", "--log-level", "verbose"])
+            .expect_err("unknown log level should fail");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn explicit_log_level_overrides_debug_compatibility() {
+        let cli = Cli::try_parse_from(["loftd", "--debug", "--log-level", "info"])
+            .expect("log level should parse");
+        let options = cli.into_runtime_options();
+
+        assert!(options.debug);
+        assert_eq!(options.log_settings.level, LogLevel::Info);
     }
 
     #[test]

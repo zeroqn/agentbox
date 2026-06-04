@@ -3,7 +3,7 @@ use std::env;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use crate::cli::{Cli, RuntimeOptions};
+use crate::cli::RuntimeOptions;
 use crate::task_rootfs::TaskRootfsBackend;
 
 pub(crate) mod ffi;
@@ -23,9 +23,8 @@ use profile::LoftdHostProfiler;
 use supervisor::{HostSupervisor, Supervisor};
 use task_rootfs::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
 
-pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
+pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
     let cwd = env::current_dir()?;
-    let options = cli.into_runtime_options();
     let mut profiler = LoftdHostProfiler::new(host_profile_enabled(&options));
     let plan =
         profiler.measure_result("launch_plan_build", || LaunchPlan::from_env(options, cwd))?;
@@ -35,19 +34,17 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
     );
     profiler.record_metadata("image", plan.image_selection.selected_reference());
 
-    if plan.debug {
-        eprintln!(
-            "loftd: launch plan: image={} rootfs-backend={} state-root={} image-cache={} sccache={} workspace-slug={} config={} loaded={}",
-            plan.image_selection.selected_reference(),
-            plan.task_rootfs_backend,
-            plan.state_layout.root_dir().display(),
-            plan.image_cache_dir.display(),
-            plan.sccache_dir.display(),
-            plan.workspace_slug,
-            plan.config_diagnostics.config_path.display(),
-            plan.config_diagnostics.config_loaded,
-        );
-    }
+    tracing::debug!(
+        image = plan.image_selection.selected_reference(),
+        rootfs_backend = %plan.task_rootfs_backend,
+        state_root = %plan.state_layout.root_dir().display(),
+        image_cache = %plan.image_cache_dir.display(),
+        sccache = %plan.sccache_dir.display(),
+        workspace_slug = %plan.workspace_slug,
+        config = %plan.config_diagnostics.config_path.display(),
+        loaded = plan.config_diagnostics.config_loaded,
+        "loftd launch plan"
+    );
 
     match plan.task_rootfs_backend {
         TaskRootfsBackend::BtrfsSnapshot => {
@@ -67,17 +64,17 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
                 profiler.record_metadata("image_digest", digest);
             }
 
-            if plan.debug {
+            {
                 let handle = lease.handle();
                 let digest = handle.image_digest().unwrap_or("<unknown>");
-                eprintln!(
-                    "loftd: task rootfs: task-id={} backend={} image={} digest={} rootfs={} task-dir={}",
-                    handle.task_id(),
-                    handle.backend(),
-                    handle.selected_image_reference(),
+                tracing::debug!(
+                    task_id = handle.task_id(),
+                    backend = %handle.backend(),
+                    image = handle.selected_image_reference(),
                     digest,
-                    handle.rootfs_path().display(),
-                    handle.task_dir().display(),
+                    rootfs = %handle.rootfs_path().display(),
+                    task_dir = %handle.task_dir().display(),
+                    "loftd task rootfs"
                 );
             }
 
@@ -102,7 +99,7 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
                             guest_command: &plan.guest_command,
                             image_process_config: lease.handle().process_config(),
                             mem_gib: plan.mem_gib,
-                            debug: plan.debug,
+                            log_level: plan.log_level,
                             profile: plan.profile,
                             root: plan.root,
                             host_uid: current_uid(),
@@ -113,16 +110,14 @@ pub(crate) fn run(cli: Cli) -> Result<ExitCode> {
                         })
                     }) {
                         Ok(config) => {
-                            if plan.debug {
-                                eprintln!(
-                                    "loftd: libkrun launch: guest-init={} disks={} ram-mib={} vcpus={} workspace={}",
-                                    guest_init.guest_exec_path,
-                                    config.disks.len(),
-                                    config.ram_mib,
-                                    config.vcpus,
-                                    plan.workspace_dir.display(),
-                                );
-                            }
+                            tracing::debug!(
+                                guest_init = %guest_init.guest_exec_path,
+                                disks = config.disks.len(),
+                                ram_mib = config.ram_mib,
+                                vcpus = config.vcpus,
+                                workspace = %plan.workspace_dir.display(),
+                                "loftd libkrun launch"
+                            );
 
                             BtrfsHostRunResult::Helper(
                                 profiler.measure_result("helper_session", || {
@@ -173,7 +168,7 @@ enum BtrfsHostRunResult {
 }
 
 fn host_profile_enabled(options: &RuntimeOptions) -> bool {
-    options.debug && options.profile
+    options.profile && options.log_settings.level.enables_debug()
 }
 
 fn finalize_post_lease_setup_failure(
@@ -228,6 +223,7 @@ mod tests {
             image: None,
             pull_latest: false,
             debug,
+            log_settings: crate::logging::LogSettings::resolve(None, debug, None),
             profile,
             root: false,
             rootfs_backend: None,

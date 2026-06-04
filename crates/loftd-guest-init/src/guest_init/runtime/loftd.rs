@@ -75,11 +75,17 @@ impl EnvSource for ProcessEnv {
 }
 
 pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
+    debug_breadcrumb("enter dispatch reached");
     let mut profiler = profile::GuestProfiler::from_process_env("loftd enter");
+    debug_breadcrumb("read-env starting");
     let env_contract = profiler.measure_result("read-env", || EnterEnv::from_env(&ProcessEnv))?;
+    debug_breadcrumb("read-env complete");
+    debug_breadcrumb("mount-workspace starting");
     profiler.measure_result("mount-workspace", || {
         ensure_workspace_mounted(&env_contract.workspace_tag, &env_contract.workspace_target)
     })?;
+    debug_breadcrumb("mount-workspace complete");
+    debug_breadcrumb("resolve-identity starting");
     let identity = profiler.measure_result("resolve-identity", || {
         resolve_identity(
             &command,
@@ -89,6 +95,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
             process::gid(),
         )
     })?;
+    debug_breadcrumb("resolve-identity complete");
     let shell_env = profiler.measure("derive-shell-env", || {
         crate::guest_init::components::shell::env::derive(
             &identity,
@@ -139,6 +146,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
+    debug_breadcrumb("final exec handoff starting");
     if should_drop_to_identity(process::is_root(), env_contract.enter_as_root) {
         process::drop_to_identity_and_exec(&identity, &command)
     } else {
@@ -304,6 +312,12 @@ fn mount_workspace(tag: &str, target: &Path) -> Result<()> {
         &["-t", "virtiofs", tag, &target.display().to_string()],
     )
     .with_context(|| format!("failed to mount loftd workspace virtiofs tag {tag}"))
+}
+
+fn debug_breadcrumb(message: &str) {
+    if std::env::var("LOFTD_GUEST_DEBUG").ok().as_deref() == Some("1") {
+        eprintln!("loftd-guest-init: debug: {message}");
+    }
 }
 
 #[cfg(test)]
