@@ -6,6 +6,7 @@ use std::process::{Command, ExitCode, Stdio};
 use crate::logging::{self, INTERNAL_LOG_LEVEL_ENV, LogSettings};
 use crate::runtime::ffi::{DirectLibkrunLauncher, DynamicLibkrunApi};
 use crate::runtime::launch_config::LaunchConfig;
+use crate::runtime::prepared_root;
 
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-enter";
 const BUILDAH_PROGRAM: &str = "buildah";
@@ -138,25 +139,34 @@ fn run_helper(config_path: &Path) -> Result<()> {
     }
     let config = LaunchConfig::read_from(config_path)?;
     logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))?;
-    let guest_config_path = config.write_guest_config_to_rootfs()?;
+    let task_state_dir = config_path.parent().ok_or_else(|| {
+        anyhow!(
+            "loftd launch config '{}' must live inside a task state directory",
+            config_path.display()
+        )
+    })?;
+    let prepared_root = prepared_root::prepare(&config, task_state_dir)?;
+    let launch_config = config.with_root_export(prepared_root.root().to_path_buf());
+    let guest_config_path = launch_config.write_guest_config_to_rootfs()?;
     tracing::debug!(
         config_path = %config_path.display(),
-        rootfs = %config.task_rootfs.display(),
+        source_rootfs = %config.task_rootfs.display(),
+        rootfs = %launch_config.task_rootfs.display(),
         guest_config = %guest_config_path.display(),
-        mounts = config.mounts.len(),
-        disks = config.disks.len(),
-        ram_mib = config.ram_mib,
-        vcpus = config.vcpus,
-        exec_path = %config.exec_path,
-        argv_len = config.argv.len(),
-        env_len = config.env.len(),
-        guest_config_env_len = config.guest_config_env.len(),
+        prepared_root_bind_count = launch_config.mounts.len(),
+        disks = launch_config.disks.len(),
+        ram_mib = launch_config.ram_mib,
+        vcpus = launch_config.vcpus,
+        exec_path = %launch_config.exec_path,
+        argv_len = launch_config.argv.len(),
+        env_len = launch_config.env.len(),
+        guest_config_env_len = launch_config.guest_config_env.len(),
         "loftd internal: launch config loaded"
     );
     tracing::debug!("libkrun API open: begin");
     let api = DynamicLibkrunApi::open_default()?;
     tracing::debug!("libkrun API open: complete");
-    DirectLibkrunLauncher::new(api).start_enter(&config)
+    DirectLibkrunLauncher::new(api).start_enter(&launch_config)
 }
 
 #[cfg(test)]

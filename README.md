@@ -805,16 +805,22 @@ used only as the rootless UID/GID namespace adapter for the helper, matching
 the namespace used to materialize the image-derived btrfs rootfs; it is not used
 as the container runtime, and this path does not rely on Podman, idmapped
 mounts, or relaxed guest-init ownership repair. The helper dynamically loads
-`libkrun.so.1` or `libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), attaches
-the task rootfs, the fixed host virtiofs mounts, and two writable persistent
-disks:
+`libkrun.so.1` or `libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), prepares
+a crun-style root export inside that same rootless namespace, and attaches that
+single prepared root plus two writable persistent disks. The prepared root is a
+bind-mounted view of the task rootfs with the workspace, Codex, Pi, Cargo, and
+sccache host directories grafted into their final guest paths before
+`krun_set_root`. Loftd intentionally does not register one `krun_add_virtiofs3`
+device per developer path; keeping those binds inside the root export avoids
+the legacy x86 IRQ/device exhaustion that can otherwise occur before libkrun's
+implicit vsock device is registered.
 
 - `loftd-nix.raw` exposed to the guest as `LOFTD_NIX` / `loftd-nix` for `/nix`;
 - `loftd-containers.raw` exposed as `LOFTD_CONTAINERS` / `loftd-containers` for
   rootless container storage.
 
-`loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, mounts
-the declared virtiofs tags before identity drop, ensures `/tmp` is a tmpfs with
+`loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, validates
+that the prepared-root paths already exist, ensures `/tmp` is a tmpfs with
 `rw,exec,mode=1777`, verifies `/dev/net/tun` is the expected character device
 `10:200`, makes it mode `0666`, probes it with `TUNSETIFF`, prepares the
 persistent cache disks, exports the shell environment, and runs `fish -l` by
@@ -864,7 +870,7 @@ backend = "btrfs-snapshot" # or "fuse-overlay"
 
 ## Persistent host mounts
 
-Each run ensures and mounts:
+Each run ensures these host-backed paths and grafts them into the prepared root:
 
 - current workspace -> `/workspace`
 - `~/.codex` -> `/home/dev/.codex`

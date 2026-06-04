@@ -12,6 +12,7 @@ pub(crate) mod image_source;
 pub(crate) mod launch_config;
 pub(crate) mod launch_plan;
 pub(crate) mod persistent_disks;
+pub(crate) mod prepared_root;
 mod profile;
 pub(crate) mod raw_btrfs;
 pub(crate) mod supervisor;

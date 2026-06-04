@@ -5,8 +5,6 @@ use std::path::Path;
 
 use crate::runtime::launch_config::LaunchConfig;
 
-const DAX_SHM_SIZE: u64 = 0;
-const READ_WRITE: bool = false;
 const LIBKRUN_LIBRARY_ENV: &str = "LOFTD_LIBKRUN_LIBRARY";
 const DEFAULT_LIBKRUN_NAMES: [&str; 2] = ["libkrun.so.1", "libkrun.so"];
 const LOFTD_LIBKRUN_LOG_TARGET_STDERR_FD: i32 = 2;
@@ -33,14 +31,6 @@ pub(crate) trait LibkrunApi {
         input_fd: i32,
         output_fd: i32,
         err_fd: i32,
-    ) -> Result<i32>;
-    fn add_virtiofs3(
-        &mut self,
-        ctx_id: u32,
-        tag: &str,
-        host_path: &Path,
-        shm_size: u64,
-        read_only: bool,
     ) -> Result<i32>;
     fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32>;
     fn set_exec(
@@ -115,18 +105,11 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         let rc = self.api.add_virtio_console_default(ctx_id, 0, 1, 2)?;
         check_setup("krun_add_virtio_console_default", rc)?;
         tracing::debug!(ctx_id, "krun_add_virtio_console_default: complete");
-        for mount in &config.mounts {
-            tracing::debug!(ctx_id, tag = %mount.tag, source = %mount.source.display(), target = %mount.target, "krun_add_virtiofs3: begin");
-            let rc = self.api.add_virtiofs3(
-                ctx_id,
-                &mount.tag,
-                &mount.source,
-                DAX_SHM_SIZE,
-                READ_WRITE,
-            )?;
-            check_setup("krun_add_virtiofs3", rc)?;
-            tracing::debug!(ctx_id, tag = %mount.tag, "krun_add_virtiofs3: complete");
-        }
+        tracing::debug!(
+            ctx_id,
+            prepared_root_bind_count = config.mounts.len(),
+            "krun_add_virtiofs3: skipped for prepared-root developer binds"
+        );
         tracing::debug!(ctx_id, workdir = %config.workdir, "krun_set_workdir: begin");
         let rc = self.api.set_workdir(ctx_id, &config.workdir)?;
         check_setup("krun_set_workdir", rc)?;
@@ -167,7 +150,6 @@ type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunAddDisk = unsafe extern "C" fn(u32, *const c_char, *const c_char, bool) -> i32;
 type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
 type KrunAddVirtioConsoleDefault = unsafe extern "C" fn(u32, i32, i32, i32) -> i32;
-type KrunAddVirtiofs3 = unsafe extern "C" fn(u32, *const c_char, *const c_char, u64, bool) -> i32;
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
     unsafe extern "C" fn(u32, *const c_char, *const *const c_char, *const *const c_char) -> i32;
@@ -184,7 +166,6 @@ pub(crate) struct DynamicLibkrunApi {
     add_disk: KrunAddDisk,
     disable_implicit_console: KrunDisableImplicitConsole,
     add_virtio_console_default: KrunAddVirtioConsoleDefault,
-    add_virtiofs3: KrunAddVirtiofs3,
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
     start_enter: KrunStartEnter,
@@ -263,9 +244,6 @@ impl DynamicLibkrunApi {
                         handle,
                         "krun_add_virtio_console_default",
                     )?),
-                    add_virtiofs3: std::mem::transmute::<*mut c_void, KrunAddVirtiofs3>(
-                        load_symbol(handle, "krun_add_virtiofs3")?,
-                    ),
                     set_workdir: std::mem::transmute::<*mut c_void, KrunSetWorkdir>(load_symbol(
                         handle,
                         "krun_set_workdir",
@@ -392,28 +370,6 @@ impl LibkrunApi for DynamicLibkrunApi {
         Ok(unsafe { (self.add_virtio_console_default)(ctx_id, input_fd, output_fd, err_fd) })
     }
 
-    fn add_virtiofs3(
-        &mut self,
-        ctx_id: u32,
-        tag: &str,
-        host_path: &Path,
-        shm_size: u64,
-        read_only: bool,
-    ) -> Result<i32> {
-        let tag = CString::new(tag)?;
-        let host_path = path_cstring(host_path)?;
-        // SAFETY: C strings live for the duration of the call.
-        Ok(unsafe {
-            (self.add_virtiofs3)(
-                ctx_id,
-                tag.as_ptr(),
-                host_path.as_ptr(),
-                shm_size,
-                read_only,
-            )
-        })
-    }
-
     fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32> {
         let workdir = CString::new(workdir)?;
         // SAFETY: C string lives for the duration of the call.
@@ -517,7 +473,6 @@ mod tests {
         AddDisk(u32, String, String, bool),
         DisableImplicitConsole(u32),
         AddVirtioConsoleDefault(u32, i32, i32, i32),
-        AddVirtiofs3(u32, String, String, u64, bool),
         SetWorkdir(u32, String),
         SetExec(u32, String, Vec<String>, Vec<(String, String)>),
         StartEnter(u32),
@@ -613,24 +568,6 @@ mod tests {
                 ctx_id, input_fd, output_fd, err_fd,
             ));
             Ok(self.rc("krun_add_virtio_console_default"))
-        }
-
-        fn add_virtiofs3(
-            &mut self,
-            ctx_id: u32,
-            tag: &str,
-            host_path: &Path,
-            shm_size: u64,
-            read_only: bool,
-        ) -> Result<i32> {
-            self.calls.borrow_mut().push(Call::AddVirtiofs3(
-                ctx_id,
-                tag.to_owned(),
-                host_path.display().to_string(),
-                shm_size,
-                read_only,
-            ));
-            Ok(self.rc("krun_add_virtiofs3"))
         }
 
         fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32> {
@@ -771,59 +708,9 @@ mod tests {
         );
         assert_eq!(calls[6], Call::DisableImplicitConsole(7));
         assert_eq!(calls[7], Call::AddVirtioConsoleDefault(7, 0, 1, 2));
-        assert_eq!(
-            calls[8],
-            Call::AddVirtiofs3(
-                7,
-                "loftd-workspace".to_owned(),
-                "/workspace-src".to_owned(),
-                0,
-                false,
-            )
-        );
+        assert_eq!(calls[8], Call::SetWorkdir(7, "/workspace".to_owned()));
         assert_eq!(
             calls[9],
-            Call::AddVirtiofs3(
-                7,
-                "loftd-codex".to_owned(),
-                "/home/host/.codex".to_owned(),
-                0,
-                false,
-            )
-        );
-        assert_eq!(
-            calls[10],
-            Call::AddVirtiofs3(
-                7,
-                "loftd-pi".to_owned(),
-                "/home/host/.pi".to_owned(),
-                0,
-                false,
-            )
-        );
-        assert_eq!(
-            calls[11],
-            Call::AddVirtiofs3(
-                7,
-                "loftd-cargo".to_owned(),
-                "/state/project/cargo".to_owned(),
-                0,
-                false,
-            )
-        );
-        assert_eq!(
-            calls[12],
-            Call::AddVirtiofs3(
-                7,
-                "loftd-sccache".to_owned(),
-                "/state/sccache".to_owned(),
-                0,
-                false,
-            )
-        );
-        assert_eq!(calls[13], Call::SetWorkdir(7, "/workspace".to_owned()));
-        assert_eq!(
-            calls[14],
             Call::SetExec(
                 7,
                 "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
@@ -836,11 +723,11 @@ mod tests {
                 vec![("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
             )
         );
-        assert_eq!(calls[15], Call::StartEnter(7));
+        assert_eq!(calls[10], Call::StartEnter(7));
         assert_eq!(
             calls.len(),
-            16,
-            "v1 must not call krun_set_env or passt APIs"
+            11,
+            "v1 must not call krun_set_env, passt APIs, or per-bind virtiofs devices"
         );
     }
 
@@ -859,14 +746,14 @@ mod tests {
     }
 
     #[test]
-    fn virtiofs_registration_failure_frees_context_before_exec() {
+    fn console_registration_failure_frees_context_before_exec() {
         let calls = Rc::new(RefCell::new(Vec::new()));
         let err = DirectLibkrunLauncher::new(FakeLibkrunApi::failing(
             calls.clone(),
-            "krun_add_virtiofs3",
+            "krun_add_virtio_console_default",
         ))
         .start_enter(&config())
-        .expect_err("virtiofs setup failure should fail");
+        .expect_err("console setup failure should fail");
 
         assert!(format!("{err:#}").contains("libkrun setup failed"));
         let calls = calls.borrow();

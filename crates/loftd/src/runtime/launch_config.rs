@@ -19,9 +19,6 @@ pub const SCCACHE_TARGET: &str = "/home/dev/.cache/sccache";
 const SCCACHE_DIR_ENV: &str = "SCCACHE_DIR";
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
 const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
-const WORKSPACE_TAG_ENV: &str = "LOFTD_WORKSPACE_TAG";
-const WORKSPACE_TARGET_ENV: &str = "LOFTD_WORKSPACE_TARGET";
-const MOUNT_COUNT_ENV: &str = "LOFTD_MOUNT_COUNT";
 const ENTER_AS_ROOT_ENV: &str = "LOFTD_ENTER_AS_ROOT";
 const GUEST_PROFILE_ENV: &str = "LOFTD_GUEST_PROFILE";
 const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
@@ -91,19 +88,11 @@ impl LaunchConfig {
     pub(crate) fn build_for_task(spec: LaunchSpec<'_>) -> Result<Self> {
         let ram_mib = resolve_ram_mib(spec.mem_gib)?;
         validate_mounts(spec.mounts)?;
-        let workspace = workspace_mount(spec.mounts)?;
-        let mut required_env = vec![
+        let required_env = vec![
             (HOST_UID_ENV.to_owned(), spec.host_uid.to_string()),
             (HOST_GID_ENV.to_owned(), spec.host_gid.to_string()),
-            (MOUNT_COUNT_ENV.to_owned(), spec.mounts.len().to_string()),
-            (WORKSPACE_TAG_ENV.to_owned(), workspace.tag.clone()),
-            (WORKSPACE_TARGET_ENV.to_owned(), workspace.target.clone()),
             (SCCACHE_DIR_ENV.to_owned(), SCCACHE_TARGET.to_owned()),
         ];
-        for (index, mount) in spec.mounts.iter().enumerate() {
-            required_env.push((format!("LOFTD_MOUNT_{index}_TAG"), mount.tag.clone()));
-            required_env.push((format!("LOFTD_MOUNT_{index}_TARGET"), mount.target.clone()));
-        }
         let mut guest_config_env = bootstrap_env(&spec.image_process_config.env, required_env)?;
         if spec.root {
             insert_env(&mut guest_config_env, ENTER_AS_ROOT_ENV, "1");
@@ -142,6 +131,12 @@ impl LaunchConfig {
             )],
             guest_config_env: guest_config_env.into_iter().collect(),
         })
+    }
+
+    pub(crate) fn with_root_export(&self, root_export: PathBuf) -> Self {
+        let mut config = self.clone();
+        config.task_rootfs = root_export;
+        config
     }
 
     #[cfg(test)]
@@ -794,21 +789,20 @@ mod tests {
         );
         assert!(config.guest_config_env_contains("LOFTD_HOST_UID", "1000"));
         assert!(config.guest_config_env_contains("LOFTD_HOST_GID", "1001"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_COUNT", "5"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_0_TAG", "loftd-workspace"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_0_TARGET", "/workspace"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_1_TAG", "loftd-codex"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_1_TARGET", "/home/dev/.codex"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_2_TAG", "loftd-pi"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_2_TARGET", "/home/dev/.pi"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_3_TAG", "loftd-cargo"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_3_TARGET", "/home/dev/.cargo"));
-        assert!(config.guest_config_env_contains("LOFTD_MOUNT_4_TAG", "loftd-sccache"));
         assert!(
-            config.guest_config_env_contains("LOFTD_MOUNT_4_TARGET", "/home/dev/.cache/sccache")
+            config
+                .guest_config_env
+                .iter()
+                .all(|(key, _)| !key.starts_with("LOFTD_MOUNT_"))
         );
-        assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TAG", "loftd-workspace"));
-        assert!(config.guest_config_env_contains("LOFTD_WORKSPACE_TARGET", "/workspace"));
+        assert!(
+            !config
+                .guest_config_env
+                .iter()
+                .any(|(key, _)| key == "LOFTD_MOUNT_COUNT"
+                    || key == "LOFTD_WORKSPACE_TAG"
+                    || key == "LOFTD_WORKSPACE_TARGET")
+        );
         assert!(config.guest_config_env_contains("SCCACHE_DIR", "/home/dev/.cache/sccache"));
         assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
         assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
