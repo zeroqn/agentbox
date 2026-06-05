@@ -755,6 +755,7 @@ Run/help:
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
 ./result/bin/loftd --passt -- bash -lc 'echo ok'
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
+./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
 ```
 
@@ -832,6 +833,14 @@ instead of a silent broken-host-alias fallback. The Nix `loftd`,
 `loftd-prebuilt`, and development
 shell paths include `pkgs.passt` so both `pasta` and `passt` are on `PATH`;
 non-Nix invocations must provide those tools themselves.
+
+For loftd guest-side debugging, `--guest-init <host-binary>` validates the
+host binary as an executable regular file, discovers the image's existing
+`/nix/store/.../bin/loftd-guest-init`, and bind-mounts the host binary
+read-only over that exact in-image target. Loftd still execs the discovered
+`/nix/store/.../bin/loftd-guest-init` guest path and preserves the same
+`LOFTD_*`, `KRUN_CONFIG`, arguments, and final guest command; it does not copy
+or chmod the task-rootfs `/nix/store` file.
 
 The default network mode remains libkrun TSI: loftd does not add a libkrun
 network device by default, but the libkrun VMM starts from the pasta-backed

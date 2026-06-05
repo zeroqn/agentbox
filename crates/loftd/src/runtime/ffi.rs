@@ -661,6 +661,7 @@ mod tests {
             task_rootfs: Path::new("/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),

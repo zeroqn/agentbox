@@ -46,6 +46,13 @@ pub struct BindMount {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GuestInitOverrideMount {
+    pub(crate) source: PathBuf,
+    pub(crate) target: String,
+    pub(crate) read_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DiskAttachment {
     pub(crate) id: String,
     pub(crate) path: PathBuf,
@@ -80,6 +87,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) task_rootfs: &'a Path,
     pub(crate) hostname: &'a str,
     pub mounts: &'a [BindMount],
+    pub(crate) guest_init_override: Option<GuestInitOverrideMount>,
     pub(crate) guest_init_exec: &'a str,
     pub(crate) guest_command: &'a [String],
     pub(crate) image_process_config: &'a OciProcessConfig,
@@ -100,6 +108,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) task_rootfs: PathBuf,
     pub(crate) hostname: String,
     pub mounts: Vec<BindMount>,
+    pub(crate) guest_init_override: Option<GuestInitOverrideMount>,
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) ram_mib: u32,
     pub(crate) vcpus: u8,
@@ -117,6 +126,9 @@ impl LaunchConfig {
     pub(crate) fn build_for_task(spec: LaunchSpec<'_>) -> Result<Self> {
         let ram_mib = resolve_ram_mib(spec.mem_gib)?;
         validate_mounts(spec.mounts)?;
+        if let Some(mount) = &spec.guest_init_override {
+            validate_guest_init_override_mount(mount, spec.guest_init_exec)?;
+        }
         let required_env = vec![
             (HOST_UID_ENV.to_owned(), spec.host_uid.to_string()),
             (HOST_GID_ENV.to_owned(), spec.host_gid.to_string()),
@@ -151,6 +163,7 @@ impl LaunchConfig {
             task_rootfs: spec.task_rootfs.to_path_buf(),
             hostname: spec.hostname.to_owned(),
             mounts: spec.mounts.to_vec(),
+            guest_init_override: spec.guest_init_override,
             disks: spec.disks,
             ram_mib,
             vcpus: spec.vcpus,
@@ -249,6 +262,19 @@ impl LaunchConfig {
             );
             push_field(&mut out, &format!("mount.{index}.tag"), &mount.tag);
             push_field(&mut out, &format!("mount.{index}.target"), &mount.target);
+        }
+        if let Some(mount) = &self.guest_init_override {
+            push_field(
+                &mut out,
+                "guest_init_override_source",
+                &mount.source.display().to_string(),
+            );
+            push_field(&mut out, "guest_init_override_target", &mount.target);
+            push_field(
+                &mut out,
+                "guest_init_override_read_only",
+                if mount.read_only { "true" } else { "false" },
+            );
         }
         push_field(&mut out, "ram_mib", &self.ram_mib.to_string());
         push_field(&mut out, "vcpus", &self.vcpus.to_string());
@@ -371,6 +397,9 @@ impl LaunchConfig {
                     | "workspace_source"
                     | "workspace_tag"
                     | "workspace_target"
+                    | "guest_init_override_source"
+                    | "guest_init_override_target"
+                    | "guest_init_override_read_only"
                     | "hostname"
                     | "ram_mib"
                     | "vcpus"
@@ -405,10 +434,13 @@ impl LaunchConfig {
             .ok_or_else(|| anyhow!("loftd launch config log_level is invalid"))?;
         let network_mode = NetworkMode::parse_config_value(&required("network_mode")?)?;
         let mounts = parse_mounts(&fields, mounts)?;
+        let guest_init_override =
+            parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
         Ok(Self {
             task_rootfs: PathBuf::from(required("task_rootfs")?),
             hostname: required("hostname")?,
             mounts,
+            guest_init_override,
             disks: disks
                 .into_iter()
                 .map(|(index, disk)| disk.finish(index))
@@ -473,6 +505,34 @@ impl PartialDiskAttachment {
     }
 }
 
+fn parse_guest_init_override_mount(
+    fields: &BTreeMap<String, String>,
+    exec_path: &str,
+) -> Result<Option<GuestInitOverrideMount>> {
+    let keys_present = [
+        "guest_init_override_source",
+        "guest_init_override_target",
+        "guest_init_override_read_only",
+    ]
+    .iter()
+    .any(|key| fields.contains_key(*key));
+    if !keys_present {
+        return Ok(None);
+    }
+
+    let mount = GuestInitOverrideMount {
+        source: PathBuf::from(required_field(fields, "guest_init_override_source")?),
+        target: required_field(fields, "guest_init_override_target")?,
+        read_only: match required_field(fields, "guest_init_override_read_only")?.as_str() {
+            "true" => true,
+            "false" => false,
+            _ => anyhow::bail!("loftd launch config guest_init_override_read_only is invalid"),
+        },
+    };
+    validate_guest_init_override_mount(&mount, exec_path)?;
+    Ok(Some(mount))
+}
+
 fn parse_mounts(
     fields: &BTreeMap<String, String>,
     indexed_mounts: BTreeMap<usize, PartialBindMount>,
@@ -527,6 +587,35 @@ fn workspace_mount(mounts: &[BindMount]) -> Result<&BindMount> {
         .iter()
         .find(|mount| mount.target == WORKSPACE_TARGET)
         .ok_or_else(|| anyhow!("loftd launch config requires a {WORKSPACE_TARGET} mount"))
+}
+
+fn validate_guest_init_override_mount(
+    mount: &GuestInitOverrideMount,
+    exec_path: &str,
+) -> Result<()> {
+    if !mount.source.is_absolute() {
+        anyhow::bail!(
+            "loftd guest-init override bind source '{}' must be absolute",
+            mount.source.display()
+        );
+    }
+    if !Path::new(&mount.target).is_absolute() {
+        anyhow::bail!(
+            "loftd guest-init override bind target '{}' must be absolute",
+            mount.target
+        );
+    }
+    if !mount.read_only {
+        anyhow::bail!("loftd guest-init override bind must be read-only");
+    }
+    if mount.target != exec_path {
+        anyhow::bail!(
+            "loftd guest-init override bind target '{}' must match guest-init exec path '{}'",
+            mount.target,
+            exec_path
+        );
+    }
+    Ok(())
 }
 
 pub fn validate_mounts(mounts: &[BindMount]) -> Result<()> {
@@ -816,6 +905,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -887,6 +977,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &command,
             image_process_config: &image_process_config,
@@ -918,6 +1009,11 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: Some(GuestInitOverrideMount {
+                source: Path::new("/host/override-loftd-guest-init").to_path_buf(),
+                target: "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                read_only: true,
+            }),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -949,6 +1045,14 @@ mod tests {
 
         assert_eq!(parsed, config);
         assert_eq!(parsed.mounts, test_mounts());
+        assert_eq!(
+            parsed.guest_init_override,
+            Some(GuestInitOverrideMount {
+                source: Path::new("/host/override-loftd-guest-init").to_path_buf(),
+                target: "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                read_only: true,
+            })
+        );
         assert_eq!(
             parsed.env,
             [("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
@@ -1002,6 +1106,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &mounts,
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -1019,6 +1124,74 @@ mod tests {
         .expect_err("config codex source should be rejected");
 
         assert!(format!("{err:#}").contains(".config/codex"));
+    }
+
+    #[test]
+    fn launch_config_requires_guest_init_override_to_be_read_only() {
+        let image_process_config = OciProcessConfig::default();
+
+        let err = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            hostname: "loftd-workspace",
+            mounts: &test_mounts(),
+            guest_init_override: Some(GuestInitOverrideMount {
+                source: Path::new("/host/override-loftd-guest-init").to_path_buf(),
+                target: "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                read_only: false,
+            }),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            log_level: LogLevel::Off,
+            network_mode: NetworkMode::Tsi,
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect_err("guest-init override bind must be read-only");
+
+        assert!(format!("{err:#}").contains("read-only"));
+    }
+
+    #[test]
+    fn launch_config_rejects_guest_init_override_target_that_differs_from_exec_path() {
+        let mut text = String::new();
+        push_field(&mut text, "task_rootfs", "/state/task/rootfs");
+        push_field(&mut text, "hostname", "loftd-workspace");
+        push_field(&mut text, "mount.0.source", "/workspace-src");
+        push_field(&mut text, "mount.0.tag", WORKSPACE_TAG);
+        push_field(&mut text, "mount.0.target", WORKSPACE_TARGET);
+        push_field(
+            &mut text,
+            "guest_init_override_source",
+            "/host/override-loftd-guest-init",
+        );
+        push_field(
+            &mut text,
+            "guest_init_override_target",
+            "/nix/store/wrong/bin/loftd-guest-init",
+        );
+        push_field(&mut text, "guest_init_override_read_only", "true");
+        push_field(&mut text, "ram_mib", "4096");
+        push_field(&mut text, "vcpus", "2");
+        push_field(&mut text, "log_level", "off");
+        push_field(&mut text, "network_mode", "tsi");
+        push_field(&mut text, "workdir", "/workspace");
+        push_field(
+            &mut text,
+            "exec_path",
+            "/nix/store/hash-loftd/bin/loftd-guest-init",
+        );
+
+        let err = LaunchConfig::parse(&text)
+            .expect_err("helper config must reject mismatched guest-init override target");
+
+        assert!(format!("{err:#}").contains("must match guest-init exec path"));
     }
 
     #[test]
@@ -1080,6 +1253,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -1144,6 +1318,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -1165,6 +1340,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -1190,6 +1366,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -1217,6 +1394,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -1251,6 +1429,7 @@ mod tests {
             task_rootfs: rootfs.path(),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,
@@ -1299,6 +1478,7 @@ mod tests {
                 task_rootfs: Path::new("/state/task/rootfs"),
                 hostname: "loftd-workspace",
                 mounts: &test_mounts(),
+                guest_init_override: None,
                 guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
                 guest_command: &[],
                 image_process_config,
@@ -1328,6 +1508,7 @@ mod tests {
             task_rootfs: Path::new("/state/task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &image_process_config,

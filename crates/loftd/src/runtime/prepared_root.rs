@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use crate::runtime::launch_config::{BindMount, LaunchConfig};
+use crate::runtime::launch_config::LaunchConfig;
 use crate::runtime::runtime_etc::{self, RuntimeEtcFiles};
 
 const PREPARED_ROOT_DIR: &str = "prepared-root";
@@ -49,15 +49,26 @@ impl PreparedRootPlan {
         runtime_etc: RuntimeEtcFiles,
     ) -> Result<Self> {
         let root_export = task_state_dir.join(PREPARED_ROOT_DIR);
-        let mut bind_grafts = Vec::with_capacity(config.mounts.len() + 1);
+        let mut bind_grafts = Vec::with_capacity(
+            config.mounts.len() + 1 + usize::from(config.guest_init_override.is_some()),
+        );
         bind_grafts.push(PreparedRootBind {
             source: config.task_rootfs.clone(),
             target: root_export.clone(),
+            kind: PreparedRootBindKind::Directory,
         });
         for mount in &config.mounts {
             bind_grafts.push(PreparedRootBind {
                 source: mount.source.clone(),
-                target: prepared_target(&root_export, mount)?,
+                target: prepared_target(&root_export, &mount.target)?,
+                kind: PreparedRootBindKind::Directory,
+            });
+        }
+        if let Some(mount) = &config.guest_init_override {
+            bind_grafts.push(PreparedRootBind {
+                source: mount.source.clone(),
+                target: prepared_target(&root_export, &mount.target)?,
+                kind: PreparedRootBindKind::ReadOnlyFile,
             });
         }
         Ok(Self {
@@ -72,18 +83,35 @@ impl PreparedRootPlan {
 struct PreparedRootBind {
     source: PathBuf,
     target: PathBuf,
+    kind: PreparedRootBindKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PreparedRootBindKind {
+    Directory,
+    ReadOnlyFile,
 }
 
 trait PreparedRootCommands {
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn bind_mount(&self, source: &Path, target: &Path) -> Result<()>;
+    fn remount_read_only(&self, target: &Path) -> Result<()>;
     fn materialize_runtime_etc(&self, root_export: &Path, files: &RuntimeEtcFiles) -> Result<()>;
 
     fn apply(&self, plan: &PreparedRootPlan) -> Result<()> {
         for bind in &plan.bind_grafts {
-            validate_source_dir(&bind.source)?;
-            self.create_dir_all(&bind.target)?;
-            self.bind_mount(&bind.source, &bind.target)?;
+            match bind.kind {
+                PreparedRootBindKind::Directory => {
+                    validate_source_dir(&bind.source)?;
+                    self.create_dir_all(&bind.target)?;
+                    self.bind_mount(&bind.source, &bind.target)?;
+                }
+                PreparedRootBindKind::ReadOnlyFile => {
+                    validate_source_file(&bind.source)?;
+                    self.bind_mount(&bind.source, &bind.target)?;
+                    self.remount_read_only(&bind.target)?;
+                }
+            }
         }
         self.materialize_runtime_etc(&plan.root_export, &plan.runtime_etc)?;
         Ok(())
@@ -121,9 +149,51 @@ impl PreparedRootCommands for HostPreparedRootCommands {
         Ok(())
     }
 
+    fn remount_read_only(&self, target: &Path) -> Result<()> {
+        let status = Command::new("mount")
+            .args(["-o", "remount,bind,ro"])
+            .arg(target)
+            .status()
+            .with_context(|| {
+                format!(
+                    "failed to run rootless prepared-root read-only remount '{}'",
+                    target.display()
+                )
+            })?;
+        if !status.success() {
+            bail!(
+                "rootless prepared-root read-only remount '{}' failed with {status}",
+                target.display()
+            );
+        }
+        Ok(())
+    }
+
     fn materialize_runtime_etc(&self, root_export: &Path, files: &RuntimeEtcFiles) -> Result<()> {
         runtime_etc::materialize(root_export, files)
     }
+}
+
+fn validate_source_file(source: &Path) -> Result<()> {
+    if !source.is_absolute() {
+        bail!(
+            "loftd prepared-root bind source '{}' must be absolute",
+            source.display()
+        );
+    }
+    let metadata = fs::metadata(source).with_context(|| {
+        format!(
+            "failed to inspect prepared-root source '{}'",
+            source.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        bail!(
+            "loftd prepared-root bind source '{}' must be a file",
+            source.display()
+        );
+    }
+    Ok(())
 }
 
 fn validate_source_dir(source: &Path) -> Result<()> {
@@ -148,12 +218,12 @@ fn validate_source_dir(source: &Path) -> Result<()> {
     Ok(())
 }
 
-fn prepared_target(root_export: &Path, mount: &BindMount) -> Result<PathBuf> {
-    let target = Path::new(&mount.target);
+fn prepared_target(root_export: &Path, mount_target: &str) -> Result<PathBuf> {
+    let target = Path::new(mount_target);
     if !target.is_absolute() {
         bail!(
             "loftd prepared-root bind target '{}' must be absolute",
-            mount.target
+            mount_target
         );
     }
     let mut relative = PathBuf::new();
@@ -164,11 +234,11 @@ fn prepared_target(root_export: &Path, mount: &BindMount) -> Result<PathBuf> {
             Component::CurDir => {}
             Component::ParentDir => bail!(
                 "loftd prepared-root bind target '{}' must not contain '..'",
-                mount.target
+                mount_target
             ),
             Component::Prefix(_) => bail!(
                 "loftd prepared-root bind target '{}' has an unsupported prefix",
-                mount.target
+                mount_target
             ),
         }
     }
@@ -183,8 +253,9 @@ mod tests {
     use super::*;
     use crate::logging::LogLevel;
     use crate::runtime::launch_config::{
-        CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, LaunchSpec, NetworkMode, PI_TAG,
-        PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+        BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, GuestInitOverrideMount,
+        LaunchSpec, NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
+        WORKSPACE_TARGET,
     };
     use std::cell::RefCell;
     use std::path::Path;
@@ -199,6 +270,7 @@ mod tests {
         CreateDir(String),
         Bind(String, String),
         RuntimeEtc(String),
+        ReadOnly(String),
     }
 
     impl PreparedRootCommands for RecordingCommands {
@@ -214,6 +286,13 @@ mod tests {
                 source.display().to_string(),
                 target.display().to_string(),
             ));
+            Ok(())
+        }
+
+        fn remount_read_only(&self, target: &Path) -> Result<()> {
+            self.calls
+                .borrow_mut()
+                .push(Call::ReadOnly(target.display().to_string()));
             Ok(())
         }
 
@@ -264,6 +343,7 @@ mod tests {
             task_rootfs: &root.join("task/rootfs"),
             hostname: "loftd-workspace",
             mounts: &test_mounts(root),
+            guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),
@@ -347,6 +427,61 @@ mod tests {
     }
 
     #[test]
+    fn prepared_root_plan_applies_guest_init_override_as_read_only_file_bind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for path in [
+            "task/rootfs/nix/store/hash-loftd/bin",
+            "workspace-src",
+            "home/.codex",
+            "home/.pi",
+            "state/cargo",
+            "state/sccache",
+        ] {
+            fs::create_dir_all(dir.path().join(path)).expect("source dir");
+        }
+        let image_target = dir
+            .path()
+            .join("task/rootfs/nix/store/hash-loftd/bin/loftd-guest-init");
+        fs::write(&image_target, "#!/bin/sh\n").expect("image guest init");
+        let override_path = dir.path().join("override-loftd-guest-init");
+        fs::write(&override_path, "#!/bin/sh\necho override\n").expect("override guest init");
+
+        let state = dir.path().join("task");
+        let mut config = config(dir.path());
+        config.guest_init_override = Some(GuestInitOverrideMount {
+            source: override_path.clone(),
+            target: "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+            read_only: true,
+        });
+        let plan =
+            PreparedRootPlan::new_with_runtime_etc(&config, &state, runtime_etc()).expect("plan");
+        let commands = RecordingCommands::default();
+
+        commands.apply(&plan).expect("apply should plan commands");
+
+        let root = state.join(PREPARED_ROOT_DIR);
+        let calls = commands.calls.borrow();
+        assert_eq!(
+            calls[12],
+            Call::Bind(
+                override_path.display().to_string(),
+                root.join("nix/store/hash-loftd/bin/loftd-guest-init")
+                    .display()
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            calls[13],
+            Call::ReadOnly(
+                root.join("nix/store/hash-loftd/bin/loftd-guest-init")
+                    .display()
+                    .to_string()
+            )
+        );
+        assert_eq!(calls[14], Call::RuntimeEtc(root.display().to_string()));
+    }
+
+    #[test]
     fn prepared_root_rejects_relative_or_root_targets() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().join("prepared-root");
@@ -355,12 +490,12 @@ mod tests {
             tag: "bad".to_owned(),
             target: "workspace".to_owned(),
         };
-        assert!(prepared_target(&root, &mount).is_err());
+        assert!(prepared_target(&root, &mount.target).is_err());
 
         mount.target = "/".to_owned();
-        assert!(prepared_target(&root, &mount).is_err());
+        assert!(prepared_target(&root, &mount.target).is_err());
 
         mount.target = "/workspace/../escape".to_owned();
-        assert!(prepared_target(&root, &mount).is_err());
+        assert!(prepared_target(&root, &mount.target).is_err());
     }
 }

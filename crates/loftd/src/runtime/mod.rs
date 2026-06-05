@@ -104,6 +104,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
                             task_rootfs: lease.handle().rootfs_path(),
                             hostname: &plan.hostname,
                             mounts: &plan.bind_mounts,
+                            guest_init_override: guest_init.override_mount.clone(),
                             guest_init_exec: &guest_init.guest_exec_path,
                             guest_command: &plan.guest_command,
                             image_process_config: lease.handle().process_config(),

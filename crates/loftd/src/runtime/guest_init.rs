@@ -3,12 +3,15 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::runtime::launch_config::GuestInitOverrideMount;
+
 const GUEST_INIT_BASENAME: &str = "loftd-guest-init";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedGuestInit {
     pub(crate) host_path: PathBuf,
     pub(crate) guest_exec_path: String,
+    pub(crate) override_mount: Option<GuestInitOverrideMount>,
 }
 
 pub(crate) fn resolve_guest_init_with_entrypoint(
@@ -17,11 +20,17 @@ pub(crate) fn resolve_guest_init_with_entrypoint(
     image_entrypoint: &[String],
 ) -> Result<ResolvedGuestInit> {
     let target = find_loftd_guest_init(task_rootfs)?;
+    let guest_exec_path = guest_path(task_rootfs, &target)?;
     if let Some(override_path) = override_path {
-        copy_guest_init_override(override_path, &target)?;
+        let source = validate_guest_init_override(override_path)?;
         return Ok(ResolvedGuestInit {
-            guest_exec_path: guest_path(task_rootfs, &target)?,
+            guest_exec_path: guest_exec_path.clone(),
             host_path: target,
+            override_mount: Some(GuestInitOverrideMount {
+                source,
+                target: guest_exec_path,
+                read_only: true,
+            }),
         });
     }
 
@@ -30,8 +39,9 @@ pub(crate) fn resolve_guest_init_with_entrypoint(
     }
 
     Ok(ResolvedGuestInit {
-        guest_exec_path: guest_path(task_rootfs, &target)?,
+        guest_exec_path,
         host_path: target,
+        override_mount: None,
     })
 }
 
@@ -69,6 +79,7 @@ fn resolve_guest_init_entrypoint(
             Ok(ResolvedGuestInit {
                 host_path,
                 guest_exec_path: exec_path.to_owned(),
+                override_mount: None,
             })
         }
         [_, enter, separator, extra @ ..] if enter == "enter" && separator == "--" => {
@@ -114,7 +125,7 @@ fn find_loftd_guest_init(task_rootfs: &Path) -> Result<PathBuf> {
     }
 }
 
-fn copy_guest_init_override(override_path: &Path, target: &Path) -> Result<()> {
+fn validate_guest_init_override(override_path: &Path) -> Result<PathBuf> {
     let source = override_path.canonicalize().with_context(|| {
         format!(
             "failed to resolve loftd guest-init override '{}'",
@@ -127,24 +138,7 @@ fn copy_guest_init_override(override_path: &Path, target: &Path) -> Result<()> {
             source.display()
         );
     }
-    fs::copy(&source, target).with_context(|| {
-        format!(
-            "failed to copy loftd guest-init override '{}' to '{}'",
-            source.display(),
-            target.display()
-        )
-    })?;
-    let mode = source
-        .metadata()
-        .with_context(|| format!("failed to stat '{}'", source.display()))?
-        .permissions()
-        .mode();
-    fs::set_permissions(target, fs::Permissions::from_mode(mode)).with_context(|| {
-        format!(
-            "failed to preserve executable mode on loftd guest-init target '{}'",
-            target.display()
-        )
-    })
+    Ok(source)
 }
 
 fn guest_path(task_rootfs: &Path, host_path: &Path) -> Result<String> {
@@ -194,6 +188,7 @@ mod tests {
             resolved.guest_exec_path,
             "/nix/store/hash-loftd/bin/loftd-guest-init"
         );
+        assert_eq!(resolved.override_mount, None);
     }
 
     #[test]
@@ -209,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn override_is_copied_into_task_rootfs_target_and_preserves_mode() {
+    fn override_is_bound_read_only_over_task_rootfs_target_without_mutating_target() {
         let temp = tempfile::tempdir().expect("tempdir should be created");
         let target = write_guest_init(temp.path(), "hash-loftd");
         let override_path = temp.path().join("override-loftd-guest-init");
@@ -228,7 +223,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(&resolved.host_path).expect("target should be readable"),
-            "#!/bin/sh\necho override\n"
+            "#!/bin/sh\n"
         );
         assert_eq!(
             fs::metadata(&resolved.host_path)
@@ -236,7 +231,17 @@ mod tests {
                 .permissions()
                 .mode()
                 & 0o777,
-            0o751
+            0o755
+        );
+        assert_eq!(
+            resolved.override_mount,
+            Some(GuestInitOverrideMount {
+                source: override_path
+                    .canonicalize()
+                    .expect("override should canonicalize"),
+                target: "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                read_only: true,
+            })
         );
     }
 
@@ -310,7 +315,17 @@ mod tests {
         assert_eq!(resolved.host_path, target);
         assert_eq!(
             fs::read_to_string(&resolved.host_path).expect("target should be readable"),
-            "#!/bin/sh\necho override\n"
+            "#!/bin/sh\n"
+        );
+        assert_eq!(
+            resolved.override_mount,
+            Some(GuestInitOverrideMount {
+                source: override_path
+                    .canonicalize()
+                    .expect("override should canonicalize"),
+                target: "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+                read_only: true,
+            })
         );
     }
 }
