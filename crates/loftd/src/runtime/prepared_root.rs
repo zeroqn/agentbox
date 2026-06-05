@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use crate::runtime::launch_config::{BindMount, LaunchConfig};
+use crate::runtime::runtime_etc::{self, RuntimeEtcFiles};
 
 const PREPARED_ROOT_DIR: &str = "prepared-root";
 
@@ -30,10 +31,23 @@ pub(crate) fn prepare(config: &LaunchConfig, task_state_dir: &Path) -> Result<Pr
 struct PreparedRootPlan {
     root_export: PathBuf,
     bind_grafts: Vec<PreparedRootBind>,
+    runtime_etc: RuntimeEtcFiles,
 }
 
 impl PreparedRootPlan {
     fn new(config: &LaunchConfig, task_state_dir: &Path) -> Result<Self> {
+        Self::new_with_runtime_etc(
+            config,
+            task_state_dir,
+            runtime_etc::build(&config.hostname)?,
+        )
+    }
+
+    fn new_with_runtime_etc(
+        config: &LaunchConfig,
+        task_state_dir: &Path,
+        runtime_etc: RuntimeEtcFiles,
+    ) -> Result<Self> {
         let root_export = task_state_dir.join(PREPARED_ROOT_DIR);
         let mut bind_grafts = Vec::with_capacity(config.mounts.len() + 1);
         bind_grafts.push(PreparedRootBind {
@@ -49,6 +63,7 @@ impl PreparedRootPlan {
         Ok(Self {
             root_export,
             bind_grafts,
+            runtime_etc,
         })
     }
 }
@@ -62,6 +77,7 @@ struct PreparedRootBind {
 trait PreparedRootCommands {
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn bind_mount(&self, source: &Path, target: &Path) -> Result<()>;
+    fn materialize_runtime_etc(&self, root_export: &Path, files: &RuntimeEtcFiles) -> Result<()>;
 
     fn apply(&self, plan: &PreparedRootPlan) -> Result<()> {
         for bind in &plan.bind_grafts {
@@ -69,6 +85,7 @@ trait PreparedRootCommands {
             self.create_dir_all(&bind.target)?;
             self.bind_mount(&bind.source, &bind.target)?;
         }
+        self.materialize_runtime_etc(&plan.root_export, &plan.runtime_etc)?;
         Ok(())
     }
 }
@@ -102,6 +119,10 @@ impl PreparedRootCommands for HostPreparedRootCommands {
             );
         }
         Ok(())
+    }
+
+    fn materialize_runtime_etc(&self, root_export: &Path, files: &RuntimeEtcFiles) -> Result<()> {
+        runtime_etc::materialize(root_export, files)
     }
 }
 
@@ -162,8 +183,8 @@ mod tests {
     use super::*;
     use crate::logging::LogLevel;
     use crate::runtime::launch_config::{
-        CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, LaunchSpec, PI_TAG, PI_TARGET,
-        SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+        CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, LaunchSpec, NetworkMode, PI_TAG,
+        PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
     };
     use std::cell::RefCell;
     use std::path::Path;
@@ -177,6 +198,7 @@ mod tests {
     enum Call {
         CreateDir(String),
         Bind(String, String),
+        RuntimeEtc(String),
     }
 
     impl PreparedRootCommands for RecordingCommands {
@@ -192,6 +214,17 @@ mod tests {
                 source.display().to_string(),
                 target.display().to_string(),
             ));
+            Ok(())
+        }
+
+        fn materialize_runtime_etc(
+            &self,
+            root_export: &Path,
+            _files: &RuntimeEtcFiles,
+        ) -> Result<()> {
+            self.calls
+                .borrow_mut()
+                .push(Call::RuntimeEtc(root_export.display().to_string()));
             Ok(())
         }
     }
@@ -229,12 +262,14 @@ mod tests {
     fn config(root: &Path) -> LaunchConfig {
         LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: &root.join("task/rootfs"),
+            hostname: "loftd-workspace",
             mounts: &test_mounts(root),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),
             mem_gib: Some(4),
             log_level: LogLevel::Off,
+            network_mode: NetworkMode::Tsi,
             profile: false,
             root: false,
             host_uid: 1000,
@@ -244,6 +279,16 @@ mod tests {
             extra_env: Vec::new(),
         })
         .expect("config should build")
+    }
+
+    fn runtime_etc() -> RuntimeEtcFiles {
+        RuntimeEtcFiles {
+            hostname: "loftd-workspace\n".to_owned(),
+            hosts:
+                "127.0.0.1\tlocalhost loftd-workspace\n::1\tlocalhost ip6-localhost ip6-loopback\n"
+                    .to_owned(),
+            resolv_conf: "nameserver 192.0.2.53\n".to_owned(),
+        }
     }
 
     #[test]
@@ -261,7 +306,8 @@ mod tests {
         }
         let state = dir.path().join("task");
         let config = config(dir.path());
-        let plan = PreparedRootPlan::new(&config, &state).expect("plan");
+        let plan =
+            PreparedRootPlan::new_with_runtime_etc(&config, &state, runtime_etc()).expect("plan");
         let commands = RecordingCommands::default();
 
         commands.apply(&plan).expect("apply should plan commands");
@@ -297,6 +343,7 @@ mod tests {
                 root.join("home/dev/.cache/sccache").display().to_string()
             )
         );
+        assert_eq!(calls[12], Call::RuntimeEtc(root.display().to_string()));
     }
 
     #[test]

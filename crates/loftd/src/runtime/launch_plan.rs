@@ -9,8 +9,8 @@ use crate::config;
 use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
 use crate::runtime::launch_config::{
-    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG,
-    SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, validate_mounts,
+    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, NetworkMode, PI_TAG, PI_TARGET,
+    SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, validate_mounts,
 };
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
@@ -20,6 +20,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 pub(crate) struct LaunchPlan {
     pub(crate) workspace_dir: PathBuf,
     pub(crate) workspace_slug: String,
+    pub(crate) hostname: String,
     pub(crate) state_layout: StateLayout,
     pub(crate) image_cache_dir: PathBuf,
     pub(crate) sccache_dir: PathBuf,
@@ -28,6 +29,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) task_rootfs_backend: TaskRootfsBackend,
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) mem_gib: Option<u32>,
+    pub(crate) network_mode: NetworkMode,
     pub(crate) guest_command: Vec<String>,
     pub(crate) debug: bool,
     pub(crate) log_level: LogLevel,
@@ -67,6 +69,7 @@ impl LaunchPlan {
             config.state_location_override(),
         )?;
         let workspace_slug = derive_workspace_slug(&workspace_dir);
+        let hostname = derive_runtime_hostname(&workspace_slug);
         let image_cache_dir = state_layout.image_cache_dir();
         let sccache_dir = state_layout.sccache_dir();
         let home_dir = home_dir.ok_or_else(|| {
@@ -81,6 +84,7 @@ impl LaunchPlan {
         Ok(Self {
             workspace_dir,
             workspace_slug,
+            hostname,
             state_layout,
             image_cache_dir,
             sccache_dir,
@@ -92,6 +96,7 @@ impl LaunchPlan {
             task_rootfs_backend,
             guest_init: options.guest_init,
             mem_gib: options.mem_gib,
+            network_mode: options.network_mode,
             guest_command: options.guest_command,
             debug: options.log_settings.level.enables_debug(),
             log_level: options.log_settings.level,
@@ -104,6 +109,10 @@ impl LaunchPlan {
             },
         })
     }
+}
+
+fn derive_runtime_hostname(workspace_slug: &str) -> String {
+    format!("loftd-{workspace_slug}")
 }
 
 fn prepare_bind_mounts(
@@ -185,6 +194,7 @@ mod tests {
 
     use crate::cli::RuntimeOptions;
     use crate::logging::{LogLevel, LogSettings};
+    use crate::runtime::launch_config::NetworkMode;
     use crate::runtime::launch_plan::{ImageSelection, LaunchPlan};
     use crate::task_rootfs::TaskRootfsBackend;
     use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -201,6 +211,7 @@ mod tests {
             guest_init: None,
             preserve_debug: false,
             mem_gib: None,
+            network_mode: NetworkMode::Tsi,
             guest_command: Vec::new(),
         }
     }
@@ -220,6 +231,7 @@ mod tests {
 
         assert_eq!(plan.workspace_dir, workspace);
         assert_eq!(plan.workspace_slug, "example-project");
+        assert_eq!(plan.hostname, "loftd-example-project");
         assert_eq!(
             plan.image_selection,
             ImageSelection::PreferLocalhostThenCanonical
@@ -459,10 +471,29 @@ mod tests {
             Some(Path::new("./loftd-guest-init").to_path_buf())
         );
         assert_eq!(plan.mem_gib, Some(8));
+        assert_eq!(plan.network_mode, NetworkMode::Tsi);
         assert_eq!(plan.guest_command, ["bash", "-lc", "echo ok"]);
         assert!(plan.debug);
         assert!(plan.profile);
         assert!(plan.root);
         assert!(plan.preserve_debug);
+    }
+
+    #[test]
+    fn launch_plan_carries_passt_network_mode() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let mut options = runtime_options();
+        options.network_mode = NetworkMode::Passt;
+
+        let plan = LaunchPlan::from_env_values(
+            options,
+            PathBuf::from("/tmp/project"),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.network_mode, NetworkMode::Passt);
     }
 }

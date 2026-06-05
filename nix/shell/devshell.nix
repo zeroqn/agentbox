@@ -11,6 +11,7 @@ pkgs.mkShell {
     pkgs.fish
     pkgs.fuse-overlayfs
     pkgs.jq
+    pkgs.passt
     pkgs.podman
     pkgs.python3
     pkgs.rustc

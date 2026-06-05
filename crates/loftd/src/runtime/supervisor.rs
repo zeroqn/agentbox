@@ -1,14 +1,16 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::OsString;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use crate::logging::{self, INTERNAL_LOG_LEVEL_ENV, LogSettings};
 use crate::runtime::ffi::{DirectLibkrunLauncher, DynamicLibkrunApi};
-use crate::runtime::launch_config::LaunchConfig;
+use crate::runtime::launch_config::{LaunchConfig, NetworkMode};
+use crate::runtime::network::{self, NetworkManagerSession, PasstWorkerSession};
 use crate::runtime::prepared_root;
 
-pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-enter";
+pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
 const BUILDAH_PROGRAM: &str = "buildah";
 const BUILDAH_UNSHARE_ARG: &str = "unshare";
 
@@ -133,23 +135,126 @@ pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
 fn run_helper(config_path: &Path) -> Result<()> {
     if logging::helper_pre_config_debug_enabled() {
         eprintln!(
-            "loftd internal: libkrun-enter starting config={}",
+            "loftd internal: libkrun-network-enter starting config={}",
             config_path.display()
         );
     }
     let config = LaunchConfig::read_from(config_path)?;
     logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))?;
-    let task_state_dir = config_path.parent().ok_or_else(|| {
-        anyhow!(
-            "loftd launch config '{}' must live inside a task state directory",
-            config_path.display()
-        )
-    })?;
-    let prepared_root = prepared_root::prepare(&config, task_state_dir)?;
+    let task_state_dir = task_state_dir_from_config_path(config_path)?;
+    tracing::debug!(
+        mode = config.network_mode.as_config_value(),
+        "loftd internal: network manager starting"
+    );
+    let mut network_session = NetworkManagerSession::start(task_state_dir)?;
+    let (passt_read, passt_write) = if config.network_mode == NetworkMode::Passt {
+        let (read_fd, write_fd) = network::passt_pid_pipe()?;
+        (Some(read_fd), Some(write_fd))
+    } else {
+        (None, None)
+    };
+    let mut worker = VmWorkerGuard::new(fork_vm_worker(
+        config_path,
+        network_session.holder_pid(),
+        passt_write,
+    )?);
+    let passt_pid = if config.network_mode == NetworkMode::Passt {
+        passt_read
+            .map(network::read_passt_pid)
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
+    network_session.set_passt_pid(passt_pid);
+    let status = worker.wait()?;
+    if let Some(code) = network::status_exit_code(status) {
+        if code == 0 {
+            return Ok(());
+        }
+        bail!("loftd VM worker exited with status {code}");
+    }
+    bail!("loftd VM worker exited due to signal")
+}
+
+struct VmWorkerGuard {
+    pid: libc::pid_t,
+}
+
+impl VmWorkerGuard {
+    fn new(pid: libc::pid_t) -> Self {
+        Self { pid }
+    }
+
+    fn wait(&mut self) -> Result<i32> {
+        let status = network::wait_pid(self.pid)?;
+        self.pid = -1;
+        Ok(status)
+    }
+}
+
+impl Drop for VmWorkerGuard {
+    fn drop(&mut self) {
+        if self.pid > 0 {
+            network::cleanup_pid(self.pid);
+        }
+    }
+}
+
+fn fork_vm_worker(
+    config_path: &Path,
+    holder_pid: libc::pid_t,
+    passt_pid_pipe: Option<OwnedFd>,
+) -> Result<libc::pid_t> {
+    // SAFETY: fork creates an isolated worker process that enters the target netns and exits.
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        bail!(
+            "failed to fork loftd VM worker: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    if pid == 0 {
+        let result = run_vm_worker(config_path, holder_pid, passt_pid_pipe);
+        if let Err(err) = result {
+            eprintln!("loftd internal VM worker: {err:#}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+    Ok(pid)
+}
+
+fn run_vm_worker(
+    config_path: &Path,
+    holder_pid: libc::pid_t,
+    passt_pid_pipe: Option<OwnedFd>,
+) -> Result<()> {
+    let config = LaunchConfig::read_from(config_path)?;
+    network::enter_netns(holder_pid)?;
+    let task_state_dir = task_state_dir_from_config_path(config_path)?;
+    let (config, _passt_session) = match config.network_mode {
+        NetworkMode::Tsi => (config, None),
+        NetworkMode::Passt => {
+            let session = PasstWorkerSession::start(task_state_dir)?;
+            if let Some(pipe) = passt_pid_pipe {
+                network::write_passt_pid(pipe, session.pid())?;
+            }
+            (
+                config.with_passt_socket(session.socket().to_path_buf()),
+                Some(session),
+            )
+        }
+    };
+    run_libkrun_in_current_namespace(&config, task_state_dir)
+}
+
+fn run_libkrun_in_current_namespace(config: &LaunchConfig, task_state_dir: &Path) -> Result<()> {
+    let prepared_root = prepared_root::prepare(config, task_state_dir)?;
     let launch_config = config.with_root_export(prepared_root.root().to_path_buf());
     let guest_config_path = launch_config.write_guest_config_to_rootfs()?;
     tracing::debug!(
-        config_path = %config_path.display(),
+        task_state = %task_state_dir.display(),
         source_rootfs = %config.task_rootfs.display(),
         rootfs = %launch_config.task_rootfs.display(),
         guest_config = %guest_config_path.display(),
@@ -169,6 +274,15 @@ fn run_helper(config_path: &Path) -> Result<()> {
     DirectLibkrunLauncher::new(api).start_enter(&launch_config)
 }
 
+fn task_state_dir_from_config_path(config_path: &Path) -> Result<&Path> {
+    config_path.parent().ok_or_else(|| {
+        anyhow!(
+            "loftd launch config '{}' must live inside a task state directory",
+            config_path.display()
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,7 +297,8 @@ mod tests {
 
     #[test]
     fn internal_rejects_wrong_argument_shape() {
-        let err = run_internal(vec!["libkrun-enter".into()]).expect_err("missing config path");
+        let err =
+            run_internal(vec!["libkrun-network-enter".into()]).expect_err("missing config path");
         assert!(format!("{err:#}").contains("expected internal"));
 
         let err = run_internal(vec!["btrfs-rootfs".into(), "/tmp/x".into()])
@@ -213,7 +328,7 @@ mod tests {
                 OsString::from("unshare"),
                 OsString::from("/nix/store/hash-loftd/bin/loftd"),
                 OsString::from("internal"),
-                OsString::from("libkrun-enter"),
+                OsString::from("libkrun-network-enter"),
                 OsString::from("/tmp/loftd-task/launch.conf"),
             ]
         );

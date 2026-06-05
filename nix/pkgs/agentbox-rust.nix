@@ -9,6 +9,7 @@ let
     pkgs.buildah
     pkgs.btrfs-progs
     pkgs.fuse-overlayfs
+    pkgs.passt
   ];
   runtimeWrapperArgs =
     [

@@ -66,6 +66,9 @@ managed sidecar.
   libkrun/libkrunfw library path, and source/debug builds can set
   `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for agentbox microvm or
   `LOFTD_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for loftd.
+- `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
+  default TSI and `--passt` mode; included in the Nix `.#loftd`,
+  `.#loftd-prebuilt`, and `nix develop` environments.
 - `btrfs`, `mkfs.btrfs`, and `blkid` on the host for microvm btrfs-snapshot
   storage, first-time libkrun/microvm raw-image creation, and reuse validation
   (`btrfs-progs` + `util-linux`; included in `nix develop`, and `btrfs` is
@@ -151,9 +154,9 @@ nix build .#agentbox-container
 - `.#agentbox`: compile from source.
 - `.#loftd`: compile from source as the dynamic host `loftd` package. It uses
   the same Rust package output as `.#agentbox`, which wraps both host binaries
-  with this flake's runtime library path. The stable raw release payload is
-  also available at `libexec/loftd`; `bin/loftd` remains the wrapped CLI for
-  normal use.
+  with this flake's runtime library path and runtime tools including
+  `pasta`/`passt`. The stable raw release payload is also available at
+  `libexec/loftd`; `bin/loftd` remains the wrapped CLI for normal use.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
   `fuse-overlayfs` and `buildah` into the runtime environment for
@@ -683,11 +686,11 @@ Current implemented milestone:
   preparation against the attached disks, then drops to the host/dev identity and
   execs the default `fish -l` shell.
 
-Current limitations: networking relies on libkrun's no-passt/TSI default path, direct
-microvm inbound port publishing is intentionally unavailable, terminal resize has only the
-narrow default virtio-console hook wired so far, and real VM smoke validation is
-still pending. See `docs/microvm-smoke.md` for the manual smoke checklist and
-current not-tested items.
+Current limitations: direct microvm inbound port publishing is intentionally
+unavailable, terminal resize has only the narrow default virtio-console hook
+wired so far, and real VM smoke validation is still pending. See
+`docs/microvm-smoke.md` for the manual smoke checklist and current not-tested
+items.
 
 The storage policy values are:
 
@@ -735,11 +738,11 @@ complete: the implementation builds a typed launch plan, uses Buildah as the
 durable OCI image source for the default btrfs path, materializes a per-task
 btrfs snapshot rootfs, prepares loftd-owned persistent raw btrfs disks for
 `/nix` and rootless container storage, starts a same-binary helper through
-`buildah unshare <loftd-exe> internal libkrun-enter <launch.conf>` to call
-libkrun, and enters the guest through `loftd-guest-init enter`. The parent
-process owns task-rootfs cleanup, with best-effort cleanup on unwind and
-`--preserve-debug` for manual inspection. The explicit `fuse-overlay` backend is
-still a future slice.
+`buildah unshare <loftd-exe> internal libkrun-network-enter <launch.conf>` to
+set up the per-session pasta namespace and call libkrun, and enters the guest
+through `loftd-guest-init enter`. The parent process owns task-rootfs cleanup,
+with best-effort cleanup on unwind and `--preserve-debug` for manual
+inspection. The explicit `fuse-overlay` backend is still a future slice.
 
 Run/help:
 
@@ -749,6 +752,7 @@ Run/help:
 ./result/bin/loftd --rootfs-backend fuse-overlay
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
+./result/bin/loftd --passt -- bash -lc 'echo ok'
 ./result/bin/loftd --log-level debug --profile -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
 ```
@@ -800,20 +804,58 @@ path is wanted.
 On a successful btrfs-snapshot run, loftd then resolves the image's executable
 `loftd-guest-init`, writes a private hex-encoded `launch.conf` under the task
 state directory, and supervises
-`buildah unshare <loftd-exe> internal libkrun-enter <launch.conf>`. Buildah is
-used only as the rootless UID/GID namespace adapter for the helper, matching
-the namespace used to materialize the image-derived btrfs rootfs; it is not used
-as the container runtime, and this path does not rely on Podman, idmapped
-mounts, or relaxed guest-init ownership repair. The helper dynamically loads
-`libkrun.so.1` or `libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), prepares
-a crun-style root export inside that same rootless namespace, and attaches that
-single prepared root plus two writable persistent disks. The prepared root is a
-bind-mounted view of the task rootfs with the workspace, Codex, Pi, Cargo, and
-sccache host directories grafted into their final guest paths before
-`krun_set_root`. Loftd intentionally does not register one `krun_add_virtiofs3`
-device per developer path; keeping those binds inside the root export avoids
-the legacy x86 IRQ/device exhaustion that can otherwise occur before libkrun's
-implicit vsock device is registered.
+`buildah unshare <loftd-exe> internal libkrun-network-enter <launch.conf>`.
+Buildah is used only as the rootless UID/GID namespace adapter for the helper,
+matching the namespace used to materialize the image-derived btrfs rootfs; it is
+not used as the container runtime, and this path does not rely on Podman,
+idmapped mounts, or relaxed guest-init ownership repair. The internal helper is
+a network manager: it creates one private network namespace holder for the
+loftd session, starts `pasta` with Podman-like `--map-guest-addr 169.254.1.2`
+and `--dns-forward 169.254.1.1`, then forks the VM worker into that namespace.
+Missing `pasta`, unsupported unprivileged namespace setup, or early proxy exit
+is a hard launch error instead of a silent broken-host-alias fallback. The Nix
+`loftd`, `loftd-prebuilt`, and development-shell paths include `pkgs.passt`
+so both `pasta` and `passt` are on `PATH`; non-Nix invocations must provide
+those tools themselves.
+
+The default network mode remains libkrun TSI: loftd does not add a libkrun
+network device by default, but the libkrun VMM starts from the pasta-backed
+namespace so the guest's Podman-like host aliases can reach the host at
+`169.254.1.2`. Passing `--passt` opts into libkrun virtio-net/passt mode. In
+that mode the VM worker starts an additional `passt` unix-socket backend inside
+the same namespace, sets guest env `LOFTD_USE_PASST=1`, and calls
+`krun_add_net_unixstream()` before `krun_start_enter()`. Both modes always
+materialize `/etc/hosts` with:
+
+```text
+169.254.1.2    host.containers.internal host.docker.internal
+```
+
+There is no shared/global rootless network namespace and no port-publish CLI in
+this slice.
+
+After networking is ready, the helper dynamically loads `libkrun.so.1` or
+`libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), prepares a crun-style root
+export inside that same rootless namespace, and attaches that single prepared
+root plus two writable persistent disks. The prepared root is a bind-mounted
+view of the task rootfs with the workspace, Codex, Pi, Cargo, and sccache host
+directories grafted into their final guest paths before `krun_set_root`. Loftd
+intentionally does not register one `krun_add_virtiofs3` device per developer
+path; keeping those binds inside the root export avoids the legacy x86
+IRQ/device exhaustion that can otherwise occur before libkrun's implicit vsock
+device is registered.
+
+On a host with libkrun and unprivileged namespace support, smoke-test the alias
+contract by starting a host listener and connecting from both modes:
+
+```bash
+# terminal 1
+python3 -m http.server 18080 --bind 0.0.0.0
+
+# terminal 2
+./result/bin/loftd -- bash -lc 'getent hosts host.containers.internal && curl -fsS http://host.containers.internal:18080/'
+./result/bin/loftd --passt -- bash -lc 'getent hosts host.docker.internal && curl -fsS http://host.docker.internal:18080/'
+```
 
 - `loftd-nix.raw` exposed to the guest as `LOFTD_NIX` / `loftd-nix` for `/nix`;
 - `loftd-containers.raw` exposed as `LOFTD_CONTAINERS` / `loftd-containers` for

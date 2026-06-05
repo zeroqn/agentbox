@@ -2,6 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
+use crate::runtime::launch_config::NetworkMode;
 use crate::task_rootfs::TaskRootfsBackend;
 
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
@@ -88,6 +89,12 @@ pub(crate) struct Cli {
     mem_gib: Option<u32>,
 
     #[arg(
+        long = "passt",
+        help = "Use libkrun virtio-net/passt mode instead of the default TSI mode"
+    )]
+    passt: bool,
+
+    #[arg(
         value_name = "COMMAND",
         last = true,
         num_args = 1..,
@@ -111,6 +118,11 @@ impl Cli {
             guest_init: self.guest_init,
             preserve_debug: self.preserve_debug,
             mem_gib: self.mem_gib,
+            network_mode: if self.passt {
+                NetworkMode::Passt
+            } else {
+                NetworkMode::Tsi
+            },
             guest_command: self.guest_command,
         }
     }
@@ -128,6 +140,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) preserve_debug: bool,
     pub(crate) mem_gib: Option<u32>,
+    pub(crate) network_mode: NetworkMode,
     pub(crate) guest_command: Vec<String>,
 }
 
@@ -153,6 +166,7 @@ mod tests {
 
     use crate::cli::Cli;
     use crate::logging::LogLevel;
+    use crate::runtime::launch_config::NetworkMode;
     use crate::task_rootfs::TaskRootfsBackend;
 
     #[test]
@@ -183,8 +197,17 @@ mod tests {
         assert!(options.root);
         assert!(options.profile);
         assert!(options.debug);
+        assert_eq!(options.network_mode, NetworkMode::Tsi);
         assert_eq!(options.log_settings.level, LogLevel::Debug);
         assert!(options.guest_command.is_empty());
+    }
+
+    #[test]
+    fn passt_flag_selects_passt_network_mode() {
+        let cli = Cli::try_parse_from(["loftd", "--passt"]).expect("passt flag should parse");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(options.network_mode, NetworkMode::Passt);
     }
 
     #[test]

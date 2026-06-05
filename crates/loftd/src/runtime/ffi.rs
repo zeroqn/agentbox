@@ -3,13 +3,25 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::path::Path;
 
-use crate::runtime::launch_config::LaunchConfig;
+use crate::runtime::launch_config::{LaunchConfig, NetworkMode};
 
 const LIBKRUN_LIBRARY_ENV: &str = "LOFTD_LIBKRUN_LIBRARY";
 const DEFAULT_LIBKRUN_NAMES: [&str; 2] = ["libkrun.so.1", "libkrun.so"];
 const LOFTD_LIBKRUN_LOG_TARGET_STDERR_FD: i32 = 2;
 const LOFTD_LIBKRUN_LOG_STYLE_NEVER: u32 = 2;
 const LOFTD_LIBKRUN_LOG_OPTION_NO_ENV: u32 = 1;
+const LOFTD_NET_FEATURE_CSUM: u32 = 1 << 0;
+const LOFTD_NET_FEATURE_GUEST_CSUM: u32 = 1 << 1;
+const LOFTD_NET_FEATURE_GUEST_TSO4: u32 = 1 << 7;
+const LOFTD_NET_FEATURE_GUEST_UFO: u32 = 1 << 10;
+const LOFTD_NET_FEATURE_HOST_TSO4: u32 = 1 << 11;
+const LOFTD_NET_FEATURE_HOST_UFO: u32 = 1 << 14;
+const LOFTD_LIBKRUN_COMPAT_NET_FEATURES: u32 = LOFTD_NET_FEATURE_CSUM
+    | LOFTD_NET_FEATURE_GUEST_CSUM
+    | LOFTD_NET_FEATURE_GUEST_TSO4
+    | LOFTD_NET_FEATURE_GUEST_UFO
+    | LOFTD_NET_FEATURE_HOST_TSO4
+    | LOFTD_NET_FEATURE_HOST_UFO;
 
 pub(crate) trait LibkrunApi {
     fn create_ctx(&mut self) -> Result<u32>;
@@ -32,6 +44,7 @@ pub(crate) trait LibkrunApi {
         output_fd: i32,
         err_fd: i32,
     ) -> Result<i32>;
+    fn add_net_unixstream(&mut self, ctx_id: u32, socket_path: &Path) -> Result<i32>;
     fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32>;
     fn set_exec(
         &mut self,
@@ -97,6 +110,15 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             check_setup("krun_add_disk", rc)?;
             tracing::debug!(ctx_id, disk_id = %disk.id, "krun_add_disk: complete");
         }
+        if config.network_mode == NetworkMode::Passt {
+            let passt_socket = config.passt_socket.as_deref().ok_or_else(|| {
+                anyhow!("libkrun passt setup requires a prepared passt unix socket path")
+            })?;
+            tracing::debug!(ctx_id, socket = %passt_socket.display(), "krun_add_net_unixstream: begin");
+            let rc = self.api.add_net_unixstream(ctx_id, passt_socket)?;
+            check_setup("krun_add_net_unixstream", rc)?;
+            tracing::debug!(ctx_id, "krun_add_net_unixstream: complete");
+        }
         tracing::debug!(ctx_id, "krun_disable_implicit_console: begin");
         let rc = self.api.disable_implicit_console(ctx_id)?;
         check_setup("krun_disable_implicit_console", rc)?;
@@ -150,6 +172,8 @@ type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunAddDisk = unsafe extern "C" fn(u32, *const c_char, *const c_char, bool) -> i32;
 type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
 type KrunAddVirtioConsoleDefault = unsafe extern "C" fn(u32, i32, i32, i32) -> i32;
+type KrunAddNetUnixstream =
+    unsafe extern "C" fn(u32, *const c_char, i32, *const c_void, u32, u8) -> i32;
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
     unsafe extern "C" fn(u32, *const c_char, *const *const c_char, *const *const c_char) -> i32;
@@ -166,6 +190,7 @@ pub(crate) struct DynamicLibkrunApi {
     add_disk: KrunAddDisk,
     disable_implicit_console: KrunDisableImplicitConsole,
     add_virtio_console_default: KrunAddVirtioConsoleDefault,
+    add_net_unixstream: Option<KrunAddNetUnixstream>,
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
     start_enter: KrunStartEnter,
@@ -200,64 +225,67 @@ impl DynamicLibkrunApi {
             bail!("failed to load {name}: {}", dlerror_string());
         }
 
-        let api =
-            unsafe {
-                // SAFETY: symbols are resolved from a successfully opened libkrun handle and
-                // transmuted to signatures verified against the local libkrun 1.18 header.
-                Self {
+        let api = unsafe {
+            // SAFETY: symbols are resolved from a successfully opened libkrun handle and
+            // transmuted to signatures verified against the local libkrun 1.18 header.
+            Self {
+                handle,
+                set_log_level: std::mem::transmute::<*mut c_void, KrunSetLogLevel>(load_symbol(
                     handle,
-                    set_log_level: std::mem::transmute::<*mut c_void, KrunSetLogLevel>(
-                        load_symbol(handle, "krun_set_log_level")?,
-                    ),
-                    init_log: load_optional_symbol(handle, "krun_init_log")
-                        .map(|symbol| std::mem::transmute::<*mut c_void, KrunInitLog>(symbol)),
-                    create_ctx: std::mem::transmute::<*mut c_void, KrunCreateCtx>(load_symbol(
-                        handle,
-                        "krun_create_ctx",
-                    )?),
-                    free_ctx: std::mem::transmute::<*mut c_void, KrunFreeCtx>(load_symbol(
-                        handle,
-                        "krun_free_ctx",
-                    )?),
-                    set_vm_config: std::mem::transmute::<*mut c_void, KrunSetVmConfig>(
-                        load_symbol(handle, "krun_set_vm_config")?,
-                    ),
-                    set_root: std::mem::transmute::<*mut c_void, KrunSetRoot>(load_symbol(
-                        handle,
-                        "krun_set_root",
-                    )?),
-                    add_disk: std::mem::transmute::<*mut c_void, KrunAddDisk>(load_symbol(
-                        handle,
-                        "krun_add_disk",
-                    )?),
-                    disable_implicit_console: std::mem::transmute::<
-                        *mut c_void,
-                        KrunDisableImplicitConsole,
-                    >(load_symbol(
-                        handle,
-                        "krun_disable_implicit_console",
-                    )?),
-                    add_virtio_console_default: std::mem::transmute::<
-                        *mut c_void,
-                        KrunAddVirtioConsoleDefault,
-                    >(load_symbol(
-                        handle,
-                        "krun_add_virtio_console_default",
-                    )?),
-                    set_workdir: std::mem::transmute::<*mut c_void, KrunSetWorkdir>(load_symbol(
-                        handle,
-                        "krun_set_workdir",
-                    )?),
-                    set_exec: std::mem::transmute::<*mut c_void, KrunSetExec>(load_symbol(
-                        handle,
-                        "krun_set_exec",
-                    )?),
-                    start_enter: std::mem::transmute::<*mut c_void, KrunStartEnter>(load_symbol(
-                        handle,
-                        "krun_start_enter",
-                    )?),
-                }
-            };
+                    "krun_set_log_level",
+                )?),
+                init_log: load_optional_symbol(handle, "krun_init_log")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunInitLog>(symbol)),
+                create_ctx: std::mem::transmute::<*mut c_void, KrunCreateCtx>(load_symbol(
+                    handle,
+                    "krun_create_ctx",
+                )?),
+                free_ctx: std::mem::transmute::<*mut c_void, KrunFreeCtx>(load_symbol(
+                    handle,
+                    "krun_free_ctx",
+                )?),
+                set_vm_config: std::mem::transmute::<*mut c_void, KrunSetVmConfig>(load_symbol(
+                    handle,
+                    "krun_set_vm_config",
+                )?),
+                set_root: std::mem::transmute::<*mut c_void, KrunSetRoot>(load_symbol(
+                    handle,
+                    "krun_set_root",
+                )?),
+                add_disk: std::mem::transmute::<*mut c_void, KrunAddDisk>(load_symbol(
+                    handle,
+                    "krun_add_disk",
+                )?),
+                disable_implicit_console: std::mem::transmute::<
+                    *mut c_void,
+                    KrunDisableImplicitConsole,
+                >(load_symbol(
+                    handle,
+                    "krun_disable_implicit_console",
+                )?),
+                add_virtio_console_default: std::mem::transmute::<
+                    *mut c_void,
+                    KrunAddVirtioConsoleDefault,
+                >(load_symbol(
+                    handle,
+                    "krun_add_virtio_console_default",
+                )?),
+                add_net_unixstream: load_optional_symbol(handle, "krun_add_net_unixstream")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunAddNetUnixstream>(symbol)),
+                set_workdir: std::mem::transmute::<*mut c_void, KrunSetWorkdir>(load_symbol(
+                    handle,
+                    "krun_set_workdir",
+                )?),
+                set_exec: std::mem::transmute::<*mut c_void, KrunSetExec>(load_symbol(
+                    handle,
+                    "krun_set_exec",
+                )?),
+                start_enter: std::mem::transmute::<*mut c_void, KrunStartEnter>(load_symbol(
+                    handle,
+                    "krun_start_enter",
+                )?),
+            }
+        };
         Ok(api)
     }
 }
@@ -370,6 +398,25 @@ impl LibkrunApi for DynamicLibkrunApi {
         Ok(unsafe { (self.add_virtio_console_default)(ctx_id, input_fd, output_fd, err_fd) })
     }
 
+    fn add_net_unixstream(&mut self, ctx_id: u32, socket_path: &Path) -> Result<i32> {
+        let add_net_unixstream = self.add_net_unixstream.ok_or_else(|| {
+            anyhow!("libkrun passt setup failed: krun_add_net_unixstream symbol is unavailable")
+        })?;
+        let socket_path = path_cstring(socket_path)?;
+        // SAFETY: C string lives for the duration of the call. The net config pointer is NULL
+        // because this slice does not expose port forwards; compat feature flags are disabled.
+        Ok(unsafe {
+            add_net_unixstream(
+                ctx_id,
+                socket_path.as_ptr(),
+                -1,
+                std::ptr::null(),
+                LOFTD_LIBKRUN_COMPAT_NET_FEATURES,
+                0,
+            )
+        })
+    }
+
     fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32> {
         let workdir = CString::new(workdir)?;
         // SAFETY: C string lives for the duration of the call.
@@ -457,7 +504,8 @@ mod tests {
     use crate::logging::LogLevel;
     use crate::runtime::launch_config::{
         BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment, LaunchSpec,
-        PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+        NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
+        WORKSPACE_TARGET,
     };
     use std::cell::RefCell;
     use std::path::Path;
@@ -471,6 +519,7 @@ mod tests {
         SetVmConfig(u32, u8, u32),
         SetRoot(u32, String),
         AddDisk(u32, String, String, bool),
+        AddNetUnixstream(u32, String),
         DisableImplicitConsole(u32),
         AddVirtioConsoleDefault(u32, i32, i32, i32),
         SetWorkdir(u32, String),
@@ -570,6 +619,14 @@ mod tests {
             Ok(self.rc("krun_add_virtio_console_default"))
         }
 
+        fn add_net_unixstream(&mut self, ctx_id: u32, socket_path: &Path) -> Result<i32> {
+            self.calls.borrow_mut().push(Call::AddNetUnixstream(
+                ctx_id,
+                socket_path.display().to_string(),
+            ));
+            Ok(self.rc("krun_add_net_unixstream"))
+        }
+
         fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32> {
             self.calls
                 .borrow_mut()
@@ -602,12 +659,14 @@ mod tests {
     fn config() -> LaunchConfig {
         LaunchConfig::build_for_task(LaunchSpec {
             task_rootfs: Path::new("/rootfs"),
+            hostname: "loftd-workspace",
             mounts: &test_mounts(),
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
             image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),
             mem_gib: Some(4),
             log_level: LogLevel::Debug,
+            network_mode: NetworkMode::Tsi,
             profile: false,
             root: false,
             host_uid: 1000,
@@ -628,6 +687,13 @@ mod tests {
             extra_env: Vec::new(),
         })
         .expect("config should build")
+    }
+
+    fn passt_config() -> LaunchConfig {
+        LaunchConfig {
+            network_mode: NetworkMode::Passt,
+            ..config().with_passt_socket(Path::new("/tmp/task/passt.sock").to_path_buf())
+        }
     }
 
     fn test_mounts() -> Vec<BindMount> {
@@ -673,6 +739,14 @@ mod tests {
         assert_eq!(
             planned_libkrun_load_order(Some("")),
             vec!["libkrun.so.1", "libkrun.so"]
+        );
+    }
+
+    #[test]
+    fn compat_net_features_match_libkrun_header_contract() {
+        assert_eq!(
+            LOFTD_LIBKRUN_COMPAT_NET_FEATURES,
+            (1 << 0) | (1 << 1) | (1 << 7) | (1 << 10) | (1 << 11) | (1 << 14)
         );
     }
 
@@ -727,8 +801,45 @@ mod tests {
         assert_eq!(
             calls.len(),
             11,
-            "v1 must not call krun_set_env, passt APIs, or per-bind virtiofs devices"
+            "TSI default must not call krun_set_env, passt APIs, or per-bind virtiofs devices"
         );
+    }
+
+    #[test]
+    fn passt_mode_adds_unixstream_before_start() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+            .start_enter(&passt_config())
+            .expect("launch should succeed");
+
+        let calls = calls.borrow();
+        let net_index = calls
+            .iter()
+            .position(|call| matches!(call, Call::AddNetUnixstream(..)))
+            .expect("passt mode should add net unixstream");
+        let start_index = calls
+            .iter()
+            .position(|call| matches!(call, Call::StartEnter(..)))
+            .expect("launch should start");
+
+        assert_eq!(
+            calls[net_index],
+            Call::AddNetUnixstream(7, "/tmp/task/passt.sock".to_owned())
+        );
+        assert!(net_index < start_index);
+    }
+
+    #[test]
+    fn passt_mode_requires_prepared_socket_path() {
+        let mut config = config();
+        config.network_mode = NetworkMode::Passt;
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let err = DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+            .start_enter(&config)
+            .expect_err("missing socket should fail setup");
+
+        assert!(format!("{err:#}").contains("prepared passt unix socket"));
+        assert!(calls.borrow().contains(&Call::FreeCtx(7)));
     }
 
     #[test]

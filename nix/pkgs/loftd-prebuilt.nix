@@ -24,6 +24,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
         pkgs.buildah
         pkgs.btrfs-progs
         pkgs.fuse-overlayfs
+        pkgs.passt
       ];
       runtimeLibraryPath = pkgs.lib.makeLibraryPath (
         pkgs.lib.optionals (libkrun != null) [ (pkgs.lib.getLib libkrun) ]

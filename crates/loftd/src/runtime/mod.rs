@@ -11,10 +11,12 @@ pub(crate) mod guest_init;
 pub(crate) mod image_source;
 pub(crate) mod launch_config;
 pub(crate) mod launch_plan;
+pub(crate) mod network;
 pub(crate) mod persistent_disks;
 pub(crate) mod prepared_root;
 mod profile;
 pub(crate) mod raw_btrfs;
+mod runtime_etc;
 pub(crate) mod supervisor;
 pub(crate) mod task_rootfs;
 
@@ -39,6 +41,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
 
     tracing::debug!(
         image = plan.image_selection.selected_reference(),
+        network_mode = plan.network_mode.as_config_value(),
         rootfs_backend = %plan.task_rootfs_backend,
         state_root = %plan.state_layout.root_dir().display(),
         image_cache = %plan.image_cache_dir.display(),
@@ -98,12 +101,14 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
                     Ok(guest_init) => match profiler.measure_result("launch_config_build", || {
                         launch_config::LaunchConfig::build_for_task(launch_config::LaunchSpec {
                             task_rootfs: lease.handle().rootfs_path(),
+                            hostname: &plan.hostname,
                             mounts: &plan.bind_mounts,
                             guest_init_exec: &guest_init.guest_exec_path,
                             guest_command: &plan.guest_command,
                             image_process_config: lease.handle().process_config(),
                             mem_gib: plan.mem_gib,
                             log_level: plan.log_level,
+                            network_mode: plan.network_mode,
                             profile: plan.profile,
                             root: plan.root,
                             host_uid: current_uid(),
@@ -119,6 +124,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
                                 disks = config.disks.len(),
                                 ram_mib = config.ram_mib,
                                 vcpus = config.vcpus,
+                                network_mode = config.network_mode.as_config_value(),
                                 workspace = %plan.workspace_dir.display(),
                                 mounts = config.mounts.len(),
                                 "loftd libkrun launch"
@@ -235,6 +241,7 @@ mod tests {
             guest_init: None,
             preserve_debug: false,
             mem_gib: None,
+            network_mode: launch_config::NetworkMode::Tsi,
             guest_command: Vec::new(),
         }
     }
