@@ -737,10 +737,11 @@ command and point permission-denied cleanup failures at the btrfs
 complete: the implementation builds a typed launch plan, uses Buildah as the
 durable OCI image source for the default btrfs path, materializes a per-task
 btrfs snapshot rootfs, prepares loftd-owned persistent raw btrfs disks for
-`/nix` and rootless container storage, starts a same-binary helper through
-`buildah unshare <loftd-exe> internal libkrun-network-enter <launch.conf>` to
-set up the per-session pasta namespace and call libkrun, and enters the guest
-through `loftd-guest-init enter`. The parent process owns task-rootfs cleanup,
+`/nix` and rootless container storage, starts a same-binary helper through a
+strict keep-id `unshare` wrapper around `<loftd-exe> internal
+libkrun-network-enter <launch.conf>` to set up the per-session pasta namespace
+and call libkrun, and enters the guest through `loftd-guest-init enter`. The
+parent process owns task-rootfs cleanup,
 with best-effort cleanup on unwind and `--preserve-debug` for manual
 inspection. The explicit `fuse-overlay` backend is still a future slice.
 
@@ -765,7 +766,7 @@ memory rounded down to whole GiB, matching agentbox libkrun mode. Pass
 
 For host-side and direct-libkrun diagnostics, use `--log-level` with one of
 `off`, `error`, `warn`, `info`, `debug`, or `trace`. The same effective level is
-used by the parent process, the `buildah unshare` helper, and libkrun logging;
+used by the parent process, the keep-id libkrun helper, and libkrun logging;
 `debug` and `trace` also set `LOFTD_GUEST_DEBUG=1` so `loftd-guest-init` prints
 early guest-entry breadcrumbs to stderr. `LOFTD_LOG_LEVEL` provides the same
 setting through the environment. When neither `--log-level` nor
@@ -803,20 +804,33 @@ path is wanted.
 
 On a successful btrfs-snapshot run, loftd then resolves the image's executable
 `loftd-guest-init`, writes a private hex-encoded `launch.conf` under the task
-state directory, and supervises
-`buildah unshare <loftd-exe> internal libkrun-network-enter <launch.conf>`.
-Buildah is used only as the rootless UID/GID namespace adapter for the helper,
-matching the namespace used to materialize the image-derived btrfs rootfs; it is
-not used as the container runtime, and this path does not rely on Podman,
-idmapped mounts, or relaxed guest-init ownership repair. The internal helper is
-a network manager: it creates one private network namespace holder for the
-loftd session, starts `pasta` with Podman-like `--map-guest-addr 169.254.1.2`
-and `--dns-forward 169.254.1.1`, then forks the VM worker into that namespace.
-Missing `pasta`, unsupported unprivileged namespace setup, or early proxy exit
-is a hard launch error instead of a silent broken-host-alias fallback. The Nix
-`loftd`, `loftd-prebuilt`, and development-shell paths include `pkgs.passt`
-so both `pasta` and `passt` are on `PATH`; non-Nix invocations must provide
-those tools themselves.
+state directory, and supervises a keep-id helper namespace around
+`<loftd-exe> internal libkrun-network-enter <launch.conf>`. Buildah remains the
+OCI image/rootfs materialization and cleanup tool, but it is no longer the
+UID/GID namespace adapter for the libkrun helper. The helper wrapper requires
+util-linux `unshare`, `newuidmap`, `newgidmap`, and usable `/etc/subuid` plus
+`/etc/subgid` entries for the invoking user. It maps the invoking host UID and
+GID to the same IDs inside the helper namespace, maps the lower and upper ID
+ranges through subordinate IDs, then runs the helper as namespace root with
+retained capabilities so prepared-root bind mounts can be grafted without
+turning host-user-owned sources such as `/workspace` into `root:root` in the
+guest view. During host-side network setup, loftd temporarily uses the keep-id
+filesystem UID/GID for helper state writes, then restores namespace-root
+filesystem identity in the VM worker before prepared-root grafting. Missing
+mapping support is a hard launch error instead of a silent fallback to
+root-owned bind mounts. This path does not rely on Podman, idmapped
+mounts, host `chown`, `:U` ownership mutation, or relaxed guest-init ownership
+repair. The internal helper is also a network manager: it creates one private
+network namespace holder for the loftd session, starts `pasta` with Podman-like
+`--map-guest-addr 169.254.1.2` and `--dns-forward 169.254.1.1`, then forks the
+VM worker into that namespace. Proxy-only runtime artifacts such as the passt
+socket are placed under `/tmp` so proxy privilege handling does not require
+write access to loftd's btrfs task state. Missing `pasta`, unsupported
+unprivileged namespace setup, or early proxy exit is a hard launch error
+instead of a silent broken-host-alias fallback. The Nix `loftd`,
+`loftd-prebuilt`, and development
+shell paths include `pkgs.passt` so both `pasta` and `passt` are on `PATH`;
+non-Nix invocations must provide those tools themselves.
 
 The default network mode remains libkrun TSI: loftd does not add a libkrun
 network device by default, but the libkrun VMM starts from the pasta-backed
@@ -1013,9 +1027,10 @@ If `clang -fuse-ld=mold` ever stops resolving correctly in-image, the fallback
 is to pin `mold` explicitly inside the wrapper and update this document to
 match.
 
-Both container and libkrun task containers run with `--userns=keep-id` so
-`/workspace` ownership matches host mapping. The `--root` flag keeps the final
-shell as root, but does not otherwise change the persistent host mount layout.
+Container task launches use Podman `--userns=keep-id`; libkrun task launches
+use loftd's keep-id helper namespace to provide the same `/workspace` ownership
+contract for the guest dev user. The `--root` flag keeps the final shell as
+root, but does not otherwise change the persistent host mount layout.
 
 ---
 

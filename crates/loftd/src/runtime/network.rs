@@ -15,7 +15,6 @@ use crate::runtime::runtime_etc::HOST_GATEWAY_ADDR;
 const HOST_DNS_FORWARD_ADDR: &str = "169.254.1.1";
 const PASTA_PROGRAM: &str = "pasta";
 const PASST_PROGRAM: &str = "passt";
-const PASTA_PID_FILE: &str = "pasta.pid";
 const PASST_SOCKET_FILE: &str = "passt.sock";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const STARTUP_POLL: Duration = Duration::from_millis(25);
@@ -24,7 +23,6 @@ const STARTUP_POLL: Duration = Duration::from_millis(25);
 pub(crate) struct ProxyCommandPlan {
     pub(crate) program: String,
     pub(crate) args: Vec<String>,
-    pub(crate) pid_file: Option<PathBuf>,
     pub(crate) socket: Option<PathBuf>,
 }
 
@@ -40,8 +38,7 @@ impl ProxyCommandPlan {
     }
 }
 
-pub(crate) fn pasta_plan(task_state_dir: &Path, holder_pid: libc::pid_t) -> ProxyCommandPlan {
-    let pid_file = task_state_dir.join(PASTA_PID_FILE);
+pub(crate) fn pasta_plan(holder_pid: libc::pid_t) -> ProxyCommandPlan {
     ProxyCommandPlan {
         program: PASTA_PROGRAM.to_owned(),
         args: vec![
@@ -61,18 +58,15 @@ pub(crate) fn pasta_plan(task_state_dir: &Path, holder_pid: libc::pid_t) -> Prox
             "-U".to_owned(),
             "none".to_owned(),
             "--quiet".to_owned(),
-            "--pid".to_owned(),
-            pid_file.display().to_string(),
             "--netns".to_owned(),
             format!("/proc/{holder_pid}/ns/net"),
         ],
-        pid_file: Some(pid_file),
         socket: None,
     }
 }
 
 pub(crate) fn passt_plan(task_state_dir: &Path) -> ProxyCommandPlan {
-    let socket = task_state_dir.join(PASST_SOCKET_FILE);
+    let socket = proxy_artifact_path(task_state_dir, PASST_SOCKET_FILE);
     ProxyCommandPlan {
         program: PASST_PROGRAM.to_owned(),
         args: vec![
@@ -90,9 +84,32 @@ pub(crate) fn passt_plan(task_state_dir: &Path) -> ProxyCommandPlan {
             "none".to_owned(),
             "--quiet".to_owned(),
         ],
-        pid_file: None,
         socket: Some(socket),
     }
+}
+
+fn proxy_artifact_path(task_state_dir: &Path, file_name: &str) -> PathBuf {
+    let task_id = task_state_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(sanitize_proxy_artifact_component)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "task".to_owned());
+    PathBuf::from("/tmp").join(format!(
+        "loftd-{}-{}-{file_name}",
+        std::process::id(),
+        task_id
+    ))
+}
+
+fn sanitize_proxy_artifact_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '-',
+        })
+        .collect()
 }
 
 pub(crate) struct NetworkManagerSession {
@@ -111,13 +128,9 @@ impl NetworkManagerSession {
         })?;
         ensure_executable_available(PASTA_PROGRAM)?;
         let holder = spawn_netns_holder()?;
-        let plan = pasta_plan(task_state_dir, holder.pid());
+        let plan = pasta_plan(holder.pid());
         let mut pasta = ManagedChild::spawn(plan.command(), "pasta")?;
-        let pid_file = plan
-            .pid_file
-            .as_deref()
-            .ok_or_else(|| anyhow!("internal pasta plan missing pid file"))?;
-        wait_for_pid_file(pid_file, &mut pasta).with_context(|| {
+        wait_for_stable_child(&mut pasta).with_context(|| {
             format!(
                 "pasta failed to initialize loftd network namespace '{}'",
                 plan.args.join(" ")
@@ -189,6 +202,7 @@ impl PasstWorkerSession {
 impl Drop for PasstWorkerSession {
     fn drop(&mut self) {
         self.child.kill_and_wait();
+        let _ = fs::remove_file(&self.socket);
     }
 }
 
@@ -400,12 +414,19 @@ fn wait_for_holder_ready(fd: OwnedFd, pid: libc::pid_t) -> Result<()> {
     }
 }
 
-fn wait_for_pid_file(pid_file: &Path, child: &mut ManagedChild) -> Result<()> {
-    wait_until_ready(child, || pid_file.exists()).map(|_| ())
-}
-
 fn wait_for_socket(socket: &Path, child: &mut ManagedChild) -> Result<()> {
     wait_until_ready(child, || socket.exists()).map(|_| ())
+}
+
+fn wait_for_stable_child(child: &mut ManagedChild) -> Result<()> {
+    let deadline = Instant::now() + STARTUP_POLL * 4;
+    while Instant::now() < deadline {
+        if let Some(status) = child.has_exited()? {
+            bail!("loftd {} exited before readiness with {status}", child.name);
+        }
+        thread::sleep(STARTUP_POLL);
+    }
+    Ok(())
 }
 
 fn wait_until_ready(child: &mut ManagedChild, mut ready: impl FnMut() -> bool) -> Result<()> {
@@ -475,7 +496,7 @@ mod tests {
 
     #[test]
     fn pasta_plan_matches_podman_like_host_alias_contract() {
-        let plan = pasta_plan(Path::new("/tmp/task"), 1234);
+        let plan = pasta_plan(1234);
 
         assert_eq!(plan.program, "pasta");
         assert!(plan.args.contains(&"--foreground".to_owned()));
@@ -494,11 +515,7 @@ mod tests {
                 .windows(2)
                 .any(|w| w == ["--netns", "/proc/1234/ns/net"])
         );
-        assert!(
-            plan.args
-                .windows(2)
-                .any(|w| w == ["--pid", "/tmp/task/pasta.pid"])
-        );
+        assert!(!plan.args.contains(&"--pid".to_owned()));
         assert!(plan.args.windows(2).any(|w| w == ["-t", "none"]));
         assert!(plan.args.windows(2).any(|w| w == ["-u", "none"]));
         assert!(plan.args.contains(&"--no-map-gw".to_owned()));
@@ -510,10 +527,14 @@ mod tests {
 
         assert_eq!(plan.program, "passt");
         assert!(plan.args.contains(&"--foreground".to_owned()));
+        let socket = plan.socket.as_ref().expect("passt socket");
+        assert!(socket.starts_with("/tmp"));
+        assert!(socket.to_string_lossy().contains("loftd-"));
+        assert!(socket.to_string_lossy().ends_with("-passt.sock"));
         assert!(
             plan.args
                 .windows(2)
-                .any(|w| w == ["--socket", "/tmp/task/passt.sock"])
+                .any(|w| w == ["--socket", socket.to_string_lossy().as_ref()])
         );
         assert!(
             plan.args

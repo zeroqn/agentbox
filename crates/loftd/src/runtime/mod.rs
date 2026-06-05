@@ -9,6 +9,7 @@ use crate::task_rootfs::TaskRootfsBackend;
 pub(crate) mod ffi;
 pub(crate) mod guest_init;
 pub(crate) mod image_source;
+pub(crate) mod keep_id;
 pub(crate) mod launch_config;
 pub(crate) mod launch_plan;
 pub(crate) mod network;

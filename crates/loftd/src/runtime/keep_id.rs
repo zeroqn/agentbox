@@ -1,0 +1,444 @@
+use anyhow::{Context, Result, anyhow, bail};
+use std::env;
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+pub(crate) const UNSHARE_PROGRAM: &str = "unshare";
+
+const SUBUID_PATH: &str = "/etc/subuid";
+const SUBGID_PATH: &str = "/etc/subgid";
+const NEWUIDMAP_PROGRAM: &str = "newuidmap";
+const NEWGIDMAP_PROGRAM: &str = "newgidmap";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IdMapRange {
+    pub(crate) inner_id: u32,
+    pub(crate) outer_id: u32,
+    pub(crate) count: u32,
+}
+
+impl IdMapRange {
+    fn to_unshare_arg(self) -> OsString {
+        OsString::from(format!(
+            "{}:{}:{}",
+            self.inner_id, self.outer_id, self.count
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KeepIdMap {
+    pub(crate) uid_ranges: Vec<IdMapRange>,
+    pub(crate) gid_ranges: Vec<IdMapRange>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SubIdRange {
+    start: u32,
+    count: u32,
+}
+
+impl SubIdRange {
+    pub(crate) fn new(start: u32, count: u32) -> Result<Self> {
+        if count == 0 {
+            bail!("subordinate ID range must not be empty");
+        }
+        checked_end(start, count)
+            .with_context(|| format!("subordinate ID range {start}:{count} overflows u32"))?;
+        Ok(Self { start, count })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KeepIdLauncher {
+    host_uid: u32,
+    host_gid: u32,
+    user_label: String,
+    map: KeepIdMap,
+}
+
+impl KeepIdLauncher {
+    pub(crate) fn from_current_system() -> Result<Self> {
+        ensure_program_available(UNSHARE_PROGRAM).with_context(|| {
+            format!("loftd keep-id libkrun helper requires util-linux `{UNSHARE_PROGRAM}` on PATH")
+        })?;
+        ensure_program_available(NEWUIDMAP_PROGRAM).with_context(|| {
+            format!(
+                "loftd keep-id libkrun helper requires `{NEWUIDMAP_PROGRAM}` on PATH for rootless UID maps"
+            )
+        })?;
+        ensure_program_available(NEWGIDMAP_PROGRAM).with_context(|| {
+            format!(
+                "loftd keep-id libkrun helper requires `{NEWGIDMAP_PROGRAM}` on PATH for rootless GID maps"
+            )
+        })?;
+
+        let host_uid = current_uid();
+        let host_gid = current_gid();
+        let user_label = current_user_label(host_uid);
+        let subuid = read_subid_range(SUBUID_PATH, &user_label, host_uid).with_context(|| {
+            format!("failed to resolve subordinate UID range for {user_label}/{host_uid}")
+        })?;
+        let subgid = read_subid_range(SUBGID_PATH, &user_label, host_uid).with_context(|| {
+            format!("failed to resolve subordinate GID range for {user_label}/{host_uid}")
+        })?;
+        Self::from_parts(host_uid, host_gid, user_label, subuid, subgid)
+    }
+
+    pub(crate) fn from_parts(
+        host_uid: u32,
+        host_gid: u32,
+        user_label: impl Into<String>,
+        subuid: SubIdRange,
+        subgid: SubIdRange,
+    ) -> Result<Self> {
+        let user_label = user_label.into();
+        Ok(Self {
+            host_uid,
+            host_gid,
+            map: KeepIdMap {
+                uid_ranges: keep_id_ranges(host_uid, subuid, "UID", &user_label)?,
+                gid_ranges: keep_id_ranges(host_gid, subgid, "GID", &user_label)?,
+            },
+            user_label,
+        })
+    }
+
+    pub(crate) fn program(&self) -> OsString {
+        OsString::from(UNSHARE_PROGRAM)
+    }
+
+    pub(crate) fn args(
+        &self,
+        executable: &Path,
+        internal_arg: &str,
+        config_path: &Path,
+    ) -> Vec<OsString> {
+        let mut args = vec![
+            OsString::from("--user"),
+            OsString::from("--mount"),
+            OsString::from("--fork"),
+            OsString::from("--kill-child"),
+            OsString::from("--propagation"),
+            OsString::from("private"),
+        ];
+        push_map_args(&mut args, "--map-users", &self.map.uid_ranges);
+        push_map_args(&mut args, "--map-groups", &self.map.gid_ranges);
+        args.extend([
+            OsString::from("--setuid"),
+            OsString::from("0"),
+            OsString::from("--setgid"),
+            OsString::from("0"),
+            OsString::from("--keep-caps"),
+            executable.as_os_str().to_os_string(),
+            OsString::from("internal"),
+            OsString::from(internal_arg),
+            config_path.as_os_str().to_os_string(),
+        ]);
+        args
+    }
+
+    pub(crate) fn diagnostic_summary(&self) -> String {
+        format!(
+            "keep-id user namespace for {} uid={} gid={} uid_map={} gid_map={}",
+            self.user_label,
+            self.host_uid,
+            self.host_gid,
+            format_ranges(&self.map.uid_ranges),
+            format_ranges(&self.map.gid_ranges)
+        )
+    }
+}
+
+fn push_map_args(args: &mut Vec<OsString>, flag: &str, ranges: &[IdMapRange]) {
+    for range in ranges {
+        args.push(OsString::from(flag));
+        args.push(range.to_unshare_arg());
+    }
+}
+
+fn format_ranges(ranges: &[IdMapRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| format!("{}:{}:{}", range.inner_id, range.outer_id, range.count))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn keep_id_ranges(
+    host_id: u32,
+    subid: SubIdRange,
+    kind: &str,
+    user_label: &str,
+) -> Result<Vec<IdMapRange>> {
+    if host_id > subid.count {
+        bail!(
+            "insufficient subordinate {kind} range for {user_label}: host {kind} {host_id} requires at least {host_id} subordinate IDs below the keep-id entry, but only {} are available",
+            subid.count
+        );
+    }
+
+    let mut ranges = Vec::with_capacity(3);
+    if host_id > 0 {
+        ranges.push(IdMapRange {
+            inner_id: 0,
+            outer_id: subid.start,
+            count: host_id,
+        });
+    }
+    ranges.push(IdMapRange {
+        inner_id: host_id,
+        outer_id: host_id,
+        count: 1,
+    });
+
+    let upper_count = subid.count - host_id;
+    if upper_count > 0 {
+        let upper_inner = host_id.checked_add(1).ok_or_else(|| {
+            anyhow!("keep-id {kind} map inner range overflows above host ID {host_id}")
+        })?;
+        let upper_outer = subid.start.checked_add(host_id).ok_or_else(|| {
+            anyhow!(
+                "keep-id {kind} map subordinate range overflows: {} + {host_id}",
+                subid.start
+            )
+        })?;
+        checked_end(upper_outer, upper_count).with_context(|| {
+            format!("keep-id {kind} upper map {upper_outer}:{upper_count} overflows u32")
+        })?;
+        ranges.push(IdMapRange {
+            inner_id: upper_inner,
+            outer_id: upper_outer,
+            count: upper_count,
+        });
+    }
+    assert_non_overlapping(&ranges, kind)?;
+    Ok(ranges)
+}
+
+fn assert_non_overlapping(ranges: &[IdMapRange], kind: &str) -> Result<()> {
+    let mut sorted = ranges.to_vec();
+    sorted.sort_by_key(|range| range.inner_id);
+    let mut previous_end = None;
+    for range in sorted {
+        let end = checked_end(range.inner_id, range.count)
+            .with_context(|| format!("keep-id {kind} inner range overflows"))?;
+        if let Some(previous) = previous_end
+            && u64::from(range.inner_id) < previous
+        {
+            bail!("keep-id {kind} map contains overlapping inner ranges");
+        }
+        previous_end = Some(end);
+    }
+    Ok(())
+}
+
+fn checked_end(start: u32, count: u32) -> Option<u64> {
+    u64::from(start)
+        .checked_add(u64::from(count))
+        .filter(|end| *end <= u64::from(u32::MAX) + 1)
+}
+
+fn read_subid_range(path: &str, user_label: &str, uid: u32) -> Result<SubIdRange> {
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("failed to read {path}; configure rootless subordinate IDs"))?;
+    parse_subid_range(&contents, user_label, uid).ok_or_else(|| {
+        anyhow!(
+            "no usable subordinate ID entry for {user_label}/{uid} in {path}; add an entry such as `{user_label}:100000:65536`"
+        )
+    })
+}
+
+fn parse_subid_range(contents: &str, user_label: &str, uid: u32) -> Option<SubIdRange> {
+    let numeric = uid.to_string();
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let mut fields = line.split(':');
+        let owner = fields.next()?;
+        let start = fields.next()?.parse::<u32>().ok()?;
+        let count = fields.next()?.parse::<u32>().ok()?;
+        if fields.next().is_some() || (owner != user_label && owner != numeric) {
+            return None;
+        }
+        SubIdRange::new(start, count).ok()
+    })
+}
+
+fn ensure_program_available(program: &str) -> Result<()> {
+    find_program_in_path(program)
+        .map(|_| ())
+        .ok_or_else(|| anyhow!("{program} is not installed or not available on PATH"))
+}
+
+fn find_program_in_path(program: &str) -> Option<PathBuf> {
+    if program.contains('/') {
+        let path = PathBuf::from(program);
+        return path.is_file().then_some(path);
+    }
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+fn current_user_label(uid: u32) -> String {
+    env::var("USER")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| env::var("LOGNAME").ok().filter(|value| !value.is_empty()))
+        .or_else(|| username_from_passwd(uid))
+        .unwrap_or_else(|| uid.to_string())
+}
+
+fn username_from_passwd(uid: u32) -> Option<String> {
+    let contents = fs::read_to_string("/etc/passwd").ok()?;
+    contents.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        let name = fields.next()?;
+        fields.next()?;
+        let parsed_uid = fields.next()?.parse::<u32>().ok()?;
+        (parsed_uid == uid).then(|| name.to_owned())
+    })
+}
+
+fn current_uid() -> u32 {
+    unsafe { libc::getuid() }
+}
+
+fn current_gid() -> u32 {
+    unsafe { libc::getgid() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn subid() -> SubIdRange {
+        SubIdRange::new(100_000, 65_536).unwrap()
+    }
+
+    #[test]
+    fn uid_1000_map_matches_podman_keep_id_shape() {
+        let ranges = keep_id_ranges(1000, subid(), "UID", "dev").unwrap();
+        assert_eq!(
+            ranges,
+            vec![
+                IdMapRange {
+                    inner_id: 0,
+                    outer_id: 100_000,
+                    count: 1000,
+                },
+                IdMapRange {
+                    inner_id: 1000,
+                    outer_id: 1000,
+                    count: 1,
+                },
+                IdMapRange {
+                    inner_id: 1001,
+                    outer_id: 101_000,
+                    count: 64_536,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn gid_993_map_has_exact_remaining_length() {
+        let ranges = keep_id_ranges(993, subid(), "GID", "dev").unwrap();
+        assert_eq!(
+            ranges,
+            vec![
+                IdMapRange {
+                    inner_id: 0,
+                    outer_id: 100_000,
+                    count: 993,
+                },
+                IdMapRange {
+                    inner_id: 993,
+                    outer_id: 993,
+                    count: 1,
+                },
+                IdMapRange {
+                    inner_id: 994,
+                    outer_id: 100_993,
+                    count: 64_543,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn zero_host_id_skips_zero_length_lower_range() {
+        let ranges = keep_id_ranges(0, subid(), "UID", "root").unwrap();
+        assert_eq!(
+            ranges,
+            vec![
+                IdMapRange {
+                    inner_id: 0,
+                    outer_id: 0,
+                    count: 1,
+                },
+                IdMapRange {
+                    inner_id: 1,
+                    outer_id: 100_000,
+                    count: 65_536,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn insufficient_subordinate_range_fails_hard() {
+        let err = keep_id_ranges(1000, SubIdRange::new(100_000, 999).unwrap(), "UID", "dev")
+            .expect_err("short ranges must fail");
+        assert!(format!("{err:#}").contains("insufficient subordinate UID range"));
+    }
+
+    #[test]
+    fn subid_parser_matches_user_or_numeric_id() {
+        let contents = "other:1:2\n1000:200000:10\ndev:100000:65536\n";
+        assert_eq!(
+            parse_subid_range(contents, "dev", 1000).unwrap(),
+            SubIdRange::new(200_000, 10).unwrap()
+        );
+        assert_eq!(
+            parse_subid_range("dev:100000:65536\n", "dev", 1000).unwrap(),
+            subid()
+        );
+    }
+
+    #[test]
+    fn launcher_args_request_namespace_root_with_keep_id_maps() {
+        let launcher = KeepIdLauncher::from_parts(1000, 993, "dev", subid(), subid()).unwrap();
+        let args = launcher.args(
+            Path::new("/nix/store/hash-loftd/bin/loftd"),
+            "libkrun-network-enter",
+            Path::new("/tmp/loftd-task/launch.conf"),
+        );
+        let strings = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(strings.contains(&"--setuid".to_owned()));
+        assert!(strings.contains(&"--setgid".to_owned()));
+        assert!(strings.contains(&"--keep-caps".to_owned()));
+        assert!(strings.windows(2).any(|pair| pair == ["--setuid", "0"]));
+        assert!(strings.windows(2).any(|pair| pair == ["--setgid", "0"]));
+        assert!(
+            strings
+                .windows(2)
+                .any(|pair| pair == ["--map-users", "1000:1000:1"])
+        );
+        assert!(
+            strings
+                .windows(2)
+                .any(|pair| pair == ["--map-groups", "993:993:1"])
+        );
+        assert_eq!(strings.last().unwrap(), "/tmp/loftd-task/launch.conf");
+    }
+}

@@ -6,13 +6,12 @@ use std::process::{Command, ExitCode, Stdio};
 
 use crate::logging::{self, INTERNAL_LOG_LEVEL_ENV, LogSettings};
 use crate::runtime::ffi::{DirectLibkrunLauncher, DynamicLibkrunApi};
+use crate::runtime::keep_id::KeepIdLauncher;
 use crate::runtime::launch_config::{LaunchConfig, NetworkMode};
 use crate::runtime::network::{self, NetworkManagerSession, PasstWorkerSession};
 use crate::runtime::prepared_root;
 
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
-const BUILDAH_PROGRAM: &str = "buildah";
-const BUILDAH_UNSHARE_ARG: &str = "unshare";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ChildStatus {
@@ -54,9 +53,9 @@ impl Supervisor for HostSupervisor {
 
 fn run_helper_process(config: &LaunchConfig, config_path: &Path) -> Result<ChildStatus> {
     let executable = std::env::current_exe()
-        .context("failed to resolve loftd executable for buildah unshare libkrun helper")?;
-    let spec = build_helper_command(&executable, config_path, config.log_level);
-    tracing::debug!(program = ?spec.program, args = ?spec.args, log_level = config.log_level.as_str(), "loftd libkrun helper command constructed");
+        .context("failed to resolve loftd executable for keep-id libkrun helper")?;
+    let spec = build_helper_command(&executable, config_path, config.log_level)?;
+    tracing::debug!(program = ?spec.program, args = ?spec.args, log_level = config.log_level.as_str(), "loftd libkrun keep-id helper command constructed");
     let mut command = spec.into_command();
     command
         .stdin(Stdio::inherit())
@@ -64,7 +63,7 @@ fn run_helper_process(config: &LaunchConfig, config_path: &Path) -> Result<Child
         .stderr(Stdio::inherit());
     let mut child = command.spawn().with_context(|| {
         format!(
-            "failed to start buildah unshare loftd libkrun helper for '{}'; btrfs-snapshot direct-libkrun launches require buildah",
+            "failed to start loftd keep-id libkrun helper for '{}'; rootless direct-libkrun launches require util-linux unshare plus newuidmap/newgidmap and usable /etc/subuid + /etc/subgid entries",
             config_path.display()
         )
     })?;
@@ -99,20 +98,30 @@ fn build_helper_command(
     executable: &Path,
     config_path: &Path,
     log_level: crate::logging::LogLevel,
+) -> Result<HelperCommandSpec> {
+    let launcher = KeepIdLauncher::from_current_system()?;
+    tracing::debug!(summary = %launcher.diagnostic_summary(), "loftd libkrun helper keep-id namespace resolved");
+    Ok(build_helper_command_with_launcher(
+        executable,
+        config_path,
+        log_level,
+        &launcher,
+    ))
+}
+
+fn build_helper_command_with_launcher(
+    executable: &Path,
+    config_path: &Path,
+    log_level: crate::logging::LogLevel,
+    launcher: &KeepIdLauncher,
 ) -> HelperCommandSpec {
     HelperCommandSpec {
-        program: OsString::from(BUILDAH_PROGRAM),
+        program: launcher.program(),
         env: vec![(
             OsString::from(INTERNAL_LOG_LEVEL_ENV),
             OsString::from(log_level.as_str()),
         )],
-        args: vec![
-            OsString::from(BUILDAH_UNSHARE_ARG),
-            executable.as_os_str().to_os_string(),
-            OsString::from("internal"),
-            OsString::from(LIBKRUN_ENTER_HELPER_ARG),
-            config_path.as_os_str().to_os_string(),
-        ],
+        args: launcher.args(executable, LIBKRUN_ENTER_HELPER_ARG, config_path),
     }
 }
 
@@ -141,6 +150,7 @@ fn run_helper(config_path: &Path) -> Result<()> {
     }
     let config = LaunchConfig::read_from(config_path)?;
     logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))?;
+    configure_helper_filesystem_identity(&config)?;
     let task_state_dir = task_state_dir_from_config_path(config_path)?;
     tracing::debug!(
         mode = config.network_mode.as_config_value(),
@@ -175,6 +185,62 @@ fn run_helper(config_path: &Path) -> Result<()> {
         bail!("loftd VM worker exited with status {code}");
     }
     bail!("loftd VM worker exited due to signal")
+}
+
+fn configure_helper_filesystem_identity(config: &LaunchConfig) -> Result<()> {
+    let host_uid = required_guest_config_u32(config, "LOFTD_HOST_UID")?;
+    let host_gid = required_guest_config_u32(config, "LOFTD_HOST_GID")?;
+    set_filesystem_gid(host_gid)?;
+    set_filesystem_uid(host_uid)?;
+    tracing::debug!(
+        host_uid,
+        host_gid,
+        "loftd internal: keep-id helper filesystem identity configured"
+    );
+    Ok(())
+}
+
+fn configure_vm_worker_filesystem_identity() -> Result<()> {
+    set_filesystem_gid(0)?;
+    set_filesystem_uid(0)?;
+    tracing::debug!("loftd internal VM worker: namespace-root filesystem identity restored");
+    Ok(())
+}
+
+fn required_guest_config_u32(config: &LaunchConfig, key: &str) -> Result<u32> {
+    let value = config
+        .guest_config_env
+        .iter()
+        .rev()
+        .find_map(|(env_key, env_value)| (env_key == key).then_some(env_value))
+        .ok_or_else(|| anyhow!("loftd launch config is missing required {key}"))?;
+    value
+        .parse::<u32>()
+        .with_context(|| format!("loftd launch config {key} value '{value}' is not a u32"))
+}
+
+fn set_filesystem_uid(uid: u32) -> Result<()> {
+    let uid = uid as libc::uid_t;
+    // SAFETY: setfsuid changes only the current process filesystem credential.
+    unsafe { libc::setfsuid(uid) };
+    // SAFETY: uid_t::MAX is treated by Linux as an invalid fsuid probe and returns the current fsuid.
+    let current = unsafe { libc::setfsuid(libc::uid_t::MAX) };
+    if current < 0 || current as libc::uid_t != uid {
+        bail!("failed to set loftd helper filesystem UID to {uid}; current fsuid is {current}");
+    }
+    Ok(())
+}
+
+fn set_filesystem_gid(gid: u32) -> Result<()> {
+    let gid = gid as libc::gid_t;
+    // SAFETY: setfsgid changes only the current process filesystem credential.
+    unsafe { libc::setfsgid(gid) };
+    // SAFETY: gid_t::MAX is treated by Linux as an invalid fsgid probe and returns the current fsgid.
+    let current = unsafe { libc::setfsgid(libc::gid_t::MAX) };
+    if current < 0 || current as libc::gid_t != gid {
+        bail!("failed to set loftd helper filesystem GID to {gid}; current fsgid is {current}");
+    }
+    Ok(())
 }
 
 struct VmWorkerGuard {
@@ -231,6 +297,7 @@ fn run_vm_worker(
     passt_pid_pipe: Option<OwnedFd>,
 ) -> Result<()> {
     let config = LaunchConfig::read_from(config_path)?;
+    configure_vm_worker_filesystem_identity()?;
     network::enter_netns(holder_pid)?;
     let task_state_dir = task_state_dir_from_config_path(config_path)?;
     let (config, _passt_session) = match config.network_mode {
@@ -307,14 +374,82 @@ mod tests {
     }
 
     #[test]
-    fn libkrun_helper_launches_through_buildah_unshare() {
-        let spec = build_helper_command(
+    fn helper_filesystem_identity_parser_uses_latest_required_env_values() {
+        let mut config = minimal_launch_config();
+        config.guest_config_env = vec![
+            ("LOFTD_HOST_UID".to_owned(), "image".to_owned()),
+            ("LOFTD_HOST_GID".to_owned(), "image".to_owned()),
+            ("LOFTD_HOST_UID".to_owned(), "1000".to_owned()),
+            ("LOFTD_HOST_GID".to_owned(), "993".to_owned()),
+        ];
+
+        assert_eq!(
+            required_guest_config_u32(&config, "LOFTD_HOST_UID").unwrap(),
+            1000
+        );
+        assert_eq!(
+            required_guest_config_u32(&config, "LOFTD_HOST_GID").unwrap(),
+            993
+        );
+    }
+
+    #[test]
+    fn helper_filesystem_identity_parser_rejects_missing_or_invalid_values() {
+        let mut config = minimal_launch_config();
+        assert!(
+            format!(
+                "{:#}",
+                required_guest_config_u32(&config, "LOFTD_HOST_UID").unwrap_err()
+            )
+            .contains("missing")
+        );
+        config.guest_config_env = vec![("LOFTD_HOST_UID".to_owned(), "not-a-uid".to_owned())];
+        assert!(
+            format!(
+                "{:#}",
+                required_guest_config_u32(&config, "LOFTD_HOST_UID").unwrap_err()
+            )
+            .contains("not a u32")
+        );
+    }
+
+    fn minimal_launch_config() -> LaunchConfig {
+        LaunchConfig {
+            task_rootfs: PathBuf::from("/tmp/rootfs"),
+            hostname: "loftd-test".to_owned(),
+            mounts: Vec::new(),
+            disks: Vec::new(),
+            ram_mib: 1024,
+            vcpus: 1,
+            log_level: crate::logging::LogLevel::Info,
+            network_mode: NetworkMode::Tsi,
+            workdir: "/workspace".to_owned(),
+            exec_path: "/bin/sh".to_owned(),
+            argv: Vec::new(),
+            env: Vec::new(),
+            guest_config_env: Vec::new(),
+            passt_socket: None,
+        }
+    }
+
+    #[test]
+    fn libkrun_helper_launches_through_keep_id_unshare() {
+        let launcher = KeepIdLauncher::from_parts(
+            1000,
+            993,
+            "dev",
+            crate::runtime::keep_id::SubIdRange::new(100_000, 65_536).unwrap(),
+            crate::runtime::keep_id::SubIdRange::new(100_000, 65_536).unwrap(),
+        )
+        .unwrap();
+        let spec = build_helper_command_with_launcher(
             Path::new("/nix/store/hash-loftd/bin/loftd"),
             Path::new("/tmp/loftd-task/launch.conf"),
             crate::logging::LogLevel::Debug,
+            &launcher,
         );
 
-        assert_eq!(spec.program, OsString::from("buildah"));
+        assert_eq!(spec.program, OsString::from("unshare"));
         assert_eq!(
             spec.env,
             vec![(
@@ -322,14 +457,31 @@ mod tests {
                 OsString::from("debug")
             )]
         );
+        let args = spec
+            .args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(args.contains(&"--user".to_owned()));
+        assert!(args.contains(&"--mount".to_owned()));
+        assert!(args.contains(&"--keep-caps".to_owned()));
+        assert!(args.windows(2).any(|pair| pair == ["--setuid", "0"]));
+        assert!(args.windows(2).any(|pair| pair == ["--setgid", "0"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--map-users", "1000:1000:1"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--map-groups", "993:993:1"])
+        );
         assert_eq!(
-            spec.args,
-            vec![
-                OsString::from("unshare"),
-                OsString::from("/nix/store/hash-loftd/bin/loftd"),
-                OsString::from("internal"),
-                OsString::from("libkrun-network-enter"),
-                OsString::from("/tmp/loftd-task/launch.conf"),
+            &args[args.len() - 4..],
+            [
+                "/nix/store/hash-loftd/bin/loftd",
+                "internal",
+                "libkrun-network-enter",
+                "/tmp/loftd-task/launch.conf",
             ]
         );
     }
