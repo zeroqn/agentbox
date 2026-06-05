@@ -11,7 +11,7 @@ mod runtime;
 mod state;
 mod task_rootfs;
 
-use cli::{Cli, RuntimeOptions};
+use cli::{Cli, CliAction, RuntimeOptions};
 
 const DEFAULT_IMAGE: &str = "localhost/loftd:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/loftd:latest";
@@ -28,8 +28,24 @@ pub fn entrypoint() -> ExitCode {
         };
     }
 
-    let cli = Cli::parse();
-    let options = cli.into_runtime_options();
+    match Cli::parse().into_action() {
+        CliAction::Run(options) => run_with_logging(options),
+        CliAction::DecodeLaunchConf { path } => {
+            match runtime::launch_config::LaunchConfig::decode_file_for_debug(&path) {
+                Ok(decoded) => {
+                    print!("{decoded}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("loftd: {err:#}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+    }
+}
+
+fn run_with_logging(options: RuntimeOptions) -> ExitCode {
     if let Err(err) = logging::init_tracing(&options.log_settings) {
         eprintln!("loftd: {err:#}");
         return ExitCode::from(1);

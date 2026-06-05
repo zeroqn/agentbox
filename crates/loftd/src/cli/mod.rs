@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
@@ -10,7 +10,7 @@ use crate::task_rootfs::TaskRootfsBackend;
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'"
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -102,9 +102,40 @@ pub(crate) struct Cli {
         help = "Run command inside the guest instead of the default fish login shell"
     )]
     guest_command: Vec<String>,
+
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
+pub(crate) enum CliCommand {
+    #[command(
+        name = "decode-launch-conf",
+        about = "Decode a hex-encoded loftd launch.conf for debugging"
+    )]
+    DecodeLaunchConf {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CliAction {
+    Run(RuntimeOptions),
+    DecodeLaunchConf { path: PathBuf },
 }
 
 impl Cli {
+    pub(crate) fn into_action(self) -> CliAction {
+        if let Some(command) = self.command.clone() {
+            match command {
+                CliCommand::DecodeLaunchConf { path } => CliAction::DecodeLaunchConf { path },
+            }
+        } else {
+            CliAction::Run(self.into_runtime_options())
+        }
+    }
+
     pub(crate) fn into_runtime_options(self) -> RuntimeOptions {
         let log_settings = LogSettings::from_process_env(self.log_level, self.debug);
         RuntimeOptions {
@@ -242,6 +273,31 @@ mod tests {
         assert_eq!(options.log_settings.level, LogLevel::Debug);
         assert!(options.profile);
         assert_eq!(options.guest_command, ["sh", "/workspace/probe.sh"]);
+    }
+
+    #[test]
+    fn parses_decode_launch_conf_subcommand() {
+        let cli = Cli::try_parse_from(["loftd", "decode-launch-conf", "/tmp/launch.conf"])
+            .expect("decode subcommand should parse");
+
+        assert_eq!(
+            cli.into_action(),
+            crate::cli::CliAction::DecodeLaunchConf {
+                path: "/tmp/launch.conf".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn decode_launch_conf_is_not_confused_with_guest_command() {
+        let cli = Cli::try_parse_from(["loftd", "--", "decode-launch-conf", "/tmp/launch.conf"])
+            .expect("delimited words should remain a guest command");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(
+            options.guest_command,
+            ["decode-launch-conf", "/tmp/launch.conf"]
+        );
     }
 
     #[test]

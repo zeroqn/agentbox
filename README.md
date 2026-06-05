@@ -785,6 +785,16 @@ raise loftd, guest-init, or libkrun debug logging; use `--log-level debug`,
 `--log-level trace`, or the compatibility form `--debug` separately when verbose
 diagnostic logs are needed. Stdout remains reserved for guest command output.
 
+To inspect a preserved task `launch.conf`, decode its internal hex line format:
+
+```bash
+loftd decode-launch-conf <task-state-dir>/launch.conf
+```
+
+The decoder prints `KEY=decoded-value` lines with control characters escaped for
+readability. It is a debugging aid for files preserved through `--preserve-debug`;
+the launch path still consumes the encoded private handoff format.
+
 Image selection is materialized through Buildah for the btrfs-snapshot path: with no
 image option, loftd first inspects `localhost/loftd:latest` and uses it with
 `--pull=never` when present, otherwise loftd uses `ghcr.io/zeroqn/loftd:latest`

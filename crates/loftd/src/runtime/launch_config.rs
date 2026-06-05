@@ -237,6 +237,12 @@ impl LaunchConfig {
         Self::parse(&text)
     }
 
+    pub(crate) fn decode_file_for_debug(path: &Path) -> Result<String> {
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("failed to read loftd launch config '{}'", path.display()))?;
+        decode_text_for_debug(&text)
+    }
+
     fn serialize(&self) -> String {
         let mut out = String::new();
         push_field(
@@ -794,6 +800,29 @@ fn push_field(out: &mut String, key: &str, value: &str) {
     out.push('\n');
 }
 
+fn decode_text_for_debug(text: &str) -> Result<String> {
+    let mut out = String::new();
+    for (line_index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let (key, encoded) = line
+            .split_once('=')
+            .ok_or_else(|| anyhow!("loftd launch config line {} is missing '='", line_index + 1))?;
+        let value = decode_hex(encoded).with_context(|| {
+            format!(
+                "loftd launch config line {} has invalid hex",
+                line_index + 1
+            )
+        })?;
+        out.push_str(key);
+        out.push('=');
+        out.push_str(&value.escape_debug().to_string());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 fn encode_hex(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len() * 2);
     for byte in value.as_bytes() {
@@ -1067,6 +1096,32 @@ mod tests {
             parsed.disks[1].path,
             Path::new("/state/loftd-containers.raw")
         );
+    }
+
+    #[test]
+    fn launch_config_debug_decode_preserves_delimiters_and_escapes_controls() {
+        let mut text = String::new();
+        push_field(&mut text, "env.0", "KEY=value=with=equals");
+        push_field(&mut text, "argv.0", "line\nwith\ttabs");
+        text.push_str("future.key=76616c7565\n");
+
+        let decoded = decode_text_for_debug(&text).expect("debug decode should succeed");
+
+        assert_eq!(
+            decoded,
+            "env.0=KEY=value=with=equals\nargv.0=line\\nwith\\ttabs\nfuture.key=value\n"
+        );
+    }
+
+    #[test]
+    fn launch_config_debug_decode_rejects_malformed_lines() {
+        let missing_equals =
+            decode_text_for_debug("task_rootfs\n").expect_err("missing separator should fail");
+        assert!(format!("{missing_equals:#}").contains("missing '='"));
+
+        let invalid_hex =
+            decode_text_for_debug("task_rootfs=6\n").expect_err("odd hex should fail");
+        assert!(format!("{invalid_hex:#}").contains("invalid hex"));
     }
 
     #[test]
