@@ -1184,6 +1184,33 @@ mod tests {
     }
 
     #[test]
+    fn profile_env_does_not_raise_guest_debug_level() {
+        let image_process_config = OciProcessConfig::default();
+        let config = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            hostname: "loftd-workspace",
+            mounts: &test_mounts(),
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            log_level: LogLevel::Info,
+            network_mode: NetworkMode::Tsi,
+            profile: true,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect("launch config should build");
+
+        assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
+        assert!(!config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
+    }
+
+    #[test]
     fn passt_mode_sets_guest_passt_dns_gate() {
         let image_process_config = OciProcessConfig::default();
         let config = LaunchConfig::build_for_task(LaunchSpec {

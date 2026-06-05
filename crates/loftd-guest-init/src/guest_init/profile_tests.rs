@@ -31,9 +31,10 @@ fn profile_config_requires_explicit_profile_env_to_enable_measurement() {
 }
 
 #[test]
-fn profile_config_reports_only_when_profile_and_debug_are_enabled() {
-    assert!(!ProfileConfig::from_env(&TestEnv::new(&[(GUEST_PROFILE_ENV, "1")])).should_report());
+fn profile_config_reports_when_profile_is_enabled() {
+    assert!(!ProfileConfig::from_env(&TestEnv::new(&[])).should_report());
     assert!(!ProfileConfig::from_env(&TestEnv::new(&[(GUEST_DEBUG_ENV, "1")])).should_report());
+    assert!(ProfileConfig::from_env(&TestEnv::new(&[(GUEST_PROFILE_ENV, "1")])).should_report());
     assert!(
         ProfileConfig::from_env(&TestEnv::new(&[
             (GUEST_PROFILE_ENV, "1"),
@@ -179,11 +180,37 @@ fn report_format_is_stable_and_uses_milliseconds() {
 }
 
 #[test]
-fn report_is_suppressed_without_debug_even_when_measurements_exist() {
+fn report_is_emitted_without_debug_when_measurements_exist() {
     let profiler = GuestProfiler {
         config: ProfileConfig {
             enabled: true,
             debug: false,
+        },
+        section: "container enter",
+        started_at: Instant::now(),
+        records: vec![ProfileRecord {
+            label: "derive-identity",
+            duration: Duration::from_millis(1),
+        }],
+    };
+    let mut out = Vec::new();
+
+    profiler
+        .write_report_with_total(&mut out, Duration::from_millis(2))
+        .expect("profile report should still succeed");
+
+    assert_eq!(
+        String::from_utf8(out).expect("report should be utf8"),
+        "loftd-guest-init profile: container enter\n  derive-identity: 1.000ms\n  total: 2.000ms\n"
+    );
+}
+
+#[test]
+fn report_is_suppressed_when_profile_is_disabled_even_with_debug() {
+    let profiler = GuestProfiler {
+        config: ProfileConfig {
+            enabled: false,
+            debug: true,
         },
         section: "container enter",
         started_at: Instant::now(),

@@ -180,7 +180,7 @@ enum BtrfsHostRunResult {
 }
 
 fn host_profile_enabled(options: &RuntimeOptions) -> bool {
-    options.profile && options.log_settings.level.enables_debug()
+    options.profile
 }
 
 fn finalize_post_lease_setup_failure(
@@ -248,10 +248,10 @@ mod tests {
     }
 
     #[test]
-    fn host_profile_is_enabled_only_when_debug_and_profile_are_enabled() {
+    fn host_profile_is_enabled_when_profile_is_requested() {
         assert!(!host_profile_enabled(&runtime_options(false, false)));
         assert!(!host_profile_enabled(&runtime_options(true, false)));
-        assert!(!host_profile_enabled(&runtime_options(false, true)));
+        assert!(host_profile_enabled(&runtime_options(false, true)));
         assert!(host_profile_enabled(&runtime_options(true, true)));
     }
 

@@ -754,7 +754,7 @@ Run/help:
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
 ./result/bin/loftd --passt -- bash -lc 'echo ok'
-./result/bin/loftd --log-level debug --profile -- bash -lc 'echo ok'
+./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
 ```
 
@@ -775,13 +775,14 @@ for `--log-level debug`; otherwise a scalar/global `RUST_LOG` value such as
 `debug` or `trace` can enable loftd tracing. Target-specific `RUST_LOG` filters
 still drive Rust tracing, but are not guessed into a libkrun numeric level.
 
-For timing diagnostics, `loftd --log-level debug --profile` or the compatibility
-form `loftd --debug --profile` emits a `loftd host profile` report to stderr for
-completed btrfs-snapshot host phases such as launch-plan build, task rootfs
-materialization, persistent disk preparation, guest-init lookup, launch config
-build, helper session, and task state cleanup. `--profile` without a debug-or-
-trace effective log level does not print the host report, so stdout remains
-reserved for guest command output.
+For timing diagnostics, `loftd --profile` emits `loftd host profile` and
+`loftd-guest-init profile` reports to stderr for completed btrfs-snapshot host
+and guest-init phases such as launch-plan build, task rootfs materialization,
+persistent disk preparation, guest-init lookup, launch config build, helper
+session, task state cleanup, and early guest bootstrap. `--profile` does not
+raise loftd, guest-init, or libkrun debug logging; use `--log-level debug`,
+`--log-level trace`, or the compatibility form `--debug` separately when verbose
+diagnostic logs are needed. Stdout remains reserved for guest command output.
 
 Image selection is materialized through Buildah for the btrfs-snapshot path: with no
 image option, loftd first inspects `localhost/loftd:latest` and uses it with

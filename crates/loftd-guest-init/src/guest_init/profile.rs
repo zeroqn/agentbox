@@ -52,7 +52,7 @@ impl ProfileConfig {
     }
 
     fn should_report(self) -> bool {
-        self.enabled && self.debug
+        self.enabled
     }
 }
 

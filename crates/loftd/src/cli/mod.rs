@@ -10,7 +10,7 @@ use crate::task_rootfs::TaskRootfsBackend;
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile --debug\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'"
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -50,7 +50,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         help = "Enable loftd component timing collection",
-        long_help = "Enable loftd component timing collection. Timing is reported to stderr only when the effective log level is debug or trace, so normal command stdout remains reserved for command output."
+        long_help = "Enable loftd component timing collection. Timing reports are emitted to stderr when profiling is requested, so normal command stdout remains reserved for command output."
     )]
     profile: bool,
 
