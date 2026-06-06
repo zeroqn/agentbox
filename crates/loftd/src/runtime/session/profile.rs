@@ -226,15 +226,17 @@ impl LoftdHostProfiler {
             let Some((child_label, nanos_text)) = line.split_once('\t') else {
                 continue;
             };
-            let Some(parent_label) = vm_worker_wait_detail_parent_label(child_label) else {
+            let Some(mapping) = vm_worker_wait_detail_parent_mapping(child_label) else {
                 continue;
             };
             let Ok(nanos) = nanos_text.parse::<u128>() else {
                 continue;
             };
             let duration = duration_from_nanos_saturating(nanos);
-            accounted = accounted.saturating_add(duration);
-            self.record_duration(parent_label, duration);
+            if mapping.accounted {
+                accounted = accounted.saturating_add(duration);
+            }
+            self.record_duration(mapping.parent_label, duration);
             recorded_any = true;
         }
 
@@ -257,7 +259,7 @@ fn format_duration(duration: Duration) -> String {
     format!("{:.3}ms", duration.as_secs_f64() * 1000.0)
 }
 
-fn vm_worker_wait_detail_path(task_state_dir: &Path) -> PathBuf {
+pub(in crate::runtime::session) fn vm_worker_wait_detail_path(task_state_dir: &Path) -> PathBuf {
     task_state_dir.join(VM_WORKER_WAIT_DETAIL_FILENAME)
 }
 
@@ -266,22 +268,104 @@ fn vm_worker_wait_detail_temp_path(task_state_dir: &Path) -> PathBuf {
 }
 
 fn is_vm_worker_wait_detail_label(label: &str) -> bool {
-    vm_worker_wait_detail_parent_label(label).is_some()
+    vm_worker_wait_detail_parent_mapping(label).is_some()
 }
 
-fn vm_worker_wait_detail_parent_label(label: &str) -> Option<&'static str> {
-    match label {
-        "vm_worker_config_read" => Some("helper_wait_vm_worker_child_config_read"),
-        "vm_worker_identity_configure" => Some("helper_wait_vm_worker_child_identity_configure"),
-        "vm_worker_enter_netns" => Some("helper_wait_vm_worker_child_enter_netns"),
-        "vm_worker_passt_start" => Some("helper_wait_vm_worker_child_passt_start"),
-        "vm_worker_prepare_root" => Some("helper_wait_vm_worker_child_prepare_root"),
-        "vm_worker_guest_config_write" => Some("helper_wait_vm_worker_child_guest_config_write"),
-        "vm_worker_libkrun_open" => Some("helper_wait_vm_worker_child_libkrun_open"),
-        "vm_worker_libkrun_configure" => Some("helper_wait_vm_worker_child_libkrun_configure"),
-        "vm_worker_libkrun_enter" => Some("helper_wait_vm_worker_child_libkrun_enter"),
-        _ => None,
+#[derive(Debug, Clone, Copy)]
+struct VmWorkerWaitDetailMapping {
+    parent_label: &'static str,
+    accounted: bool,
+}
+
+impl VmWorkerWaitDetailMapping {
+    const fn accounted(parent_label: &'static str) -> Self {
+        Self {
+            parent_label,
+            accounted: true,
+        }
     }
+
+    const fn display_only(parent_label: &'static str) -> Self {
+        Self {
+            parent_label,
+            accounted: false,
+        }
+    }
+}
+
+fn vm_worker_wait_detail_parent_mapping(label: &str) -> Option<VmWorkerWaitDetailMapping> {
+    Some(match label {
+        "vm_worker_config_read" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_config_read")
+        }
+        "vm_worker_identity_configure" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_identity_configure")
+        }
+        "vm_worker_enter_netns" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_enter_netns")
+        }
+        "vm_worker_passt_start" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_passt_start")
+        }
+        "vm_worker_prepare_root" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_prepare_root")
+        }
+        "vm_worker_guest_config_write" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_guest_config_write")
+        }
+        "vm_worker_libkrun_open" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_open")
+        }
+        "vm_worker_libkrun_configure" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_configure")
+        }
+        "vm_worker_libkrun_enter" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_enter")
+        }
+        "libkrun_start_enter_event_manager_create" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_event_manager_create",
+        ),
+        "libkrun_start_enter_context_take" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_context_take")
+        }
+        "libkrun_start_enter_load_firmware" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_load_firmware",
+        ),
+        "libkrun_start_enter_configure_block" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_configure_block",
+        ),
+        "libkrun_start_enter_configure_kernel_cmdline" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_configure_kernel_cmdline",
+        ),
+        "libkrun_start_enter_configure_net" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_configure_net",
+        ),
+        "libkrun_start_enter_configure_vsock" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_configure_vsock",
+        ),
+        "libkrun_start_enter_configure_gpu_console" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_configure_gpu_console",
+        ),
+        "libkrun_start_enter_set_identity" => {
+            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_set_identity")
+        }
+        "libkrun_build_microvm_choose_payload" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_build_choose_payload",
+        ),
+        "libkrun_build_microvm_create_guest_memory" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_build_create_guest_memory",
+        ),
+        "libkrun_build_microvm_start_vcpus" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_build_start_vcpus",
+        ),
+        "libkrun_build_microvm_register_event_subscriber" => VmWorkerWaitDetailMapping::accounted(
+            "helper_wait_vm_worker_child_libkrun_build_register_event_subscriber",
+        ),
+        "libkrun_start_enter_event_loop_runtime" => VmWorkerWaitDetailMapping::display_only(
+            "helper_wait_vm_worker_child_libkrun_event_loop_runtime",
+        ),
+        _ => return None,
+    })
 }
 
 fn duration_from_nanos_saturating(nanos: u128) -> Duration {
@@ -493,6 +577,47 @@ mod tests {
         assert!(text.contains("helper_wait_vm_worker_child_unattributed: 4.000ms"));
         assert!(!text.contains("helper_wait_vm_worker_child_libkrun_session"));
         assert!(!text.contains("unrelated_child_phase"));
+
+        fs::remove_dir_all(cleanup_dir).expect("temp task state dir should be removed");
+    }
+
+    #[test]
+    fn host_profile_imports_libkrun_internal_wait_child_details() {
+        let task_state_dir = unique_temp_dir("loftd-profile-libkrun-details");
+        fs::create_dir_all(&task_state_dir).expect("temp task state dir should be created");
+        let cleanup_dir = task_state_dir.clone();
+
+        fs::write(
+            vm_worker_wait_detail_path(&task_state_dir),
+            concat!(
+                "vm_worker_config_read\t1000000\n",
+                "libkrun_start_enter_event_manager_create\t2000000\n",
+                "libkrun_start_enter_configure_block\t3000000\n",
+                "libkrun_build_microvm_create_guest_memory\t4000000\n",
+                "libkrun_start_enter_event_loop_runtime\t0\n",
+                "unknown_libkrun_phase\t5000000\n",
+            ),
+        )
+        .expect("profile artifact should write");
+
+        let mut parent_profiler = LoftdHostProfiler::new_started_at(true, Instant::now());
+        parent_profiler.record_vm_worker_wait_details(&task_state_dir, Duration::from_millis(20));
+
+        let mut output = Vec::new();
+        parent_profiler
+            .write_report_with_total(&mut output, Duration::from_millis(21))
+            .expect("report should write");
+        let text = String::from_utf8(output).expect("report should be utf-8");
+
+        assert!(text.contains("helper_wait_vm_worker_child_config_read: 1.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_libkrun_event_manager_create: 2.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_libkrun_configure_block: 3.000ms"));
+        assert!(
+            text.contains("helper_wait_vm_worker_child_libkrun_build_create_guest_memory: 4.000ms")
+        );
+        assert!(text.contains("helper_wait_vm_worker_child_libkrun_event_loop_runtime: 0.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_unattributed: 10.000ms"));
+        assert!(!text.contains("unknown_libkrun_phase"));
 
         fs::remove_dir_all(cleanup_dir).expect("temp task state dir should be removed");
     }

@@ -23,6 +23,7 @@ enum Call {
     AddVirtioConsoleDefault(u32, i32, i32, i32),
     SetWorkdir(u32, String),
     SetExec(u32, String, Vec<String>, Vec<(String, String)>),
+    SetProfilePath(u32, String),
     StartEnter(u32),
 }
 
@@ -147,6 +148,14 @@ impl LibkrunApi for FakeLibkrunApi {
             env.to_vec(),
         ));
         Ok(self.rc("krun_set_exec"))
+    }
+
+    fn set_profile_path(&mut self, ctx_id: u32, profile_path: &Path) -> Result<i32> {
+        self.calls.borrow_mut().push(Call::SetProfilePath(
+            ctx_id,
+            profile_path.display().to_string(),
+        ));
+        Ok(self.rc("krun_set_profile_path"))
     }
 
     fn start_enter(&mut self, ctx_id: u32) -> Result<i32> {
@@ -355,6 +364,52 @@ fn pre_enter_hook_runs_after_setup_and_before_start() {
         .position(|call| matches!(call, Call::StartEnter(..)))
         .expect("launch should start after hook");
     assert!(set_exec_index < start_index);
+}
+
+#[test]
+fn profile_path_is_set_after_exec_and_before_pre_enter_hook() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter_profiled_with_pre_enter_hook(
+            &config(),
+            Some(Path::new("/tmp/vm-worker-host-profile.tsv")),
+            || {
+                let calls = calls.borrow();
+                assert!(calls.iter().any(|call| matches!(call, Call::SetExec(..))));
+                assert!(
+                    calls
+                        .iter()
+                        .any(|call| matches!(call, Call::SetProfilePath(..)))
+                );
+                assert!(
+                    !calls
+                        .iter()
+                        .any(|call| matches!(call, Call::StartEnter(..)))
+                );
+            },
+        )
+        .expect("launch should succeed");
+
+    let calls = calls.borrow();
+    let set_exec_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetExec(..)))
+        .expect("setup should configure exec");
+    let set_profile_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetProfilePath(..)))
+        .expect("profile path should be configured");
+    let start_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::StartEnter(..)))
+        .expect("launch should start");
+
+    assert_eq!(
+        calls[set_profile_index],
+        Call::SetProfilePath(7, "/tmp/vm-worker-host-profile.tsv".to_owned())
+    );
+    assert!(set_exec_index < set_profile_index);
+    assert!(set_profile_index < start_index);
 }
 
 #[test]

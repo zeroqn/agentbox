@@ -1,6 +1,7 @@
 //! Direct libkrun launch sequencing from a prepared `LaunchConfig`.
 
 use anyhow::{Context, Result, anyhow, bail};
+use std::path::Path;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 
@@ -21,9 +22,19 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         self.start_enter_with_pre_enter_hook(config, || {})
     }
 
+    #[cfg(test)]
     pub(crate) fn start_enter_with_pre_enter_hook(
+        self,
+        config: &LaunchConfig,
+        before_start_enter: impl FnOnce(),
+    ) -> Result<()> {
+        self.start_enter_profiled_with_pre_enter_hook(config, None, before_start_enter)
+    }
+
+    pub(crate) fn start_enter_profiled_with_pre_enter_hook(
         mut self,
         config: &LaunchConfig,
+        profile_path: Option<&Path>,
         before_start_enter: impl FnOnce(),
     ) -> Result<()> {
         tracing::debug!(level = ?config.log_level, libkrun_level = config.log_level.libkrun_level(), "libkrun log init: begin");
@@ -38,7 +49,8 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             .create_ctx()
             .context("libkrun setup failed: create ctx")?;
         tracing::debug!(ctx_id, "krun_create_ctx: complete");
-        if let Err(err) = self.configure_and_start(ctx_id, config, before_start_enter) {
+        if let Err(err) = self.configure_and_start(ctx_id, config, profile_path, before_start_enter)
+        {
             let _ = self.api.free_ctx(ctx_id);
             return Err(err);
         }
@@ -49,6 +61,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         &mut self,
         ctx_id: u32,
         config: &LaunchConfig,
+        profile_path: Option<&Path>,
         before_start_enter: impl FnOnce(),
     ) -> Result<()> {
         tracing::debug!(
@@ -106,6 +119,12 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             .set_exec(ctx_id, &config.exec_path, &config.argv, &config.env)?;
         check_setup("krun_set_exec", rc)?;
         tracing::debug!(ctx_id, "krun_set_exec: complete");
+        if let Some(profile_path) = profile_path {
+            tracing::debug!(ctx_id, profile_path = %profile_path.display(), "krun_set_profile_path: begin");
+            let rc = self.api.set_profile_path(ctx_id, profile_path)?;
+            check_setup("krun_set_profile_path", rc)?;
+            tracing::debug!(ctx_id, "krun_set_profile_path: complete");
+        }
         before_start_enter();
         tracing::debug!(ctx_id, "krun_start_enter: begin");
         let rc = self.api.start_enter(ctx_id)?;

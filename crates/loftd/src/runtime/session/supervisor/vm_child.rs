@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
-use crate::runtime::session::profile::LoftdHostProfiler;
+use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_path};
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::vm::libkrun::{DirectLibkrunLauncher, DynamicLibkrunApi};
@@ -151,13 +151,21 @@ fn run_libkrun_in_current_namespace(
     let configure_started_at = Instant::now();
     let mut configure_duration = std::time::Duration::ZERO;
     let mut pre_enter_reached = false;
-    let result =
-        DirectLibkrunLauncher::new(api).start_enter_with_pre_enter_hook(&launch_config, || {
+    let libkrun_profile_path = if profiler.is_enabled() {
+        Some(vm_worker_wait_detail_path(task_state_dir))
+    } else {
+        None
+    };
+    let result = DirectLibkrunLauncher::new(api).start_enter_profiled_with_pre_enter_hook(
+        &launch_config,
+        libkrun_profile_path.as_deref(),
+        || {
             configure_duration = configure_started_at.elapsed();
             pre_enter_reached = true;
             profiler.record_vm_worker_libkrun_configure(configure_duration);
             let _ = profiler.write_vm_worker_wait_details(task_state_dir);
-        });
+        },
+    );
     let session_duration = session_started_at.elapsed();
     profiler.record_vm_worker_libkrun_session(session_duration);
     if pre_enter_reached {

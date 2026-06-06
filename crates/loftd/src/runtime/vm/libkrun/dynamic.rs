@@ -39,6 +39,7 @@ type KrunAddNetUnixstream =
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
     unsafe extern "C" fn(u32, *const c_char, *const *const c_char, *const *const c_char) -> i32;
+type KrunSetProfilePath = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunStartEnter = unsafe extern "C" fn(u32) -> i32;
 
 pub(crate) struct DynamicLibkrunApi {
@@ -55,6 +56,7 @@ pub(crate) struct DynamicLibkrunApi {
     add_net_unixstream: Option<KrunAddNetUnixstream>,
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
+    set_profile_path: Option<KrunSetProfilePath>,
     start_enter: KrunStartEnter,
 }
 
@@ -142,6 +144,8 @@ impl DynamicLibkrunApi {
                     handle,
                     "krun_set_exec",
                 )?),
+                set_profile_path: load_optional_symbol(handle, "krun_set_profile_path")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetProfilePath>(symbol)),
                 start_enter: std::mem::transmute::<*mut c_void, KrunStartEnter>(load_symbol(
                     handle,
                     "krun_start_enter",
@@ -305,6 +309,16 @@ impl LibkrunApi for DynamicLibkrunApi {
         let envp = null_terminated_ptrs(&env_strings);
         // SAFETY: C strings and pointer arrays live for the duration of the call.
         Ok(unsafe { (self.set_exec)(ctx_id, exec_path.as_ptr(), argv.as_ptr(), envp.as_ptr()) })
+    }
+
+    fn set_profile_path(&mut self, ctx_id: u32, profile_path: &Path) -> Result<i32> {
+        let Some(set_profile_path) = self.set_profile_path else {
+            return Ok(0);
+        };
+        let profile_path = path_cstring(profile_path)?;
+        // SAFETY: optional function pointer is resolved from libkrun when present, and the C
+        // string lives for the duration of the call.
+        Ok(unsafe { set_profile_path(ctx_id, profile_path.as_ptr()) })
     }
 
     fn start_enter(&mut self, ctx_id: u32) -> Result<i32> {
