@@ -1,8 +1,11 @@
 use anyhow::Result;
+use std::fs::{self, File};
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub(crate) const LOFTD_HOST_PROFILE_ENV: &str = "LOFTD_HOST_PROFILE";
+const VM_WORKER_WAIT_DETAIL_FILENAME: &str = "vm-worker-host-profile.tsv";
 
 #[derive(Debug)]
 pub(crate) struct LoftdHostProfiler {
@@ -73,6 +76,22 @@ impl LoftdHostProfiler {
         result
     }
 
+    pub(in crate::runtime::session) fn measure_result_with_duration<T>(
+        &mut self,
+        label: &'static str,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<(T, Duration)> {
+        if !self.enabled {
+            return f().map(|value| (value, Duration::ZERO));
+        }
+
+        let started_at = Instant::now();
+        let result = f();
+        let duration = started_at.elapsed();
+        self.record_duration(label, duration);
+        result.map(|value| (value, duration))
+    }
+
     pub(in crate::runtime::session) fn measure_result_with<T>(
         &mut self,
         label: &'static str,
@@ -89,6 +108,37 @@ impl LoftdHostProfiler {
             duration: started_at.elapsed(),
         });
         result
+    }
+
+    pub(in crate::runtime::session) fn write_vm_worker_wait_details(
+        &self,
+        task_state_dir: &Path,
+    ) -> io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let path = vm_worker_wait_detail_path(task_state_dir);
+        let temp_path = vm_worker_wait_detail_temp_path(task_state_dir);
+        let mut file = File::create(&temp_path)?;
+        for record in &self.records {
+            if is_vm_worker_wait_detail_label(record.label) {
+                writeln!(file, "{}\t{}", record.label, record.duration.as_nanos())?;
+            }
+        }
+        file.flush()?;
+        fs::rename(temp_path, path)
+    }
+
+    pub(in crate::runtime::session) fn record_vm_worker_wait_details(
+        &mut self,
+        task_state_dir: &Path,
+        wait_duration: Duration,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let _ = self.try_record_vm_worker_wait_details(task_state_dir, wait_duration);
     }
 
     pub(in crate::runtime::session) fn emit_to_stderr(&self) {
@@ -135,6 +185,44 @@ impl LoftdHostProfiler {
         )?;
         writer.flush()
     }
+
+    fn record_duration(&mut self, label: &'static str, duration: Duration) {
+        if self.enabled {
+            self.records.push(ProfileRecord { label, duration });
+        }
+    }
+
+    fn try_record_vm_worker_wait_details(
+        &mut self,
+        task_state_dir: &Path,
+        wait_duration: Duration,
+    ) -> io::Result<()> {
+        let text = fs::read_to_string(vm_worker_wait_detail_path(task_state_dir))?;
+        let mut accounted = Duration::ZERO;
+        let mut recorded_any = false;
+
+        for line in text.lines() {
+            let Some((child_label, nanos_text)) = line.split_once('\t') else {
+                continue;
+            };
+            let Some(parent_label) = vm_worker_wait_detail_parent_label(child_label) else {
+                continue;
+            };
+            let Ok(nanos) = nanos_text.parse::<u128>() else {
+                continue;
+            };
+            let duration = duration_from_nanos_saturating(nanos);
+            accounted = accounted.saturating_add(duration);
+            self.record_duration(parent_label, duration);
+            recorded_any = true;
+        }
+
+        if recorded_any {
+            let unattributed = wait_duration.saturating_sub(accounted);
+            self.record_duration("helper_wait_vm_worker_child_unattributed", unattributed);
+        }
+        Ok(())
+    }
 }
 
 fn host_profile_env_enabled() -> bool {
@@ -146,6 +234,36 @@ fn host_profile_env_enabled() -> bool {
 
 fn format_duration(duration: Duration) -> String {
     format!("{:.3}ms", duration.as_secs_f64() * 1000.0)
+}
+
+fn vm_worker_wait_detail_path(task_state_dir: &Path) -> PathBuf {
+    task_state_dir.join(VM_WORKER_WAIT_DETAIL_FILENAME)
+}
+
+fn vm_worker_wait_detail_temp_path(task_state_dir: &Path) -> PathBuf {
+    task_state_dir.join(format!("{VM_WORKER_WAIT_DETAIL_FILENAME}.tmp"))
+}
+
+fn is_vm_worker_wait_detail_label(label: &str) -> bool {
+    vm_worker_wait_detail_parent_label(label).is_some()
+}
+
+fn vm_worker_wait_detail_parent_label(label: &str) -> Option<&'static str> {
+    match label {
+        "vm_worker_config_read" => Some("helper_wait_vm_worker_child_config_read"),
+        "vm_worker_identity_configure" => Some("helper_wait_vm_worker_child_identity_configure"),
+        "vm_worker_enter_netns" => Some("helper_wait_vm_worker_child_enter_netns"),
+        "vm_worker_passt_start" => Some("helper_wait_vm_worker_child_passt_start"),
+        "vm_worker_prepare_root" => Some("helper_wait_vm_worker_child_prepare_root"),
+        "vm_worker_guest_config_write" => Some("helper_wait_vm_worker_child_guest_config_write"),
+        "vm_worker_libkrun_open" => Some("helper_wait_vm_worker_child_libkrun_open"),
+        "vm_worker_libkrun_session" => Some("helper_wait_vm_worker_child_libkrun_session"),
+        _ => None,
+    }
+}
+
+fn duration_from_nanos_saturating(nanos: u128) -> Duration {
+    Duration::from_nanos(nanos.min(u64::MAX as u128) as u64)
 }
 
 #[cfg(test)]
@@ -320,5 +438,60 @@ mod tests {
         assert!(text.contains("helper_wait_vm_worker"));
         assert!(text.contains("total_profiled_host_runtime"));
         assert!(!text.contains("loftd-guest-init profile"));
+    }
+
+    #[test]
+    fn host_profile_imports_vm_worker_wait_child_details() {
+        let task_state_dir = unique_temp_dir("loftd-profile-vm-worker-details");
+        fs::create_dir_all(&task_state_dir).expect("temp task state dir should be created");
+        let cleanup_dir = task_state_dir.clone();
+
+        let mut child_profiler = LoftdHostProfiler::new_started_at(true, Instant::now());
+        child_profiler.record_duration("vm_worker_config_read", Duration::from_millis(1));
+        child_profiler.record_duration("vm_worker_libkrun_session", Duration::from_millis(7));
+        child_profiler.record_duration("unrelated_child_phase", Duration::from_millis(3));
+        child_profiler
+            .write_vm_worker_wait_details(&task_state_dir)
+            .expect("child profile artifact should write");
+
+        let mut parent_profiler = LoftdHostProfiler::new_started_at(true, Instant::now());
+        parent_profiler.record_vm_worker_wait_details(&task_state_dir, Duration::from_millis(10));
+
+        let mut output = Vec::new();
+        parent_profiler
+            .write_report_with_total(&mut output, Duration::from_millis(11))
+            .expect("report should write");
+        let text = String::from_utf8(output).expect("report should be utf-8");
+
+        assert!(text.contains("helper_wait_vm_worker_child_config_read: 1.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_libkrun_session: 7.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_unattributed: 2.000ms"));
+        assert!(!text.contains("unrelated_child_phase"));
+
+        fs::remove_dir_all(cleanup_dir).expect("temp task state dir should be removed");
+    }
+
+    #[test]
+    fn host_profile_ignores_missing_vm_worker_wait_child_details() {
+        let task_state_dir = unique_temp_dir("loftd-profile-missing-vm-worker-details");
+        let mut profiler = LoftdHostProfiler::new_started_at(true, Instant::now());
+
+        profiler.record_vm_worker_wait_details(&task_state_dir, Duration::from_millis(10));
+
+        let mut output = Vec::new();
+        profiler
+            .write_report_with_total(&mut output, Duration::from_millis(11))
+            .expect("report should write");
+        let text = String::from_utf8(output).expect("report should be utf-8");
+
+        assert!(!text.contains("helper_wait_vm_worker_child_unattributed"));
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{unique}", std::process::id()))
     }
 }

@@ -785,7 +785,10 @@ the aggregate `helper_session` row and, when profiling is enabled, also emits
 scoped helper/VM-worker host reports with `profile_scope` metadata for the
 helper command build/spawn/wait path, helper setup, passt handoff, VM-worker
 fork/wait, prepared-root setup, libkrun open, and the blocking libkrun guest
-session. `--profile` does not raise loftd, guest-init, or libkrun debug logging;
+session. The helper report also imports VM-worker child phase timings under
+`helper_wait_vm_worker_child_*` rows, with `helper_wait_vm_worker_child_unattributed`
+covering any remaining wait time outside the known child phases. `--profile`
+does not raise loftd, guest-init, or libkrun debug logging;
 use `--log-level debug`, `--log-level trace`, or the compatibility form
 `--debug` separately when verbose diagnostic logs are needed. Stdout remains
 reserved for guest command output.

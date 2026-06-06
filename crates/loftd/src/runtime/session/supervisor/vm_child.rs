@@ -73,6 +73,9 @@ fn run_vm_worker_child(
     if let Err(err) = &result {
         eprintln!("loftd internal VM worker: {err:#}");
     }
+    if let Ok(task_state_dir) = task_state_dir_from_config_path(config_path) {
+        let _ = profiler.write_vm_worker_wait_details(task_state_dir);
+    }
     let _ = profiler.finalize_result(result);
     exit_code
 }

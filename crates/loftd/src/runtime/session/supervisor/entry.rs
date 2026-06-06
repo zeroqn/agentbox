@@ -90,7 +90,9 @@ fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> 
         None
     };
     network_session.set_passt_pid(passt_pid);
-    let status = profiler.measure_result("helper_wait_vm_worker", || worker.wait())?;
+    let (status, wait_duration) =
+        profiler.measure_result_with_duration("helper_wait_vm_worker", || worker.wait())?;
+    profiler.record_vm_worker_wait_details(task_state_dir, wait_duration);
     if let Some(code) = network::status_exit_code(status) {
         if code == 0 {
             return Ok(());
