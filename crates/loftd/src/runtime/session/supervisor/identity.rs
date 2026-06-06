@@ -4,6 +4,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::runtime::launch::config::LaunchConfig;
+
 pub(crate) const UNSHARE_PROGRAM: &str = "unshare";
 
 const SUBUID_PATH: &str = "/etc/subuid";
@@ -311,6 +313,62 @@ fn current_uid() -> u32 {
 
 fn current_gid() -> u32 {
     unsafe { libc::getgid() }
+}
+
+pub(crate) fn configure_helper_filesystem_identity(config: &LaunchConfig) -> Result<()> {
+    let host_uid = required_guest_config_u32(config, "LOFTD_HOST_UID")?;
+    let host_gid = required_guest_config_u32(config, "LOFTD_HOST_GID")?;
+    set_filesystem_gid(host_gid)?;
+    set_filesystem_uid(host_uid)?;
+    tracing::debug!(
+        host_uid,
+        host_gid,
+        "loftd internal: keep-id helper filesystem identity configured"
+    );
+    Ok(())
+}
+
+pub(crate) fn configure_vm_worker_filesystem_identity() -> Result<()> {
+    set_filesystem_gid(0)?;
+    set_filesystem_uid(0)?;
+    tracing::debug!("loftd internal VM worker: namespace-root filesystem identity restored");
+    Ok(())
+}
+
+pub(crate) fn required_guest_config_u32(config: &LaunchConfig, key: &str) -> Result<u32> {
+    let value = config
+        .guest_config_env
+        .iter()
+        .rev()
+        .find_map(|(env_key, env_value)| (env_key == key).then_some(env_value))
+        .ok_or_else(|| anyhow!("loftd launch config is missing required {key}"))?;
+    value
+        .parse::<u32>()
+        .with_context(|| format!("loftd launch config {key} value '{value}' is not a u32"))
+}
+
+fn set_filesystem_uid(uid: u32) -> Result<()> {
+    let uid = uid as libc::uid_t;
+    // SAFETY: setfsuid changes only the current process filesystem credential.
+    unsafe { libc::setfsuid(uid) };
+    // SAFETY: uid_t::MAX is treated by Linux as an invalid fsuid probe and returns the current fsuid.
+    let current = unsafe { libc::setfsuid(libc::uid_t::MAX) };
+    if current < 0 || current as libc::uid_t != uid {
+        bail!("failed to set loftd helper filesystem UID to {uid}; current fsuid is {current}");
+    }
+    Ok(())
+}
+
+fn set_filesystem_gid(gid: u32) -> Result<()> {
+    let gid = gid as libc::gid_t;
+    // SAFETY: setfsgid changes only the current process filesystem credential.
+    unsafe { libc::setfsgid(gid) };
+    // SAFETY: gid_t::MAX is treated by Linux as an invalid fsgid probe and returns the current fsgid.
+    let current = unsafe { libc::setfsgid(libc::gid_t::MAX) };
+    if current < 0 || current as libc::gid_t != gid {
+        bail!("failed to set loftd helper filesystem GID to {gid}; current fsgid is {current}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

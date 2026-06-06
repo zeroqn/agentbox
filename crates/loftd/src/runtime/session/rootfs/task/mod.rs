@@ -4,8 +4,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::runtime::image_source::{self, BuildahCommands, OciProcessConfig};
 use crate::runtime::launch::plan::ImageSelection;
+use crate::runtime::session::rootfs::image_source::{self, BuildahCommands, OciProcessConfig};
 use crate::task_rootfs::TaskRootfsBackend;
 
 const TASKS_DIR: &str = "tasks";

@@ -6,8 +6,10 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
+use crate::runtime::launch::components::persistent_disks::raw_btrfs::{
+    self, RawBtrfsDisk, RawDiskSpec,
+};
 use crate::runtime::launch::config::DiskAttachment;
-use crate::runtime::raw_btrfs::{self, RawBtrfsDisk, RawDiskSpec};
 
 pub(super) const FILE_NAME: &str = "loftd-containers.raw";
 pub(super) const ID: &str = "loftd-containers";

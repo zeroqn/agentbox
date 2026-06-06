@@ -1,0 +1,198 @@
+use anyhow::Result;
+use std::ffi::OsString;
+use std::path::Path;
+use std::process::ExitCode;
+
+pub(crate) mod command;
+pub(crate) mod entry;
+pub(crate) mod identity;
+pub(crate) mod vm_child;
+
+use crate::runtime::launch::config::LaunchConfig;
+
+pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChildStatus {
+    code: Option<i32>,
+}
+
+impl ChildStatus {
+    pub(crate) fn exited(code: i32) -> Self {
+        Self { code: Some(code) }
+    }
+
+    pub(crate) fn signaled() -> Self {
+        Self { code: None }
+    }
+
+    pub(crate) fn exit_code(self) -> ExitCode {
+        ExitCode::from(
+            self.code
+                .and_then(|code| u8::try_from(code).ok())
+                .unwrap_or(1),
+        )
+    }
+}
+
+pub(crate) trait Supervisor {
+    fn run(&self, config: &LaunchConfig, task_state_dir: &Path) -> Result<ChildStatus>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HostSupervisor;
+
+impl Supervisor for HostSupervisor {
+    fn run(&self, config: &LaunchConfig, task_state_dir: &Path) -> Result<ChildStatus> {
+        let config_path = task_state_dir.join("launch.conf");
+        config.write_to(&config_path)?;
+        command::run_helper_process(config, &config_path)
+    }
+}
+
+pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
+    entry::run_internal(args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::launch::config::NetworkMode;
+    use crate::runtime::session::supervisor::identity::KeepIdLauncher;
+    use std::path::PathBuf;
+
+    #[test]
+    fn child_status_maps_to_parent_exit_code() {
+        assert_eq!(ChildStatus::exited(0).exit_code(), ExitCode::from(0));
+        assert_eq!(ChildStatus::exited(42).exit_code(), ExitCode::from(42));
+        assert_eq!(ChildStatus::exited(300).exit_code(), ExitCode::from(1));
+        assert_eq!(ChildStatus::signaled().exit_code(), ExitCode::from(1));
+    }
+
+    #[test]
+    fn internal_rejects_wrong_argument_shape() {
+        let err =
+            run_internal(vec!["libkrun-network-enter".into()]).expect_err("missing config path");
+        assert!(format!("{err:#}").contains("expected internal"));
+
+        let err = run_internal(vec!["btrfs-rootfs".into(), "/tmp/x".into()])
+            .expect_err("wrong subcommand");
+        assert!(format!("{err:#}").contains("unknown loftd internal command"));
+    }
+
+    #[test]
+    fn helper_filesystem_identity_parser_uses_latest_required_env_values() {
+        let mut config = minimal_launch_config();
+        config.guest_config_env = vec![
+            ("LOFTD_HOST_UID".to_owned(), "image".to_owned()),
+            ("LOFTD_HOST_GID".to_owned(), "image".to_owned()),
+            ("LOFTD_HOST_UID".to_owned(), "1000".to_owned()),
+            ("LOFTD_HOST_GID".to_owned(), "993".to_owned()),
+        ];
+
+        assert_eq!(
+            identity::required_guest_config_u32(&config, "LOFTD_HOST_UID").unwrap(),
+            1000
+        );
+        assert_eq!(
+            identity::required_guest_config_u32(&config, "LOFTD_HOST_GID").unwrap(),
+            993
+        );
+    }
+
+    #[test]
+    fn helper_filesystem_identity_parser_rejects_missing_or_invalid_values() {
+        let mut config = minimal_launch_config();
+        assert!(
+            format!(
+                "{:#}",
+                identity::required_guest_config_u32(&config, "LOFTD_HOST_UID").unwrap_err()
+            )
+            .contains("missing")
+        );
+        config.guest_config_env = vec![("LOFTD_HOST_UID".to_owned(), "not-a-uid".to_owned())];
+        assert!(
+            format!(
+                "{:#}",
+                identity::required_guest_config_u32(&config, "LOFTD_HOST_UID").unwrap_err()
+            )
+            .contains("not a u32")
+        );
+    }
+
+    fn minimal_launch_config() -> LaunchConfig {
+        LaunchConfig {
+            task_rootfs: PathBuf::from("/tmp/rootfs"),
+            hostname: "loftd-test".to_owned(),
+            mounts: Vec::new(),
+            guest_init_override: None,
+            disks: Vec::new(),
+            ram_mib: 1024,
+            vcpus: 1,
+            log_level: crate::logging::LogLevel::Info,
+            network_mode: NetworkMode::Tsi,
+            workdir: "/workspace".to_owned(),
+            exec_path: "/bin/sh".to_owned(),
+            argv: Vec::new(),
+            env: Vec::new(),
+            guest_config_env: Vec::new(),
+            passt_socket: None,
+        }
+    }
+
+    #[test]
+    fn libkrun_helper_launches_through_keep_id_unshare() {
+        let launcher = KeepIdLauncher::from_parts(
+            1000,
+            993,
+            "dev",
+            crate::runtime::session::supervisor::identity::SubIdRange::new(100_000, 65_536)
+                .unwrap(),
+            crate::runtime::session::supervisor::identity::SubIdRange::new(100_000, 65_536)
+                .unwrap(),
+        )
+        .unwrap();
+        let spec = command::build_helper_command_with_launcher(
+            Path::new("/nix/store/hash-loftd/bin/loftd"),
+            Path::new("/tmp/loftd-task/launch.conf"),
+            crate::logging::LogLevel::Debug,
+            &launcher,
+        );
+
+        assert_eq!(spec.program, OsString::from("unshare"));
+        assert_eq!(
+            spec.env,
+            vec![(
+                OsString::from("LOFTD_INTERNAL_LOG_LEVEL"),
+                OsString::from("debug")
+            )]
+        );
+        let args = spec
+            .args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(args.contains(&"--user".to_owned()));
+        assert!(args.contains(&"--mount".to_owned()));
+        assert!(args.contains(&"--keep-caps".to_owned()));
+        assert!(args.windows(2).any(|pair| pair == ["--setuid", "0"]));
+        assert!(args.windows(2).any(|pair| pair == ["--setgid", "0"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--map-users", "1000:1000:1"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--map-groups", "993:993:1"])
+        );
+        assert_eq!(
+            &args[args.len() - 4..],
+            [
+                "/nix/store/hash-loftd/bin/loftd",
+                "internal",
+                "libkrun-network-enter",
+                "/tmp/loftd-task/launch.conf",
+            ]
+        );
+    }
+}

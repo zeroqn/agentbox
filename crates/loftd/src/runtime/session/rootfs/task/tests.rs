@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::image_source::{BuildahCommands, OciProcessConfig};
+use crate::runtime::session::rootfs::image_source::{BuildahCommands, OciProcessConfig};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 use std::cell::RefCell;
 use std::collections::VecDeque;

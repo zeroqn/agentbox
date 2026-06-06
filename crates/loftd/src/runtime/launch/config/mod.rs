@@ -1,0 +1,100 @@
+use anyhow::Result;
+use std::path::PathBuf;
+
+mod codec;
+mod components;
+mod guest_env;
+mod model;
+
+pub(crate) use components::mounts::validate_mounts;
+pub(crate) use components::resources::resolve_cpu_count;
+pub(crate) use model::{
+    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment,
+    GuestInitOverrideMount, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, NetworkMode, PI_TAG,
+    PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+};
+
+#[cfg(test)]
+use self::codec::{decode_text_for_debug, push_field};
+#[cfg(test)]
+use self::components::resources::{default_ram_mib_from_meminfo, resolve_ram_mib};
+
+impl LaunchConfig {
+    /// Build the serialized helper/libkrun launch contract from explicit contributors.
+    pub(crate) fn build_for_task(spec: LaunchSpec<'_>) -> Result<Self> {
+        let ram_mib = components::resources::resolve_ram_mib(spec.mem_gib)?;
+        components::mounts::validate_mounts(spec.mounts)?;
+        if let Some(mount) = &spec.guest_init_override {
+            components::guest_init::validate_guest_init_override_mount(
+                mount,
+                spec.guest_init_exec,
+            )?;
+        }
+
+        let mut guest_config_env = guest_env::bootstrap_env(
+            &spec.image_process_config.env,
+            components::identity::required_env(spec.host_uid, spec.host_gid),
+        )?;
+        if spec.root {
+            guest_env::insert_env(&mut guest_config_env, model::ENTER_AS_ROOT_ENV, "1");
+        }
+        if spec.profile {
+            guest_env::insert_env(&mut guest_config_env, model::GUEST_PROFILE_ENV, "1");
+        }
+        if spec.log_level.enables_debug() {
+            guest_env::insert_env(&mut guest_config_env, model::GUEST_DEBUG_ENV, "1");
+        }
+        components::network::contribute_guest_env(&mut guest_config_env, spec.network_mode);
+        for (key, value) in spec.extra_env {
+            guest_config_env.insert(key, value);
+        }
+
+        Ok(Self {
+            task_rootfs: spec.task_rootfs.to_path_buf(),
+            hostname: spec.hostname.to_owned(),
+            mounts: spec.mounts.to_vec(),
+            guest_init_override: spec.guest_init_override,
+            disks: spec.disks,
+            ram_mib,
+            vcpus: spec.vcpus,
+            log_level: spec.log_level,
+            network_mode: spec.network_mode,
+            workdir: components::process::workdir_from_image(
+                spec.image_process_config.working_dir.as_deref(),
+            ),
+            exec_path: spec.guest_init_exec.to_owned(),
+            argv: components::process::guest_init_argv(
+                spec.guest_command,
+                &spec.image_process_config.cmd,
+            ),
+            env: vec![(
+                model::KRUN_CONFIG_ENV.to_owned(),
+                LOFTD_KRUN_CONFIG_PATH.to_owned(),
+            )],
+            guest_config_env: guest_config_env.into_iter().collect(),
+            passt_socket: None,
+        })
+    }
+
+    pub(crate) fn with_root_export(&self, root_export: PathBuf) -> Self {
+        let mut config = self.clone();
+        config.task_rootfs = root_export;
+        config
+    }
+
+    pub(crate) fn with_passt_socket(&self, passt_socket: PathBuf) -> Self {
+        let mut config = self.clone();
+        config.passt_socket = Some(passt_socket);
+        config
+    }
+
+    #[cfg(test)]
+    pub(crate) fn guest_config_env_contains(&self, name: &str, value: &str) -> bool {
+        self.guest_config_env
+            .iter()
+            .any(|(key, actual)| key == name && actual == value)
+    }
+}
+
+#[cfg(test)]
+mod tests;

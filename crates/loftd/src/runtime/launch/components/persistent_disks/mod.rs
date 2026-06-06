@@ -7,10 +7,11 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::runtime::launch::config::DiskAttachment;
-use crate::runtime::raw_btrfs::{self, HostRawImageCommandRunner, RawBtrfsDisk};
+use raw_btrfs::{HostRawImageCommandRunner, RawBtrfsDisk};
 
 mod containers;
 mod nix;
+pub(crate) mod raw_btrfs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PersistentDisks {
@@ -58,8 +59,8 @@ fn prepare_with_runner(
 
 #[cfg(test)]
 mod tests {
+    use super::raw_btrfs::{RawBtrfsDiskStatus, test_support::FakeRunner};
     use super::*;
-    use crate::runtime::raw_btrfs::{RawBtrfsDiskStatus, test_support::FakeRunner};
     use std::fs::File;
 
     #[test]

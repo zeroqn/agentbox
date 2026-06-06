@@ -4,7 +4,9 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use crate::runtime::launch::config::LaunchConfig;
-use crate::runtime::runtime_etc::{self, RuntimeEtcFiles};
+pub(crate) mod etc;
+
+use etc::RuntimeEtcFiles;
 
 const PREPARED_ROOT_DIR: &str = "prepared-root";
 
@@ -36,11 +38,7 @@ struct PreparedRootPlan {
 
 impl PreparedRootPlan {
     fn new(config: &LaunchConfig, task_state_dir: &Path) -> Result<Self> {
-        Self::new_with_runtime_etc(
-            config,
-            task_state_dir,
-            runtime_etc::build(&config.hostname)?,
-        )
+        Self::new_with_runtime_etc(config, task_state_dir, etc::build(&config.hostname)?)
     }
 
     fn new_with_runtime_etc(
@@ -170,7 +168,7 @@ impl PreparedRootCommands for HostPreparedRootCommands {
     }
 
     fn materialize_runtime_etc(&self, root_export: &Path, files: &RuntimeEtcFiles) -> Result<()> {
-        runtime_etc::materialize(root_export, files)
+        etc::materialize(root_export, files)
     }
 }
 
@@ -346,7 +344,8 @@ mod tests {
             guest_init_override: None,
             guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
             guest_command: &[],
-            image_process_config: &crate::runtime::image_source::OciProcessConfig::default(),
+            image_process_config:
+                &crate::runtime::session::rootfs::image_source::OciProcessConfig::default(),
             mem_gib: Some(4),
             log_level: LogLevel::Off,
             network_mode: NetworkMode::Tsi,

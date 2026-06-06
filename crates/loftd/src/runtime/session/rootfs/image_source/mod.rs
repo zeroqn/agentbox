@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::runtime::launch::plan::ImageSelection;
-use crate::runtime::task_rootfs::{
+use crate::runtime::session::rootfs::task::{
     BtrfsRootfsCommands, UnsharedBtrfsRootfsCommands, snapshot_mounted_rootfs,
 };
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};

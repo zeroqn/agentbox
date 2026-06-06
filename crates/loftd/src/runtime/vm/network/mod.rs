@@ -8,109 +8,21 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[cfg(test)]
-use crate::runtime::launch::config::NetworkMode;
-use crate::runtime::runtime_etc::HOST_GATEWAY_ADDR;
-
-const HOST_DNS_FORWARD_ADDR: &str = "169.254.1.1";
-const PASTA_PROGRAM: &str = "pasta";
-const PASST_PROGRAM: &str = "passt";
-const PASST_SOCKET_FILE: &str = "passt.sock";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const STARTUP_POLL: Duration = Duration::from_millis(25);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProxyCommandPlan {
-    pub(crate) program: String,
-    pub(crate) args: Vec<String>,
-    pub(crate) socket: Option<PathBuf>,
-}
+#[cfg(test)]
+use crate::runtime::launch::config::NetworkMode;
+pub(crate) mod addresses;
+mod pid;
+mod plan;
 
-impl ProxyCommandPlan {
-    fn command(&self) -> Command {
-        let mut command = Command::new(&self.program);
-        command
-            .args(&self.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        command
-    }
-}
-
-pub(crate) fn pasta_plan(holder_pid: libc::pid_t) -> ProxyCommandPlan {
-    ProxyCommandPlan {
-        program: PASTA_PROGRAM.to_owned(),
-        args: vec![
-            "--foreground".to_owned(),
-            "--config-net".to_owned(),
-            "--no-map-gw".to_owned(),
-            "--map-guest-addr".to_owned(),
-            HOST_GATEWAY_ADDR.to_owned(),
-            "--dns-forward".to_owned(),
-            HOST_DNS_FORWARD_ADDR.to_owned(),
-            "-t".to_owned(),
-            "none".to_owned(),
-            "-u".to_owned(),
-            "none".to_owned(),
-            "-T".to_owned(),
-            "none".to_owned(),
-            "-U".to_owned(),
-            "none".to_owned(),
-            "--quiet".to_owned(),
-            "--netns".to_owned(),
-            format!("/proc/{holder_pid}/ns/net"),
-        ],
-        socket: None,
-    }
-}
-
-pub(crate) fn passt_plan(task_state_dir: &Path) -> ProxyCommandPlan {
-    let socket = proxy_artifact_path(task_state_dir, PASST_SOCKET_FILE);
-    ProxyCommandPlan {
-        program: PASST_PROGRAM.to_owned(),
-        args: vec![
-            "--foreground".to_owned(),
-            "--one-off".to_owned(),
-            "--socket".to_owned(),
-            socket.display().to_string(),
-            "--map-guest-addr".to_owned(),
-            HOST_GATEWAY_ADDR.to_owned(),
-            "--dns-forward".to_owned(),
-            HOST_DNS_FORWARD_ADDR.to_owned(),
-            "-t".to_owned(),
-            "none".to_owned(),
-            "-u".to_owned(),
-            "none".to_owned(),
-            "--quiet".to_owned(),
-        ],
-        socket: Some(socket),
-    }
-}
-
-fn proxy_artifact_path(task_state_dir: &Path, file_name: &str) -> PathBuf {
-    let task_id = task_state_dir
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(sanitize_proxy_artifact_component)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "task".to_owned());
-    PathBuf::from("/tmp").join(format!(
-        "loftd-{}-{}-{file_name}",
-        std::process::id(),
-        task_id
-    ))
-}
-
-fn sanitize_proxy_artifact_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
-            _ => '-',
-        })
-        .collect()
-}
+pub(crate) use pid::{
+    cleanup_pid, passt_pid_pipe, read_passt_pid, status_exit_code, wait_pid, write_passt_pid,
+};
+#[cfg(test)]
+use plan::PASST_SOCKET_FILE;
+pub(crate) use plan::{PASST_PROGRAM, PASTA_PROGRAM, passt_plan, pasta_plan};
 
 pub(crate) struct NetworkManagerSession {
     holder: HolderGuard,
@@ -153,7 +65,7 @@ impl NetworkManagerSession {
 
     pub(crate) fn cleanup(&mut self) {
         if let Some(pid) = self.passt_pid.take() {
-            kill_and_wait_pid(pid);
+            pid::kill_and_wait_pid(pid);
         }
         self.pasta.kill_and_wait();
         self.holder.kill_and_wait();
@@ -275,48 +187,6 @@ fn passt_socket_for_mode(mode: NetworkMode, task_state_dir: &Path) -> Option<Pat
     }
 }
 
-pub(crate) fn passt_pid_pipe() -> Result<(OwnedFd, OwnedFd)> {
-    pipe_cloexec("loftd passt pid pipe")
-}
-
-fn pipe_cloexec(label: &str) -> Result<(OwnedFd, OwnedFd)> {
-    let mut fds = [0; 2];
-    // SAFETY: pipe2 writes two valid close-on-exec fds on success.
-    let rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
-    if rc < 0 {
-        bail!(
-            "failed to create {label}: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    // SAFETY: fds are freshly returned by pipe and uniquely owned here.
-    let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
-    // SAFETY: fds are freshly returned by pipe and uniquely owned here.
-    let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
-    Ok((read_fd, write_fd))
-}
-
-pub(crate) fn write_passt_pid(fd: OwnedFd, pid: libc::pid_t) -> Result<()> {
-    let mut file = fs::File::from(fd);
-    file.write_all(pid.to_string().as_bytes())
-        .context("failed to send loftd passt pid to network manager")
-}
-
-pub(crate) fn read_passt_pid(fd: OwnedFd) -> Result<Option<libc::pid_t>> {
-    let mut file = fs::File::from(fd);
-    let mut text = String::new();
-    file.read_to_string(&mut text)
-        .context("failed to read loftd passt pid from VM worker")?;
-    let text = text.trim();
-    if text.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(
-        text.parse::<libc::pid_t>()
-            .context("loftd VM worker reported invalid passt pid")?,
-    ))
-}
-
 fn ensure_executable_available(program: &str) -> Result<()> {
     let status = Command::new(program)
         .arg("--help")
@@ -343,7 +213,7 @@ impl HolderGuard {
 
     fn kill_and_wait(&mut self) {
         if self.pid > 0 {
-            kill_and_wait_pid(self.pid);
+            pid::kill_and_wait_pid(self.pid);
             self.pid = -1;
         }
     }
@@ -356,7 +226,7 @@ impl Drop for HolderGuard {
 }
 
 fn spawn_netns_holder() -> Result<HolderGuard> {
-    let (read_fd, write_fd) = pipe_cloexec("loftd network namespace holder readiness pipe")?;
+    let (read_fd, write_fd) = pid::pipe_cloexec("loftd network namespace holder readiness pipe")?;
     // SAFETY: fork is used to create a simple namespace holder process. The child either
     // unshares and pauses or exits immediately; no Rust references are shared back.
     let pid = unsafe { libc::fork() };
@@ -441,53 +311,6 @@ fn wait_until_ready(child: &mut ManagedChild, mut ready: impl FnMut() -> bool) -
         thread::sleep(STARTUP_POLL);
     }
     bail!("loftd {} did not become ready within 5s", child.name)
-}
-
-pub(crate) fn wait_pid(pid: libc::pid_t) -> Result<i32> {
-    let mut status = 0;
-    // SAFETY: pid is a child process id returned by fork.
-    let rc = unsafe { libc::waitpid(pid, &mut status, 0) };
-    if rc < 0 {
-        bail!(
-            "failed to wait for loftd VM worker {pid}: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    Ok(status)
-}
-
-pub(crate) fn status_exit_code(status: i32) -> Option<i32> {
-    if libc::WIFEXITED(status) {
-        Some(libc::WEXITSTATUS(status))
-    } else {
-        None
-    }
-}
-
-fn kill_and_wait_pid(pid: libc::pid_t) {
-    // SAFETY: best-effort signal to a child/descendant pid managed by loftd.
-    let _ = unsafe { libc::kill(pid, libc::SIGTERM) };
-    let start = Instant::now();
-    loop {
-        let mut status = 0;
-        // SAFETY: best-effort nonblocking reap of a known pid.
-        let rc = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-        if rc == pid || rc < 0 {
-            break;
-        }
-        if start.elapsed() > Duration::from_millis(500) {
-            // SAFETY: escalate cleanup for stubborn child.
-            let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
-            // SAFETY: final blocking reap.
-            let _ = unsafe { libc::waitpid(pid, &mut status, 0) };
-            break;
-        }
-        thread::sleep(STARTUP_POLL);
-    }
-}
-
-pub(crate) fn cleanup_pid(pid: libc::pid_t) {
-    kill_and_wait_pid(pid);
 }
 
 #[cfg(test)]
