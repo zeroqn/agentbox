@@ -1,21 +1,21 @@
 use anyhow::Result;
 use std::env;
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::cli::RuntimeOptions;
 use crate::config;
 use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
-use crate::runtime::launch_config::{
-    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, NetworkMode, PI_TAG, PI_TARGET,
-    SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, validate_mounts,
-};
+use crate::runtime::launch::components::mounts;
+use crate::runtime::launch::config::{BindMount, NetworkMode};
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
+/// Resolved host-side launch intent and session inputs.
+///
+/// `LaunchPlan` is built from CLI/config/environment before any task rootfs or
+/// helper/libkrun execution contract is materialized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LaunchPlan {
     pub(crate) workspace_dir: PathBuf,
@@ -75,7 +75,7 @@ impl LaunchPlan {
         let home_dir = home_dir.ok_or_else(|| {
             anyhow::anyhow!("HOME is not set; loftd cannot prepare .codex and .pi bind mounts")
         })?;
-        let bind_mounts = prepare_bind_mounts(&workspace_dir, home_dir, &state_layout)?;
+        let bind_mounts = mounts::prepare_dev_mounts(&workspace_dir, home_dir, &state_layout)?;
         let task_rootfs_backend = options
             .rootfs_backend
             .or_else(|| config.task_rootfs_backend())
@@ -113,46 +113,6 @@ impl LaunchPlan {
 
 fn derive_runtime_hostname(workspace_slug: &str) -> String {
     format!("loftd-{workspace_slug}")
-}
-
-fn prepare_bind_mounts(
-    workspace_dir: &Path,
-    home_dir: &Path,
-    state_layout: &StateLayout,
-) -> Result<Vec<BindMount>> {
-    let codex_dir = home_dir.join(".codex");
-    let pi_dir = home_dir.join(".pi");
-    let cargo_dir = state_layout.root_dir().join("cargo");
-    let sccache_dir = state_layout.sccache_dir();
-
-    fs::create_dir_all(&codex_dir)
-        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", codex_dir.display()))?;
-    fs::create_dir_all(&pi_dir)
-        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", pi_dir.display()))?;
-    fs::create_dir_all(&cargo_dir)
-        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", cargo_dir.display()))?;
-    fs::create_dir_all(&sccache_dir)
-        .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", sccache_dir.display()))?;
-    fs::set_permissions(&sccache_dir, fs::Permissions::from_mode(0o700))
-        .map_err(|err| anyhow::anyhow!("failed to chmod 700 '{}': {err}", sccache_dir.display()))?;
-
-    let mounts = vec![
-        bind_mount(workspace_dir, WORKSPACE_TAG, WORKSPACE_TARGET),
-        bind_mount(&codex_dir, CODEX_TAG, CODEX_TARGET),
-        bind_mount(&pi_dir, PI_TAG, PI_TARGET),
-        bind_mount(&cargo_dir, CARGO_TAG, CARGO_TARGET),
-        bind_mount(&sccache_dir, SCCACHE_TAG, SCCACHE_TARGET),
-    ];
-    validate_mounts(&mounts)?;
-    Ok(mounts)
-}
-
-fn bind_mount(source: &Path, tag: &str, target: &str) -> BindMount {
-    BindMount {
-        source: source.to_path_buf(),
-        tag: tag.to_owned(),
-        target: target.to_owned(),
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,8 +154,8 @@ mod tests {
 
     use crate::cli::RuntimeOptions;
     use crate::logging::{LogLevel, LogSettings};
-    use crate::runtime::launch_config::NetworkMode;
-    use crate::runtime::launch_plan::{ImageSelection, LaunchPlan};
+    use crate::runtime::launch::config::NetworkMode;
+    use crate::runtime::launch::plan::{ImageSelection, LaunchPlan};
     use crate::task_rootfs::TaskRootfsBackend;
     use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 

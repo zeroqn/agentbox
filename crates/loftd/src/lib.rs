@@ -31,7 +31,7 @@ pub fn entrypoint() -> ExitCode {
     match Cli::parse().into_action() {
         CliAction::Run(options) => run_with_logging(options),
         CliAction::DecodeLaunchConf { path } => {
-            match runtime::launch_config::LaunchConfig::decode_file_for_debug(&path) {
+            match runtime::launch::config::LaunchConfig::decode_file_for_debug(&path) {
                 Ok(decoded) => {
                     print!("{decoded}");
                     ExitCode::SUCCESS

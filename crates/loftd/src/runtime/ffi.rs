@@ -3,7 +3,7 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::path::Path;
 
-use crate::runtime::launch_config::{LaunchConfig, NetworkMode};
+use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 
 const LIBKRUN_LIBRARY_ENV: &str = "LOFTD_LIBKRUN_LIBRARY";
 const DEFAULT_LIBKRUN_NAMES: [&str; 2] = ["libkrun.so.1", "libkrun.so"];
@@ -502,7 +502,7 @@ fn dlerror_string() -> String {
 mod tests {
     use super::*;
     use crate::logging::LogLevel;
-    use crate::runtime::launch_config::{
+    use crate::runtime::launch::config::{
         BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment, LaunchSpec,
         NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
         WORKSPACE_TARGET,

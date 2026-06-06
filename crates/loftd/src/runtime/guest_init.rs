@@ -3,7 +3,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use crate::runtime::launch_config::GuestInitOverrideMount;
+use crate::runtime::launch::config::GuestInitOverrideMount;
 
 const GUEST_INIT_BASENAME: &str = "loftd-guest-init";
 

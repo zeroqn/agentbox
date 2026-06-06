@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
-use crate::runtime::launch_config::NetworkMode;
+use crate::runtime::launch::config::NetworkMode;
 use crate::runtime::runtime_etc::HOST_GATEWAY_ADDR;
 
 const HOST_DNS_FORWARD_ADDR: &str = "169.254.1.1";

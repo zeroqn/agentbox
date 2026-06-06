@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::runtime::launch_plan::ImageSelection;
+use crate::runtime::launch::plan::ImageSelection;
 use crate::runtime::task_rootfs::{
     BtrfsRootfsCommands, UnsharedBtrfsRootfsCommands, snapshot_mounted_rootfs,
 };

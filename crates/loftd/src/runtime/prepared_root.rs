@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use crate::runtime::launch_config::LaunchConfig;
+use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::runtime_etc::{self, RuntimeEtcFiles};
 
 const PREPARED_ROOT_DIR: &str = "prepared-root";
@@ -252,7 +252,7 @@ fn prepared_target(root_export: &Path, mount_target: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use crate::logging::LogLevel;
-    use crate::runtime::launch_config::{
+    use crate::runtime::launch::config::{
         BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, GuestInitOverrideMount,
         LaunchSpec, NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
         WORKSPACE_TARGET,

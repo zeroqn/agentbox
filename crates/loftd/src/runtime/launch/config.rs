@@ -103,6 +103,10 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) extra_env: Vec<(String, String)>,
 }
 
+/// Serialized helper/libkrun execution contract.
+///
+/// `LaunchConfig` is derived from a resolved launch plan plus materialized task
+/// rootfs data and is written into the task rootfs for the helper process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LaunchConfig {
     pub(crate) task_rootfs: PathBuf,

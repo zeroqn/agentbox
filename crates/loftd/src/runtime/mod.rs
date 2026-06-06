@@ -10,10 +10,8 @@ pub(crate) mod ffi;
 pub(crate) mod guest_init;
 pub(crate) mod image_source;
 pub(crate) mod keep_id;
-pub(crate) mod launch_config;
-pub(crate) mod launch_plan;
+pub(crate) mod launch;
 pub(crate) mod network;
-pub(crate) mod persistent_disks;
 pub(crate) mod prepared_root;
 mod profile;
 pub(crate) mod raw_btrfs;
@@ -21,8 +19,7 @@ mod runtime_etc;
 pub(crate) mod supervisor;
 pub(crate) mod task_rootfs;
 
-use launch_plan::LaunchPlan;
-use persistent_disks::{HostPersistentDiskPreparer, PersistentDiskPreparer};
+use launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
 use profile::LoftdHostProfiler;
 use supervisor::{HostSupervisor, Supervisor};
 use task_rootfs::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
@@ -100,7 +97,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
                     )
                 }) {
                     Ok(guest_init) => match profiler.measure_result("launch_config_build", || {
-                        launch_config::LaunchConfig::build_for_task(launch_config::LaunchSpec {
+                        launch::config::LaunchConfig::build_for_task(launch::config::LaunchSpec {
                             task_rootfs: lease.handle().rootfs_path(),
                             hostname: &plan.hostname,
                             mounts: &plan.bind_mounts,
@@ -115,7 +112,7 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
                             root: plan.root,
                             host_uid: current_uid(),
                             host_gid: current_gid(),
-                            vcpus: launch_config::resolve_cpu_count()?,
+                            vcpus: launch::config::resolve_cpu_count()?,
                             disks: disks.attachments(),
                             extra_env: disks.env_pairs(),
                         })
@@ -243,7 +240,7 @@ mod tests {
             guest_init: None,
             preserve_debug: false,
             mem_gib: None,
-            network_mode: launch_config::NetworkMode::Tsi,
+            network_mode: launch::config::NetworkMode::Tsi,
             guest_command: Vec::new(),
         }
     }

@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
-use crate::runtime::launch_config::NetworkMode;
+use crate::runtime::launch::config::NetworkMode;
 use crate::task_rootfs::TaskRootfsBackend;
 
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
@@ -197,7 +197,7 @@ mod tests {
 
     use crate::cli::Cli;
     use crate::logging::LogLevel;
-    use crate::runtime::launch_config::NetworkMode;
+    use crate::runtime::launch::config::NetworkMode;
     use crate::task_rootfs::TaskRootfsBackend;
 
     #[test]

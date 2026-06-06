@@ -7,7 +7,7 @@ use std::process::{Command, ExitCode, Stdio};
 use crate::logging::{self, INTERNAL_LOG_LEVEL_ENV, LogSettings};
 use crate::runtime::ffi::{DirectLibkrunLauncher, DynamicLibkrunApi};
 use crate::runtime::keep_id::KeepIdLauncher;
-use crate::runtime::launch_config::{LaunchConfig, NetworkMode};
+use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::network::{self, NetworkManagerSession, PasstWorkerSession};
 use crate::runtime::prepared_root;
 

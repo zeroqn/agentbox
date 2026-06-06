@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::runtime::image_source::{self, BuildahCommands, OciProcessConfig};
-use crate::runtime::launch_plan::ImageSelection;
+use crate::runtime::launch::plan::ImageSelection;
 use crate::task_rootfs::TaskRootfsBackend;
 
 const TASKS_DIR: &str = "tasks";
