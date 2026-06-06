@@ -10,17 +10,23 @@ mod profile;
 pub(crate) mod rootfs;
 pub(crate) mod supervisor;
 
+use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec};
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
 use profile::LoftdHostProfiler;
 use rootfs::task::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
 use supervisor::{HostSupervisor, Supervisor};
 
-pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
-    let cwd = env::current_dir()?
-        .canonicalize()
-        .context("failed to canonicalize current directory for loftd workspace mount")?;
-    let mut profiler = LoftdHostProfiler::new(host_profile_enabled(&options));
+pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -> Result<ExitCode> {
+    let mut profiler = LoftdHostProfiler::new_started_at(
+        host_profile_enabled(&options),
+        profile_scope.started_at(),
+    );
+    let cwd = profiler.measure_result("workspace_canonicalization", || {
+        env::current_dir()?
+            .canonicalize()
+            .context("failed to canonicalize current directory for loftd workspace mount")
+    })?;
     let plan =
         profiler.measure_result("launch_plan_build", || LaunchPlan::from_env(options, cwd))?;
     profiler.record_metadata(
@@ -148,15 +154,9 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
             } else {
                 profiler.measure_result("task_state_cleanup", || lease.cleanup())
             };
-            profiler.emit_to_stderr();
-            match host_run_result {
-                BtrfsHostRunResult::Helper(run_result) => {
-                    finalize_btrfs_run_result(run_result, cleanup_result)
-                }
-                BtrfsHostRunResult::SetupFailed(setup_error) => {
-                    finalize_post_lease_setup_failure(setup_error, cleanup_result)
-                }
-            }
+            finalize_profiled_btrfs_run(host_run_result, cleanup_result, || {
+                profiler.emit_to_stderr();
+            })
         }
         TaskRootfsBackend::FuseOverlay => bail!(
             "loftd fuse-overlay task rootfs materialization is not implemented in this phase; use btrfs-snapshot or wait for the fuse-overlay slice"
@@ -167,6 +167,22 @@ pub(crate) fn run(options: RuntimeOptions) -> Result<ExitCode> {
 enum BtrfsHostRunResult {
     Helper(Result<supervisor::ChildStatus>),
     SetupFailed(anyhow::Error),
+}
+
+fn finalize_profiled_btrfs_run(
+    host_run_result: BtrfsHostRunResult,
+    cleanup_result: Result<rootfs::task::CleanupResult>,
+    emit_profile: impl FnOnce(),
+) -> Result<ExitCode> {
+    emit_profile();
+    match host_run_result {
+        BtrfsHostRunResult::Helper(run_result) => {
+            finalize_btrfs_run_result(run_result, cleanup_result)
+        }
+        BtrfsHostRunResult::SetupFailed(setup_error) => {
+            finalize_post_lease_setup_failure(setup_error, cleanup_result)
+        }
+    }
 }
 
 fn host_profile_enabled(options: &RuntimeOptions) -> bool {
@@ -218,6 +234,7 @@ fn current_gid() -> u32 {
 mod tests {
     use super::*;
     use anyhow::anyhow;
+    use std::cell::Cell;
     use std::path::PathBuf;
 
     fn runtime_options(debug: bool, profile: bool) -> RuntimeOptions {
@@ -243,6 +260,40 @@ mod tests {
         assert!(!host_profile_enabled(&runtime_options(true, false)));
         assert!(host_profile_enabled(&runtime_options(false, true)));
         assert!(host_profile_enabled(&runtime_options(true, true)));
+    }
+
+    #[test]
+    fn profiled_btrfs_finalization_emits_report_before_returning_helper_result() {
+        let emitted = Cell::new(false);
+        let code = finalize_profiled_btrfs_run(
+            BtrfsHostRunResult::Helper(Ok(supervisor::ChildStatus::exited(3))),
+            Ok(rootfs::task::CleanupResult::Removed),
+            || emitted.set(true),
+        )
+        .expect("successful helper and cleanup should return helper exit code");
+
+        assert!(
+            emitted.get(),
+            "host profile should be emitted on completed btrfs path"
+        );
+        assert_eq!(code, ExitCode::from(3));
+    }
+
+    #[test]
+    fn profiled_btrfs_finalization_emits_report_before_returning_setup_error() {
+        let emitted = Cell::new(false);
+        let err = finalize_profiled_btrfs_run(
+            BtrfsHostRunResult::SetupFailed(anyhow!("guest-init failure")),
+            Ok(rootfs::task::CleanupResult::Removed),
+            || emitted.set(true),
+        )
+        .expect_err("setup failure should still be returned");
+
+        assert!(
+            emitted.get(),
+            "host profile should be emitted before setup errors return"
+        );
+        assert_eq!(err.to_string(), "guest-init failure");
     }
 
     #[test]

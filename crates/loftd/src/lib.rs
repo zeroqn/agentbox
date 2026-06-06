@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::ffi::OsString;
 use std::process::ExitCode;
+use std::time::Instant;
 
 mod cli;
 mod config;
@@ -17,6 +18,7 @@ const DEFAULT_IMAGE: &str = "localhost/loftd:latest";
 const DEFAULT_FALLBACK_IMAGE: &str = "ghcr.io/zeroqn/loftd:latest";
 
 pub fn entrypoint() -> ExitCode {
+    let host_session_started_at = Instant::now();
     let args = std::env::args_os().collect::<Vec<_>>();
     if is_internal_invocation(&args) {
         return match run_internal(args.into_iter().skip(2).collect()) {
@@ -29,7 +31,10 @@ pub fn entrypoint() -> ExitCode {
     }
 
     match Cli::parse().into_action() {
-        CliAction::Run(options) => run_with_logging(options),
+        CliAction::Run(options) => run_with_logging(
+            options,
+            runtime::RuntimeProfileScope::from_started_at(host_session_started_at),
+        ),
         CliAction::DecodeLaunchConf { path } => {
             match runtime::launch::config::LaunchConfig::decode_file_for_debug(&path) {
                 Ok(decoded) => {
@@ -45,13 +50,16 @@ pub fn entrypoint() -> ExitCode {
     }
 }
 
-fn run_with_logging(options: RuntimeOptions) -> ExitCode {
+fn run_with_logging(
+    options: RuntimeOptions,
+    profile_scope: runtime::RuntimeProfileScope,
+) -> ExitCode {
     if let Err(err) = logging::init_tracing(&options.log_settings) {
         eprintln!("loftd: {err:#}");
         return ExitCode::from(1);
     }
 
-    match run(options) {
+    match run(options, profile_scope) {
         Ok(code) => code,
         Err(err) => {
             eprintln!("loftd: {err:#}");
@@ -60,8 +68,8 @@ fn run_with_logging(options: RuntimeOptions) -> ExitCode {
     }
 }
 
-fn run(options: RuntimeOptions) -> Result<ExitCode> {
-    runtime::run(options)
+fn run(options: RuntimeOptions, profile_scope: runtime::RuntimeProfileScope) -> Result<ExitCode> {
+    runtime::run(options, profile_scope)
 }
 
 fn is_internal_invocation(args: &[OsString]) -> bool {
