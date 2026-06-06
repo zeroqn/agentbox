@@ -72,7 +72,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         config.exec_path,
         "/nix/store/hash-loftd/bin/loftd-guest-init"
     );
-    assert_eq!(config.argv, ["enter", "--", "fish", "-l"]);
+    assert_eq!(config.argv, ["enter", "fish", "-l"]);
     assert_eq!(
         config.env,
         [("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
@@ -131,7 +131,8 @@ fn launch_config_uses_explicit_guest_command() {
     })
     .expect("launch config should build");
 
-    assert_eq!(config.argv, ["enter", "--", "bash", "-lc", "echo ok"]);
+    assert_eq!(config.argv, ["enter", "bash", "-lc", "echo ok"]);
+    assert_ne!(config.argv.get(1).map(String::as_str), Some("--"));
 }
 
 #[test]
@@ -197,7 +198,7 @@ fn launch_config_round_trips_through_hex_line_format() {
     assert!(parsed.guest_config_env_contains("LOFTD_ENTER_AS_ROOT", "1"));
     assert!(parsed.guest_config_env_contains("LOFTD_CONTAINERS_STORAGE", "1"));
     assert!(parsed.guest_config_env_contains("PATH", "/nix/store/fish/bin"));
-    assert_eq!(parsed.argv, ["enter", "--", "fish", "-l"]);
+    assert_eq!(parsed.argv, ["enter", "fish", "-l"]);
     assert_eq!(parsed.workdir, "/workspace/project");
     assert_eq!(parsed.disks[0].id, "loftd-nix");
     assert_eq!(
@@ -681,5 +682,5 @@ fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
     })
     .expect("launch config should build");
 
-    assert_eq!(config.argv, ["enter", "--", "bash", "-lc", "echo image"]);
+    assert_eq!(config.argv, ["enter", "bash", "-lc", "echo image"]);
 }

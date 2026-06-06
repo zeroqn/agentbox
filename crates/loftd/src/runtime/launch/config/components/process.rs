@@ -20,9 +20,5 @@ pub(crate) fn guest_init_argv(guest_command: &[String], image_cmd: &[String]) ->
         guest_command.to_vec()
     };
 
-    ["enter", "--"]
-        .into_iter()
-        .map(str::to_owned)
-        .chain(command)
-        .collect()
+    std::iter::once("enter".to_owned()).chain(command).collect()
 }

@@ -298,12 +298,7 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
         Call::SetExec(
             7,
             "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
-            vec![
-                "enter".to_owned(),
-                "--".to_owned(),
-                "fish".to_owned(),
-                "-l".to_owned()
-            ],
+            vec!["enter".to_owned(), "fish".to_owned(), "-l".to_owned()],
             vec![("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
         )
     );
