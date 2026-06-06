@@ -789,14 +789,17 @@ and the blocking libkrun guest session when control returns to Rust. The helper
 report also imports VM-worker child phase timings under
 `helper_wait_vm_worker_child_*` rows from a pre-handoff artifact written before
 `krun_start_enter`. The vendored libkrun build appends opt-in internal
-`libkrun_*` TSV rows to that same artifact through `krun_set_profile_path`, so
-profiles can further split the wait into event-manager creation, context take,
-firmware/block/kernel-cmdline/net/vsock/gpu-console/identity setup, and selected
-microVM build phases such as payload choice, guest-memory creation, vCPU start,
-and event-subscriber registration. `helper_wait_vm_worker_child_unattributed`
-covers any remaining wait time outside the known child/libkrun setup phases,
-usually guest runtime or libkrun event-loop time after the handoff. `--profile`
-does not raise loftd, guest-init, or libkrun debug logging;
+`libkrun_*` TSV rows to that same artifact through `krun_set_profile_path`.
+loftd prints those rows as a separate `libkrun profile` section with raw
+nanosecond (`ns`) values plus a derived millisecond rendering, instead of
+merging them into loftd's millisecond host profile rows. The libkrun section can
+show event-manager creation, context take, firmware/block/kernel-cmdline/net/
+vsock/gpu-console/identity setup, and selected microVM build phases such as
+payload choice, guest-memory creation, vCPU start, and event-subscriber
+registration. `helper_wait_vm_worker_child_unattributed` covers any remaining
+wait time outside the known loftd-owned child setup phases, usually guest
+runtime or libkrun event-loop time after the handoff. `--profile` does not raise
+loftd, guest-init, or libkrun debug logging;
 use `--log-level debug`, `--log-level trace`, or the compatibility form
 `--debug` separately when verbose diagnostic logs are needed. Stdout remains
 reserved for guest command output.

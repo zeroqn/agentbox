@@ -13,6 +13,7 @@ pub(crate) struct LoftdHostProfiler {
     started_at: Instant,
     metadata: Vec<ProfileMetadata>,
     records: Vec<ProfileRecord>,
+    raw_records: Vec<RawProfileRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +28,12 @@ struct ProfileRecord {
     duration: Duration,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawProfileRecord {
+    label: String,
+    nanos: u128,
+}
+
 impl LoftdHostProfiler {
     pub(in crate::runtime::session) fn new_started_at(enabled: bool, started_at: Instant) -> Self {
         Self {
@@ -34,6 +41,7 @@ impl LoftdHostProfiler {
             started_at,
             metadata: Vec::new(),
             records: Vec::new(),
+            raw_records: Vec::new(),
         }
     }
 
@@ -120,11 +128,15 @@ impl LoftdHostProfiler {
 
         let path = vm_worker_wait_detail_path(task_state_dir);
         let temp_path = vm_worker_wait_detail_temp_path(task_state_dir);
+        let raw_libkrun_records = read_raw_libkrun_profile_records(&path)?;
         let mut file = File::create(&temp_path)?;
         for record in &self.records {
             if is_vm_worker_wait_detail_label(record.label) {
                 writeln!(file, "{}\t{}", record.label, record.duration.as_nanos())?;
             }
+        }
+        for record in raw_libkrun_records {
+            writeln!(file, "{}\t{}", record.label, record.nanos)?;
         }
         file.flush()?;
         fs::rename(temp_path, path)
@@ -183,6 +195,18 @@ impl LoftdHostProfiler {
             "  total_profiled_host_runtime: {}",
             format_duration(total)
         )?;
+        if !self.raw_records.is_empty() {
+            writeln!(writer, "libkrun profile")?;
+            for record in &self.raw_records {
+                writeln!(
+                    writer,
+                    "  {}: {}ns ({})",
+                    record.label,
+                    record.nanos,
+                    format_duration(duration_from_nanos_saturating(record.nanos))
+                )?;
+            }
+        }
         writer.flush()
     }
 
@@ -226,16 +250,19 @@ impl LoftdHostProfiler {
             let Some((child_label, nanos_text)) = line.split_once('\t') else {
                 continue;
             };
-            let Some(mapping) = vm_worker_wait_detail_parent_mapping(child_label) else {
-                continue;
-            };
             let Ok(nanos) = nanos_text.parse::<u128>() else {
                 continue;
             };
-            let duration = duration_from_nanos_saturating(nanos);
-            if mapping.accounted {
-                accounted = accounted.saturating_add(duration);
+            if is_raw_libkrun_profile_label(child_label) {
+                self.record_raw_profile(child_label, nanos);
+                recorded_any = true;
+                continue;
             }
+            let Some(mapping) = vm_worker_wait_detail_parent_mapping(child_label) else {
+                continue;
+            };
+            let duration = duration_from_nanos_saturating(nanos);
+            accounted = accounted.saturating_add(duration);
             self.record_duration(mapping.parent_label, duration);
             recorded_any = true;
         }
@@ -245,6 +272,13 @@ impl LoftdHostProfiler {
             self.record_duration("helper_wait_vm_worker_child_unattributed", unattributed);
         }
         Ok(())
+    }
+
+    fn record_raw_profile(&mut self, label: &str, nanos: u128) {
+        self.raw_records.push(RawProfileRecord {
+            label: label.to_owned(),
+            nanos,
+        });
     }
 }
 
@@ -267,6 +301,35 @@ fn vm_worker_wait_detail_temp_path(task_state_dir: &Path) -> PathBuf {
     task_state_dir.join(format!("{VM_WORKER_WAIT_DETAIL_FILENAME}.tmp"))
 }
 
+fn read_raw_libkrun_profile_records(path: &Path) -> io::Result<Vec<RawProfileRecord>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let records = text
+        .lines()
+        .filter_map(parse_raw_libkrun_profile_record)
+        .collect();
+    Ok(records)
+}
+
+fn parse_raw_libkrun_profile_record(line: &str) -> Option<RawProfileRecord> {
+    let (label, nanos_text) = line.split_once('\t')?;
+    if !is_raw_libkrun_profile_label(label) {
+        return None;
+    }
+    let nanos = nanos_text.parse::<u128>().ok()?;
+    Some(RawProfileRecord {
+        label: label.to_owned(),
+        nanos,
+    })
+}
+
+fn is_raw_libkrun_profile_label(label: &str) -> bool {
+    label.starts_with("libkrun_")
+}
+
 fn is_vm_worker_wait_detail_label(label: &str) -> bool {
     vm_worker_wait_detail_parent_mapping(label).is_some()
 }
@@ -274,22 +337,11 @@ fn is_vm_worker_wait_detail_label(label: &str) -> bool {
 #[derive(Debug, Clone, Copy)]
 struct VmWorkerWaitDetailMapping {
     parent_label: &'static str,
-    accounted: bool,
 }
 
 impl VmWorkerWaitDetailMapping {
     const fn accounted(parent_label: &'static str) -> Self {
-        Self {
-            parent_label,
-            accounted: true,
-        }
-    }
-
-    const fn display_only(parent_label: &'static str) -> Self {
-        Self {
-            parent_label,
-            accounted: false,
-        }
+        Self { parent_label }
     }
 }
 
@@ -322,48 +374,6 @@ fn vm_worker_wait_detail_parent_mapping(label: &str) -> Option<VmWorkerWaitDetai
         "vm_worker_libkrun_enter" => {
             VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_enter")
         }
-        "libkrun_start_enter_event_manager_create" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_event_manager_create",
-        ),
-        "libkrun_start_enter_context_take" => {
-            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_context_take")
-        }
-        "libkrun_start_enter_load_firmware" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_load_firmware",
-        ),
-        "libkrun_start_enter_configure_block" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_configure_block",
-        ),
-        "libkrun_start_enter_configure_kernel_cmdline" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_configure_kernel_cmdline",
-        ),
-        "libkrun_start_enter_configure_net" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_configure_net",
-        ),
-        "libkrun_start_enter_configure_vsock" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_configure_vsock",
-        ),
-        "libkrun_start_enter_configure_gpu_console" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_configure_gpu_console",
-        ),
-        "libkrun_start_enter_set_identity" => {
-            VmWorkerWaitDetailMapping::accounted("helper_wait_vm_worker_child_libkrun_set_identity")
-        }
-        "libkrun_build_microvm_choose_payload" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_build_choose_payload",
-        ),
-        "libkrun_build_microvm_create_guest_memory" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_build_create_guest_memory",
-        ),
-        "libkrun_build_microvm_start_vcpus" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_build_start_vcpus",
-        ),
-        "libkrun_build_microvm_register_event_subscriber" => VmWorkerWaitDetailMapping::accounted(
-            "helper_wait_vm_worker_child_libkrun_build_register_event_subscriber",
-        ),
-        "libkrun_start_enter_event_loop_runtime" => VmWorkerWaitDetailMapping::display_only(
-            "helper_wait_vm_worker_child_libkrun_event_loop_runtime",
-        ),
         _ => return None,
     })
 }
@@ -582,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn host_profile_imports_libkrun_internal_wait_child_details() {
+    fn host_profile_reads_libkrun_internal_profile_as_standalone_ns_rows() {
         let task_state_dir = unique_temp_dir("loftd-profile-libkrun-details");
         fs::create_dir_all(&task_state_dir).expect("temp task state dir should be created");
         let cleanup_dir = task_state_dir.clone();
@@ -595,7 +605,7 @@ mod tests {
                 "libkrun_start_enter_configure_block\t3000000\n",
                 "libkrun_build_microvm_create_guest_memory\t4000000\n",
                 "libkrun_start_enter_event_loop_runtime\t0\n",
-                "unknown_libkrun_phase\t5000000\n",
+                "libkrun_future_phase\t5000000\n",
             ),
         )
         .expect("profile artifact should write");
@@ -610,14 +620,42 @@ mod tests {
         let text = String::from_utf8(output).expect("report should be utf-8");
 
         assert!(text.contains("helper_wait_vm_worker_child_config_read: 1.000ms"));
-        assert!(text.contains("helper_wait_vm_worker_child_libkrun_event_manager_create: 2.000ms"));
-        assert!(text.contains("helper_wait_vm_worker_child_libkrun_configure_block: 3.000ms"));
-        assert!(
-            text.contains("helper_wait_vm_worker_child_libkrun_build_create_guest_memory: 4.000ms")
-        );
-        assert!(text.contains("helper_wait_vm_worker_child_libkrun_event_loop_runtime: 0.000ms"));
-        assert!(text.contains("helper_wait_vm_worker_child_unattributed: 10.000ms"));
-        assert!(!text.contains("unknown_libkrun_phase"));
+        assert!(text.contains("helper_wait_vm_worker_child_unattributed: 19.000ms"));
+        assert!(text.contains("libkrun profile\n"));
+        assert!(text.contains("libkrun_start_enter_event_manager_create: 2000000ns (2.000ms)"));
+        assert!(text.contains("libkrun_start_enter_configure_block: 3000000ns (3.000ms)"));
+        assert!(text.contains("libkrun_build_microvm_create_guest_memory: 4000000ns (4.000ms)"));
+        assert!(text.contains("libkrun_start_enter_event_loop_runtime: 0ns (0.000ms)"));
+        assert!(text.contains("libkrun_future_phase: 5000000ns (5.000ms)"));
+        assert!(!text.contains("helper_wait_vm_worker_child_libkrun_event_manager_create"));
+        assert!(!text.contains("helper_wait_vm_worker_child_libkrun_configure_block"));
+
+        fs::remove_dir_all(cleanup_dir).expect("temp task state dir should be removed");
+    }
+
+    #[test]
+    fn vm_worker_wait_detail_rewrite_preserves_raw_libkrun_rows() {
+        let task_state_dir = unique_temp_dir("loftd-profile-preserve-libkrun-details");
+        fs::create_dir_all(&task_state_dir).expect("temp task state dir should be created");
+        let cleanup_dir = task_state_dir.clone();
+
+        fs::write(
+            vm_worker_wait_detail_path(&task_state_dir),
+            "libkrun_start_enter_configure_block\t3000000\n",
+        )
+        .expect("profile artifact should write");
+
+        let mut profiler = LoftdHostProfiler::new_started_at(true, Instant::now());
+        profiler.record_duration("vm_worker_config_read", Duration::from_millis(1));
+        profiler
+            .write_vm_worker_wait_details(&task_state_dir)
+            .expect("child detail artifact rewrite should preserve libkrun rows");
+
+        let text = fs::read_to_string(vm_worker_wait_detail_path(&task_state_dir))
+            .expect("profile artifact should be readable");
+
+        assert!(text.contains("vm_worker_config_read\t1000000\n"));
+        assert!(text.contains("libkrun_start_enter_configure_block\t3000000\n"));
 
         fs::remove_dir_all(cleanup_dir).expect("temp task state dir should be removed");
     }
