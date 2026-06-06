@@ -331,6 +331,33 @@ fn passt_mode_adds_unixstream_before_start() {
 }
 
 #[test]
+fn pre_enter_hook_runs_after_setup_and_before_start() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter_with_pre_enter_hook(&config(), || {
+            let calls = calls.borrow();
+            assert!(calls.iter().any(|call| matches!(call, Call::SetExec(..))));
+            assert!(
+                !calls
+                    .iter()
+                    .any(|call| matches!(call, Call::StartEnter(..)))
+            );
+        })
+        .expect("launch should succeed");
+
+    let calls = calls.borrow();
+    let set_exec_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetExec(..)))
+        .expect("setup should configure exec before hook");
+    let start_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::StartEnter(..)))
+        .expect("launch should start after hook");
+    assert!(set_exec_index < start_index);
+}
+
+#[test]
 fn passt_mode_requires_prepared_socket_path() {
     let mut config = config();
     config.network_mode = NetworkMode::Passt;

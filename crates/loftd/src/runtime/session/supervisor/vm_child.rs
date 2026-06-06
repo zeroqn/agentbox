@@ -3,6 +3,7 @@
 use anyhow::{Result, bail};
 use std::os::fd::OwnedFd;
 use std::path::Path;
+use std::time::Instant;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::session::profile::LoftdHostProfiler;
@@ -146,7 +147,22 @@ fn run_libkrun_in_current_namespace(
         DynamicLibkrunApi::open_default()
     })?;
     tracing::debug!("libkrun API open: complete");
-    profiler.measure_result("vm_worker_libkrun_session", || {
-        DirectLibkrunLauncher::new(api).start_enter(&launch_config)
-    })
+    let session_started_at = Instant::now();
+    let configure_started_at = Instant::now();
+    let mut configure_duration = std::time::Duration::ZERO;
+    let mut pre_enter_reached = false;
+    let result =
+        DirectLibkrunLauncher::new(api).start_enter_with_pre_enter_hook(&launch_config, || {
+            configure_duration = configure_started_at.elapsed();
+            pre_enter_reached = true;
+            profiler.record_vm_worker_libkrun_configure(configure_duration);
+            let _ = profiler.write_vm_worker_wait_details(task_state_dir);
+        });
+    let session_duration = session_started_at.elapsed();
+    profiler.record_vm_worker_libkrun_session(session_duration);
+    if pre_enter_reached {
+        profiler
+            .record_vm_worker_libkrun_enter(session_duration.saturating_sub(configure_duration));
+    }
+    result
 }

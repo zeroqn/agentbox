@@ -16,7 +16,16 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         Self { api }
     }
 
-    pub(crate) fn start_enter(mut self, config: &LaunchConfig) -> Result<()> {
+    #[cfg(test)]
+    pub(crate) fn start_enter(self, config: &LaunchConfig) -> Result<()> {
+        self.start_enter_with_pre_enter_hook(config, || {})
+    }
+
+    pub(crate) fn start_enter_with_pre_enter_hook(
+        mut self,
+        config: &LaunchConfig,
+        before_start_enter: impl FnOnce(),
+    ) -> Result<()> {
         tracing::debug!(level = ?config.log_level, libkrun_level = config.log_level.libkrun_level(), "libkrun log init: begin");
         check_setup(
             "libkrun_log_init",
@@ -29,14 +38,19 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             .create_ctx()
             .context("libkrun setup failed: create ctx")?;
         tracing::debug!(ctx_id, "krun_create_ctx: complete");
-        if let Err(err) = self.configure_and_start(ctx_id, config) {
+        if let Err(err) = self.configure_and_start(ctx_id, config, before_start_enter) {
             let _ = self.api.free_ctx(ctx_id);
             return Err(err);
         }
         Ok(())
     }
 
-    fn configure_and_start(&mut self, ctx_id: u32, config: &LaunchConfig) -> Result<()> {
+    fn configure_and_start(
+        &mut self,
+        ctx_id: u32,
+        config: &LaunchConfig,
+        before_start_enter: impl FnOnce(),
+    ) -> Result<()> {
         tracing::debug!(
             ctx_id,
             vcpus = config.vcpus,
@@ -92,6 +106,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             .set_exec(ctx_id, &config.exec_path, &config.argv, &config.env)?;
         check_setup("krun_set_exec", rc)?;
         tracing::debug!(ctx_id, "krun_set_exec: complete");
+        before_start_enter();
         tracing::debug!(ctx_id, "krun_start_enter: begin");
         let rc = self.api.start_enter(ctx_id)?;
         tracing::debug!(ctx_id, rc, "krun_start_enter: returned");

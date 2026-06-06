@@ -192,6 +192,27 @@ impl LoftdHostProfiler {
         }
     }
 
+    pub(in crate::runtime::session) fn record_vm_worker_libkrun_configure(
+        &mut self,
+        duration: Duration,
+    ) {
+        self.record_duration("vm_worker_libkrun_configure", duration);
+    }
+
+    pub(in crate::runtime::session) fn record_vm_worker_libkrun_session(
+        &mut self,
+        duration: Duration,
+    ) {
+        self.record_duration("vm_worker_libkrun_session", duration);
+    }
+
+    pub(in crate::runtime::session) fn record_vm_worker_libkrun_enter(
+        &mut self,
+        duration: Duration,
+    ) {
+        self.record_duration("vm_worker_libkrun_enter", duration);
+    }
+
     fn try_record_vm_worker_wait_details(
         &mut self,
         task_state_dir: &Path,
@@ -257,7 +278,8 @@ fn vm_worker_wait_detail_parent_label(label: &str) -> Option<&'static str> {
         "vm_worker_prepare_root" => Some("helper_wait_vm_worker_child_prepare_root"),
         "vm_worker_guest_config_write" => Some("helper_wait_vm_worker_child_guest_config_write"),
         "vm_worker_libkrun_open" => Some("helper_wait_vm_worker_child_libkrun_open"),
-        "vm_worker_libkrun_session" => Some("helper_wait_vm_worker_child_libkrun_session"),
+        "vm_worker_libkrun_configure" => Some("helper_wait_vm_worker_child_libkrun_configure"),
+        "vm_worker_libkrun_enter" => Some("helper_wait_vm_worker_child_libkrun_enter"),
         _ => None,
     }
 }
@@ -448,14 +470,16 @@ mod tests {
 
         let mut child_profiler = LoftdHostProfiler::new_started_at(true, Instant::now());
         child_profiler.record_duration("vm_worker_config_read", Duration::from_millis(1));
+        child_profiler.record_vm_worker_libkrun_configure(Duration::from_millis(2));
         child_profiler.record_duration("vm_worker_libkrun_session", Duration::from_millis(7));
+        child_profiler.record_vm_worker_libkrun_enter(Duration::from_millis(5));
         child_profiler.record_duration("unrelated_child_phase", Duration::from_millis(3));
         child_profiler
             .write_vm_worker_wait_details(&task_state_dir)
             .expect("child profile artifact should write");
 
         let mut parent_profiler = LoftdHostProfiler::new_started_at(true, Instant::now());
-        parent_profiler.record_vm_worker_wait_details(&task_state_dir, Duration::from_millis(10));
+        parent_profiler.record_vm_worker_wait_details(&task_state_dir, Duration::from_millis(12));
 
         let mut output = Vec::new();
         parent_profiler
@@ -464,8 +488,10 @@ mod tests {
         let text = String::from_utf8(output).expect("report should be utf-8");
 
         assert!(text.contains("helper_wait_vm_worker_child_config_read: 1.000ms"));
-        assert!(text.contains("helper_wait_vm_worker_child_libkrun_session: 7.000ms"));
-        assert!(text.contains("helper_wait_vm_worker_child_unattributed: 2.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_libkrun_configure: 2.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_libkrun_enter: 5.000ms"));
+        assert!(text.contains("helper_wait_vm_worker_child_unattributed: 4.000ms"));
+        assert!(!text.contains("helper_wait_vm_worker_child_libkrun_session"));
         assert!(!text.contains("unrelated_child_phase"));
 
         fs::remove_dir_all(cleanup_dir).expect("temp task state dir should be removed");
