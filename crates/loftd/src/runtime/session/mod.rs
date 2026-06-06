@@ -127,11 +127,12 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                 "loftd libkrun launch"
                             );
 
-                            BtrfsHostRunResult::Helper(
-                                profiler.measure_result("helper_session", || {
-                                    HostSupervisor.run(&config, lease.handle().task_dir())
-                                }),
-                            )
+                            BtrfsHostRunResult::Helper(profiler.measure_result_with(
+                                "helper_session",
+                                |profiler| {
+                                    HostSupervisor.run(&config, lease.handle().task_dir(), profiler)
+                                },
+                            ))
                         }
                         Err(err) => BtrfsHostRunResult::SetupFailed(err),
                     },

@@ -780,10 +780,15 @@ For timing diagnostics, `loftd --profile` emits `loftd host profile` and
 `loftd-guest-init profile` reports to stderr for completed btrfs-snapshot host
 and guest-init phases such as launch-plan build, task rootfs materialization,
 persistent disk preparation, guest-init lookup, launch config build, helper
-session, task state cleanup, and early guest bootstrap. `--profile` does not
-raise loftd, guest-init, or libkrun debug logging; use `--log-level debug`,
-`--log-level trace`, or the compatibility form `--debug` separately when verbose
-diagnostic logs are needed. Stdout remains reserved for guest command output.
+session, task state cleanup, and early guest bootstrap. The host report keeps
+the aggregate `helper_session` row and, when profiling is enabled, also emits
+scoped helper/VM-worker host reports with `profile_scope` metadata for the
+helper command build/spawn/wait path, helper setup, passt handoff, VM-worker
+fork/wait, prepared-root setup, libkrun open, and the blocking libkrun guest
+session. `--profile` does not raise loftd, guest-init, or libkrun debug logging;
+use `--log-level debug`, `--log-level trace`, or the compatibility form
+`--debug` separately when verbose diagnostic logs are needed. Stdout remains
+reserved for guest command output.
 
 To inspect a preserved task `launch.conf`, decode its internal hex line format:
 

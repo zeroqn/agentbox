@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::logging::{self, LogSettings};
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
+use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::supervisor::LIBKRUN_ENTER_HELPER_ARG;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::session::supervisor::vm_child::{self, VmWorkerGuard};
@@ -28,42 +29,68 @@ pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
 }
 
 fn run_helper(config_path: &Path) -> Result<()> {
+    let mut profiler = LoftdHostProfiler::from_env_started_now();
+    profiler.record_metadata("profile_scope", "helper");
+    profiler.record_metadata(
+        "profile_launch_config_path",
+        config_path.display().to_string(),
+    );
+
+    let result = run_helper_profiled(config_path, &mut profiler);
+    profiler.finalize_result(result)
+}
+
+fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> Result<()> {
     if logging::helper_pre_config_debug_enabled() {
         eprintln!(
             "loftd internal: libkrun-network-enter starting config={}",
             config_path.display()
         );
     }
-    let config = LaunchConfig::read_from(config_path)?;
-    logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))?;
-    identity::configure_helper_filesystem_identity(&config)?;
+    let config = profiler.measure_result("helper_config_read", || {
+        LaunchConfig::read_from(config_path)
+    })?;
+    profiler.measure_result("helper_tracing_init", || {
+        logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))
+    })?;
+    profiler.measure_result("helper_identity_configure", || {
+        identity::configure_helper_filesystem_identity(&config)
+    })?;
     let task_state_dir = task_state_dir_from_config_path(config_path)?;
+    profiler.record_metadata(
+        "profile_task_state_dir",
+        task_state_dir.display().to_string(),
+    );
     tracing::debug!(
         mode = config.network_mode.as_config_value(),
         "loftd internal: network manager starting"
     );
-    let mut network_session = NetworkManagerSession::start(task_state_dir)?;
+    let mut network_session = profiler.measure_result("helper_network_start", || {
+        NetworkManagerSession::start(task_state_dir)
+    })?;
     let (passt_read, passt_write) = if config.network_mode == NetworkMode::Passt {
-        let (read_fd, write_fd) = network::passt_pid_pipe()?;
-        (Some(read_fd), Some(write_fd))
+        profiler.measure_result("helper_passt_pipe_setup", || {
+            let (read_fd, write_fd) = network::passt_pid_pipe()?;
+            Ok((Some(read_fd), Some(write_fd)))
+        })?
     } else {
         (None, None)
     };
-    let mut worker = VmWorkerGuard::new(vm_child::fork_vm_worker(
-        config_path,
-        network_session.holder_pid(),
-        passt_write,
-    )?);
+    let mut worker =
+        VmWorkerGuard::new(profiler.measure_result("helper_vm_worker_fork", || {
+            vm_child::fork_vm_worker(config_path, network_session.holder_pid(), passt_write)
+        })?);
     let passt_pid = if config.network_mode == NetworkMode::Passt {
-        passt_read
-            .map(network::read_passt_pid)
-            .transpose()?
+        profiler
+            .measure_result("helper_passt_pid_read", || {
+                passt_read.map(network::read_passt_pid).transpose()
+            })?
             .flatten()
     } else {
         None
     };
     network_session.set_passt_pid(passt_pid);
-    let status = worker.wait()?;
+    let status = profiler.measure_result("helper_wait_vm_worker", || worker.wait())?;
     if let Some(code) = network::status_exit_code(status) {
         if code == 0 {
             return Ok(());

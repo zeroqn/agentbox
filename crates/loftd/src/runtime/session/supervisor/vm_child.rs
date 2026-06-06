@@ -5,6 +5,7 @@ use std::os::fd::OwnedFd;
 use std::path::Path;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
+use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::vm::libkrun::{DirectLibkrunLauncher, DynamicLibkrunApi};
@@ -49,45 +50,79 @@ pub(crate) fn fork_vm_worker(
         );
     }
     if pid == 0 {
-        let result = run_vm_worker(config_path, holder_pid, passt_pid_pipe);
-        if let Err(err) = result {
-            eprintln!("loftd internal VM worker: {err:#}");
-            std::process::exit(1);
-        }
-        std::process::exit(0);
+        std::process::exit(run_vm_worker_child(config_path, holder_pid, passt_pid_pipe));
     }
     Ok(pid)
+}
+
+fn run_vm_worker_child(
+    config_path: &Path,
+    holder_pid: libc::pid_t,
+    passt_pid_pipe: Option<OwnedFd>,
+) -> i32 {
+    let mut profiler = LoftdHostProfiler::from_env_started_now();
+    profiler.record_metadata("profile_scope", "vm_worker");
+    profiler.record_metadata(
+        "profile_launch_config_path",
+        config_path.display().to_string(),
+    );
+
+    let result = run_vm_worker(config_path, holder_pid, passt_pid_pipe, &mut profiler);
+    let exit_code = if result.is_ok() { 0 } else { 1 };
+    profiler.record_metadata("profile_exit_code", exit_code.to_string());
+    if let Err(err) = &result {
+        eprintln!("loftd internal VM worker: {err:#}");
+    }
+    let _ = profiler.finalize_result(result);
+    exit_code
 }
 
 fn run_vm_worker(
     config_path: &Path,
     holder_pid: libc::pid_t,
     passt_pid_pipe: Option<OwnedFd>,
+    profiler: &mut LoftdHostProfiler,
 ) -> Result<()> {
-    let config = LaunchConfig::read_from(config_path)?;
-    identity::configure_vm_worker_filesystem_identity()?;
-    network::enter_netns(holder_pid)?;
+    let config = profiler.measure_result("vm_worker_config_read", || {
+        LaunchConfig::read_from(config_path)
+    })?;
+    profiler.measure_result("vm_worker_identity_configure", || {
+        identity::configure_vm_worker_filesystem_identity()
+    })?;
+    profiler.measure_result("vm_worker_enter_netns", || network::enter_netns(holder_pid))?;
     let task_state_dir = task_state_dir_from_config_path(config_path)?;
+    profiler.record_metadata(
+        "profile_task_state_dir",
+        task_state_dir.display().to_string(),
+    );
     let (config, _passt_session) = match config.network_mode {
         NetworkMode::Tsi => (config, None),
-        NetworkMode::Passt => {
+        NetworkMode::Passt => profiler.measure_result("vm_worker_passt_start", || {
             let session = PasstWorkerSession::start(task_state_dir)?;
             if let Some(pipe) = passt_pid_pipe {
                 network::write_passt_pid(pipe, session.pid())?;
             }
-            (
+            Ok((
                 config.with_passt_socket(session.socket().to_path_buf()),
                 Some(session),
-            )
-        }
+            ))
+        })?,
     };
-    run_libkrun_in_current_namespace(&config, task_state_dir)
+    run_libkrun_in_current_namespace(&config, task_state_dir, profiler)
 }
 
-fn run_libkrun_in_current_namespace(config: &LaunchConfig, task_state_dir: &Path) -> Result<()> {
-    let prepared_root = prepared_root::prepare(config, task_state_dir)?;
+fn run_libkrun_in_current_namespace(
+    config: &LaunchConfig,
+    task_state_dir: &Path,
+    profiler: &mut LoftdHostProfiler,
+) -> Result<()> {
+    let prepared_root = profiler.measure_result("vm_worker_prepare_root", || {
+        prepared_root::prepare(config, task_state_dir)
+    })?;
     let launch_config = config.with_root_export(prepared_root.root().to_path_buf());
-    let guest_config_path = launch_config.write_guest_config_to_rootfs()?;
+    let guest_config_path = profiler.measure_result("vm_worker_guest_config_write", || {
+        launch_config.write_guest_config_to_rootfs()
+    })?;
     tracing::debug!(
         task_state = %task_state_dir.display(),
         source_rootfs = %config.task_rootfs.display(),
@@ -104,7 +139,11 @@ fn run_libkrun_in_current_namespace(config: &LaunchConfig, task_state_dir: &Path
         "loftd internal: launch config loaded"
     );
     tracing::debug!("libkrun API open: begin");
-    let api = DynamicLibkrunApi::open_default()?;
+    let api = profiler.measure_result("vm_worker_libkrun_open", || {
+        DynamicLibkrunApi::open_default()
+    })?;
     tracing::debug!("libkrun API open: complete");
-    DirectLibkrunLauncher::new(api).start_enter(&launch_config)
+    profiler.measure_result("vm_worker_libkrun_session", || {
+        DirectLibkrunLauncher::new(api).start_enter(&launch_config)
+    })
 }

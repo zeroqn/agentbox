@@ -9,6 +9,7 @@ pub(crate) mod identity;
 pub(crate) mod vm_child;
 
 use crate::runtime::launch::config::LaunchConfig;
+use crate::runtime::session::profile::LoftdHostProfiler;
 
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
 
@@ -36,17 +37,27 @@ impl ChildStatus {
 }
 
 pub(crate) trait Supervisor {
-    fn run(&self, config: &LaunchConfig, task_state_dir: &Path) -> Result<ChildStatus>;
+    fn run(
+        &self,
+        config: &LaunchConfig,
+        task_state_dir: &Path,
+        profiler: &mut LoftdHostProfiler,
+    ) -> Result<ChildStatus>;
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HostSupervisor;
 
 impl Supervisor for HostSupervisor {
-    fn run(&self, config: &LaunchConfig, task_state_dir: &Path) -> Result<ChildStatus> {
+    fn run(
+        &self,
+        config: &LaunchConfig,
+        task_state_dir: &Path,
+        profiler: &mut LoftdHostProfiler,
+    ) -> Result<ChildStatus> {
         let config_path = task_state_dir.join("launch.conf");
         config.write_to(&config_path)?;
-        command::run_helper_process(config, &config_path)
+        command::run_helper_process(config, &config_path, profiler)
     }
 }
 
@@ -156,6 +167,7 @@ mod tests {
             Path::new("/nix/store/hash-loftd/bin/loftd"),
             Path::new("/tmp/loftd-task/launch.conf"),
             crate::logging::LogLevel::Debug,
+            false,
             &launcher,
         );
 
@@ -193,6 +205,63 @@ mod tests {
                 "libkrun-network-enter",
                 "/tmp/loftd-task/launch.conf",
             ]
+        );
+    }
+
+    #[test]
+    fn libkrun_helper_sets_host_profile_env_only_when_enabled() {
+        let launcher = KeepIdLauncher::from_parts(
+            1000,
+            993,
+            "dev",
+            crate::runtime::session::supervisor::identity::SubIdRange::new(100_000, 65_536)
+                .unwrap(),
+            crate::runtime::session::supervisor::identity::SubIdRange::new(100_000, 65_536)
+                .unwrap(),
+        )
+        .unwrap();
+
+        let disabled = command::build_helper_command_with_launcher(
+            Path::new("/nix/store/hash-loftd/bin/loftd"),
+            Path::new("/tmp/loftd-task/launch.conf"),
+            crate::logging::LogLevel::Debug,
+            false,
+            &launcher,
+        );
+        assert!(
+            !disabled
+                .env
+                .iter()
+                .any(|(key, _)| key == &OsString::from("LOFTD_HOST_PROFILE"))
+        );
+        assert!(
+            !disabled
+                .env
+                .iter()
+                .any(|(key, _)| key == &OsString::from("LOFTD_GUEST_PROFILE"))
+        );
+
+        let enabled = command::build_helper_command_with_launcher(
+            Path::new("/nix/store/hash-loftd/bin/loftd"),
+            Path::new("/tmp/loftd-task/launch.conf"),
+            crate::logging::LogLevel::Debug,
+            true,
+            &launcher,
+        );
+        assert!(enabled.env.contains(&(
+            OsString::from("LOFTD_INTERNAL_LOG_LEVEL"),
+            OsString::from("debug")
+        )));
+        assert!(
+            enabled
+                .env
+                .contains(&(OsString::from("LOFTD_HOST_PROFILE"), OsString::from("1")))
+        );
+        assert!(
+            !enabled
+                .env
+                .iter()
+                .any(|(key, _)| key == &OsString::from("LOFTD_GUEST_PROFILE"))
         );
     }
 }
