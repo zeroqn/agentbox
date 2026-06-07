@@ -2,6 +2,7 @@
   description = "Rust CLI for launching a Podman shell inside a Nix-based container";
 
   inputs = {
+    self.submodules = true;
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgsMaster.url = "github:NixOS/nixpkgs/master";
   };

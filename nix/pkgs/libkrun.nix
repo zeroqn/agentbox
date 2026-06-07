@@ -1,6 +1,6 @@
 { pkgs, libkrunfw }:
 let
-  libkrunSrc = ../../vendor/libkrun;
+  libkrunSrc = ../../deps/libkrun;
 in
 (pkgs.libkrun.override {
   inherit libkrunfw;
@@ -15,6 +15,6 @@ in
   src = libkrunSrc;
   cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
     src = libkrunSrc;
-    hash = "sha256-dfIe2pl957MRcY1hIv6wPPX/4He+ou+eCZLbylVeGAE=";
+    hash = "sha256-2ZjrOdrwnR1oaGmCZc/13LIlH3qPI7g9kBaYAEpwpSE=";
   };
 })
