@@ -1,0 +1,4 @@
+[submodule "deps/libkrun"]
+	path = deps/libkrun
+	url = git@github.com:zeroqn/libkrun.git
+	branch = loftd
