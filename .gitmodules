@@ -2,3 +2,7 @@
 	path = deps/libkrun
 	url = git@github.com:zeroqn/libkrun.git
 	branch = loftd
+[submodule "deps/libkrunfw"]
+	path = deps/libkrunfw
+	url = git@github.com:zeroqn/libkrunfw.git
+	branch = agentbox
