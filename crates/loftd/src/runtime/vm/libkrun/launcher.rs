@@ -7,6 +7,9 @@ use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 
 use super::api::LibkrunApi;
 
+pub(super) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
+    "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
+
 #[derive(Debug)]
 pub(crate) struct DirectLibkrunLauncher<A> {
     api: A,
@@ -124,6 +127,16 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             let rc = self.api.set_profile_path(ctx_id, profile_path)?;
             check_setup("krun_set_profile_path", rc)?;
             tracing::debug!(ctx_id, "krun_set_profile_path: complete");
+            tracing::debug!(
+                ctx_id,
+                fragment = PROFILE_KERNEL_CMDLINE_APPEND,
+                "krun_set_kernel_cmdline_append: begin"
+            );
+            let rc = self
+                .api
+                .set_kernel_cmdline_append(ctx_id, PROFILE_KERNEL_CMDLINE_APPEND)?;
+            check_setup("krun_set_kernel_cmdline_append", rc)?;
+            tracing::debug!(ctx_id, "krun_set_kernel_cmdline_append: complete");
         }
         before_start_enter();
         tracing::debug!(ctx_id, "krun_start_enter: begin");

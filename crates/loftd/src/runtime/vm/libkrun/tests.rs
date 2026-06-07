@@ -5,6 +5,7 @@ use crate::runtime::launch::config::{
     LaunchSpec, NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
     WORKSPACE_TARGET,
 };
+use crate::runtime::vm::libkrun::launcher::PROFILE_KERNEL_CMDLINE_APPEND;
 use anyhow::Result;
 use std::cell::RefCell;
 use std::path::Path;
@@ -24,6 +25,7 @@ enum Call {
     SetWorkdir(u32, String),
     SetExec(u32, String, Vec<String>, Vec<(String, String)>),
     SetProfilePath(u32, String),
+    SetKernelCmdlineAppend(u32, String),
     StartEnter(u32),
 }
 
@@ -156,6 +158,13 @@ impl LibkrunApi for FakeLibkrunApi {
             profile_path.display().to_string(),
         ));
         Ok(self.rc("krun_set_profile_path"))
+    }
+
+    fn set_kernel_cmdline_append(&mut self, ctx_id: u32, fragment: &str) -> Result<i32> {
+        self.calls
+            .borrow_mut()
+            .push(Call::SetKernelCmdlineAppend(ctx_id, fragment.to_owned()));
+        Ok(self.rc("krun_set_kernel_cmdline_append"))
     }
 
     fn start_enter(&mut self, ctx_id: u32) -> Result<i32> {
@@ -306,7 +315,7 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
     assert_eq!(
         calls.len(),
         11,
-        "TSI default must not call krun_set_env, passt APIs, or per-bind virtiofs devices"
+        "TSI default must not call krun_set_env, passt APIs, profile cmdline, or per-bind virtiofs devices"
     );
 }
 
@@ -362,7 +371,7 @@ fn pre_enter_hook_runs_after_setup_and_before_start() {
 }
 
 #[test]
-fn profile_path_is_set_after_exec_and_before_pre_enter_hook() {
+fn profile_setup_runs_after_exec_and_before_pre_enter_hook() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
         .start_enter_profiled_with_pre_enter_hook(
@@ -375,6 +384,11 @@ fn profile_path_is_set_after_exec_and_before_pre_enter_hook() {
                     calls
                         .iter()
                         .any(|call| matches!(call, Call::SetProfilePath(..)))
+                );
+                assert!(
+                    calls
+                        .iter()
+                        .any(|call| matches!(call, Call::SetKernelCmdlineAppend(..)))
                 );
                 assert!(
                     !calls
@@ -394,6 +408,10 @@ fn profile_path_is_set_after_exec_and_before_pre_enter_hook() {
         .iter()
         .position(|call| matches!(call, Call::SetProfilePath(..)))
         .expect("profile path should be configured");
+    let set_cmdline_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetKernelCmdlineAppend(..)))
+        .expect("profile cmdline diagnostics should be configured");
     let start_index = calls
         .iter()
         .position(|call| matches!(call, Call::StartEnter(..)))
@@ -403,8 +421,13 @@ fn profile_path_is_set_after_exec_and_before_pre_enter_hook() {
         calls[set_profile_index],
         Call::SetProfilePath(7, "/tmp/vm-worker-host-profile.tsv".to_owned())
     );
+    assert_eq!(
+        calls[set_cmdline_index],
+        Call::SetKernelCmdlineAppend(7, PROFILE_KERNEL_CMDLINE_APPEND.to_owned())
+    );
     assert!(set_exec_index < set_profile_index);
-    assert!(set_profile_index < start_index);
+    assert!(set_profile_index < set_cmdline_index);
+    assert!(set_cmdline_index < start_index);
 }
 
 #[test]

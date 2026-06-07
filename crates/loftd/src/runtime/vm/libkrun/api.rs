@@ -34,5 +34,6 @@ pub(crate) trait LibkrunApi {
         env: &[(String, String)],
     ) -> Result<i32>;
     fn set_profile_path(&mut self, ctx_id: u32, profile_path: &Path) -> Result<i32>;
+    fn set_kernel_cmdline_append(&mut self, ctx_id: u32, fragment: &str) -> Result<i32>;
     fn start_enter(&mut self, ctx_id: u32) -> Result<i32>;
 }

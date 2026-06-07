@@ -40,6 +40,7 @@ type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
     unsafe extern "C" fn(u32, *const c_char, *const *const c_char, *const *const c_char) -> i32;
 type KrunSetProfilePath = unsafe extern "C" fn(u32, *const c_char) -> i32;
+type KrunSetKernelCmdlineAppend = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunStartEnter = unsafe extern "C" fn(u32) -> i32;
 
 pub(crate) struct DynamicLibkrunApi {
@@ -57,6 +58,7 @@ pub(crate) struct DynamicLibkrunApi {
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
     set_profile_path: Option<KrunSetProfilePath>,
+    set_kernel_cmdline_append: Option<KrunSetKernelCmdlineAppend>,
     start_enter: KrunStartEnter,
 }
 
@@ -146,6 +148,13 @@ impl DynamicLibkrunApi {
                 )?),
                 set_profile_path: load_optional_symbol(handle, "krun_set_profile_path")
                     .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetProfilePath>(symbol)),
+                set_kernel_cmdline_append: load_optional_symbol(
+                    handle,
+                    "krun_set_kernel_cmdline_append",
+                )
+                .map(|symbol| {
+                    std::mem::transmute::<*mut c_void, KrunSetKernelCmdlineAppend>(symbol)
+                }),
                 start_enter: std::mem::transmute::<*mut c_void, KrunStartEnter>(load_symbol(
                     handle,
                     "krun_start_enter",
@@ -319,6 +328,16 @@ impl LibkrunApi for DynamicLibkrunApi {
         // SAFETY: optional function pointer is resolved from libkrun when present, and the C
         // string lives for the duration of the call.
         Ok(unsafe { set_profile_path(ctx_id, profile_path.as_ptr()) })
+    }
+
+    fn set_kernel_cmdline_append(&mut self, ctx_id: u32, fragment: &str) -> Result<i32> {
+        let Some(set_kernel_cmdline_append) = self.set_kernel_cmdline_append else {
+            return Ok(0);
+        };
+        let fragment = CString::new(fragment)?;
+        // SAFETY: optional function pointer is resolved from libkrun when present, and the C
+        // string lives for the duration of the call.
+        Ok(unsafe { set_kernel_cmdline_append(ctx_id, fragment.as_ptr()) })
     }
 
     fn start_enter(&mut self, ctx_id: u32) -> Result<i32> {
