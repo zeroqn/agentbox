@@ -198,9 +198,12 @@ nix build .#agentbox-container
 - `.#container-lib-policy-seccomp-json`: install the pinned
   `containers/container-libs` `common/pkg/seccomp/seccomp.json` policy at
   `share/containers/seccomp.json` for downstream flakes or image reuse.
-- `.#container`: loftd-compatible Podman image archive named `localhost/loftd:latest`.
+- `.#container`: loftd-compatible Podman image archive named `localhost/loftd:latest`;
+  includes rootless Podman tooling such as Podman, Buildah, crun, netavark,
+  aardvark-dns, passt, and docker-compose.
 - `.#agentbox-container`: agentbox-compatible Podman image archive named
-  `localhost/agentbox:latest` for the existing `agentbox` runtime variants.
+  `localhost/agentbox:latest` for the existing `agentbox` runtime variants;
+  includes the same rootless Podman tooling, including Buildah.
 
 ### Nix store / DB diagnostics
 

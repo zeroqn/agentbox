@@ -356,6 +356,7 @@ let
 
   rootlessPodmanImagePackages = [
     podman
+    pkgs.buildah
     crun
     pkgs.conmon
     pkgs.netavark
