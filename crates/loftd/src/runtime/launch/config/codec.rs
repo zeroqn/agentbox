@@ -110,13 +110,6 @@ impl LaunchConfig {
         }
         push_field(&mut out, "workdir", &self.workdir);
         push_field(&mut out, "exec_path", &self.exec_path);
-        if let Some(passt_socket) = &self.passt_socket {
-            push_field(
-                &mut out,
-                "passt_socket",
-                &passt_socket.display().to_string(),
-            );
-        }
         for (index, disk) in self.disks.iter().enumerate() {
             push_field(&mut out, &format!("disk.{index}.id"), &disk.id);
             push_field(
@@ -234,7 +227,6 @@ impl LaunchConfig {
                     | "network_mode"
                     | "workdir"
                     | "exec_path"
-                    | "passt_socket"
             ) {
                 if fields.insert(key.to_owned(), value).is_some() {
                     anyhow::bail!("loftd launch config repeats key {key}");
@@ -282,7 +274,7 @@ impl LaunchConfig {
             argv: argv.into_values().collect(),
             env: env.into_values().collect(),
             guest_config_env: guest_config_env.into_values().collect(),
-            passt_socket: fields.get("passt_socket").map(PathBuf::from),
+            passt_fd: None,
         })
     }
 }

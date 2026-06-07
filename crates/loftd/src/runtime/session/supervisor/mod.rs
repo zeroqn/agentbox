@@ -148,7 +148,7 @@ mod tests {
             argv: Vec::new(),
             env: Vec::new(),
             guest_config_env: Vec::new(),
-            passt_socket: None,
+            passt_fd: None,
         }
     }
 

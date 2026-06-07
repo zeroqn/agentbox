@@ -18,6 +18,7 @@ const LOFTD_NET_FEATURE_GUEST_TSO4: u32 = 1 << 7;
 const LOFTD_NET_FEATURE_GUEST_UFO: u32 = 1 << 10;
 const LOFTD_NET_FEATURE_HOST_TSO4: u32 = 1 << 11;
 const LOFTD_NET_FEATURE_HOST_UFO: u32 = 1 << 14;
+const LOFTD_PASST_MAC: [u8; 6] = [0x02, 0x4c, 0x4f, 0x46, 0x54, 0x44];
 pub(crate) const LOFTD_LIBKRUN_COMPAT_NET_FEATURES: u32 = LOFTD_NET_FEATURE_CSUM
     | LOFTD_NET_FEATURE_GUEST_CSUM
     | LOFTD_NET_FEATURE_GUEST_TSO4
@@ -34,8 +35,7 @@ type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunAddDisk = unsafe extern "C" fn(u32, *const c_char, *const c_char, bool) -> i32;
 type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
 type KrunAddVirtioConsoleDefault = unsafe extern "C" fn(u32, i32, i32, i32) -> i32;
-type KrunAddNetUnixstream =
-    unsafe extern "C" fn(u32, *const c_char, i32, *const c_void, u32, u8) -> i32;
+type KrunAddNetUnixstream = unsafe extern "C" fn(u32, *const c_char, i32, *mut u8, u32, u32) -> i32;
 type KrunSetPortMap = unsafe extern "C" fn(u32, *const *const c_char) -> i32;
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
@@ -277,21 +277,21 @@ impl LibkrunApi for DynamicLibkrunApi {
         Ok(unsafe { (self.add_virtio_console_default)(ctx_id, input_fd, output_fd, err_fd) })
     }
 
-    fn add_net_unixstream(&mut self, ctx_id: u32, socket_path: &Path) -> Result<i32> {
+    fn add_net_unixstream(&mut self, ctx_id: u32, socket_fd: i32, flags: u32) -> Result<i32> {
         let add_net_unixstream = self.add_net_unixstream.ok_or_else(|| {
             anyhow!("libkrun passt setup failed: krun_add_net_unixstream symbol is unavailable")
         })?;
-        let socket_path = path_cstring(socket_path)?;
-        // SAFETY: C string lives for the duration of the call. The net config pointer is NULL
-        // because this slice does not expose port forwards; compat feature flags are disabled.
+        let mut mac = LOFTD_PASST_MAC;
+        // SAFETY: the MAC buffer lives for the duration of the call. c_path is NULL because
+        // loftd follows crun's socketpair/--fd passt wiring.
         Ok(unsafe {
             add_net_unixstream(
                 ctx_id,
-                socket_path.as_ptr(),
-                -1,
                 std::ptr::null(),
+                socket_fd,
+                mac.as_mut_ptr(),
                 LOFTD_LIBKRUN_COMPAT_NET_FEATURES,
-                0,
+                flags,
             )
         })
     }

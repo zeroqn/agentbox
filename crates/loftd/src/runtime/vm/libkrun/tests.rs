@@ -19,7 +19,7 @@ enum Call {
     SetVmConfig(u32, u8, u32),
     SetRoot(u32, String),
     AddDisk(u32, String, String, bool),
-    AddNetUnixstream(u32, String),
+    AddNetUnixstream(u32, i32, u32),
     SetPortMap(u32, Vec<String>),
     DisableImplicitConsole(u32),
     AddVirtioConsoleDefault(u32, i32, i32, i32),
@@ -34,6 +34,7 @@ enum Call {
 struct FakeLibkrunApi {
     calls: Rc<RefCell<Vec<Call>>>,
     fail_call: Option<&'static str>,
+    net_dhcp_flag_unsupported: bool,
 }
 
 impl FakeLibkrunApi {
@@ -41,6 +42,7 @@ impl FakeLibkrunApi {
         Self {
             calls,
             fail_call: None,
+            net_dhcp_flag_unsupported: false,
         }
     }
 
@@ -48,6 +50,15 @@ impl FakeLibkrunApi {
         Self {
             calls,
             fail_call: Some(fail_call),
+            net_dhcp_flag_unsupported: false,
+        }
+    }
+
+    fn net_dhcp_flag_unsupported(calls: Rc<RefCell<Vec<Call>>>) -> Self {
+        Self {
+            calls,
+            fail_call: None,
+            net_dhcp_flag_unsupported: true,
         }
     }
 
@@ -122,11 +133,13 @@ impl LibkrunApi for FakeLibkrunApi {
         Ok(self.rc("krun_add_virtio_console_default"))
     }
 
-    fn add_net_unixstream(&mut self, ctx_id: u32, socket_path: &Path) -> Result<i32> {
-        self.calls.borrow_mut().push(Call::AddNetUnixstream(
-            ctx_id,
-            socket_path.display().to_string(),
-        ));
+    fn add_net_unixstream(&mut self, ctx_id: u32, socket_fd: i32, flags: u32) -> Result<i32> {
+        self.calls
+            .borrow_mut()
+            .push(Call::AddNetUnixstream(ctx_id, socket_fd, flags));
+        if self.net_dhcp_flag_unsupported && flags == 2 {
+            return Ok(-libc::EINVAL);
+        }
         Ok(self.rc("krun_add_net_unixstream"))
     }
 
@@ -221,7 +234,7 @@ fn passt_config() -> LaunchConfig {
     LaunchConfig {
         network_mode: NetworkMode::Passt,
         publish: Vec::new(),
-        ..config().with_passt_socket(Path::new("/tmp/task/passt.sock").to_path_buf())
+        ..config().with_passt_fd(42)
     }
 }
 
@@ -294,6 +307,13 @@ fn compat_net_features_match_libkrun_header_contract() {
 }
 
 #[test]
+fn passt_net_flags_match_libkrun_header_width() {
+    fn assert_u32(_: u32) {}
+
+    assert_u32(super::launcher::NET_FLAG_DHCP_CLIENT);
+}
+
+#[test]
 fn fake_api_records_direct_libkrun_v1_call_order() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
@@ -360,11 +380,31 @@ fn passt_mode_adds_unixstream_before_start() {
         .position(|call| matches!(call, Call::StartEnter(..)))
         .expect("launch should start");
 
-    assert_eq!(
-        calls[net_index],
-        Call::AddNetUnixstream(7, "/tmp/task/passt.sock".to_owned())
-    );
+    assert_eq!(calls[net_index], Call::AddNetUnixstream(7, 42, 2));
     assert!(net_index < start_index);
+}
+
+#[test]
+fn passt_mode_retries_without_dhcp_client_flag_when_libkrun_rejects_it() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    DirectLibkrunLauncher::new(FakeLibkrunApi::net_dhcp_flag_unsupported(calls.clone()))
+        .start_enter(&passt_config())
+        .expect("launch should succeed");
+
+    let calls = calls.borrow();
+    let net_calls = calls
+        .iter()
+        .filter(|call| matches!(call, Call::AddNetUnixstream(..)))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        net_calls,
+        vec![
+            Call::AddNetUnixstream(7, 42, 2),
+            Call::AddNetUnixstream(7, 42, 0)
+        ]
+    );
 }
 
 #[test]
@@ -499,15 +539,15 @@ fn profile_setup_runs_after_exec_and_before_pre_enter_hook() {
 }
 
 #[test]
-fn passt_mode_requires_prepared_socket_path() {
+fn passt_mode_requires_prepared_socket_fd() {
     let mut config = config();
     config.network_mode = NetworkMode::Passt;
     let calls = Rc::new(RefCell::new(Vec::new()));
     let err = DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
         .start_enter(&config)
-        .expect_err("missing socket should fail setup");
+        .expect_err("missing fd should fail setup");
 
-    assert!(format!("{err:#}").contains("prepared passt unix socket"));
+    assert!(format!("{err:#}").contains("prepared passt socket fd"));
     assert!(calls.borrow().contains(&Call::FreeCtx(7)));
 }
 

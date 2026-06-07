@@ -864,9 +864,12 @@ mounts, host `chown`, `:U` ownership mutation, or relaxed guest-init ownership
 repair. The internal helper is also a network manager: it creates one private
 network namespace holder for the loftd session, starts `pasta` with Podman-like
 `--map-guest-addr 169.254.1.2` and `--dns-forward 169.254.1.1`, then forks the
-VM worker into that namespace. Proxy-only runtime artifacts such as the passt
-socket are placed under `/tmp` so proxy privilege handling does not require
-write access to loftd's btrfs task state. Missing `pasta`, unsupported
+VM worker into that namespace. When `--passt` is enabled, the helper creates an
+`AF_UNIX` socketpair and starts `passt` with `--fd <child-fd>` before the VM
+worker enters the private network namespace; the worker inherits the other fd
+and passes it to libkrun with `krun_add_net_unixstream()`. This follows crun's
+passt wiring, keeps published ports bound in the helper's host-facing network
+namespace, and avoids creating passt control sockets on host `/tmp`. Missing `pasta`, unsupported
 unprivileged namespace setup, or early proxy exit is a hard launch error
 instead of a silent broken-host-alias fallback. The Nix `loftd`,
 `loftd-prebuilt`, and development

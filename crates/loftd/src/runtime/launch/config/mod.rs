@@ -73,7 +73,7 @@ impl LaunchConfig {
                 LOFTD_KRUN_CONFIG_PATH.to_owned(),
             )],
             guest_config_env: guest_config_env.into_iter().collect(),
-            passt_socket: None,
+            passt_fd: None,
         })
     }
 
@@ -83,9 +83,9 @@ impl LaunchConfig {
         config
     }
 
-    pub(crate) fn with_passt_socket(&self, passt_socket: PathBuf) -> Self {
+    pub(crate) fn with_passt_fd(&self, passt_fd: i32) -> Self {
         let mut config = self.clone();
-        config.passt_socket = Some(passt_socket);
+        config.passt_fd = Some(passt_fd);
         config
     }
 

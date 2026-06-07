@@ -123,5 +123,5 @@ pub(crate) struct LaunchConfig {
     pub(crate) argv: Vec<String>,
     pub(crate) env: Vec<(String, String)>,
     pub(crate) guest_config_env: Vec<(String, String)>,
-    pub(crate) passt_socket: Option<PathBuf>,
+    pub(crate) passt_fd: Option<i32>,
 }

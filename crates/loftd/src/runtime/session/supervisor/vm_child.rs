@@ -1,7 +1,6 @@
 //! Forked VM child process and direct libkrun entry path.
 
 use anyhow::{Result, bail};
-use std::os::fd::OwnedFd;
 use std::path::Path;
 use std::time::Instant;
 
@@ -10,7 +9,7 @@ use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::vm::libkrun::{DirectLibkrunLauncher, DynamicLibkrunApi};
-use crate::runtime::vm::network::{self, PasstWorkerSession};
+use crate::runtime::vm::network;
 use crate::runtime::vm::prepared_root;
 
 pub(crate) struct VmWorkerGuard {
@@ -40,7 +39,7 @@ impl Drop for VmWorkerGuard {
 pub(crate) fn fork_vm_worker(
     config_path: &Path,
     holder_pid: libc::pid_t,
-    passt_pid_pipe: Option<OwnedFd>,
+    passt_fd: Option<i32>,
 ) -> Result<libc::pid_t> {
     // SAFETY: fork creates an isolated worker process that enters the target netns and exits.
     let pid = unsafe { libc::fork() };
@@ -51,16 +50,12 @@ pub(crate) fn fork_vm_worker(
         );
     }
     if pid == 0 {
-        std::process::exit(run_vm_worker_child(config_path, holder_pid, passt_pid_pipe));
+        std::process::exit(run_vm_worker_child(config_path, holder_pid, passt_fd));
     }
     Ok(pid)
 }
 
-fn run_vm_worker_child(
-    config_path: &Path,
-    holder_pid: libc::pid_t,
-    passt_pid_pipe: Option<OwnedFd>,
-) -> i32 {
+fn run_vm_worker_child(config_path: &Path, holder_pid: libc::pid_t, passt_fd: Option<i32>) -> i32 {
     let mut profiler = LoftdHostProfiler::from_env_started_now();
     profiler.record_metadata("profile_scope", "vm_worker");
     profiler.record_metadata(
@@ -68,7 +63,7 @@ fn run_vm_worker_child(
         config_path.display().to_string(),
     );
 
-    let result = run_vm_worker(config_path, holder_pid, passt_pid_pipe, &mut profiler);
+    let result = run_vm_worker(config_path, holder_pid, passt_fd, &mut profiler);
     let exit_code = if result.is_ok() { 0 } else { 1 };
     profiler.record_metadata("profile_exit_code", exit_code.to_string());
     if let Err(err) = &result {
@@ -84,7 +79,7 @@ fn run_vm_worker_child(
 fn run_vm_worker(
     config_path: &Path,
     holder_pid: libc::pid_t,
-    passt_pid_pipe: Option<OwnedFd>,
+    passt_fd: Option<i32>,
     profiler: &mut LoftdHostProfiler,
 ) -> Result<()> {
     let config = profiler.measure_result("vm_worker_config_read", || {
@@ -99,17 +94,12 @@ fn run_vm_worker(
         "profile_task_state_dir",
         task_state_dir.display().to_string(),
     );
-    let (config, _passt_session) = match config.network_mode {
-        NetworkMode::Tsi => (config, None),
-        NetworkMode::Passt => profiler.measure_result("vm_worker_passt_start", || {
-            let session = PasstWorkerSession::start(task_state_dir, &config.publish)?;
-            if let Some(pipe) = passt_pid_pipe {
-                network::write_passt_pid(pipe, session.pid())?;
-            }
-            Ok((
-                config.with_passt_socket(session.socket().to_path_buf()),
-                Some(session),
-            ))
+    let config = match config.network_mode {
+        NetworkMode::Tsi => config,
+        NetworkMode::Passt => profiler.measure_result("vm_worker_passt_fd_handoff", || {
+            passt_fd
+                .map(|fd| config.with_passt_fd(fd))
+                .ok_or_else(|| anyhow::anyhow!("loftd passt mode requires inherited passt fd"))
         })?,
     };
     run_libkrun_in_current_namespace(&config, task_state_dir, profiler)

@@ -1,33 +1,26 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::path::{Path, PathBuf};
+use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const STARTUP_POLL: Duration = Duration::from_millis(25);
 
-#[cfg(test)]
-use crate::runtime::launch::config::NetworkMode;
 pub(crate) mod addresses;
 mod pid;
 mod plan;
 
-pub(crate) use pid::{
-    cleanup_pid, passt_pid_pipe, read_passt_pid, status_exit_code, wait_pid, write_passt_pid,
-};
-#[cfg(test)]
-use plan::PASST_SOCKET_FILE;
+pub(crate) use pid::{cleanup_pid, status_exit_code, wait_pid};
 pub(crate) use plan::{PASST_PROGRAM, PASTA_PROGRAM, passt_plan, pasta_plan};
 
 pub(crate) struct NetworkManagerSession {
     holder: HolderGuard,
     pasta: ManagedChild,
-    passt_pid: Option<libc::pid_t>,
 }
 
 impl NetworkManagerSession {
@@ -48,25 +41,14 @@ impl NetworkManagerSession {
                 plan.args.join(" ")
             )
         })?;
-        Ok(Self {
-            holder,
-            pasta,
-            passt_pid: None,
-        })
+        Ok(Self { holder, pasta })
     }
 
     pub(crate) fn holder_pid(&self) -> libc::pid_t {
         self.holder.pid()
     }
 
-    pub(crate) fn set_passt_pid(&mut self, pid: Option<libc::pid_t>) {
-        self.passt_pid = pid;
-    }
-
     pub(crate) fn cleanup(&mut self) {
-        if let Some(pid) = self.passt_pid.take() {
-            pid::kill_and_wait_pid(pid);
-        }
         self.pasta.kill_and_wait();
         self.holder.kill_and_wait();
     }
@@ -80,42 +62,64 @@ impl Drop for NetworkManagerSession {
 
 pub(crate) struct PasstWorkerSession {
     child: ManagedChild,
-    socket: PathBuf,
+    passt_fd: OwnedFd,
 }
 
 impl PasstWorkerSession {
-    pub(crate) fn start(task_state_dir: &Path, publish: &[String]) -> Result<Self> {
+    pub(crate) fn start(publish: &[String]) -> Result<Self> {
         ensure_executable_available(PASST_PROGRAM)?;
-        let plan = passt_plan(task_state_dir, publish)?;
-        let socket = plan
-            .socket
-            .clone()
-            .ok_or_else(|| anyhow!("internal passt plan missing socket"))?;
-        let _ = fs::remove_file(&socket);
-        let mut child = ManagedChild::spawn(plan.command(), "passt")?;
-        wait_for_socket(&socket, &mut child).with_context(|| {
+        let (passt_fd, child_fd) = passt_socketpair()?;
+        let plan = passt_plan(child_fd.as_raw_fd(), publish)?;
+        let mut command = plan.command();
+        let passt_fd_raw = passt_fd.as_raw_fd();
+        // SAFETY: this closure only invokes async-signal-safe `close` in the child
+        // after fork and before exec so passt does not inherit libkrun's socket fd.
+        unsafe {
+            command.pre_exec(move || {
+                let rc = libc::close(passt_fd_raw);
+                if rc < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = ManagedChild::spawn(command, "passt")?;
+        drop(child_fd);
+        wait_for_stable_child(&mut child).with_context(|| {
             format!(
-                "passt failed to initialize loftd unix socket '{}'",
-                socket.display()
+                "passt failed to initialize loftd fd backend '{}'",
+                plan.args.join(" ")
             )
         })?;
-        Ok(Self { child, socket })
+        Ok(Self { child, passt_fd })
     }
 
-    pub(crate) fn pid(&self) -> libc::pid_t {
-        self.child.pid()
-    }
-
-    pub(crate) fn socket(&self) -> &Path {
-        &self.socket
+    pub(crate) fn fd(&self) -> i32 {
+        self.passt_fd.as_raw_fd()
     }
 }
 
 impl Drop for PasstWorkerSession {
     fn drop(&mut self) {
         self.child.kill_and_wait();
-        let _ = fs::remove_file(&self.socket);
     }
+}
+
+fn passt_socketpair() -> Result<(OwnedFd, OwnedFd)> {
+    let mut fds = [-1; 2];
+    // SAFETY: socketpair writes two file descriptors into the provided array on success.
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    if rc < 0 {
+        bail!(
+            "failed to create loftd passt socketpair: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    // SAFETY: both descriptors are initialized and uniquely owned after successful socketpair.
+    let parent = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+    // SAFETY: both descriptors are initialized and uniquely owned after successful socketpair.
+    let child = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+    Ok((parent, child))
 }
 
 struct ManagedChild {
@@ -129,10 +133,6 @@ impl ManagedChild {
             .spawn()
             .with_context(|| format!("failed to start loftd {name}; is {name} on PATH?"))?;
         Ok(Self { child, name })
-    }
-
-    fn pid(&self) -> libc::pid_t {
-        self.child.id() as libc::pid_t
     }
 
     fn has_exited(&mut self) -> Result<Option<std::process::ExitStatus>> {
@@ -177,14 +177,6 @@ pub(crate) fn enter_netns(holder_pid: libc::pid_t) -> Result<()> {
         );
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn passt_socket_for_mode(mode: NetworkMode, task_state_dir: &Path) -> Option<PathBuf> {
-    match mode {
-        NetworkMode::Tsi => None,
-        NetworkMode::Passt => Some(task_state_dir.join(PASST_SOCKET_FILE)),
-    }
 }
 
 fn ensure_executable_available(program: &str) -> Result<()> {
@@ -284,10 +276,6 @@ fn wait_for_holder_ready(fd: OwnedFd, pid: libc::pid_t) -> Result<()> {
     }
 }
 
-fn wait_for_socket(socket: &Path, child: &mut ManagedChild) -> Result<()> {
-    wait_until_ready(child, || socket.exists()).map(|_| ())
-}
-
 fn wait_for_stable_child(child: &mut ManagedChild) -> Result<()> {
     let deadline = Instant::now() + STARTUP_POLL * 4;
     while Instant::now() < deadline {
@@ -297,20 +285,6 @@ fn wait_for_stable_child(child: &mut ManagedChild) -> Result<()> {
         thread::sleep(STARTUP_POLL);
     }
     Ok(())
-}
-
-fn wait_until_ready(child: &mut ManagedChild, mut ready: impl FnMut() -> bool) -> Result<()> {
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
-    while Instant::now() < deadline {
-        if ready() {
-            return Ok(());
-        }
-        if let Some(status) = child.has_exited()? {
-            bail!("loftd {} exited before readiness with {status}", child.name);
-        }
-        thread::sleep(STARTUP_POLL);
-    }
-    bail!("loftd {} did not become ready within 5s", child.name)
 }
 
 #[cfg(test)]
@@ -345,20 +319,13 @@ mod tests {
     }
 
     #[test]
-    fn passt_plan_uses_unix_socket_and_no_publish_defaults() {
-        let plan = passt_plan(Path::new("/tmp/task"), &[]).expect("passt plan");
+    fn passt_plan_uses_fd_backend_and_no_publish_defaults() {
+        let plan = passt_plan(42, &[]).expect("passt plan");
 
         assert_eq!(plan.program, "passt");
         assert!(plan.args.contains(&"--foreground".to_owned()));
-        let socket = plan.socket.as_ref().expect("passt socket");
-        assert!(socket.starts_with("/tmp"));
-        assert!(socket.to_string_lossy().contains("loftd-"));
-        assert!(socket.to_string_lossy().ends_with("-passt.sock"));
-        assert!(
-            plan.args
-                .windows(2)
-                .any(|w| w == ["--socket", socket.to_string_lossy().as_ref()])
-        );
+        assert_eq!(plan.fd, Some(42));
+        assert!(plan.args.windows(2).any(|w| w == ["--fd", "42"]));
         assert!(
             plan.args
                 .windows(2)
@@ -369,7 +336,8 @@ mod tests {
                 .windows(2)
                 .any(|w| w == ["--dns-forward", "169.254.1.1"])
         );
-        assert!(plan.args.contains(&"--one-off".to_owned()));
+        assert!(!plan.args.contains(&"--socket".to_owned()));
+        assert!(!plan.args.contains(&"--one-off".to_owned()));
         assert!(plan.args.windows(2).any(|w| w == ["-t", "none"]));
         assert!(plan.args.windows(2).any(|w| w == ["-u", "none"]));
         assert!(!plan.args.contains(&"-T".to_owned()));
@@ -379,7 +347,7 @@ mod tests {
     #[test]
     fn passt_plan_emits_tcp_publish_args() {
         let publish = vec!["8080:80".to_owned(), "tcp:8443:443".to_owned()];
-        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+        let plan = passt_plan(42, &publish).expect("passt plan");
 
         assert!(plan.args.windows(2).any(|w| w == ["-t", "8080:80"]));
         assert!(plan.args.windows(2).any(|w| w == ["-t", "8443:443"]));
@@ -389,7 +357,7 @@ mod tests {
     #[test]
     fn passt_plan_emits_udp_publish_args() {
         let publish = vec!["udp:5353:5353".to_owned()];
-        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+        let plan = passt_plan(42, &publish).expect("passt plan");
 
         assert!(plan.args.windows(2).any(|w| w == ["-t", "none"]));
         assert!(plan.args.windows(2).any(|w| w == ["-u", "5353:5353"]));
@@ -398,7 +366,7 @@ mod tests {
     #[test]
     fn passt_plan_emits_mixed_publish_args() {
         let publish = vec!["8080:80".to_owned(), "udp:5353:5353".to_owned()];
-        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+        let plan = passt_plan(42, &publish).expect("passt plan");
 
         assert!(plan.args.windows(2).any(|w| w == ["-t", "8080:80"]));
         assert!(plan.args.windows(2).any(|w| w == ["-u", "5353:5353"]));
@@ -413,7 +381,7 @@ mod tests {
             "tcp:8080:80/127.0.0.1".to_owned(),
             "udp:5353~5354:5353%eth0".to_owned(),
         ];
-        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+        let plan = passt_plan(42, &publish).expect("passt plan");
 
         assert!(
             plan.args
@@ -434,9 +402,8 @@ mod tests {
 
     #[test]
     fn passt_plan_rejects_empty_or_unknown_publish_selectors() {
-        let empty = passt_plan(Path::new("/tmp/task"), &["tcp:".to_owned()])
-            .expect_err("empty payload should fail");
-        let unknown = passt_plan(Path::new("/tmp/task"), &["sctp:5000:5000".to_owned()])
+        let empty = passt_plan(42, &["tcp:".to_owned()]).expect_err("empty payload should fail");
+        let unknown = passt_plan(42, &["sctp:5000:5000".to_owned()])
             .expect_err("unknown selector should fail");
 
         assert!(format!("{empty:#}").contains("empty"));
@@ -444,14 +411,16 @@ mod tests {
     }
 
     #[test]
-    fn passt_socket_is_only_planned_for_passt_mode() {
-        assert_eq!(
-            passt_socket_for_mode(NetworkMode::Tsi, Path::new("/tmp/task")),
-            None
-        );
-        assert_eq!(
-            passt_socket_for_mode(NetworkMode::Passt, Path::new("/tmp/task")),
-            Some(Path::new("/tmp/task/passt.sock").to_path_buf())
-        );
+    fn passt_socketpair_returns_connected_fds() {
+        use std::io::{Read as _, Write as _};
+        let (parent, child) = passt_socketpair().expect("socketpair");
+        let mut parent = fs::File::from(parent);
+        let mut child = fs::File::from(child);
+
+        child.write_all(b"x").expect("write child");
+        let mut byte = [0_u8; 1];
+        parent.read_exact(&mut byte).expect("read parent");
+
+        assert_eq!(byte, [b'x']);
     }
 }

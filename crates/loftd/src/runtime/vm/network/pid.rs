@@ -1,17 +1,11 @@
 //! Pipe and pid lifecycle helpers for VM/network workers.
 
-use anyhow::{Context, Result, bail};
-use std::fs;
-use std::io::{Read, Write};
+use anyhow::{Result, bail};
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const STARTUP_POLL: Duration = Duration::from_millis(25);
-
-pub(crate) fn passt_pid_pipe() -> Result<(OwnedFd, OwnedFd)> {
-    pipe_cloexec("loftd passt pid pipe")
-}
 
 pub(super) fn pipe_cloexec(label: &str) -> Result<(OwnedFd, OwnedFd)> {
     let mut fds = [0; 2];
@@ -28,27 +22,6 @@ pub(super) fn pipe_cloexec(label: &str) -> Result<(OwnedFd, OwnedFd)> {
     // SAFETY: fds are freshly returned by pipe and uniquely owned here.
     let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
     Ok((read_fd, write_fd))
-}
-
-pub(crate) fn write_passt_pid(fd: OwnedFd, pid: libc::pid_t) -> Result<()> {
-    let mut file = fs::File::from(fd);
-    file.write_all(pid.to_string().as_bytes())
-        .context("failed to send loftd passt pid to network manager")
-}
-
-pub(crate) fn read_passt_pid(fd: OwnedFd) -> Result<Option<libc::pid_t>> {
-    let mut file = fs::File::from(fd);
-    let mut text = String::new();
-    file.read_to_string(&mut text)
-        .context("failed to read loftd passt pid from VM worker")?;
-    let text = text.trim();
-    if text.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(
-        text.parse::<libc::pid_t>()
-            .context("loftd VM worker reported invalid passt pid")?,
-    ))
 }
 
 pub(crate) fn wait_pid(pid: libc::pid_t) -> Result<i32> {

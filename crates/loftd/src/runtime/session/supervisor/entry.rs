@@ -10,7 +10,7 @@ use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::supervisor::LIBKRUN_ENTER_HELPER_ARG;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::session::supervisor::vm_child::{self, VmWorkerGuard};
-use crate::runtime::vm::network::{self, NetworkManagerSession};
+use crate::runtime::vm::network::{NetworkManagerSession, PasstWorkerSession, status_exit_code};
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
     let [subcommand, config_path]: [OsString; 2] = args.try_into().map_err(|args: Vec<_>| {
@@ -65,35 +65,25 @@ fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> 
         mode = config.network_mode.as_config_value(),
         "loftd internal: network manager starting"
     );
-    let mut network_session = profiler.measure_result("helper_network_start", || {
+    let network_session = profiler.measure_result("helper_network_start", || {
         NetworkManagerSession::start(task_state_dir)
     })?;
-    let (passt_read, passt_write) = if config.network_mode == NetworkMode::Passt {
-        profiler.measure_result("helper_passt_pipe_setup", || {
-            let (read_fd, write_fd) = network::passt_pid_pipe()?;
-            Ok((Some(read_fd), Some(write_fd)))
-        })?
-    } else {
-        (None, None)
-    };
-    let mut worker =
-        VmWorkerGuard::new(profiler.measure_result("helper_vm_worker_fork", || {
-            vm_child::fork_vm_worker(config_path, network_session.holder_pid(), passt_write)
-        })?);
-    let passt_pid = if config.network_mode == NetworkMode::Passt {
-        profiler
-            .measure_result("helper_passt_pid_read", || {
-                passt_read.map(network::read_passt_pid).transpose()
-            })?
-            .flatten()
+    let passt_session = if config.network_mode == NetworkMode::Passt {
+        Some(profiler.measure_result("helper_passt_start", || {
+            PasstWorkerSession::start(&config.publish)
+        })?)
     } else {
         None
     };
-    network_session.set_passt_pid(passt_pid);
+    let passt_fd = passt_session.as_ref().map(PasstWorkerSession::fd);
+    let mut worker =
+        VmWorkerGuard::new(profiler.measure_result("helper_vm_worker_fork", || {
+            vm_child::fork_vm_worker(config_path, network_session.holder_pid(), passt_fd)
+        })?);
     let (status, wait_duration) =
         profiler.measure_result_with_duration("helper_wait_vm_worker", || worker.wait())?;
     profiler.record_vm_worker_wait_details(task_state_dir, wait_duration);
-    if let Some(code) = network::status_exit_code(status) {
+    if let Some(code) = status_exit_code(status) {
         if code == 0 {
             return Ok(());
         }

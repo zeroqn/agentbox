@@ -10,6 +10,7 @@ use super::api::LibkrunApi;
 
 pub(super) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
+pub(super) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
 
 #[derive(Debug)]
 pub(crate) struct DirectLibkrunLauncher<A> {
@@ -92,11 +93,26 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             tracing::debug!(ctx_id, disk_id = %disk.id, "krun_add_disk: complete");
         }
         if config.network_mode == NetworkMode::Passt {
-            let passt_socket = config.passt_socket.as_deref().ok_or_else(|| {
-                anyhow!("libkrun passt setup requires a prepared passt unix socket path")
+            let passt_fd = config.passt_fd.ok_or_else(|| {
+                anyhow!("libkrun passt setup requires a prepared passt socket fd")
             })?;
-            tracing::debug!(ctx_id, socket = %passt_socket.display(), "krun_add_net_unixstream: begin");
-            let rc = self.api.add_net_unixstream(ctx_id, passt_socket)?;
+            tracing::debug!(
+                ctx_id,
+                fd = passt_fd,
+                flags = NET_FLAG_DHCP_CLIENT,
+                "krun_add_net_unixstream: begin"
+            );
+            let mut rc = self
+                .api
+                .add_net_unixstream(ctx_id, passt_fd, NET_FLAG_DHCP_CLIENT)?;
+            if rc == -libc::EINVAL {
+                tracing::debug!(
+                    ctx_id,
+                    fd = passt_fd,
+                    "krun_add_net_unixstream returned EINVAL with NET_FLAG_DHCP_CLIENT; retrying without flags"
+                );
+                rc = self.api.add_net_unixstream(ctx_id, passt_fd, 0)?;
+            }
             check_setup("krun_add_net_unixstream", rc)?;
             tracing::debug!(ctx_id, "krun_add_net_unixstream: complete");
         } else if !config.publish.is_empty() {
