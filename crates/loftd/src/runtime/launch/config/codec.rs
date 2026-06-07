@@ -105,6 +105,9 @@ impl LaunchConfig {
             "network_mode",
             self.network_mode.as_config_value(),
         );
+        for (index, spec) in self.publish.iter().enumerate() {
+            push_field(&mut out, &format!("publish.{index}"), spec);
+        }
         push_field(&mut out, "workdir", &self.workdir);
         push_field(&mut out, "exec_path", &self.exec_path);
         if let Some(passt_socket) = &self.passt_socket {
@@ -148,6 +151,7 @@ impl LaunchConfig {
         let mut argv = BTreeMap::new();
         let mut env = BTreeMap::new();
         let mut guest_config_env = BTreeMap::new();
+        let mut publish = BTreeMap::new();
         let mut mounts: BTreeMap<usize, PartialBindMount> = BTreeMap::new();
         let mut disks: BTreeMap<usize, PartialDiskAttachment> = BTreeMap::new();
 
@@ -196,6 +200,8 @@ impl LaunchConfig {
                 }
             } else if let Some(index) = key.strip_prefix("argv.") {
                 argv.insert(parse_index(key, index)?, value);
+            } else if let Some(index) = key.strip_prefix("publish.") {
+                publish.insert(parse_index(key, index)?, value);
             } else if let Some(index) = key.strip_prefix("env.") {
                 let (name, actual) = value
                     .split_once('=')
@@ -270,6 +276,7 @@ impl LaunchConfig {
             vcpus,
             log_level,
             network_mode,
+            publish: publish.into_values().collect(),
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,
             argv: argv.into_values().collect(),

@@ -102,7 +102,7 @@ fn run_vm_worker(
     let (config, _passt_session) = match config.network_mode {
         NetworkMode::Tsi => (config, None),
         NetworkMode::Passt => profiler.measure_result("vm_worker_passt_start", || {
-            let session = PasstWorkerSession::start(task_state_dir)?;
+            let session = PasstWorkerSession::start(task_state_dir, &config.publish)?;
             if let Some(pipe) = passt_pid_pipe {
                 network::write_passt_pid(pipe, session.pid())?;
             }

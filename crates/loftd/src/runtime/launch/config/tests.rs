@@ -49,6 +49,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         mem_gib: Some(4),
         log_level: LogLevel::Debug,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: true,
         root: false,
         host_uid: 1000,
@@ -121,6 +122,7 @@ fn launch_config_uses_explicit_guest_command() {
         mem_gib: Some(4),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -158,6 +160,7 @@ fn launch_config_round_trips_through_hex_line_format() {
         mem_gib: Some(2),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: true,
         host_uid: 1000,
@@ -208,6 +211,60 @@ fn launch_config_round_trips_through_hex_line_format() {
 }
 
 #[test]
+fn launch_config_carries_publish_specs_from_launch_spec() {
+    let publish = vec!["8080:80".to_owned(), "udp:5353:5353".to_owned()];
+    let image_process_config = OciProcessConfig::default();
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Passt,
+        publish: &publish,
+        profile: false,
+        root: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+    })
+    .expect("launch config should build");
+
+    assert_eq!(config.publish, publish);
+}
+
+#[test]
+fn launch_config_round_trips_publish_entries_in_order() {
+    let mut text = String::new();
+    push_field(&mut text, "task_rootfs", "/state/task/rootfs");
+    push_field(&mut text, "hostname", "loftd-workspace");
+    push_field(&mut text, "workspace_source", "/workspace-src");
+    push_field(&mut text, "workspace_tag", WORKSPACE_TAG);
+    push_field(&mut text, "workspace_target", WORKSPACE_TARGET);
+    push_field(&mut text, "ram_mib", "4096");
+    push_field(&mut text, "vcpus", "2");
+    push_field(&mut text, "log_level", "off");
+    push_field(&mut text, "network_mode", "passt");
+    push_field(&mut text, "publish.1", "udp:5353:5353");
+    push_field(&mut text, "publish.0", "8080:80");
+    push_field(&mut text, "workdir", "/workspace");
+    push_field(&mut text, "exec_path", "/loftd-guest-init");
+
+    let parsed = LaunchConfig::parse(&text).expect("config should parse");
+
+    assert_eq!(parsed.publish, ["8080:80", "udp:5353:5353"]);
+    let serialized = decode_text_for_debug(&parsed.serialize()).expect("debug decode");
+    assert!(serialized.contains("publish.0=8080:80\n"));
+    assert!(serialized.contains("publish.1=udp:5353:5353\n"));
+}
+
+#[test]
 fn launch_config_debug_decode_preserves_delimiters_and_escapes_controls() {
     let mut text = String::new();
     push_field(&mut text, "env.0", "KEY=value=with=equals");
@@ -249,6 +306,7 @@ fn launch_config_legacy_workspace_fields_fall_back_to_single_workspace_mount() {
 
     let parsed = LaunchConfig::parse(&text).expect("legacy config should parse");
 
+    assert!(parsed.publish.is_empty());
     assert_eq!(
         parsed.mounts,
         [BindMount {
@@ -276,6 +334,7 @@ fn launch_config_rejects_config_codex_mounts() {
         mem_gib: Some(4),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -308,6 +367,7 @@ fn launch_config_requires_guest_init_override_to_be_read_only() {
         mem_gib: Some(4),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -362,6 +422,27 @@ fn launch_config_rejects_unknown_missing_and_malformed_keys() {
     assert!(LaunchConfig::parse("unknown=61\n").is_err());
     assert!(LaunchConfig::parse("task_rootfs=6\n").is_err());
     assert!(LaunchConfig::parse("task_rootfs=2f\n").is_err());
+}
+
+#[test]
+fn launch_config_rejects_malformed_publish_indexes() {
+    let mut text = String::new();
+    push_field(&mut text, "task_rootfs", "/state/task/rootfs");
+    push_field(&mut text, "hostname", "loftd-workspace");
+    push_field(&mut text, "workspace_source", "/workspace-src");
+    push_field(&mut text, "workspace_tag", WORKSPACE_TAG);
+    push_field(&mut text, "workspace_target", WORKSPACE_TARGET);
+    push_field(&mut text, "ram_mib", "4096");
+    push_field(&mut text, "vcpus", "2");
+    push_field(&mut text, "log_level", "off");
+    push_field(&mut text, "network_mode", "tsi");
+    push_field(&mut text, "publish.bad", "8080:80");
+    push_field(&mut text, "workdir", "/workspace");
+    push_field(&mut text, "exec_path", "/loftd-guest-init");
+
+    let err = LaunchConfig::parse(&text).expect_err("bad publish index should fail");
+
+    assert!(format!("{err:#}").contains("publish.bad"));
 }
 
 #[test]
@@ -423,6 +504,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         mem_gib: Some(4),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -482,6 +564,7 @@ fn guest_debug_env_follows_effective_log_level() {
         mem_gib: Some(4),
         log_level: LogLevel::Info,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -504,6 +587,7 @@ fn guest_debug_env_follows_effective_log_level() {
         mem_gib: Some(4),
         log_level: LogLevel::Trace,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -530,6 +614,7 @@ fn profile_env_does_not_raise_guest_debug_level() {
         mem_gib: Some(4),
         log_level: LogLevel::Info,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: true,
         root: false,
         host_uid: 1000,
@@ -558,6 +643,7 @@ fn passt_mode_sets_guest_passt_dns_gate() {
         mem_gib: Some(4),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Passt,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -593,6 +679,7 @@ fn writes_loftd_config_json_under_task_rootfs() {
         mem_gib: Some(4),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -642,6 +729,7 @@ fn malformed_image_env_is_rejected() {
             mem_gib: Some(4),
             log_level: LogLevel::Off,
             network_mode: NetworkMode::Tsi,
+            publish: &[],
             profile: false,
             root: false,
             host_uid: 1000,
@@ -672,6 +760,7 @@ fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
         mem_gib: Some(4),
         log_level: LogLevel::Off,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,

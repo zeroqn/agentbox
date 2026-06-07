@@ -30,6 +30,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) publish: Vec<String>,
     pub(crate) guest_command: Vec<String>,
     pub(crate) debug: bool,
     pub(crate) log_level: LogLevel,
@@ -97,6 +98,7 @@ impl LaunchPlan {
             guest_init: options.guest_init,
             mem_gib: options.mem_gib,
             network_mode: options.network_mode,
+            publish: options.publish,
             guest_command: options.guest_command,
             debug: options.log_settings.level.enables_debug(),
             log_level: options.log_settings.level,
@@ -172,6 +174,7 @@ mod tests {
             preserve_debug: false,
             mem_gib: None,
             network_mode: NetworkMode::Tsi,
+            publish: Vec::new(),
             guest_command: Vec::new(),
         }
     }
@@ -455,5 +458,23 @@ mod tests {
         .expect("plan should build");
 
         assert_eq!(plan.network_mode, NetworkMode::Passt);
+    }
+
+    #[test]
+    fn launch_plan_carries_publish_specs() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let mut options = runtime_options();
+        options.publish = vec!["8080:80".to_owned(), "8443:443".to_owned()];
+
+        let plan = LaunchPlan::from_env_values(
+            options,
+            PathBuf::from("/tmp/project"),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.publish, ["8080:80", "8443:443"]);
     }
 }

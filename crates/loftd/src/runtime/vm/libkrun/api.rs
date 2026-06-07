@@ -25,6 +25,7 @@ pub(crate) trait LibkrunApi {
         err_fd: i32,
     ) -> Result<i32>;
     fn add_net_unixstream(&mut self, ctx_id: u32, socket_path: &Path) -> Result<i32>;
+    fn set_port_map(&mut self, ctx_id: u32, port_map: &[String]) -> Result<i32>;
     fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32>;
     fn set_exec(
         &mut self,

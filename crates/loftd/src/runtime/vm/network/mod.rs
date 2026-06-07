@@ -84,9 +84,9 @@ pub(crate) struct PasstWorkerSession {
 }
 
 impl PasstWorkerSession {
-    pub(crate) fn start(task_state_dir: &Path) -> Result<Self> {
+    pub(crate) fn start(task_state_dir: &Path, publish: &[String]) -> Result<Self> {
         ensure_executable_available(PASST_PROGRAM)?;
-        let plan = passt_plan(task_state_dir);
+        let plan = passt_plan(task_state_dir, publish)?;
         let socket = plan
             .socket
             .clone()
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn passt_plan_uses_unix_socket_and_no_publish_defaults() {
-        let plan = passt_plan(Path::new("/tmp/task"));
+        let plan = passt_plan(Path::new("/tmp/task"), &[]).expect("passt plan");
 
         assert_eq!(plan.program, "passt");
         assert!(plan.args.contains(&"--foreground".to_owned()));
@@ -370,8 +370,77 @@ mod tests {
                 .any(|w| w == ["--dns-forward", "169.254.1.1"])
         );
         assert!(plan.args.contains(&"--one-off".to_owned()));
+        assert!(plan.args.windows(2).any(|w| w == ["-t", "none"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-u", "none"]));
         assert!(!plan.args.contains(&"-T".to_owned()));
         assert!(!plan.args.contains(&"-U".to_owned()));
+    }
+
+    #[test]
+    fn passt_plan_emits_tcp_publish_args() {
+        let publish = vec!["8080:80".to_owned(), "tcp:8443:443".to_owned()];
+        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+
+        assert!(plan.args.windows(2).any(|w| w == ["-t", "8080:80"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-t", "8443:443"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-u", "none"]));
+    }
+
+    #[test]
+    fn passt_plan_emits_udp_publish_args() {
+        let publish = vec!["udp:5353:5353".to_owned()];
+        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+
+        assert!(plan.args.windows(2).any(|w| w == ["-t", "none"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-u", "5353:5353"]));
+    }
+
+    #[test]
+    fn passt_plan_emits_mixed_publish_args() {
+        let publish = vec!["8080:80".to_owned(), "udp:5353:5353".to_owned()];
+        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+
+        assert!(plan.args.windows(2).any(|w| w == ["-t", "8080:80"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-u", "5353:5353"]));
+        assert!(!plan.args.windows(2).any(|w| w == ["-t", "none"]));
+        assert!(!plan.args.windows(2).any(|w| w == ["-u", "none"]));
+    }
+
+    #[test]
+    fn passt_plan_preserves_ranges_and_bind_payloads() {
+        let publish = vec![
+            "10000-10010:80-90".to_owned(),
+            "tcp:8080:80/127.0.0.1".to_owned(),
+            "udp:5353~5354:5353%eth0".to_owned(),
+        ];
+        let plan = passt_plan(Path::new("/tmp/task"), &publish).expect("passt plan");
+
+        assert!(
+            plan.args
+                .windows(2)
+                .any(|w| w == ["-t", "10000-10010:80-90"])
+        );
+        assert!(
+            plan.args
+                .windows(2)
+                .any(|w| w == ["-t", "8080:80/127.0.0.1"])
+        );
+        assert!(
+            plan.args
+                .windows(2)
+                .any(|w| w == ["-u", "5353~5354:5353%eth0"])
+        );
+    }
+
+    #[test]
+    fn passt_plan_rejects_empty_or_unknown_publish_selectors() {
+        let empty = passt_plan(Path::new("/tmp/task"), &["tcp:".to_owned()])
+            .expect_err("empty payload should fail");
+        let unknown = passt_plan(Path::new("/tmp/task"), &["sctp:5000:5000".to_owned()])
+            .expect_err("unknown selector should fail");
+
+        assert!(format!("{empty:#}").contains("empty"));
+        assert!(format!("{unknown:#}").contains("unsupported protocol"));
     }
 
     #[test]

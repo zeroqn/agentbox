@@ -349,6 +349,7 @@ mod tests {
             mem_gib: Some(4),
             log_level: LogLevel::Off,
             network_mode: NetworkMode::Tsi,
+            publish: &[],
             profile: false,
             root: false,
             host_uid: 1000,

@@ -59,6 +59,7 @@ impl LaunchConfig {
             vcpus: spec.vcpus,
             log_level: spec.log_level,
             network_mode: spec.network_mode,
+            publish: spec.publish.to_vec(),
             workdir: components::process::workdir_from_image(
                 spec.image_process_config.working_dir.as_deref(),
             ),

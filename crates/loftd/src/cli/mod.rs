@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
@@ -95,6 +95,17 @@ pub(crate) struct Cli {
     passt: bool,
 
     #[arg(
+        short = 'p',
+        long = "publish",
+        value_name = "SPEC",
+        value_parser = parse_publish_arg,
+        action = ArgAction::Append,
+        help = "Publish a host port to the guest; repeatable",
+        long_help = "Publish a host port to the guest; repeatable. Default TSI mode accepts simple TCP HOST_PORT:GUEST_PORT. With --passt, tcp:SPEC and udp:SPEC select passt TCP/UDP forwarding, and unprefixed SPEC defaults to TCP."
+    )]
+    publish: Vec<String>,
+
+    #[arg(
         value_name = "COMMAND",
         last = true,
         num_args = 1..,
@@ -154,6 +165,7 @@ impl Cli {
             } else {
                 NetworkMode::Tsi
             },
+            publish: self.publish,
             guest_command: self.guest_command,
         }
     }
@@ -172,6 +184,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) preserve_debug: bool,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) publish: Vec<String>,
     pub(crate) guest_command: Vec<String>,
 }
 
@@ -189,6 +202,14 @@ pub(crate) fn parse_mem_gib_arg(value: &str) -> Result<u32, String> {
 
 fn parse_rootfs_backend_arg(value: &str) -> Result<TaskRootfsBackend, String> {
     TaskRootfsBackend::parse_config_value(value)
+}
+
+fn parse_publish_arg(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("publish spec must not be empty".to_owned());
+    }
+    Ok(value.to_owned())
 }
 
 #[cfg(test)]
@@ -229,6 +250,7 @@ mod tests {
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
+        assert!(options.publish.is_empty());
         assert_eq!(options.log_settings.level, LogLevel::Debug);
         assert!(options.guest_command.is_empty());
     }
@@ -242,11 +264,44 @@ mod tests {
     }
 
     #[test]
+    fn publish_flag_is_repeatable() {
+        let cli = Cli::try_parse_from(["loftd", "-p", "8080:80", "--publish", "8443:443"])
+            .expect("publish flags should parse");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(options.publish, ["8080:80", "8443:443"]);
+    }
+
+    #[test]
+    fn publish_rejects_empty_spec() {
+        let empty_err =
+            Cli::try_parse_from(["loftd", "-p", ""]).expect_err("empty publish should fail");
+        let whitespace_err = Cli::try_parse_from(["loftd", "--publish", "   "])
+            .expect_err("blank publish should fail");
+
+        assert_eq!(empty_err.kind(), clap::error::ErrorKind::ValueValidation);
+        assert_eq!(
+            whitespace_err.kind(),
+            clap::error::ErrorKind::ValueValidation
+        );
+    }
+
+    #[test]
     fn parses_explicit_guest_command_after_delimiter() {
         let cli = Cli::try_parse_from(["loftd", "--", "bash", "-lc", "echo ok"])
             .expect("guest command should parse after delimiter");
         let options = cli.into_runtime_options();
 
+        assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
+    }
+
+    #[test]
+    fn publish_preserves_guest_command() {
+        let cli = Cli::try_parse_from(["loftd", "-p", "8080:80", "--", "bash", "-lc", "echo ok"])
+            .expect("publish and command should parse");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(options.publish, ["8080:80"]);
         assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
     }
 

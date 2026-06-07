@@ -36,6 +36,7 @@ type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
 type KrunAddVirtioConsoleDefault = unsafe extern "C" fn(u32, i32, i32, i32) -> i32;
 type KrunAddNetUnixstream =
     unsafe extern "C" fn(u32, *const c_char, i32, *const c_void, u32, u8) -> i32;
+type KrunSetPortMap = unsafe extern "C" fn(u32, *const *const c_char) -> i32;
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
     unsafe extern "C" fn(u32, *const c_char, *const *const c_char, *const *const c_char) -> i32;
@@ -55,6 +56,7 @@ pub(crate) struct DynamicLibkrunApi {
     disable_implicit_console: KrunDisableImplicitConsole,
     add_virtio_console_default: KrunAddVirtioConsoleDefault,
     add_net_unixstream: Option<KrunAddNetUnixstream>,
+    set_port_map: Option<KrunSetPortMap>,
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
     set_profile_path: Option<KrunSetProfilePath>,
@@ -138,6 +140,8 @@ impl DynamicLibkrunApi {
                 )?),
                 add_net_unixstream: load_optional_symbol(handle, "krun_add_net_unixstream")
                     .map(|symbol| std::mem::transmute::<*mut c_void, KrunAddNetUnixstream>(symbol)),
+                set_port_map: load_optional_symbol(handle, "krun_set_port_map")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetPortMap>(symbol)),
                 set_workdir: std::mem::transmute::<*mut c_void, KrunSetWorkdir>(load_symbol(
                     handle,
                     "krun_set_workdir",
@@ -290,6 +294,19 @@ impl LibkrunApi for DynamicLibkrunApi {
                 0,
             )
         })
+    }
+
+    fn set_port_map(&mut self, ctx_id: u32, port_map: &[String]) -> Result<i32> {
+        let set_port_map = self.set_port_map.ok_or_else(|| {
+            anyhow!("libkrun TSI publish setup failed: krun_set_port_map symbol is unavailable")
+        })?;
+        let port_map_strings = port_map
+            .iter()
+            .map(|spec| CString::new(spec.as_str()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let port_map = null_terminated_ptrs(&port_map_strings);
+        // SAFETY: C strings and pointer array live for the duration of the call.
+        Ok(unsafe { set_port_map(ctx_id, port_map.as_ptr()) })
     }
 
     fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32> {

@@ -12,6 +12,7 @@ use std::time::Instant;
 use crate::cli::RuntimeOptions;
 
 pub(crate) mod launch;
+pub(crate) mod publish;
 pub(crate) mod session;
 pub(crate) mod vm;
 

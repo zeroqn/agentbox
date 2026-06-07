@@ -106,6 +106,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                             mem_gib: plan.mem_gib,
                             log_level: plan.log_level,
                             network_mode: plan.network_mode,
+                            publish: &plan.publish,
                             profile: plan.profile,
                             root: plan.root,
                             host_uid: current_uid(),
@@ -251,6 +252,7 @@ mod tests {
             preserve_debug: false,
             mem_gib: None,
             network_mode: config::NetworkMode::Tsi,
+            publish: Vec::new(),
             guest_command: Vec::new(),
         }
     }

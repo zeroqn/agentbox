@@ -20,6 +20,7 @@ enum Call {
     SetRoot(u32, String),
     AddDisk(u32, String, String, bool),
     AddNetUnixstream(u32, String),
+    SetPortMap(u32, Vec<String>),
     DisableImplicitConsole(u32),
     AddVirtioConsoleDefault(u32, i32, i32, i32),
     SetWorkdir(u32, String),
@@ -129,6 +130,13 @@ impl LibkrunApi for FakeLibkrunApi {
         Ok(self.rc("krun_add_net_unixstream"))
     }
 
+    fn set_port_map(&mut self, ctx_id: u32, port_map: &[String]) -> Result<i32> {
+        self.calls
+            .borrow_mut()
+            .push(Call::SetPortMap(ctx_id, port_map.to_vec()));
+        Ok(self.rc("krun_set_port_map"))
+    }
+
     fn set_workdir(&mut self, ctx_id: u32, workdir: &str) -> Result<i32> {
         self.calls
             .borrow_mut()
@@ -186,6 +194,7 @@ fn config() -> LaunchConfig {
         mem_gib: Some(4),
         log_level: LogLevel::Debug,
         network_mode: NetworkMode::Tsi,
+        publish: &[],
         profile: false,
         root: false,
         host_uid: 1000,
@@ -211,7 +220,22 @@ fn config() -> LaunchConfig {
 fn passt_config() -> LaunchConfig {
     LaunchConfig {
         network_mode: NetworkMode::Passt,
+        publish: Vec::new(),
         ..config().with_passt_socket(Path::new("/tmp/task/passt.sock").to_path_buf())
+    }
+}
+
+fn tsi_publish_config() -> LaunchConfig {
+    LaunchConfig {
+        publish: vec!["8080:80".to_owned(), "8443:443".to_owned()],
+        ..config()
+    }
+}
+
+fn passt_publish_config() -> LaunchConfig {
+    LaunchConfig {
+        publish: vec!["8080:80".to_owned(), "udp:5353:5353".to_owned()],
+        ..passt_config()
     }
 }
 
@@ -344,6 +368,50 @@ fn passt_mode_adds_unixstream_before_start() {
 }
 
 #[test]
+fn tsi_publish_calls_set_port_map_before_start() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&tsi_publish_config())
+        .expect("launch should succeed");
+
+    let calls = calls.borrow();
+    let port_map_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetPortMap(..)))
+        .expect("TSI publish should set port map");
+    let start_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::StartEnter(..)))
+        .expect("launch should start");
+
+    assert_eq!(
+        calls[port_map_index],
+        Call::SetPortMap(7, vec!["8080:80".to_owned(), "8443:443".to_owned()])
+    );
+    assert!(port_map_index < start_index);
+}
+
+#[test]
+fn passt_publish_does_not_call_set_port_map() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&passt_publish_config())
+        .expect("launch should succeed");
+
+    let calls = calls.borrow();
+    assert!(
+        calls
+            .iter()
+            .any(|call| matches!(call, Call::AddNetUnixstream(..)))
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|call| matches!(call, Call::SetPortMap(..)))
+    );
+}
+
+#[test]
 fn pre_enter_hook_runs_after_setup_and_before_start() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
@@ -451,6 +519,37 @@ fn setup_failure_is_classified_and_frees_context_before_start() {
         .expect_err("setup failure should fail");
 
     assert!(format!("{err:#}").contains("libkrun setup failed"));
+    let calls = calls.borrow();
+    assert!(calls.contains(&Call::FreeCtx(7)));
+    assert!(!calls.contains(&Call::StartEnter(7)));
+}
+
+#[test]
+fn set_port_map_failure_is_setup_failure_and_frees_context() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let err =
+        DirectLibkrunLauncher::new(FakeLibkrunApi::failing(calls.clone(), "krun_set_port_map"))
+            .start_enter(&tsi_publish_config())
+            .expect_err("port-map setup failure should fail");
+
+    assert!(format!("{err:#}").contains("libkrun setup failed: krun_set_port_map"));
+    let calls = calls.borrow();
+    assert!(calls.contains(&Call::FreeCtx(7)));
+    assert!(!calls.contains(&Call::StartEnter(7)));
+}
+
+#[test]
+fn tsi_invalid_publish_fails_before_start() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let invalid = LaunchConfig {
+        publish: vec!["udp:5353:5353".to_owned()],
+        ..config()
+    };
+    let err = DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&invalid)
+        .expect_err("unsupported TSI publish should fail");
+
+    assert!(format!("{err:#}").contains("TSI publish"));
     let calls = calls.borrow();
     assert!(calls.contains(&Call::FreeCtx(7)));
     assert!(!calls.contains(&Call::StartEnter(7)));

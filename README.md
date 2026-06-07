@@ -894,8 +894,26 @@ materialize `/etc/hosts` with:
 169.254.1.2    host.containers.internal host.docker.internal
 ```
 
-There is no shared/global rootless network namespace and no port-publish CLI in
-this slice.
+Use repeatable `-p, --publish SPEC` to expose guest services on host ports.
+In the default TSI mode, loftd supports only simple TCP
+`HOST_PORT:GUEST_PORT` mappings through libkrun `krun_set_port_map()`:
+
+```bash
+./result/bin/loftd -p 8080:80 -- bash -lc 'python3 -m http.server 80'
+```
+
+TSI publish specs intentionally reject UDP, host bind addresses, port ranges,
+random host ports, `all`/`none`, and protocol selectors. Use `--passt` when you
+need broader passt-compatible forwarding syntax. In passt mode, unprefixed
+publish specs default to TCP; `tcp:` and `udp:` select passt `-t` and `-u`
+forwarding respectively, and passt owns deeper grammar validation for ranges,
+bind-address suffixes, interfaces, and exclusions:
+
+```bash
+./result/bin/loftd --passt -p tcp:8080:80 -p udp:5353:5353 -- bash -lc 'echo ok'
+```
+
+Loftd still does not create a shared/global rootless network namespace.
 
 After networking is ready, the helper dynamically loads `libkrun.so.1` or
 `libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), prepares a crun-style root

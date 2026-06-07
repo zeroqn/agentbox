@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::path::Path;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
+use crate::runtime::publish::tsi_port_map;
 
 use super::api::LibkrunApi;
 
@@ -98,6 +99,13 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             let rc = self.api.add_net_unixstream(ctx_id, passt_socket)?;
             check_setup("krun_add_net_unixstream", rc)?;
             tracing::debug!(ctx_id, "krun_add_net_unixstream: complete");
+        } else if !config.publish.is_empty() {
+            let port_map =
+                tsi_port_map(&config.publish).context("libkrun TSI publish setup failed")?;
+            tracing::debug!(ctx_id, ports = ?port_map, "krun_set_port_map: begin");
+            let rc = self.api.set_port_map(ctx_id, &port_map)?;
+            check_setup("krun_set_port_map", rc)?;
+            tracing::debug!(ctx_id, "krun_set_port_map: complete");
         }
         tracing::debug!(ctx_id, "krun_disable_implicit_console: begin");
         let rc = self.api.disable_implicit_console(ctx_id)?;
