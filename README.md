@@ -135,13 +135,16 @@ env -u LD_PRELOAD some-foreign-binary --flag
 
 ```bash
 nix build .#loftd
+nix build .#loftd-dev
 nix build .#agentbox-prebuilt
 nix build .#loftd-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
 nix build .#reasonix
 nix build .#libkrunfw
+nix build .#libkrunfw-dev
 nix build .#libkrun
+nix build .#libkrun-dev
 nix build .#crun
 nix build .#podman
 nix build .#container-lib-policy-seccomp-json
@@ -152,11 +155,13 @@ nix build .#agentbox-container
 ### Build outputs
 
 - `.#agentbox`: compile from source.
-- `.#loftd`: compile from source as the dynamic host `loftd` package. It uses
-  the same Rust package output as `.#agentbox`, which wraps both host binaries
-  with this flake's runtime library path and runtime tools including
-  `pasta`/`passt`. The stable raw release payload is also available at
-  `libexec/loftd`; `bin/loftd` remains the wrapped CLI for normal use.
+- `.#loftd`: install the pinned published neutral dynamic Linux `loftd` asset
+  through the same packaging path as `.#loftd-prebuilt`. This is the fast default
+  path for ordinary host usage and uses pinned prebuilt `libkrunfw`.
+- `.#loftd-dev`: compile the workspace Rust host package and wire it to
+  `deps/libkrunfw` through `.#libkrunfw-dev`. Use this target for local
+  libkrunfw/kernel configuration experiments; it intentionally pays the slow
+  firmware build cost.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
   `fuse-overlayfs` and `buildah` into the runtime environment for
@@ -178,8 +183,13 @@ nix build .#agentbox-container
   pinned for `x86_64-linux`).
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
-- `.#libkrun`: build libkrun 1.18.0 from source (overrides nixpkgs 1.17.4)
-  with net, sound, GPU, block, and input support enabled.
+- `.#libkrunfw-dev`: build local `deps/libkrunfw` for firmware/kernel
+  configuration experiments.
+- `.#libkrun`: build libkrun 1.18.1 from source (overrides nixpkgs 1.17.4)
+  with net, sound, GPU, block, and input support enabled, linked against the
+  pinned prebuilt `.#libkrunfw`.
+- `.#libkrun-dev`: build the same libkrun source linked against local
+  `.#libkrunfw-dev`.
 - `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
   override, krun handler support, raw data disk annotation support,
   `krun.nested_virt` support, and `pkgs.passt` on crun's runtime `PATH`.
@@ -1109,8 +1119,9 @@ release-builder `/nix/store/<hash>-...` references, and Nix packaging patches
 its ordinary ELF runtime dependencies before wrapping the libkrun/runtime-tool
 environment.
 For ordinary loftd usage, prefer `nix build .#loftd`, `nix build
-.#loftd-prebuilt` for pinned systems, or the published
-`ghcr.io/<repo-owner>/loftd` image.
+.#loftd-prebuilt` for the explicit prebuilt alias, or the published
+`ghcr.io/<repo-owner>/loftd` image. Use `nix build .#loftd-dev` only when local
+`deps/libkrunfw` experiments are intended.
 
 ---
 

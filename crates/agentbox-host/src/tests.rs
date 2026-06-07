@@ -80,7 +80,8 @@ fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
     for required in [
         r#"loftdImage = mkImage "loftd";"#,
         r#"agentboxImage = mkImage "agentbox";"#,
-        "loftd = rustPackages.rustPackage;",
+        "loftd = prebuiltLoftd;",
+        "loftd-dev = rustPackagesDev.rustPackage;",
         "prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix",
         "loftd-prebuilt = prebuiltLoftd;",
         "container = loftdImage;",

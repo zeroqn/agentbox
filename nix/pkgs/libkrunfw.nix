@@ -26,6 +26,7 @@
   util-linux,
   xz,
   zlib,
+  useLocalSource ? false,
   variant ? null,
 }:
 
@@ -143,4 +144,10 @@ let
     };
   };
 in
-if system == "x86_64-linux" then localSource else prebuilt
+if useLocalSource then
+  if system == "x86_64-linux" then
+    localSource
+  else
+    throw "local libkrunfw source build is only supported on x86_64-linux"
+else
+  prebuilt
