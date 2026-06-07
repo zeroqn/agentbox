@@ -899,7 +899,10 @@ materialize `/etc/hosts` with:
 
 Use repeatable `-p, --publish SPEC` to expose guest services on host ports.
 In the default TSI mode, loftd supports only simple TCP
-`HOST_PORT:GUEST_PORT` mappings through libkrun `krun_set_port_map()`:
+`HOST_PORT:GUEST_PORT` mappings through a two-hop path: `pasta` listens in the
+host-facing helper namespace and forwards `HOST_PORT` into the VM worker's
+private network namespace, while libkrun `krun_set_port_map()` maps guest
+listens on `GUEST_PORT` to that same target-namespace `HOST_PORT`:
 
 ```bash
 ./result/bin/loftd -p 8080:80 -- bash -lc 'python3 -m http.server 80'

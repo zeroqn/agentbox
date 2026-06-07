@@ -9,6 +9,9 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::runtime::launch::config::NetworkMode;
+use crate::runtime::publish::tsi_pasta_tcp_forwards;
+
 const STARTUP_POLL: Duration = Duration::from_millis(25);
 
 pub(crate) mod addresses;
@@ -24,7 +27,11 @@ pub(crate) struct NetworkManagerSession {
 }
 
 impl NetworkManagerSession {
-    pub(crate) fn start(task_state_dir: &Path) -> Result<Self> {
+    pub(crate) fn start(
+        task_state_dir: &Path,
+        network_mode: NetworkMode,
+        publish: &[String],
+    ) -> Result<Self> {
         fs::create_dir_all(task_state_dir).with_context(|| {
             format!(
                 "failed to create loftd network task state dir '{}'",
@@ -32,8 +39,9 @@ impl NetworkManagerSession {
             )
         })?;
         ensure_executable_available(PASTA_PROGRAM)?;
+        let tcp_forwards = pasta_tcp_forwards_for(network_mode, publish)?;
         let holder = spawn_netns_holder()?;
-        let plan = pasta_plan(holder.pid());
+        let plan = pasta_plan(holder.pid(), &tcp_forwards);
         let mut pasta = ManagedChild::spawn(plan.command(), "pasta")?;
         wait_for_stable_child(&mut pasta).with_context(|| {
             format!(
@@ -57,6 +65,13 @@ impl NetworkManagerSession {
 impl Drop for NetworkManagerSession {
     fn drop(&mut self) {
         self.cleanup();
+    }
+}
+
+fn pasta_tcp_forwards_for(network_mode: NetworkMode, publish: &[String]) -> Result<Vec<String>> {
+    match network_mode {
+        NetworkMode::Tsi => tsi_pasta_tcp_forwards(publish),
+        NetworkMode::Passt => Ok(Vec::new()),
     }
 }
 
@@ -293,7 +308,7 @@ mod tests {
 
     #[test]
     fn pasta_plan_matches_podman_like_host_alias_contract() {
-        let plan = pasta_plan(1234);
+        let plan = pasta_plan(1234, &[]);
 
         assert_eq!(plan.program, "pasta");
         assert!(plan.args.contains(&"--foreground".to_owned()));
@@ -316,6 +331,47 @@ mod tests {
         assert!(plan.args.windows(2).any(|w| w == ["-t", "none"]));
         assert!(plan.args.windows(2).any(|w| w == ["-u", "none"]));
         assert!(plan.args.contains(&"--no-map-gw".to_owned()));
+    }
+
+    #[test]
+    fn pasta_plan_emits_tsi_publish_tcp_forwards() {
+        let forwards = vec!["8080:8080".to_owned(), "8443:8443".to_owned()];
+        let plan = pasta_plan(1234, &forwards);
+
+        assert!(plan.args.windows(2).any(|w| w == ["-t", "8080:8080"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-t", "8443:8443"]));
+        assert!(!plan.args.windows(2).any(|w| w == ["-t", "none"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-u", "none"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-T", "none"]));
+        assert!(plan.args.windows(2).any(|w| w == ["-U", "none"]));
+    }
+
+    #[test]
+    fn tsi_mode_derives_pasta_forwards_from_publish_specs() {
+        let publish = vec!["8080:80".to_owned(), "8443:443".to_owned()];
+
+        assert_eq!(
+            pasta_tcp_forwards_for(NetworkMode::Tsi, &publish).expect("TSI forwards"),
+            ["8080:8080", "8443:8443"]
+        );
+    }
+
+    #[test]
+    fn passt_mode_keeps_pasta_inbound_closed_when_publish_is_present() {
+        let publish = vec!["8080:80".to_owned(), "udp:5353:5353".to_owned()];
+
+        assert_eq!(
+            pasta_tcp_forwards_for(NetworkMode::Passt, &publish).expect("passt forwards"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn tsi_mode_rejects_passt_only_publish_syntax_before_pasta_spawn() {
+        let error = pasta_tcp_forwards_for(NetworkMode::Tsi, &["udp:5353:5353".to_owned()])
+            .expect_err("UDP is passt-only");
+
+        assert!(format!("{error:#}").contains("TSI publish spec"));
     }
 
     #[test]

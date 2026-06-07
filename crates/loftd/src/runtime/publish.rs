@@ -15,10 +15,26 @@ pub(crate) struct PasstPublishSpec {
     pub(crate) payload: String,
 }
 
-pub(crate) fn tsi_port_map(specs: &[String]) -> Result<Vec<String>> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TsiPublishMapping {
+    host: u16,
+    guest: u16,
+}
+
+impl TsiPublishMapping {
+    fn port_map(self) -> String {
+        format!("{}:{}", self.host, self.guest)
+    }
+
+    fn pasta_tcp_forward(self) -> String {
+        format!("{}:{}", self.host, self.host)
+    }
+}
+
+fn tsi_publish_mappings(specs: &[String]) -> Result<Vec<TsiPublishMapping>> {
     let mut host_ports = HashSet::new();
     let mut guest_ports = HashSet::new();
-    let mut port_map = Vec::with_capacity(specs.len());
+    let mut mappings = Vec::with_capacity(specs.len());
 
     for spec in specs {
         let spec = spec.trim();
@@ -39,10 +55,24 @@ pub(crate) fn tsi_port_map(specs: &[String]) -> Result<Vec<String>> {
         if !guest_ports.insert(guest) {
             bail!("TSI publish spec '{spec}' duplicates guest port {guest}");
         }
-        port_map.push(format!("{host}:{guest}"));
+        mappings.push(TsiPublishMapping { host, guest });
     }
 
-    Ok(port_map)
+    Ok(mappings)
+}
+
+pub(crate) fn tsi_port_map(specs: &[String]) -> Result<Vec<String>> {
+    Ok(tsi_publish_mappings(specs)?
+        .into_iter()
+        .map(TsiPublishMapping::port_map)
+        .collect())
+}
+
+pub(crate) fn tsi_pasta_tcp_forwards(specs: &[String]) -> Result<Vec<String>> {
+    Ok(tsi_publish_mappings(specs)?
+        .into_iter()
+        .map(TsiPublishMapping::pasta_tcp_forward)
+        .collect())
 }
 
 pub(crate) fn passt_publish_specs(specs: &[String]) -> Result<Vec<PasstPublishSpec>> {
@@ -117,6 +147,15 @@ mod tests {
         assert_eq!(
             tsi_port_map(&strings(&["1:65535", "65535:1"])).expect("valid port map"),
             ["1:65535", "65535:1"]
+        );
+    }
+
+    #[test]
+    fn tsi_derives_pasta_forwards_for_host_ports() {
+        assert_eq!(
+            tsi_pasta_tcp_forwards(&strings(&["8080:80", "8443:443"]))
+                .expect("valid pasta forwards"),
+            ["8080:8080", "8443:8443"]
         );
     }
 

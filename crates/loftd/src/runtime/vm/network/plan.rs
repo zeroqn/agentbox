@@ -30,29 +30,40 @@ impl ProxyCommandPlan {
     }
 }
 
-pub(crate) fn pasta_plan(holder_pid: libc::pid_t) -> ProxyCommandPlan {
+pub(crate) fn pasta_plan(holder_pid: libc::pid_t, tcp_forwards: &[String]) -> ProxyCommandPlan {
+    let mut args = vec![
+        "--foreground".to_owned(),
+        "--config-net".to_owned(),
+        "--no-map-gw".to_owned(),
+        "--map-guest-addr".to_owned(),
+        HOST_GATEWAY_ADDR.to_owned(),
+        "--dns-forward".to_owned(),
+        HOST_DNS_FORWARD_ADDR.to_owned(),
+    ];
+    if tcp_forwards.is_empty() {
+        args.push("-t".to_owned());
+        args.push("none".to_owned());
+    } else {
+        for forward in tcp_forwards {
+            args.push("-t".to_owned());
+            args.push(forward.clone());
+        }
+    }
+    args.extend([
+        "-u".to_owned(),
+        "none".to_owned(),
+        "-T".to_owned(),
+        "none".to_owned(),
+        "-U".to_owned(),
+        "none".to_owned(),
+        "--quiet".to_owned(),
+        "--netns".to_owned(),
+        format!("/proc/{holder_pid}/ns/net"),
+    ]);
+
     ProxyCommandPlan {
         program: PASTA_PROGRAM.to_owned(),
-        args: vec![
-            "--foreground".to_owned(),
-            "--config-net".to_owned(),
-            "--no-map-gw".to_owned(),
-            "--map-guest-addr".to_owned(),
-            HOST_GATEWAY_ADDR.to_owned(),
-            "--dns-forward".to_owned(),
-            HOST_DNS_FORWARD_ADDR.to_owned(),
-            "-t".to_owned(),
-            "none".to_owned(),
-            "-u".to_owned(),
-            "none".to_owned(),
-            "-T".to_owned(),
-            "none".to_owned(),
-            "-U".to_owned(),
-            "none".to_owned(),
-            "--quiet".to_owned(),
-            "--netns".to_owned(),
-            format!("/proc/{holder_pid}/ns/net"),
-        ],
+        args,
         fd: None,
     }
 }

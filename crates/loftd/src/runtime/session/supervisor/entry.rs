@@ -66,7 +66,7 @@ fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> 
         "loftd internal: network manager starting"
     );
     let network_session = profiler.measure_result("helper_network_start", || {
-        NetworkManagerSession::start(task_state_dir)
+        NetworkManagerSession::start(task_state_dir, config.network_mode, &config.publish)
     })?;
     let passt_session = if config.network_mode == NetworkMode::Passt {
         Some(profiler.measure_result("helper_passt_start", || {
