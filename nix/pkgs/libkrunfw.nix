@@ -17,6 +17,7 @@
   gnused,
   gnutar,
   gzip,
+  lz4,
   ncurses,
   openssl,
   patch,
@@ -106,6 +107,7 @@ let
       gnused
       gnutar
       gzip
+      lz4
       ncurses
       openssl
       patch
