@@ -591,6 +591,34 @@ fn loftd_wrappers_use_loftd_internal_wait_contracts() {
 }
 
 #[test]
+fn loftd_image_includes_root_only_as_dev_helper() {
+    for required in [
+        r#"loftdAsDevCommandCompat = pkgs.writeShellScriptBin "loftd-as-dev""#,
+        "loftd-guest-init as-dev",
+        "asDev = loftdAsDevCommandCompat",
+        "loftdOnlyCommandCompat = pkgs.lib.optional (commandCompat.asDev != null) commandCompat.asDev",
+        "] ++ loftdOnlyCommandCompat ++ imagePathPackages",
+        "] ++ loftdOnlyCommandCompat ++ [",
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn agentbox_image_does_not_select_loftd_as_dev_helper() {
+    let agentbox_branch = LAYERS
+        .split(r#"} else {"#)
+        .nth(1)
+        .expect("agentbox command compat branch should exist")
+        .split("};")
+        .next()
+        .expect("agentbox command compat branch should end");
+
+    assert!(agentbox_branch.contains("asDev = null"));
+    assert!(!agentbox_branch.contains("loftdAsDevCommandCompat"));
+}
+
+#[test]
 fn image_materializes_graphene_hardened_malloc_as_nix_loader_preload() {
     for required in [
         "grapheneHardenedMalloc = pkgs.graphene-hardened-malloc.overrideAttrs",
@@ -855,7 +883,7 @@ fn image_roots_musl_bin_output_exposed_by_image_path() {
     assert!(c_toolchain_path.contains("pkgs.gcc"));
     assert!(c_toolchain_path.contains("muslBin"));
     assert!(LAYERS.contains("imagePathPackages"));
-    assert!(LAYERS.contains("] ++ imagePathPackages);"));
+    assert!(LAYERS.contains("] ++ loftdOnlyCommandCompat ++ imagePathPackages);"));
     assert!(LAYERS.contains("muslBin = pkgs.lib.getBin pkgs.musl;"));
     assert!(LAYERS.contains("cToolchainImagePackages = cToolchainPathPackages ++ ["));
     assert!(LAYERS.contains("pkgs.musl"));

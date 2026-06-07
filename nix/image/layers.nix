@@ -157,18 +157,27 @@ let
     fi
     exec ${pkgs.docker-compose}/bin/docker-compose "$@"
   '';
+  loftdAsDevCommandCompat = pkgs.writeShellScriptBin "loftd-as-dev" ''
+    unset LD_PRELOAD
+    unset NSS_WRAPPER_PASSWD
+    unset NSS_WRAPPER_GROUP
+    exec ${agentboxMuslPackage}/bin/loftd-guest-init as-dev "$@"
+  '';
 
   commandCompat = if imageVariant == "loftd" then {
     nix = loftdNixCommandCompat;
     podman = loftdPodmanCommandCompat;
     docker = loftdDockerCommandCompat;
     dockerCompose = loftdDockerComposeCommandCompat;
+    asDev = loftdAsDevCommandCompat;
   } else {
     nix = agentboxNixCommandCompat;
     podman = agentboxPodmanCommandCompat;
     docker = agentboxDockerCommandCompat;
     dockerCompose = agentboxDockerComposeCommandCompat;
+    asDev = null;
   };
+  loftdOnlyCommandCompat = pkgs.lib.optional (commandCompat.asDev != null) commandCompat.asDev;
   nixCommandCompat = commandCompat.nix;
   podmanCommandCompat = commandCompat.podman;
   dockerCommandCompat = commandCompat.docker;
@@ -432,7 +441,7 @@ let
     podmanCommandCompat
     dockerCommandCompat
     dockerComposeCommandCompat
-  ] ++ imagePathPackages);
+  ] ++ loftdOnlyCommandCompat ++ imagePathPackages);
   realPodmanBin = "${podman}/bin/podman";
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
@@ -451,6 +460,7 @@ let
     podmanCommandCompat
     dockerCommandCompat
     dockerComposeCommandCompat
+  ] ++ loftdOnlyCommandCompat ++ [
     rustcCommandCompat
     rustAnalyzerCommandCompat
   ];
@@ -567,6 +577,7 @@ in
     podmanCommandCompat
     dockerCommandCompat
     dockerComposeCommandCompat
+    loftdAsDevCommandCompat
     rustcCommandCompat
     rustAnalyzerCommandCompat
     grapheneHardenedMalloc

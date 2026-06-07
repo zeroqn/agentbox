@@ -775,6 +775,23 @@ memory rounded down to whole GiB, matching agentbox libkrun mode. Pass
 `SCCACHE_DIR=/home/dev/.cache/sccache`, backed by loftd's shared state
 `sccache` bind mount.
 
+Root shell handoff:
+
+```bash
+./result/bin/loftd --root
+# inside the root shell:
+loftd-as-dev          # execs fish -l as dev
+loftd-as-dev id -un  # runs a command as dev
+```
+
+`loftd-as-dev` is packaged only in the loftd image. It is a narrow root-only
+helper for dropping from an interactive loftd root shell back to the materialized
+`dev` account. With no arguments it launches `fish -l`; with arguments it runs
+that command as `dev`. Exiting that fish or command returns to the invoking root
+shell only when the helper was started as a child process from an interactive
+root shell. The helper does not provide sudo/su, does not switch arbitrary users,
+and cannot be used by `dev` to regain root.
+
 For host-side and direct-libkrun diagnostics, use `--log-level` with one of
 `off`, `error`, `warn`, `info`, `debug`, or `trace`. The same effective level is
 used by the parent process, the keep-id libkrun helper, and libkrun logging;

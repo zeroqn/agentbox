@@ -19,6 +19,11 @@ fn internal_runtime_derives_parent_shell_environment_before_podman_prep() {
     assert!(
         shell_env
             .vars
+            .contains(&("LOGNAME".to_owned(), "dev".to_owned()))
+    );
+    assert!(
+        shell_env
+            .vars
             .contains(&("XDG_RUNTIME_DIR".to_owned(), "/run/user/1234".to_owned()))
     );
     assert!(

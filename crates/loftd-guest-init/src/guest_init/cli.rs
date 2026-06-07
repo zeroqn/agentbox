@@ -14,6 +14,8 @@ pub(in crate::guest_init) struct GuestInitCli {
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum GuestInitCommand {
     Enter(EnterCommand),
+    #[command(name = "as-dev", hide = true)]
+    AsDev(AsDevCommand),
     #[command(hide = true)]
     Internal(InternalCommand),
 }
@@ -26,15 +28,28 @@ pub(in crate::guest_init) struct EnterCommand {
 
 impl EnterCommand {
     pub(in crate::guest_init) fn resolved_command(&self) -> Vec<String> {
-        let command = self
-            .command
-            .strip_prefix(&["--".to_owned()])
-            .unwrap_or(&self.command);
-        if command.is_empty() {
-            vec!["fish".to_owned(), "-l".to_owned()]
-        } else {
-            command.to_vec()
-        }
+        resolved_dev_command(&self.command)
+    }
+}
+
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) struct AsDevCommand {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub(in crate::guest_init) command: Vec<String>,
+}
+
+impl AsDevCommand {
+    pub(in crate::guest_init) fn resolved_command(&self) -> Vec<String> {
+        resolved_dev_command(&self.command)
+    }
+}
+
+fn resolved_dev_command(command: &[String]) -> Vec<String> {
+    let command = command.strip_prefix(&["--".to_owned()]).unwrap_or(command);
+    if command.is_empty() {
+        vec!["fish".to_owned(), "-l".to_owned()]
+    } else {
+        command.to_vec()
     }
 }
 
@@ -133,6 +148,35 @@ mod tests {
             panic!("expected enter command");
         };
         assert_eq!(command.resolved_command(), ["fish", "-l"]);
+    }
+
+    #[test]
+    fn as_dev_defaults_to_login_fish() {
+        let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "as-dev"])
+            .expect("as-dev command should parse");
+
+        let GuestInitCommand::AsDev(command) = cli.command else {
+            panic!("expected as-dev command");
+        };
+        assert_eq!(command.resolved_command(), ["fish", "-l"]);
+    }
+
+    #[test]
+    fn as_dev_accepts_explicit_delimiter_before_command() {
+        let cli = GuestInitCli::try_parse_from([
+            "loftd-guest-init",
+            "as-dev",
+            "--",
+            "bash",
+            "-lc",
+            "id -un",
+        ])
+        .expect("as-dev command should parse");
+
+        let GuestInitCommand::AsDev(command) = cli.command else {
+            panic!("expected as-dev command");
+        };
+        assert_eq!(command.resolved_command(), ["bash", "-lc", "id -un"]);
     }
 
     #[test]

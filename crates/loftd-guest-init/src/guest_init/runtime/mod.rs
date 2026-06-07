@@ -4,11 +4,13 @@ use crate::guest_init::cli::{
     GuestInitCommand, InternalSubcommand, NixSubcommand, PodmanSubcommand,
 };
 
+pub(in crate::guest_init) mod as_dev;
 pub(in crate::guest_init) mod loftd;
 
 pub(in crate::guest_init) fn run(command: GuestInitCommand) -> Result<()> {
     match command {
         GuestInitCommand::Enter(command) => loftd::enter(command.resolved_command()),
+        GuestInitCommand::AsDev(command) => as_dev::run(command.resolved_command()),
         GuestInitCommand::Internal(command) => match command.command {
             InternalSubcommand::Nix(nix) => match nix.command {
                 NixSubcommand::Prep => {

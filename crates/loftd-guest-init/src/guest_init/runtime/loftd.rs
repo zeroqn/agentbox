@@ -10,6 +10,12 @@ use crate::guest_init::{command, process, profile};
 
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
 const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
+const LEGACY_HOST_UID_ENV: &str = "AGENTBOX_HOST_UID";
+const LEGACY_HOST_GID_ENV: &str = "AGENTBOX_HOST_GID";
+const LEGACY_ENTER_AS_ROOT_ENV: &str = "AGENTBOX_ENTER_AS_ROOT";
+const LEGACY_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY";
+const LEGACY_CONTAINERS_STORAGE_ENV: &str = "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE";
+const LEGACY_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST";
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -168,9 +174,9 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 impl EnterEnv {
     fn from_env(env: &impl EnvSource) -> Result<Self> {
         Ok(Self {
-            enter_as_root: env.var(ENTER_AS_ROOT_ENV).as_deref() == Some("1"),
-            host_uid: parse_optional_u32(env, HOST_UID_ENV)?,
-            host_gid: parse_optional_u32(env, HOST_GID_ENV)?,
+            enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
+            host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
+            host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
         })
     }
@@ -178,12 +184,16 @@ impl EnterEnv {
 
 fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
     Ok(LoftdEnv {
-        nix_overlay: env_flag(env, "LOFTD_NIX_OVERLAY"),
-        containers_storage: env_flag(env, "LOFTD_CONTAINERS_STORAGE"),
-        use_passt: env_flag(env, "LOFTD_USE_PASST"),
-        enter_as_root: env_flag(env, ENTER_AS_ROOT_ENV),
-        host_uid: parse_optional_u32(env, HOST_UID_ENV)?,
-        host_gid: parse_optional_u32(env, HOST_GID_ENV)?,
+        nix_overlay: env_flag_any(env, "LOFTD_NIX_OVERLAY", LEGACY_NIX_OVERLAY_ENV),
+        containers_storage: env_flag_any(
+            env,
+            "LOFTD_CONTAINERS_STORAGE",
+            LEGACY_CONTAINERS_STORAGE_ENV,
+        ),
+        use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
+        enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
+        host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
+        host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
         nix_disk_id: env
             .var("LOFTD_NIX_DISK_ID")
             .unwrap_or_else(|| crate::guest_init::components::env::RAW_NIX_DISK_ID.to_owned()),
@@ -199,8 +209,21 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
     })
 }
 
+fn env_flag_any(env: &impl EnvSource, primary: &str, legacy: &str) -> bool {
+    env_flag(env, primary) || env_flag(env, legacy)
+}
+
 fn env_flag(env: &impl EnvSource, name: &str) -> bool {
     env.var(name).as_deref() == Some("1")
+}
+
+fn parse_optional_u32_any(
+    env: &impl EnvSource,
+    primary: &str,
+    legacy: &str,
+) -> Result<Option<u32>> {
+    parse_optional_u32(env, primary)?
+        .map_or_else(|| parse_optional_u32(env, legacy), |value| Ok(Some(value)))
 }
 
 fn parse_optional_u32(env: &impl EnvSource, name: &str) -> Result<Option<u32>> {
@@ -221,7 +244,7 @@ fn resolve_identity(
     gid: u32,
 ) -> Result<DevIdentity> {
     let shell = resolve_shell(command);
-    if should_drop_to_identity(is_root, env.enter_as_root) {
+    if is_root {
         let uid = env
             .host_uid
             .ok_or_else(|| anyhow!("{HOST_UID_ENV} is required for loftd enter"))?;
@@ -438,6 +461,26 @@ mod tests {
     }
 
     #[test]
+    fn loftd_env_accepts_current_host_agentbox_compat_names() {
+        let env = EnterEnv::from_env(&env(&[
+            ("AGENTBOX_LIBKRUN_NIX_OVERLAY", "1"),
+            ("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE", "1"),
+            ("AGENTBOX_LIBKRUN_USE_PASST", "1"),
+            ("AGENTBOX_ENTER_AS_ROOT", "1"),
+            ("AGENTBOX_HOST_UID", "2000"),
+            ("AGENTBOX_HOST_GID", "2001"),
+        ]))
+        .expect("compat env should parse");
+
+        assert!(env.enter_as_root);
+        assert!(env.loftd.nix_overlay);
+        assert!(env.loftd.containers_storage);
+        assert!(env.loftd.use_passt);
+        assert_eq!(env.host_uid, Some(2000));
+        assert_eq!(env.host_gid, Some(2001));
+    }
+
+    #[test]
     fn loftd_identity_requires_host_ids_when_root_drops_to_dev() {
         let missing_ids_env = EnterEnv::from_env(&env(&[])).expect("env should parse");
         let err = resolve_identity(
@@ -460,6 +503,23 @@ mod tests {
             0,
         )
         .expect("identity should resolve");
+        assert_eq!(identity.uid, 1000);
+        assert_eq!(identity.gid, 1001);
+    }
+
+    #[test]
+    fn loftd_root_shell_still_materializes_non_root_dev_identity() {
+        let root_env = EnterEnv::from_env(&env(&[
+            (crate::guest_init::components::env::ENTER_AS_ROOT_ENV, "1"),
+            (HOST_UID_ENV, "1000"),
+            (HOST_GID_ENV, "1001"),
+        ]))
+        .expect("env should parse");
+
+        let identity =
+            resolve_identity(&["fish".to_owned(), "-l".to_owned()], &root_env, true, 0, 0)
+                .expect("root shell identity should resolve");
+
         assert_eq!(identity.uid, 1000);
         assert_eq!(identity.gid, 1001);
     }

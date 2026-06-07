@@ -21,6 +21,7 @@ pub(in crate::guest_init) fn derive(
         containers_storage.then(|| PathBuf::from(format!("/run/user/{}", identity.uid)));
     let mut vars = vec![
         ("USER".to_owned(), DEV_USER.to_owned()),
+        ("LOGNAME".to_owned(), DEV_USER.to_owned()),
         ("HOME".to_owned(), home.clone()),
         ("SHELL".to_owned(), identity.shell.display().to_string()),
         ("XDG_CONFIG_HOME".to_owned(), format!("{home}/.config")),
