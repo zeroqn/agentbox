@@ -18,6 +18,7 @@ pub(in crate::guest_init) const RAW_NIX_DISK_LABEL: &str = "LOFTD_NIX";
 pub(in crate::guest_init) const RAW_CONTAINER_DISK_ID: &str = "loftd-containers";
 pub(in crate::guest_init) const RAW_CONTAINER_DISK_LABEL: &str = "LOFTD_CONTAINERS";
 pub(in crate::guest_init) const ENTER_AS_ROOT_ENV: &str = "LOFTD_ENTER_AS_ROOT";
+pub(in crate::guest_init) const CONTAINERS_STORE_ENV: &str = "LOFTD_CONTAINERS_STORE";
 const LEGACY_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY";
 const LEGACY_CONTAINERS_STORAGE_ENV: &str = "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE";
 const LEGACY_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST";
@@ -25,11 +26,34 @@ const LEGACY_ENTER_AS_ROOT_ENV: &str = "AGENTBOX_ENTER_AS_ROOT";
 const LEGACY_HOST_UID_ENV: &str = "AGENTBOX_HOST_UID";
 const LEGACY_HOST_GID_ENV: &str = "AGENTBOX_HOST_GID";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::guest_init) enum ContainerStoreBackend {
+    Bind,
+    RawDisk,
+}
+
+impl ContainerStoreBackend {
+    pub(in crate::guest_init) fn parse_env_value(value: &str) -> Result<Self> {
+        match value {
+            "bind" => Ok(Self::Bind),
+            "raw-disk" => Ok(Self::RawDisk),
+            _ => anyhow::bail!(
+                "{CONTAINERS_STORE_ENV} must be either 'bind' or 'raw-disk' (got '{value}')"
+            ),
+        }
+    }
+
+    pub(in crate::guest_init) fn from_optional_env_value(value: Option<String>) -> Result<Self> {
+        value.map_or(Ok(Self::RawDisk), |value| Self::parse_env_value(&value))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct LoftdEnv {
     pub(in crate::guest_init) nix_overlay: bool,
     pub(in crate::guest_init) nix_host_overlay: bool,
     pub(in crate::guest_init) containers_storage: bool,
+    pub(in crate::guest_init) container_store_backend: ContainerStoreBackend,
     pub(in crate::guest_init) use_passt: bool,
     pub(in crate::guest_init) enter_as_root: bool,
     pub(in crate::guest_init) host_uid: Option<u32>,
@@ -49,6 +73,11 @@ impl LoftdEnv {
                 "LOFTD_CONTAINERS_STORAGE",
                 LEGACY_CONTAINERS_STORAGE_ENV,
             ),
+            container_store_backend: ContainerStoreBackend::from_optional_env_value(
+                env::var(CONTAINERS_STORE_ENV)
+                    .ok()
+                    .filter(|value| !value.is_empty()),
+            )?,
             use_passt: env_flag_any("LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
             enter_as_root: env_flag_any(ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
             host_uid: parse_optional_u32_any("LOFTD_HOST_UID", LEGACY_HOST_UID_ENV)?,

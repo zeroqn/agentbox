@@ -988,15 +988,21 @@ migrated or deleted automatically.
 
 - host-overlay `/nix` is signaled to the guest with `LOFTD_NIX_OVERLAY=1` and
   `LOFTD_NIX_HOST_OVERLAY=1`; no `/nix` disk id/label is emitted in this mode.
-- `loftd-containers.raw` remains exposed as `LOFTD_CONTAINERS` /
-  `loftd-containers` for rootless container storage.
+- By default, nested/rootless Podman storage is a workspace-scoped host state
+  directory bind-mounted to guest `/home/dev/.local/share/containers`. The host
+  directory must live on btrfs so guest Podman can keep using the btrfs storage
+  driver; bind mode fails closed with guidance if the guest-visible store is not
+  btrfs-backed.
+- Use `loftd --container-store raw-disk` to preserve the previous raw disk
+  carrier. In raw-disk mode, `loftd-containers.raw` remains exposed as
+  `LOFTD_CONTAINERS` / `loftd-containers` for rootless container storage.
 
 `loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, validates
 that the prepared-root paths already exist, ensures `/tmp` is a tmpfs with
 `rw,exec,mode=1777`, verifies `/dev/net/tun` is the expected character device
 `10:200`, makes it mode `0666`, probes it with `TUNSETIFF`, verifies the
-host-prepared `/nix` overlay in host-overlay mode, prepares the persistent
-container-store disk, exports the shell environment, and runs `fish -l` by
+host-prepared `/nix` overlay in host-overlay mode, prepares the selected
+container-store backend, exports the shell environment, and runs `fish -l` by
 default. For deterministic smoke tests, `loftd -- <command>` preserves the same
 guest bootstrap path but replaces the final guest command with the explicit argv
 after `--`.

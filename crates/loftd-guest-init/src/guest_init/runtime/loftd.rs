@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::guest_init::components::env::{
-    DEFAULT_SHELL, ENTER_AS_ROOT_ENV, LoftdEnv, NIX_REMOTE_URI,
+    CONTAINERS_STORE_ENV, ContainerStoreBackend, DEFAULT_SHELL, ENTER_AS_ROOT_ENV, LoftdEnv,
+    NIX_REMOTE_URI,
 };
 use crate::guest_init::components::home::identity::{DevIdentity, validate_host_identity};
 use crate::guest_init::{command, process, profile};
@@ -95,7 +96,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     debug_breadcrumb("read-env complete");
     debug_breadcrumb("validate-prepared-root starting");
     profiler.measure_result("validate-prepared-root", || {
-        validate_prepared_root_paths(PREPARED_ROOT_TARGETS)
+        validate_prepared_root_paths(&prepared_root_targets(&env_contract.loftd))
     })?;
     debug_breadcrumb("validate-prepared-root complete");
     profiler.measure_result("ensure-tmp-tmpfs", ensure_tmp_tmpfs_mounted)?;
@@ -191,6 +192,9 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
             "LOFTD_CONTAINERS_STORAGE",
             LEGACY_CONTAINERS_STORAGE_ENV,
         ),
+        container_store_backend: ContainerStoreBackend::from_optional_env_value(
+            env.var(CONTAINERS_STORE_ENV),
+        )?,
         use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
         enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
         host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
@@ -208,6 +212,14 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
             crate::guest_init::components::env::RAW_CONTAINER_DISK_LABEL.to_owned()
         }),
     })
+}
+
+fn prepared_root_targets(env: &LoftdEnv) -> Vec<&'static str> {
+    let mut targets = PREPARED_ROOT_TARGETS.to_vec();
+    if env.containers_storage && env.container_store_backend == ContainerStoreBackend::Bind {
+        targets.push(crate::guest_init::components::disk::containers::MOUNT_POINT);
+    }
+    targets
 }
 
 fn env_flag_any(env: &impl EnvSource, primary: &str, legacy: &str) -> bool {
@@ -454,6 +466,10 @@ mod tests {
         assert!(env.loftd.nix_overlay);
         assert!(env.loftd.nix_host_overlay);
         assert!(env.loftd.containers_storage);
+        assert_eq!(
+            env.loftd.container_store_backend,
+            ContainerStoreBackend::RawDisk
+        );
         assert!(!env.loftd.use_passt);
         assert_eq!(env.loftd.nix_disk_id, "loftd-nix");
         assert_eq!(env.loftd.nix_disk_label, "LOFTD_NIX");
@@ -478,9 +494,59 @@ mod tests {
         assert!(env.enter_as_root);
         assert!(env.loftd.nix_overlay);
         assert!(env.loftd.containers_storage);
+        assert_eq!(
+            env.loftd.container_store_backend,
+            ContainerStoreBackend::RawDisk
+        );
         assert!(env.loftd.use_passt);
         assert_eq!(env.host_uid, Some(2000));
         assert_eq!(env.host_gid, Some(2001));
+    }
+
+    #[test]
+    fn loftd_env_accepts_bind_container_store_backend() {
+        let env = EnterEnv::from_env(&env(&[
+            ("LOFTD_CONTAINERS_STORAGE", "1"),
+            (CONTAINERS_STORE_ENV, "bind"),
+        ]))
+        .expect("bind backend should parse");
+
+        assert!(env.loftd.containers_storage);
+        assert_eq!(
+            env.loftd.container_store_backend,
+            ContainerStoreBackend::Bind
+        );
+    }
+
+    #[test]
+    fn loftd_env_rejects_invalid_container_store_backend() {
+        let err = EnterEnv::from_env(&env(&[(CONTAINERS_STORE_ENV, "overlay")]))
+            .expect_err("invalid backend should fail");
+
+        assert!(err.to_string().contains(CONTAINERS_STORE_ENV));
+    }
+
+    #[test]
+    fn prepared_root_targets_are_backend_specific_for_container_store() {
+        let raw = EnterEnv::from_env(&env(&[
+            ("LOFTD_CONTAINERS_STORAGE", "1"),
+            (CONTAINERS_STORE_ENV, "raw-disk"),
+        ]))
+        .expect("raw env should parse");
+        let bind = EnterEnv::from_env(&env(&[
+            ("LOFTD_CONTAINERS_STORAGE", "1"),
+            (CONTAINERS_STORE_ENV, "bind"),
+        ]))
+        .expect("bind env should parse");
+
+        assert!(
+            !prepared_root_targets(&raw.loftd)
+                .contains(&crate::guest_init::components::disk::containers::MOUNT_POINT)
+        );
+        assert!(
+            prepared_root_targets(&bind.loftd)
+                .contains(&crate::guest_init::components::disk::containers::MOUNT_POINT)
+        );
     }
 
     #[test]

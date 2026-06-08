@@ -105,7 +105,8 @@ impl ResizeTarget {
 mod tests {
     use super::*;
     use crate::guest_init::components::env::{
-        RAW_CONTAINER_DISK_ID, RAW_CONTAINER_DISK_LABEL, RAW_NIX_DISK_ID, RAW_NIX_DISK_LABEL,
+        ContainerStoreBackend, RAW_CONTAINER_DISK_ID, RAW_CONTAINER_DISK_LABEL, RAW_NIX_DISK_ID,
+        RAW_NIX_DISK_LABEL,
     };
     use std::cell::RefCell;
 
@@ -206,6 +207,7 @@ mod tests {
             nix_overlay: false,
             nix_host_overlay: false,
             containers_storage: false,
+            container_store_backend: ContainerStoreBackend::RawDisk,
             use_passt: false,
             enter_as_root: false,
             host_uid: None,

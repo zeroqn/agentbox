@@ -5,12 +5,30 @@ use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::launch::config::NetworkMode;
 use crate::task_rootfs::TaskRootfsBackend;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContainerStoreBackend {
+    Bind,
+    RawDisk,
+}
+
+impl ContainerStoreBackend {
+    pub(crate) const DEFAULT: Self = Self::Bind;
+
+    pub(crate) fn parse_config_value(value: &str) -> Result<Self, String> {
+        match value {
+            "bind" => Ok(Self::Bind),
+            "raw-disk" => Ok(Self::RawDisk),
+            _ => Err("allowed values are bind and raw-disk".to_owned()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
 #[command(
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf"
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -69,6 +87,15 @@ pub(crate) struct Cli {
         long_help = "Override the task rootfs backend for this run. Allowed values are btrfs-snapshot and fuse-overlay. If omitted, loftd uses [task-rootfs].backend from loftd.toml or defaults to btrfs-snapshot."
     )]
     rootfs_backend: Option<TaskRootfsBackend>,
+
+    #[arg(
+        long = "container-store",
+        value_name = "BACKEND",
+        value_parser = parse_container_store_backend_arg,
+        help = "Override the nested Podman container-store backend for this run",
+        long_help = "Override the nested Podman container-store backend for this run. Allowed values are bind and raw-disk. If omitted, loftd bind-mounts a persistent host state directory into the guest."
+    )]
+    container_store_backend: Option<ContainerStoreBackend>,
 
     #[arg(
         long = "guest-init",
@@ -157,6 +184,7 @@ impl Cli {
             profile: self.profile,
             root: self.root,
             rootfs_backend: self.rootfs_backend,
+            container_store_backend: self.container_store_backend,
             guest_init: self.guest_init,
             preserve_debug: self.preserve_debug,
             mem_gib: self.mem_gib,
@@ -180,6 +208,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
+    pub(crate) container_store_backend: Option<ContainerStoreBackend>,
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) preserve_debug: bool,
     pub(crate) mem_gib: Option<u32>,
@@ -204,6 +233,10 @@ fn parse_rootfs_backend_arg(value: &str) -> Result<TaskRootfsBackend, String> {
     TaskRootfsBackend::parse_config_value(value)
 }
 
+fn parse_container_store_backend_arg(value: &str) -> Result<ContainerStoreBackend, String> {
+    ContainerStoreBackend::parse_config_value(value)
+}
+
 fn parse_publish_arg(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -216,7 +249,7 @@ fn parse_publish_arg(value: &str) -> Result<String, String> {
 mod tests {
     use clap::Parser;
 
-    use crate::cli::Cli;
+    use crate::cli::{Cli, ContainerStoreBackend};
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::NetworkMode;
     use crate::task_rootfs::TaskRootfsBackend;
@@ -240,6 +273,7 @@ mod tests {
         let options = cli.into_runtime_options();
 
         assert_eq!(options.rootfs_backend, Some(TaskRootfsBackend::FuseOverlay));
+        assert_eq!(options.container_store_backend, None);
         assert_eq!(options.mem_gib, Some(8));
         assert_eq!(
             options.guest_init.as_deref(),
@@ -398,6 +432,33 @@ mod tests {
 
         assert_eq!(auto_err.kind(), clap::error::ErrorKind::ValueValidation);
         assert_eq!(reflink_err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn container_store_backend_accepts_bind_and_raw_disk() {
+        let bind = Cli::try_parse_from(["loftd", "--container-store", "bind"])
+            .expect("bind container store should parse")
+            .into_runtime_options();
+        let raw = Cli::try_parse_from(["loftd", "--container-store", "raw-disk"])
+            .expect("raw disk container store should parse")
+            .into_runtime_options();
+
+        assert_eq!(
+            bind.container_store_backend,
+            Some(ContainerStoreBackend::Bind)
+        );
+        assert_eq!(
+            raw.container_store_backend,
+            Some(ContainerStoreBackend::RawDisk)
+        );
+    }
+
+    #[test]
+    fn container_store_backend_rejects_invalid_values() {
+        let err = Cli::try_parse_from(["loftd", "--container-store", "auto"])
+            .expect_err("unknown container store should fail");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[test]

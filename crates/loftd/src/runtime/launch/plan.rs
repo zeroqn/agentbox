@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::cli::RuntimeOptions;
+use crate::cli::{ContainerStoreBackend, RuntimeOptions};
 use crate::config;
 use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
@@ -27,6 +27,7 @@ pub(crate) struct LaunchPlan {
     pub bind_mounts: Vec<BindMount>,
     pub(crate) image_selection: ImageSelection,
     pub(crate) task_rootfs_backend: TaskRootfsBackend,
+    pub(crate) container_store_backend: ContainerStoreBackend,
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
@@ -76,7 +77,14 @@ impl LaunchPlan {
         let home_dir = home_dir.ok_or_else(|| {
             anyhow::anyhow!("HOME is not set; loftd cannot prepare .codex and .pi bind mounts")
         })?;
-        let bind_mounts = mounts::prepare_dev_mounts(&workspace_dir, home_dir, &state_layout)?;
+        let container_store_backend = options
+            .container_store_backend
+            .unwrap_or(ContainerStoreBackend::DEFAULT);
+        let mut bind_mounts = mounts::prepare_dev_mounts(&workspace_dir, home_dir, &state_layout)?;
+        if container_store_backend == ContainerStoreBackend::Bind {
+            bind_mounts.push(mounts::containers_store::prepare(&state_layout)?);
+            crate::runtime::launch::config::validate_mounts(&bind_mounts)?;
+        }
         let task_rootfs_backend = options
             .rootfs_backend
             .or_else(|| config.task_rootfs_backend())
@@ -95,6 +103,7 @@ impl LaunchPlan {
                 options.pull_latest,
             ),
             task_rootfs_backend,
+            container_store_backend,
             guest_init: options.guest_init,
             mem_gib: options.mem_gib,
             network_mode: options.network_mode,
@@ -154,7 +163,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
-    use crate::cli::RuntimeOptions;
+    use crate::cli::{ContainerStoreBackend, RuntimeOptions};
     use crate::logging::{LogLevel, LogSettings};
     use crate::runtime::launch::config::NetworkMode;
     use crate::runtime::launch::plan::{ImageSelection, LaunchPlan};
@@ -170,6 +179,7 @@ mod tests {
             profile: false,
             root: false,
             rootfs_backend: None,
+            container_store_backend: None,
             guest_init: None,
             preserve_debug: false,
             mem_gib: None,
@@ -201,6 +211,7 @@ mod tests {
         );
         assert_eq!(plan.image_selection.selected_reference(), DEFAULT_IMAGE);
         assert_eq!(plan.task_rootfs_backend, TaskRootfsBackend::BtrfsSnapshot);
+        assert_eq!(plan.container_store_backend, ContainerStoreBackend::Bind);
         assert_eq!(plan.log_level, LogLevel::Off);
         assert!(!plan.debug);
         assert!(!plan.config_diagnostics.config_loaded);
@@ -228,7 +239,7 @@ mod tests {
                 .find(|mount| mount.target == target)
                 .expect("mount should exist")
         };
-        assert_eq!(plan.bind_mounts.len(), 5);
+        assert_eq!(plan.bind_mounts.len(), 6);
         assert_eq!(mount("/workspace").source, workspace);
         assert_eq!(mount("/home/dev/.codex").source, home.join(".codex"));
         assert_eq!(mount("/home/dev/.pi").source, home.join(".pi"));
@@ -240,9 +251,14 @@ mod tests {
             mount("/home/dev/.cache/sccache").source,
             plan.state_layout.sccache_dir()
         );
+        assert_eq!(
+            mount("/home/dev/.local/share/containers").source,
+            plan.state_layout.root_dir().join("containers")
+        );
         assert!(home.join(".codex").is_dir());
         assert!(home.join(".pi").is_dir());
         assert!(plan.state_layout.root_dir().join("cargo").is_dir());
+        assert!(plan.state_layout.root_dir().join("containers").is_dir());
         assert_eq!(
             fs::metadata(plan.state_layout.sccache_dir())
                 .expect("sccache metadata")
@@ -405,6 +421,30 @@ mod tests {
         .expect("plan should build");
 
         assert_eq!(plan.task_rootfs_backend, TaskRootfsBackend::BtrfsSnapshot);
+    }
+
+    #[test]
+    fn raw_disk_container_store_does_not_add_container_bind_mount() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let mut options = runtime_options();
+        options.container_store_backend = Some(ContainerStoreBackend::RawDisk);
+
+        let plan = LaunchPlan::from_env_values(
+            options,
+            PathBuf::from("/tmp/project"),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.container_store_backend, ContainerStoreBackend::RawDisk);
+        assert!(
+            !plan
+                .bind_mounts
+                .iter()
+                .any(|mount| mount.target == "/home/dev/.local/share/containers")
+        );
     }
 
     #[test]

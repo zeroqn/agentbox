@@ -9,9 +9,10 @@ mod model;
 pub(crate) use components::mounts::validate_mounts;
 pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
-    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment,
-    GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec,
-    NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, CONTAINERS_STORE_TAG,
+    CONTAINERS_STORE_TARGET, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
+    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG,
+    SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
 };
 
 #[cfg(test)]

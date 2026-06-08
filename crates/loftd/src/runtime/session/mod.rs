@@ -113,7 +113,8 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
 
             let host_run_result = match profiler
                 .measure_result("persistent_disk_preparation", || {
-                    HostPersistentDiskPreparer.prepare(plan.state_layout.root_dir())
+                    HostPersistentDiskPreparer
+                        .prepare(plan.state_layout.root_dir(), plan.container_store_backend)
                 })
                 .context("failed to prepare loftd persistent dev cache disks")
             {
@@ -279,6 +280,7 @@ mod tests {
             profile,
             root: false,
             rootfs_backend: None,
+            container_store_backend: None,
             guest_init: None,
             preserve_debug: false,
             mem_gib: None,

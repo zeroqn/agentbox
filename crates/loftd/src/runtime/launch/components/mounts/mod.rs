@@ -11,6 +11,7 @@ use crate::state::StateLayout;
 
 mod cargo;
 mod codex;
+pub(crate) mod containers_store;
 mod pi;
 mod sccache;
 mod workspace;
@@ -90,6 +91,38 @@ mod tests {
         assert_eq!(
             fs::metadata(state_layout.sccache_dir())
                 .expect("sccache metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn container_store_mount_uses_state_root_carrier_with_private_permissions() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let workspace = dir.path().join("project");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+        let state_layout = state::resolve_state_layout_from_parts(
+            &workspace,
+            Some(dir.path().join("state").as_path()),
+            Some(home.as_path()),
+            None,
+        )
+        .expect("state layout should resolve");
+
+        let mount = containers_store::prepare(&state_layout).expect("mount should prepare");
+
+        assert_mount(
+            &mount,
+            &state_layout.root_dir().join("containers"),
+            crate::runtime::launch::config::CONTAINERS_STORE_TAG,
+            crate::runtime::launch::config::CONTAINERS_STORE_TARGET,
+        );
+        assert_eq!(
+            fs::metadata(state_layout.root_dir().join("containers"))
+                .expect("container store metadata")
                 .permissions()
                 .mode()
                 & 0o777,

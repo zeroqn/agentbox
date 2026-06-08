@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::guest_init::command;
-use crate::guest_init::components::env::{LoftdEnv, PODMAN_LOG_PATH, PODMAN_STATUS_PATH, RUN_DIR};
+use crate::guest_init::components::env::{
+    ContainerStoreBackend, LoftdEnv, PODMAN_LOG_PATH, PODMAN_STATUS_PATH, RUN_DIR,
+};
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::podman::config::PodmanToolPaths;
 use crate::guest_init::components::podman::status::{self, PodmanPrepState, PodmanPrepStatus};
@@ -122,13 +124,20 @@ pub(in crate::guest_init) fn run_prep(
     if !process::is_root() {
         bail!("internal container storage bootstrap must run as root");
     }
-    for tool in ["blkid", "mount", "findmnt", "podman"] {
+    for tool in required_tools(env_contract.container_store_backend) {
         command::require_on_path(tool)?;
     }
     let tool_paths = PodmanToolPaths::discover()?;
     crate::guest_init::components::podman::kernel::prepare()?;
     crate::guest_init::components::podman::idmap::prepare(identity)?;
     crate::guest_init::components::podman::storage::bootstrap(identity, env_contract, &tool_paths)
+}
+
+fn required_tools(container_store_backend: ContainerStoreBackend) -> &'static [&'static str] {
+    match container_store_backend {
+        ContainerStoreBackend::Bind => &["findmnt", "podman"],
+        ContainerStoreBackend::RawDisk => &["blkid", "mount", "findmnt", "podman"],
+    }
 }
 
 fn wait_for_parent_running_status(status_path: &Path, pid: u32) -> Result<()> {

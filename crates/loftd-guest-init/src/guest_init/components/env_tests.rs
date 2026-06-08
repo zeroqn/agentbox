@@ -1,7 +1,10 @@
 use crate::guest_init::components::env::{
-    ENTER_AS_ROOT_ENV, LoftdEnv, RAW_CONTAINER_DISK_ID, RAW_CONTAINER_DISK_LABEL, RAW_NIX_DISK_ID,
-    RAW_NIX_DISK_LABEL,
+    CONTAINERS_STORE_ENV, ContainerStoreBackend, ENTER_AS_ROOT_ENV, LoftdEnv,
+    RAW_CONTAINER_DISK_ID, RAW_CONTAINER_DISK_LABEL, RAW_NIX_DISK_ID, RAW_NIX_DISK_LABEL,
 };
+use std::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn internal_runtime_disk_contract_defaults_match_host_contract() {
@@ -13,7 +16,65 @@ fn internal_runtime_disk_contract_defaults_match_host_contract() {
 }
 
 #[test]
+fn internal_runtime_parses_container_store_backend_contract() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::set_var("LOFTD_CONTAINERS_STORAGE", "1");
+        std::env::set_var(CONTAINERS_STORE_ENV, "bind");
+    }
+    let bind = LoftdEnv::from_process_env().expect("bind backend should parse");
+    unsafe {
+        std::env::set_var(CONTAINERS_STORE_ENV, "raw-disk");
+    }
+    let raw = LoftdEnv::from_process_env().expect("raw backend should parse");
+    unsafe {
+        std::env::remove_var("LOFTD_CONTAINERS_STORAGE");
+        std::env::remove_var(CONTAINERS_STORE_ENV);
+    }
+
+    assert!(bind.containers_storage);
+    assert_eq!(bind.container_store_backend, ContainerStoreBackend::Bind);
+    assert_eq!(raw.container_store_backend, ContainerStoreBackend::RawDisk);
+}
+
+#[test]
+fn internal_runtime_legacy_container_storage_defaults_to_raw_disk() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::set_var("LOFTD_CONTAINERS_STORAGE", "1");
+        std::env::remove_var(CONTAINERS_STORE_ENV);
+    }
+    let parsed = LoftdEnv::from_process_env().expect("legacy env should parse");
+    unsafe {
+        std::env::remove_var("LOFTD_CONTAINERS_STORAGE");
+    }
+
+    assert_eq!(
+        parsed.container_store_backend,
+        ContainerStoreBackend::RawDisk
+    );
+}
+
+#[test]
+fn internal_runtime_rejects_unknown_container_store_backend() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::set_var(CONTAINERS_STORE_ENV, "overlay");
+    }
+    let err = LoftdEnv::from_process_env().expect_err("unknown backend should fail");
+    unsafe {
+        std::env::remove_var(CONTAINERS_STORE_ENV);
+    }
+
+    assert!(err.to_string().contains(CONTAINERS_STORE_ENV));
+}
+
+#[test]
 fn internal_runtime_parses_authoritative_host_nix_overlay_marker() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
     // SAFETY: test mutates process env in a small single-threaded assertion.
     unsafe {
         std::env::set_var("LOFTD_NIX_OVERLAY", "1");

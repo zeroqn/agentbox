@@ -1,3 +1,4 @@
+use crate::guest_init::components::env::ContainerStoreBackend;
 use crate::guest_init::components::podman::root::{PodmanPrepOperation, planned_operations};
 
 #[test]
@@ -14,4 +15,16 @@ fn podman_prep_operation_order_keeps_root_setup_before_configs() {
         pos(PodmanPrepOperation::MountContainerStorage) < pos(PodmanPrepOperation::WriteConfig)
     );
     assert!(pos(PodmanPrepOperation::WriteConfig) < pos(PodmanPrepOperation::WriteReadyStatus));
+}
+
+#[test]
+fn podman_prep_tools_are_backend_specific() {
+    assert_eq!(
+        super::required_tools(ContainerStoreBackend::Bind),
+        ["findmnt", "podman"]
+    );
+    assert_eq!(
+        super::required_tools(ContainerStoreBackend::RawDisk),
+        ["blkid", "mount", "findmnt", "podman"]
+    );
 }
