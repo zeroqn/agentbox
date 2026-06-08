@@ -155,10 +155,12 @@ nix build .#agentbox-container
 ### Build outputs
 
 - `.#agentbox`: compile from source.
-- `.#loftd`: install the pinned published neutral dynamic Linux `loftd` asset
-  through the same packaging path as `.#loftd-prebuilt`. This is the fast default
-  path for ordinary host usage and uses pinned prebuilt `libkrunfw`.
-- `.#loftd-dev`: compile the workspace Rust host package and wire it to
+- `.#loftd`: compile the workspace Rust host package and wrap it with the
+  pinned prebuilt `libkrun`/`libkrunfw` runtime library path. This intentionally
+  shares the same Rust package derivation as `.#agentbox` for now, so the raw
+  dynamic `loftd` binary is available at `libexec/loftd` while the wrapped CLI is
+  available at `bin/loftd`.
+- `.#loftd-dev`: compile the workspace Rust host package and wire it to local
   `deps/libkrunfw` through `.#libkrunfw-dev`. Use this target for local
   libkrunfw/kernel configuration experiments; the local firmware build routes
   C/Kbuild compiler calls through `sccache` by default, but repeat-build
@@ -1202,8 +1204,9 @@ Linux ELF packaging input and intentionally non-standalone: it must not contain
 release-builder `/nix/store/<hash>-...` references, and Nix packaging patches
 its ordinary ELF runtime dependencies before wrapping the libkrun/runtime-tool
 environment.
-For ordinary loftd usage, prefer `nix build .#loftd`, `nix build
-.#loftd-prebuilt` for the explicit prebuilt alias, or the published
+For ordinary source-built loftd usage with pinned prebuilt libkrun firmware,
+prefer `nix build .#loftd`; use `nix build .#loftd-prebuilt` only for the
+explicit pinned release-asset packaging path, or the published
 `ghcr.io/<repo-owner>/loftd` image. Use `nix build .#loftd-dev` only when local
 `deps/libkrunfw` experiments are intended.
 

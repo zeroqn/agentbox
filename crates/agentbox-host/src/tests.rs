@@ -80,7 +80,8 @@ fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
     for required in [
         r#"loftdImage = mkImage "loftd";"#,
         r#"agentboxImage = mkImage "agentbox";"#,
-        "loftd = prebuiltLoftd;",
+        "agentbox = rustPackages.rustPackage;",
+        "loftd = rustPackages.rustPackage;",
         "loftd-dev = rustPackagesDev.rustPackage;",
         "prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix",
         "loftd-prebuilt = prebuiltLoftd;",
@@ -435,6 +436,10 @@ fn loftd_prebuilt_updater_rejects_legacy_store_refs_and_updates_loftd_pin() {
 fn loftd_prebuilt_docs_define_neutral_asset_contract() {
     for required in [
         "nix build .#loftd-prebuilt",
+        "`.#loftd`: compile the workspace Rust host package and wrap it with the\n  pinned prebuilt `libkrun`/`libkrunfw` runtime library path",
+        "This intentionally\n  shares the same Rust package derivation as `.#agentbox` for now",
+        "raw\n  dynamic `loftd` binary is available at `libexec/loftd`",
+        "`.#loftd-dev`: compile the workspace Rust host package and wire it to local\n  `deps/libkrunfw`",
         "`.#loftd-prebuilt`: install a pinned published neutral dynamic Linux `loftd`",
         "lacks a neutral pinned asset",
         "loftd-<arch>-unknown-linux-gnu",
@@ -443,6 +448,10 @@ fn loftd_prebuilt_docs_define_neutral_asset_contract() {
         "nix develop --command ./scripts/update-loftd-prebuilt.sh",
         "rejects wrapper-script assets, legacy",
         "concrete\n`/nix/store/<hash>-...` references",
+        "For ordinary source-built loftd usage with pinned prebuilt libkrun firmware",
+        "use `nix build .#loftd-prebuilt` only for the\nexplicit pinned release-asset packaging path",
+        "Use `nix build .#loftd-dev` only when local\n`deps/libkrunfw` experiments are intended",
+        "Nix `loftd`,\n`loftd-prebuilt`, and development\nshell paths include `pkgs.passt`",
     ] {
         assert!(README_MD.contains(required), "missing {required}");
     }

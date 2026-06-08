@@ -121,7 +121,7 @@
           reasonix = reasonix;
           symposium = symposium;
           agentbox = rustPackages.rustPackage;
-          loftd = prebuiltLoftd;
+          loftd = rustPackages.rustPackage;
           loftd-dev = rustPackagesDev.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           loftd-prebuilt = prebuiltLoftd;
