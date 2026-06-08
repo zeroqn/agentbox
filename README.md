@@ -810,7 +810,11 @@ For timing diagnostics, `loftd --profile` emits `loftd host profile` and
 `loftd-guest-init profile` reports to stderr for completed btrfs-snapshot host
 and guest-init phases such as launch-plan build, task rootfs materialization,
 persistent disk preparation, guest-init lookup, launch config build, helper
-session, task state cleanup, and early guest bootstrap. The host report keeps
+session, task state cleanup, and early guest bootstrap. Btrfs rootfs profile
+metadata includes `task_rootfs_cache_status` (`hit`, `miss-populated`,
+`miss-rebuilt`, or `direct-uncached`), `task_rootfs_cache_digest_key` when a
+known digest keys the cache entry, optional `task_rootfs_cache_path`, and
+`task_rootfs_cache_uncached_reason` for direct uncached runs. The host report keeps
 the aggregate `helper_session` row and, when profiling is enabled, also emits
 scoped helper/VM-worker host reports with `profile_scope` metadata for the
 helper command build/spawn/wait path, helper setup, passt handoff, VM-worker
@@ -849,19 +853,26 @@ image option, loftd first inspects `localhost/loftd:latest` and uses it with
 `--pull=never` when present, otherwise loftd uses `ghcr.io/zeroqn/loftd:latest`
 with `--pull=missing`. The flake's canonical `.#container` output builds that
 local `localhost/loftd:latest` image with `loftd-guest-init enter` as its guest
-contract. `--pull-latest` uses the canonical image with `--pull=always`, and
-`--image` uses exactly the supplied image reference with `--pull=missing`.
-`--image` and `--pull-latest` are mutually exclusive.
+contract. `--pull-latest` refreshes the canonical image through Buildah before
+cache lookup, and `--image` uses exactly the supplied image reference with
+`--pull=missing`. `--image` and `--pull-latest` are mutually exclusive.
 
 Loftd uses **task rootfs backend** terminology for the host-side mechanism that
 materializes the clean task root filesystem. The default backend is
-`btrfs-snapshot`: one `buildah unshare` transaction creates a temporary Buildah
-working container, mounts the selected image rootfs, validates exactly one
-executable `loftd-guest-init`, snapshots the mounted rootfs into loftd task
-state, and removes the Buildah working container. There is no `auto` backend,
-no initial loftd `reflink` backend, and no copy/reflink fallback for the default
-btrfs path; choose `fuse-overlay` explicitly when the future portable overlay
-path is wanted.
+`btrfs-snapshot`: loftd keeps a digest-keyed btrfs image-source snapshot cache
+under its per-user image state directory and snapshots that cached source into a
+fresh per-task rootfs on same-digest restarts. Cache misses still use one
+`buildah unshare` transaction to create a temporary Buildah working container,
+mount the selected image rootfs, validate exactly one executable
+`loftd-guest-init`, snapshot the mounted rootfs into loftd task state, and
+remove the Buildah working container; known-digest misses then snapshot that task
+rootfs into the digest-keyed source cache and write cache metadata. Cache hits
+may inspect/refresh image metadata but avoid the Buildah working-container
+lifecycle (`buildah from`, `mount`, `umount`, and `rm`). Unknown-digest runs use
+the direct Buildah materialization path and do not write cache entries. There is
+no `auto` backend, no initial loftd `reflink` backend, and no copy/reflink
+fallback for the default btrfs path; choose `fuse-overlay` explicitly when the
+future portable overlay path is wanted.
 
 On a successful btrfs-snapshot run, loftd then resolves the image's executable
 `loftd-guest-init`, writes a private hex-encoded `launch.conf` under the task

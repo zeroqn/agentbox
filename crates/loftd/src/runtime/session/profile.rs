@@ -406,6 +406,12 @@ mod tests {
         profiler.record_metadata("task_rootfs_backend", "btrfs-snapshot");
         profiler.record_metadata("image", "localhost/loftd:latest");
         profiler.record_metadata("image_digest", "sha256:abc123");
+        profiler.record_metadata("task_rootfs_cache_status", "hit");
+        profiler.record_metadata("task_rootfs_cache_digest_key", "sha256-abc123");
+        profiler.record_metadata(
+            "task_rootfs_cache_path",
+            "/tmp/loftd/microvm/images/btrfs-snapshots/sha256-abc123",
+        );
         profiler
             .measure_result("workspace_canonicalization", || Ok(()))
             .expect("phase should pass");
@@ -450,6 +456,11 @@ mod tests {
         assert!(text.contains("task_rootfs_backend: btrfs-snapshot"));
         assert!(text.contains("image: localhost/loftd:latest"));
         assert!(text.contains("image_digest: sha256:abc123"));
+        assert!(text.contains("task_rootfs_cache_status: hit"));
+        assert!(text.contains("task_rootfs_cache_digest_key: sha256-abc123"));
+        assert!(text.contains(
+            "task_rootfs_cache_path: /tmp/loftd/microvm/images/btrfs-snapshots/sha256-abc123"
+        ));
         assert!(!text.contains("loftd-guest-init profile"));
         for label in [
             "workspace_canonicalization",

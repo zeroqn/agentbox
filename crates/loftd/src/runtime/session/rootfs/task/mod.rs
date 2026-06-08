@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::runtime::launch::plan::ImageSelection;
-use crate::runtime::session::rootfs::image_source::{self, BuildahCommands, OciProcessConfig};
+use crate::runtime::session::rootfs::image_source::{
+    self, BuildahCommands, ImageSourceCacheProfile, OciProcessConfig,
+};
 use crate::task_rootfs::TaskRootfsBackend;
 
 const TASKS_DIR: &str = "tasks";
@@ -20,6 +22,7 @@ pub(crate) struct TaskRootfsHandle {
     selected_image_reference: String,
     image_digest: Option<String>,
     process_config: OciProcessConfig,
+    cache_profile: ImageSourceCacheProfile,
     preserve_debug: bool,
 }
 
@@ -111,6 +114,10 @@ impl TaskRootfsHandle {
         &self.process_config
     }
 
+    pub(crate) fn cache_profile(&self) -> &ImageSourceCacheProfile {
+        &self.cache_profile
+    }
+
     pub(crate) fn cleanup_state(
         self,
         commands: &impl BtrfsRootfsCommands,
@@ -135,11 +142,15 @@ impl TaskRootfsHandle {
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRootfsManager {
     state_root: PathBuf,
+    image_cache_root: PathBuf,
 }
 
 impl TaskRootfsManager {
-    pub(crate) fn new(state_root: PathBuf) -> Self {
-        Self { state_root }
+    pub(crate) fn new(state_root: PathBuf, image_cache_root: PathBuf) -> Self {
+        Self {
+            state_root,
+            image_cache_root,
+        }
     }
 
     pub(crate) fn materialize_btrfs_from_buildah(
@@ -154,11 +165,16 @@ impl TaskRootfsManager {
         reset_task_dir(&task_dir, btrfs)?;
         let rootfs_path = task_dir.join(BTRFS_ROOTFS_DIR);
 
-        let source_rootfs =
-            image_source::materialize_btrfs_source_rootfs(selection, &rootfs_path, buildah)
-                .map_err(|err| {
-                    cleanup_after_materialization_failure(&task_dir, btrfs, preserve_debug, err)
-                })?;
+        let source_rootfs = image_source::materialize_btrfs_source_rootfs(
+            selection,
+            &rootfs_path,
+            &self.image_cache_root,
+            buildah,
+            btrfs,
+        )
+        .map_err(|err| {
+            cleanup_after_materialization_failure(&task_dir, btrfs, preserve_debug, err)
+        })?;
 
         Ok(TaskRootfsHandle {
             task_id: task_id.to_owned(),
@@ -168,6 +184,7 @@ impl TaskRootfsManager {
             selected_image_reference: source_rootfs.selected_reference,
             image_digest: source_rootfs.image_digest,
             process_config: source_rootfs.process_config,
+            cache_profile: source_rootfs.cache_profile,
             preserve_debug,
         })
     }

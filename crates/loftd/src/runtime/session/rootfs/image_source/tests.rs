@@ -4,7 +4,9 @@ use std::cell::RefCell;
 #[derive(Debug)]
 struct FakeBuildahCommands {
     local_image_exists: bool,
+    image_digest: Option<String>,
     output: String,
+    fail_unshare: bool,
     calls: RefCell<Vec<Vec<String>>>,
 }
 
@@ -12,17 +14,29 @@ impl FakeBuildahCommands {
     fn new(local_image_exists: bool, rootfs_path: &Path) -> Self {
         Self {
             local_image_exists,
+            image_digest: None,
             output: format!(
                 "selected_image={}\nimage_digest=sha256:feedface\nrootfs_path={}\n",
                 DEFAULT_FALLBACK_IMAGE,
                 rootfs_path.display()
             ),
+            fail_unshare: false,
             calls: RefCell::new(Vec::new()),
         }
     }
 
+    fn with_image_digest(mut self, digest: &str) -> Self {
+        self.image_digest = Some(digest.to_owned());
+        self
+    }
+
     fn with_output(mut self, output: String) -> Self {
         self.output = output;
+        self
+    }
+
+    fn fail_on_unshare(mut self) -> Self {
+        self.fail_unshare = true;
         self
     }
 
@@ -38,6 +52,27 @@ impl BuildahCommands for FakeBuildahCommands {
             .push(args.iter().map(|arg| (*arg).to_owned()).collect());
         match args {
             ["--version"] => Ok("buildah version 1.42.0\n".to_owned()),
+            ["pull", _reference] => Ok("pulled\n".to_owned()),
+            [
+                "inspect",
+                "--type",
+                "image",
+                "--format",
+                "{{.Digest}}",
+                _reference,
+            ]
+            | [
+                "inspect",
+                "--type",
+                "image",
+                "--format",
+                "{{.FromImageDigest}}",
+                _reference,
+            ] => self
+                .image_digest
+                .as_ref()
+                .map(|digest| format!("{digest}\n"))
+                .ok_or_else(|| anyhow!("image digest unavailable")),
             other => bail!("unexpected buildah args: {other:?}"),
         }
     }
@@ -58,6 +93,10 @@ impl BuildahCommands for FakeBuildahCommands {
                 .chain(args.iter().map(|arg| (*arg).to_owned()))
                 .collect(),
         );
+        if self.fail_unshare {
+            bail!("unshare materializer must not run");
+        }
+        fs::create_dir_all(args[2]).expect("fake task rootfs should be created");
         Ok(self.output.clone())
     }
 }
@@ -135,7 +174,16 @@ impl ChildBuildahCommands for FakeChildBuildahCommands {
 
 #[derive(Debug)]
 struct FakeBtrfsRootfsCommands {
-    calls: RefCell<Vec<(PathBuf, PathBuf)>>,
+    calls: RefCell<Vec<BtrfsCall>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BtrfsCall {
+    Snapshot {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    Delete(PathBuf),
 }
 
 impl FakeBtrfsRootfsCommands {
@@ -144,50 +192,128 @@ impl FakeBtrfsRootfsCommands {
             calls: RefCell::new(Vec::new()),
         }
     }
+
+    fn calls(&self) -> Vec<BtrfsCall> {
+        self.calls.borrow().clone()
+    }
 }
 
 impl BtrfsRootfsCommands for FakeBtrfsRootfsCommands {
     fn snapshot_btrfs_subvolume(&self, source: &Path, destination: &Path) -> Result<()> {
-        self.calls
-            .borrow_mut()
-            .push((source.to_path_buf(), destination.to_path_buf()));
-        fs::create_dir_all(destination).expect("destination should be created");
-        Ok(())
+        self.calls.borrow_mut().push(BtrfsCall::Snapshot {
+            source: source.to_path_buf(),
+            destination: destination.to_path_buf(),
+        });
+        if source.exists() {
+            copy_rootfs_tree(source, destination)
+        } else {
+            fs::create_dir_all(destination).expect("destination should be created");
+            Ok(())
+        }
     }
 
-    fn delete_btrfs_subvolume(&self, _subvolume: &Path) -> Result<()> {
+    fn delete_btrfs_subvolume(&self, subvolume: &Path) -> Result<()> {
+        self.calls
+            .borrow_mut()
+            .push(BtrfsCall::Delete(subvolume.to_path_buf()));
+        if subvolume.exists() {
+            fs::remove_dir_all(subvolume).with_context(|| {
+                format!("failed to remove fake subvolume '{}'", subvolume.display())
+            })?;
+        }
         Ok(())
     }
+}
+
+fn copy_rootfs_tree(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(source)
+        .with_context(|| format!("failed to stat '{}'", source.display()))?;
+    if metadata.is_dir() {
+        fs::create_dir_all(destination)
+            .with_context(|| format!("failed to create '{}'", destination.display()))?;
+        for entry in fs::read_dir(source)
+            .with_context(|| format!("failed to read '{}'", source.display()))?
+        {
+            let entry = entry?;
+            copy_rootfs_tree(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+        fs::set_permissions(
+            destination,
+            fs::Permissions::from_mode(metadata.permissions().mode()),
+        )?;
+    } else if metadata.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination)?;
+        fs::set_permissions(
+            destination,
+            fs::Permissions::from_mode(metadata.permissions().mode()),
+        )?;
+    }
+    Ok(())
+}
+
+fn call_materialize(
+    selection: &ImageSelection,
+    task_rootfs: &Path,
+    cache_root: &Path,
+    commands: &FakeBuildahCommands,
+    btrfs: &FakeBtrfsRootfsCommands,
+) -> Result<ImageSourceRootfs> {
+    materialize_btrfs_source_rootfs(selection, task_rootfs, cache_root, commands, btrfs)
 }
 
 #[test]
 fn default_selection_uses_localhost_with_pull_never_when_present() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
+    let task_rootfs = temp.path().join("rootfs");
     let output = format!(
         "selected_image={DEFAULT_IMAGE}\nimage_digest=sha256:local\nrootfs_path={}\n",
-        temp.path().join("rootfs").display()
+        task_rootfs.display()
     );
-    let commands = FakeBuildahCommands::new(true, &temp.path().join("rootfs")).with_output(output);
+    let commands = FakeBuildahCommands::new(true, &task_rootfs)
+        .with_image_digest("sha256:local")
+        .with_output(output);
+    let btrfs = FakeBtrfsRootfsCommands::new();
 
-    let rootfs = materialize_btrfs_source_rootfs(
+    let rootfs = call_materialize(
         &ImageSelection::PreferLocalhostThenCanonical,
-        &temp.path().join("rootfs"),
+        &task_rootfs,
+        &temp.path().join("cache"),
         &commands,
+        &btrfs,
     )
     .expect("local image should materialize");
 
     assert_eq!(rootfs.selected_reference, DEFAULT_IMAGE);
     assert_eq!(rootfs.image_digest.as_deref(), Some("sha256:local"));
     assert_eq!(
+        rootfs.cache_profile.status,
+        ImageSourceCacheStatus::MissPopulated
+    );
+    assert_eq!(
+        rootfs.cache_profile.digest_key.as_deref(),
+        Some("sha256-local")
+    );
+    assert_eq!(
         commands.calls(),
         vec![
             vec!["--version"],
             vec!["inspect", "--type", "image", DEFAULT_IMAGE],
             vec![
+                "inspect",
+                "--type",
+                "image",
+                "--format",
+                "{{.Digest}}",
+                DEFAULT_IMAGE
+            ],
+            vec![
                 "unshare-materializer",
                 DEFAULT_IMAGE,
                 "never",
-                temp.path().join("rootfs").to_str().unwrap()
+                task_rootfs.to_str().unwrap()
             ],
         ]
     );
@@ -196,12 +322,16 @@ fn default_selection_uses_localhost_with_pull_never_when_present() {
 #[test]
 fn default_selection_falls_back_to_canonical_with_pull_missing() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
-    let commands = FakeBuildahCommands::new(false, &temp.path().join("rootfs"));
+    let task_rootfs = temp.path().join("rootfs");
+    let commands = FakeBuildahCommands::new(false, &task_rootfs);
+    let btrfs = FakeBtrfsRootfsCommands::new();
 
-    materialize_btrfs_source_rootfs(
+    call_materialize(
         &ImageSelection::PreferLocalhostThenCanonical,
-        &temp.path().join("rootfs"),
+        &task_rootfs,
+        &temp.path().join("cache"),
         &commands,
+        &btrfs,
     )
     .expect("canonical fallback should materialize");
 
@@ -211,24 +341,45 @@ fn default_selection_falls_back_to_canonical_with_pull_missing() {
             vec!["--version"],
             vec!["inspect", "--type", "image", DEFAULT_IMAGE],
             vec![
+                "inspect",
+                "--type",
+                "image",
+                "--format",
+                "{{.Digest}}",
+                DEFAULT_FALLBACK_IMAGE
+            ],
+            vec![
+                "inspect",
+                "--type",
+                "image",
+                "--format",
+                "{{.FromImageDigest}}",
+                DEFAULT_FALLBACK_IMAGE
+            ],
+            vec![
                 "unshare-materializer",
                 DEFAULT_FALLBACK_IMAGE,
                 "missing",
-                temp.path().join("rootfs").to_str().unwrap()
+                task_rootfs.to_str().unwrap()
             ],
         ]
     );
 }
 
 #[test]
-fn pull_latest_uses_canonical_with_pull_always() {
+fn pull_latest_refreshes_image_before_cache_lookup() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
-    let commands = FakeBuildahCommands::new(false, &temp.path().join("rootfs"));
+    let task_rootfs = temp.path().join("rootfs");
+    let commands =
+        FakeBuildahCommands::new(false, &task_rootfs).with_image_digest("sha256:feedface");
+    let btrfs = FakeBtrfsRootfsCommands::new();
 
-    materialize_btrfs_source_rootfs(
+    call_materialize(
         &ImageSelection::CanonicalWithRefresh,
-        &temp.path().join("rootfs"),
+        &task_rootfs,
+        &temp.path().join("cache"),
         &commands,
+        &btrfs,
     )
     .expect("canonical refresh should materialize");
 
@@ -236,26 +387,43 @@ fn pull_latest_uses_canonical_with_pull_always() {
         commands.calls(),
         vec![
             vec!["--version"],
+            vec!["pull", DEFAULT_FALLBACK_IMAGE],
+            vec![
+                "inspect",
+                "--type",
+                "image",
+                "--format",
+                "{{.Digest}}",
+                DEFAULT_FALLBACK_IMAGE
+            ],
             vec![
                 "unshare-materializer",
                 DEFAULT_FALLBACK_IMAGE,
                 "always",
-                temp.path().join("rootfs").to_str().unwrap()
+                task_rootfs.to_str().unwrap()
             ],
         ]
     );
 }
 
 #[test]
-fn explicit_image_uses_pull_missing_without_refs_file() {
+fn explicit_digest_image_uses_digest_key_without_image_inspect() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
-    let commands = FakeBuildahCommands::new(false, &temp.path().join("rootfs"));
+    let task_rootfs = temp.path().join("rootfs");
+    let commands = FakeBuildahCommands::new(false, &task_rootfs);
+    let btrfs = FakeBtrfsRootfsCommands::new();
     let selection = ImageSelection::Explicit {
         reference: "ghcr.io/example/loftd@sha256:abc123".to_owned(),
     };
 
-    materialize_btrfs_source_rootfs(&selection, &temp.path().join("rootfs"), &commands)
-        .expect("explicit image should materialize");
+    call_materialize(
+        &selection,
+        &task_rootfs,
+        &temp.path().join("cache"),
+        &commands,
+        &btrfs,
+    )
+    .expect("explicit image should materialize");
 
     assert_eq!(
         commands.calls(),
@@ -265,8 +433,178 @@ fn explicit_image_uses_pull_missing_without_refs_file() {
                 "unshare-materializer",
                 "ghcr.io/example/loftd@sha256:abc123",
                 "missing",
-                temp.path().join("rootfs").to_str().unwrap()
+                task_rootfs.to_str().unwrap()
             ],
+        ]
+    );
+}
+
+#[test]
+fn safe_digest_key_rejects_path_unsafe_digest_values() {
+    assert_eq!(
+        safe_digest_key("sha256:feedface").unwrap(),
+        "sha256-feedface"
+    );
+    assert!(safe_digest_key("sha256:").is_err());
+    assert!(safe_digest_key("sha/256:feedface").is_err());
+    assert!(safe_digest_key("sha256:../feedface").is_err());
+    assert!(safe_digest_key("<no value>").is_err());
+}
+
+#[test]
+fn cache_metadata_round_trips_process_config() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: DEFAULT_IMAGE.to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        rootfs_path: temp.path().join("task-rootfs"),
+        process_config: OciProcessConfig {
+            env: vec!["PATH=/nix/store/fish/bin".to_owned()],
+            cmd: vec!["fish".to_owned(), "-l".to_owned()],
+            entrypoint: vec!["/nix/store/hash-loftd/bin/loftd-guest-init".to_owned()],
+            working_dir: Some("/workspace".to_owned()),
+        },
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+
+    let metadata = format_cache_metadata(&source);
+    let parsed = parse_cache_metadata(&metadata, &temp.path().join("cache-rootfs"))
+        .expect("cache metadata should parse");
+
+    assert_eq!(parsed.selected_reference, source.selected_reference);
+    assert_eq!(parsed.image_digest, source.image_digest);
+    assert_eq!(parsed.process_config, source.process_config);
+    assert_eq!(parsed.rootfs_path, temp.path().join("cache-rootfs"));
+}
+
+#[test]
+fn cache_hit_reuses_source_without_unshare_materializer() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    write_guest_init(&entry.rootfs_path, "hash-loftd", 0o755);
+    let source = ImageSourceRootfs {
+        selected_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig {
+            env: vec!["PATH=/nix/store/fish/bin".to_owned()],
+            ..OciProcessConfig::default()
+        },
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    let task_rootfs = temp.path().join("task-rootfs");
+    let commands = FakeBuildahCommands::new(false, &task_rootfs)
+        .with_image_digest("sha256:feedface")
+        .fail_on_unshare();
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let rootfs = call_materialize(
+        &ImageSelection::PreferLocalhostThenCanonical,
+        &task_rootfs,
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("cache hit should materialize task rootfs");
+
+    assert_eq!(rootfs.cache_profile.status, ImageSourceCacheStatus::Hit);
+    assert_eq!(rootfs.rootfs_path, task_rootfs);
+    assert_eq!(
+        rootfs.process_config.env,
+        vec!["PATH=/nix/store/fish/bin".to_owned()]
+    );
+    assert_eq!(
+        btrfs.calls(),
+        vec![BtrfsCall::Snapshot {
+            source: entry.rootfs_path,
+            destination: rootfs.rootfs_path,
+        }]
+    );
+    assert!(commands.calls().iter().all(|call| {
+        !matches!(
+            call.first().map(String::as_str),
+            Some("unshare-materializer")
+        ) && !call
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "from" | "mount" | "umount" | "rm"))
+    }));
+}
+
+#[test]
+fn unknown_digest_uses_direct_uncached_path_without_cache_write() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let task_rootfs = temp.path().join("task-rootfs");
+    let output = format!(
+        "selected_image={DEFAULT_FALLBACK_IMAGE}\nimage_digest=<no value>\nrootfs_path={}\n",
+        task_rootfs.display()
+    );
+    let commands = FakeBuildahCommands::new(false, &task_rootfs).with_output(output);
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let rootfs = call_materialize(
+        &ImageSelection::PreferLocalhostThenCanonical,
+        &task_rootfs,
+        &temp.path().join("cache"),
+        &commands,
+        &btrfs,
+    )
+    .expect("unknown digest should still materialize");
+
+    assert_eq!(rootfs.image_digest, None);
+    assert_eq!(
+        rootfs.cache_profile.status,
+        ImageSourceCacheStatus::DirectUncached
+    );
+    assert_eq!(
+        rootfs.cache_profile.uncached_reason.as_deref(),
+        Some("unknown-digest")
+    );
+    assert_eq!(btrfs.calls(), Vec::new());
+    assert!(
+        !temp
+            .path()
+            .join("cache")
+            .join(BTRFS_IMAGE_CACHE_DIR)
+            .exists()
+    );
+}
+
+#[test]
+fn corrupt_cache_entry_rebuilds_before_writing_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("incomplete cache rootfs should exist");
+    let task_rootfs = temp.path().join("task-rootfs");
+    let commands =
+        FakeBuildahCommands::new(false, &task_rootfs).with_image_digest("sha256:feedface");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let rootfs = call_materialize(
+        &ImageSelection::PreferLocalhostThenCanonical,
+        &task_rootfs,
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("corrupt cache should rebuild");
+
+    assert_eq!(
+        rootfs.cache_profile.status,
+        ImageSourceCacheStatus::MissRebuilt
+    );
+    assert!(entry.metadata_path.is_file());
+    assert_eq!(
+        btrfs.calls(),
+        vec![
+            BtrfsCall::Delete(entry.rootfs_path.clone()),
+            BtrfsCall::Snapshot {
+                source: task_rootfs,
+                destination: entry.rootfs_path,
+            },
         ]
     );
 }
@@ -384,8 +722,11 @@ fn internal_child_snapshots_buildah_mount_and_cleans_container_on_success() {
     .expect("child materialization should succeed");
 
     assert_eq!(
-        btrfs.calls.borrow().as_slice(),
-        [(mount_root, destination.clone())]
+        btrfs.calls(),
+        vec![BtrfsCall::Snapshot {
+            source: mount_root,
+            destination: destination.clone(),
+        }]
     );
     assert_eq!(
         buildah.calls(),

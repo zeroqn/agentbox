@@ -1,5 +1,7 @@
 use super::*;
-use crate::runtime::session::rootfs::image_source::{BuildahCommands, OciProcessConfig};
+use crate::runtime::session::rootfs::image_source::{
+    BuildahCommands, ImageSourceCacheProfile, ImageSourceCacheStatus, OciProcessConfig,
+};
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -70,6 +72,7 @@ impl BtrfsRootfsCommands for FakeBtrfsRootfsCommands {
 #[derive(Debug)]
 struct FakeBuildahCommands {
     output: RefCell<Result<String, &'static str>>,
+    image_digest: Option<String>,
     calls: RefCell<Vec<Vec<String>>>,
 }
 
@@ -80,6 +83,7 @@ impl FakeBuildahCommands {
                 "selected_image={selected_image}\nimage_digest=sha256:feedface\nrootfs_path={}\noci_env.0=504154483d2f6e69782f73746f72652f666973682f62696e\n",
                 rootfs_path.display()
             ))),
+            image_digest: None,
             calls: RefCell::new(Vec::new()),
         }
     }
@@ -87,8 +91,14 @@ impl FakeBuildahCommands {
     fn fail(message: &'static str) -> Self {
         Self {
             output: RefCell::new(Err(message)),
+            image_digest: None,
             calls: RefCell::new(Vec::new()),
         }
+    }
+
+    fn with_image_digest(mut self, digest: &str) -> Self {
+        self.image_digest = Some(digest.to_owned());
+        self
     }
 }
 
@@ -97,7 +107,24 @@ impl BuildahCommands for FakeBuildahCommands {
         self.calls
             .borrow_mut()
             .push(args.iter().map(|arg| (*arg).to_owned()).collect());
-        Ok("buildah version 1.42.0\n".to_owned())
+        match args {
+            ["--version"] => Ok("buildah version 1.42.0\n".to_owned()),
+            ["inspect", "--type", "image", "--format", "{{.Digest}}", _]
+            | [
+                "inspect",
+                "--type",
+                "image",
+                "--format",
+                "{{.FromImageDigest}}",
+                _,
+            ] => self
+                .image_digest
+                .as_ref()
+                .map(|digest| format!("{digest}\n"))
+                .ok_or_else(|| anyhow!("image digest unavailable")),
+            ["pull", _] => Ok("pulled\n".to_owned()),
+            other => anyhow::bail!("unexpected buildah args: {other:?}"),
+        }
     }
 
     fn status(&self, args: &[&str]) -> Result<bool> {
@@ -141,7 +168,7 @@ fn manager_materializes_btrfs_task_rootfs_handle_from_buildah_source() {
         .join(BTRFS_ROOTFS_DIR);
     let buildah = FakeBuildahCommands::success(&rootfs_path, DEFAULT_IMAGE);
     let btrfs = FakeBtrfsRootfsCommands::new();
-    let manager = TaskRootfsManager::new(state_root.clone());
+    let manager = TaskRootfsManager::new(state_root.clone(), temp.path().join("image-cache"));
 
     let handle = manager
         .materialize_btrfs_from_buildah(
@@ -163,6 +190,87 @@ fn manager_materializes_btrfs_task_rootfs_handle_from_buildah_source() {
         handle.process_config().env,
         vec!["PATH=/nix/store/fish/bin".to_owned()]
     );
+    assert_eq!(
+        handle.cache_profile().status,
+        ImageSourceCacheStatus::MissPopulated
+    );
+    assert_eq!(
+        handle.cache_profile().digest_key.as_deref(),
+        Some("sha256-feedface")
+    );
+}
+
+#[test]
+fn manager_uses_cached_source_for_distinct_task_rootfs_paths() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let state_root = temp.path().join("state");
+    let image_cache = temp.path().join("image-cache");
+    let cache_entry = image_cache.join("btrfs-snapshots").join("sha256-feedface");
+    let cache_rootfs = cache_entry.join("rootfs");
+    let guest_init = cache_rootfs.join("nix/store/hash-loftd/bin/loftd-guest-init");
+    fs::create_dir_all(guest_init.parent().unwrap()).expect("guest init parent");
+    fs::write(&guest_init, "#!/bin/sh\n").expect("guest init");
+    fs::set_permissions(&guest_init, fs::Permissions::from_mode(0o755)).expect("guest init mode");
+    fs::write(
+        cache_entry.join("metadata"),
+        "selected_image=localhost/loftd:latest\nimage_digest=sha256:feedface\noci_env.0=504154483d2f6e69782f73746f72652f666973682f62696e\n",
+    )
+    .expect("cache metadata");
+
+    let buildah =
+        FakeBuildahCommands::fail("unshare should not run").with_image_digest("sha256:feedface");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+    let manager = TaskRootfsManager::new(state_root.clone(), image_cache);
+
+    let first = manager
+        .materialize_btrfs_from_buildah(
+            &ImageSelection::PreferLocalhostThenCanonical,
+            "task-1",
+            false,
+            &buildah,
+            &btrfs,
+        )
+        .expect("first task should hit cache");
+    let second = manager
+        .materialize_btrfs_from_buildah(
+            &ImageSelection::PreferLocalhostThenCanonical,
+            "task-2",
+            false,
+            &buildah,
+            &btrfs,
+        )
+        .expect("second task should hit cache");
+
+    assert_ne!(first.rootfs_path(), second.rootfs_path());
+    assert_eq!(first.cache_profile().status, ImageSourceCacheStatus::Hit);
+    assert_eq!(second.cache_profile().status, ImageSourceCacheStatus::Hit);
+    assert_eq!(
+        first.rootfs_path(),
+        state_root
+            .join(TASKS_DIR)
+            .join("task-1")
+            .join(BTRFS_ROOTFS_DIR)
+    );
+    assert_eq!(
+        second.rootfs_path(),
+        state_root
+            .join(TASKS_DIR)
+            .join("task-2")
+            .join(BTRFS_ROOTFS_DIR)
+    );
+    assert_eq!(
+        btrfs.calls(),
+        vec![
+            BtrfsCall::Snapshot {
+                source: cache_rootfs.clone(),
+                destination: first.rootfs_path().to_path_buf(),
+            },
+            BtrfsCall::Snapshot {
+                source: cache_rootfs,
+                destination: second.rootfs_path().to_path_buf(),
+            },
+        ]
+    );
 }
 
 #[test]
@@ -172,7 +280,7 @@ fn materialization_failure_cleans_partial_task_rootfs_without_fallback() {
     let task_dir = state_root.join(TASKS_DIR).join("task-fail");
     let buildah = FakeBuildahCommands::fail("snapshot failed");
     let btrfs = FakeBtrfsRootfsCommands::new();
-    let manager = TaskRootfsManager::new(state_root);
+    let manager = TaskRootfsManager::new(state_root, temp.path().join("image-cache"));
 
     let error = manager
         .materialize_btrfs_from_buildah(
@@ -199,7 +307,7 @@ fn preserve_debug_keeps_partial_rootfs_on_failure() {
     let task_dir = state_root.join(TASKS_DIR).join("task-preserve");
     let buildah = FakeBuildahCommands::fail("snapshot failed");
     let btrfs = FakeBtrfsRootfsCommands::new();
-    let manager = TaskRootfsManager::new(state_root);
+    let manager = TaskRootfsManager::new(state_root, temp.path().join("image-cache"));
 
     let error = manager
         .materialize_btrfs_from_buildah(
@@ -232,6 +340,7 @@ fn cleanup_delete_failure_preserves_state_for_manual_recovery() {
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
         process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
         preserve_debug: false,
     };
     let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
@@ -261,6 +370,7 @@ fn lease_explicit_cleanup_reports_delete_failure() {
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
         process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
         preserve_debug: false,
     };
     let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
@@ -287,6 +397,7 @@ fn lease_drop_fallback_is_best_effort_and_non_panicking() {
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
         process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
         preserve_debug: false,
     };
     let commands = FakeBtrfsRootfsCommands::new().fail_delete("operation not permitted");
@@ -310,6 +421,7 @@ fn lease_preserve_debug_disables_automatic_cleanup() {
         selected_image_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: None,
         process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
         preserve_debug: true,
     };
     let commands = FakeBtrfsRootfsCommands::new();

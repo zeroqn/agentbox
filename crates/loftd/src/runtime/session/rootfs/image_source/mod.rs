@@ -12,6 +12,9 @@ use crate::runtime::session::rootfs::task::{
 };
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
+const BTRFS_IMAGE_CACHE_DIR: &str = "btrfs-snapshots";
+const CACHE_ROOTFS_DIR: &str = "rootfs";
+const CACHE_METADATA_FILE: &str = "metadata";
 const GUEST_INIT_BASENAME: &str = "loftd-guest-init";
 const INTERNAL_BTRFS_ROOTFS_COMMAND: &str = "btrfs-rootfs";
 const OCI_PROCESS_CONFIG_TEMPLATE: &str = r#"{{range $index, $value := .OCIv1.Config.Env}}{{printf "oci_env.%d=%x\n" $index $value}}{{end}}{{range $index, $value := .OCIv1.Config.Cmd}}{{printf "oci_cmd.%d=%x\n" $index $value}}{{end}}{{range $index, $value := .OCIv1.Config.Entrypoint}}{{printf "oci_entrypoint.%d=%x\n" $index $value}}{{end}}{{if .OCIv1.Config.WorkingDir}}{{printf "oci_workdir=%x\n" .OCIv1.Config.WorkingDir}}{{end}}"#;
@@ -45,6 +48,67 @@ pub(crate) struct ImageSourceRootfs {
     pub(crate) image_digest: Option<String>,
     pub(crate) rootfs_path: PathBuf,
     pub(crate) process_config: OciProcessConfig,
+    pub(crate) cache_profile: ImageSourceCacheProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImageSourceCacheProfile {
+    pub(crate) status: ImageSourceCacheStatus,
+    pub(crate) digest_key: Option<String>,
+    pub(crate) cache_path: Option<PathBuf>,
+    pub(crate) uncached_reason: Option<String>,
+}
+
+impl ImageSourceCacheProfile {
+    fn hit(entry: &BtrfsImageCacheEntry) -> Self {
+        Self {
+            status: ImageSourceCacheStatus::Hit,
+            digest_key: Some(entry.digest_key.clone()),
+            cache_path: Some(entry.entry_dir.clone()),
+            uncached_reason: None,
+        }
+    }
+
+    fn populated(entry: &BtrfsImageCacheEntry, rebuilt: bool) -> Self {
+        Self {
+            status: if rebuilt {
+                ImageSourceCacheStatus::MissRebuilt
+            } else {
+                ImageSourceCacheStatus::MissPopulated
+            },
+            digest_key: Some(entry.digest_key.clone()),
+            cache_path: Some(entry.entry_dir.clone()),
+            uncached_reason: None,
+        }
+    }
+
+    pub(crate) fn direct_uncached(reason: &'static str) -> Self {
+        Self {
+            status: ImageSourceCacheStatus::DirectUncached,
+            digest_key: None,
+            cache_path: None,
+            uncached_reason: Some(reason.to_owned()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImageSourceCacheStatus {
+    Hit,
+    MissPopulated,
+    MissRebuilt,
+    DirectUncached,
+}
+
+impl ImageSourceCacheStatus {
+    pub(crate) fn as_profile_value(self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::MissPopulated => "miss-populated",
+            Self::MissRebuilt => "miss-rebuilt",
+            Self::DirectUncached => "direct-uncached",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -104,16 +168,111 @@ impl BuildahCommands for HostBuildahCommands {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BtrfsImageCacheEntry {
+    digest: String,
+    digest_key: String,
+    entry_dir: PathBuf,
+    rootfs_path: PathBuf,
+    metadata_path: PathBuf,
+}
+
+impl BtrfsImageCacheEntry {
+    fn new(cache_root: &Path, digest: &str) -> Result<Self> {
+        let digest_key = safe_digest_key(digest)?;
+        let entry_dir = cache_root.join(BTRFS_IMAGE_CACHE_DIR).join(&digest_key);
+        Ok(Self {
+            digest: digest.to_owned(),
+            digest_key,
+            rootfs_path: entry_dir.join(CACHE_ROOTFS_DIR),
+            metadata_path: entry_dir.join(CACHE_METADATA_FILE),
+            entry_dir,
+        })
+    }
+
+    fn is_complete(&self) -> bool {
+        self.rootfs_path.is_dir() && self.metadata_path.is_file()
+    }
+}
+
 pub(crate) fn materialize_btrfs_source_rootfs(
     selection: &ImageSelection,
     destination: &Path,
+    image_cache_root: &Path,
     commands: &impl BuildahCommands,
+    btrfs: &impl BtrfsRootfsCommands,
 ) -> Result<ImageSourceRootfs> {
     commands
         .run(&["--version"])
         .context("failed to verify buildah; btrfs-snapshot task rootfs requires buildah")?;
 
     let attempt = select_attempt(selection, commands)?;
+    let resolved_digest = resolve_attempt_digest(&attempt, commands)?;
+    let mut invalid_cached_entry = false;
+
+    if let Some(digest) = resolved_digest.as_deref() {
+        let entry = BtrfsImageCacheEntry::new(image_cache_root, digest)?;
+        match read_valid_cache_entry(&entry) {
+            Ok(Some(cached)) => {
+                snapshot_mounted_rootfs(&entry.rootfs_path, destination, btrfs).with_context(
+                    || {
+                        format!(
+                            "failed to btrfs-snapshot cached image rootfs '{}' to task rootfs '{}'",
+                            entry.rootfs_path.display(),
+                            destination.display()
+                        )
+                    },
+                )?;
+                return Ok(ImageSourceRootfs {
+                    selected_reference: attempt.reference,
+                    image_digest: Some(entry.digest.clone()),
+                    rootfs_path: destination.to_path_buf(),
+                    process_config: cached.process_config,
+                    cache_profile: ImageSourceCacheProfile::hit(&entry),
+                });
+            }
+            Ok(None) => invalid_cached_entry = entry.entry_dir.exists(),
+            Err(err) => {
+                invalid_cached_entry = true;
+                tracing::debug!(
+                    digest,
+                    cache_entry = %entry.entry_dir.display(),
+                    error = %format!("{err:#}"),
+                    "ignoring invalid loftd btrfs image-source cache entry"
+                );
+            }
+        }
+    }
+
+    let materialized = materialize_task_rootfs_from_buildah(&attempt, destination, commands)?;
+    let Some(digest) = materialized.image_digest.as_deref() else {
+        return Ok(ImageSourceRootfs {
+            cache_profile: ImageSourceCacheProfile::direct_uncached("unknown-digest"),
+            ..materialized
+        });
+    };
+
+    let entry = BtrfsImageCacheEntry::new(image_cache_root, digest)?;
+    let rebuilt = invalid_cached_entry || entry.entry_dir.exists();
+    populate_cache_entry(&entry, &materialized, btrfs).with_context(|| {
+        format!(
+            "failed to populate loftd btrfs image-source cache entry '{}' from task rootfs '{}'",
+            entry.entry_dir.display(),
+            materialized.rootfs_path.display()
+        )
+    })?;
+
+    Ok(ImageSourceRootfs {
+        cache_profile: ImageSourceCacheProfile::populated(&entry, rebuilt),
+        ..materialized
+    })
+}
+
+fn materialize_task_rootfs_from_buildah(
+    attempt: &ImageSourceAttempt,
+    destination: &Path,
+    commands: &impl BuildahCommands,
+) -> Result<ImageSourceRootfs> {
     let destination = destination
         .to_str()
         .ok_or_else(|| anyhow!("loftd task rootfs path is not valid UTF-8"))?;
@@ -130,7 +289,216 @@ pub(crate) fn materialize_btrfs_source_rootfs(
                 attempt.pull_policy.as_buildah_value()
             )
         })?;
-    parse_materializer_output(&output)
+    let mut rootfs = parse_materializer_output(&output)?;
+    rootfs.cache_profile = ImageSourceCacheProfile::direct_uncached("pending-cache-decision");
+    Ok(rootfs)
+}
+
+fn resolve_attempt_digest(
+    attempt: &ImageSourceAttempt,
+    commands: &impl BuildahCommands,
+) -> Result<Option<String>> {
+    if let Some(digest) = digest_from_reference(&attempt.reference) {
+        return Ok(Some(digest.to_owned()));
+    }
+
+    if attempt.pull_policy == BuildahPullPolicy::Always {
+        commands
+            .run(&["pull", attempt.reference.as_str()])
+            .with_context(|| format!("failed to refresh Buildah image '{}'", attempt.reference))?;
+    }
+
+    inspect_image_digest(&attempt.reference, commands)
+}
+
+fn inspect_image_digest(
+    reference: &str,
+    commands: &impl BuildahCommands,
+) -> Result<Option<String>> {
+    for template in ["{{.Digest}}", "{{.FromImageDigest}}"] {
+        match commands.run(&[
+            "inspect", "--type", "image", "--format", template, reference,
+        ]) {
+            Ok(output) => {
+                if let Some(digest) = optional_digest(output) {
+                    return Ok(Some(digest));
+                }
+            }
+            Err(err) => {
+                tracing::debug!(
+                    image = reference,
+                    template,
+                    error = %format!("{err:#}"),
+                    "Buildah image digest inspect did not resolve a digest"
+                );
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn digest_from_reference(reference: &str) -> Option<&str> {
+    reference
+        .split_once('@')
+        .map(|(_, digest)| digest)
+        .filter(|digest| digest_is_known(digest))
+}
+
+fn read_valid_cache_entry(entry: &BtrfsImageCacheEntry) -> Result<Option<ImageSourceRootfs>> {
+    if !entry.is_complete() {
+        return Ok(None);
+    }
+    let metadata = fs::read_to_string(&entry.metadata_path).with_context(|| {
+        format!(
+            "failed to read loftd btrfs image-source cache metadata '{}'",
+            entry.metadata_path.display()
+        )
+    })?;
+    let cached = parse_cache_metadata(&metadata, &entry.rootfs_path)?;
+    if cached.image_digest.as_deref() != Some(entry.digest.as_str()) {
+        bail!(
+            "cache metadata digest mismatch: expected '{}', got '{:?}'",
+            entry.digest,
+            cached.image_digest
+        );
+    }
+    find_loftd_guest_init(&entry.rootfs_path).with_context(|| {
+        format!(
+            "cached image rootfs '{}' is not loftd-compatible",
+            entry.rootfs_path.display()
+        )
+    })?;
+    Ok(Some(cached))
+}
+
+fn parse_cache_metadata(metadata: &str, rootfs_path: &Path) -> Result<ImageSourceRootfs> {
+    let rootfs_path = rootfs_path
+        .to_str()
+        .ok_or_else(|| anyhow!("loftd image-source cache rootfs path is not valid UTF-8"))?;
+    parse_materializer_output(&format!("{metadata}rootfs_path={rootfs_path}\n"))
+}
+
+fn populate_cache_entry(
+    entry: &BtrfsImageCacheEntry,
+    source: &ImageSourceRootfs,
+    btrfs: &impl BtrfsRootfsCommands,
+) -> Result<()> {
+    reset_cache_entry(entry, btrfs)?;
+    fs::create_dir_all(&entry.entry_dir).with_context(|| {
+        format!(
+            "failed to create loftd btrfs image-source cache entry '{}'",
+            entry.entry_dir.display()
+        )
+    })?;
+
+    let result = (|| {
+        snapshot_mounted_rootfs(&source.rootfs_path, &entry.rootfs_path, btrfs)?;
+        fs::write(&entry.metadata_path, format_cache_metadata(source)).with_context(|| {
+            format!(
+                "failed to write loftd btrfs image-source cache metadata '{}'",
+                entry.metadata_path.display()
+            )
+        })
+    })();
+
+    if let Err(err) = result {
+        reset_cache_entry(entry, btrfs).with_context(|| {
+            format!(
+                "failed to clean incomplete loftd btrfs image-source cache entry '{}' after error: {err:#}",
+                entry.entry_dir.display()
+            )
+        })?;
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn reset_cache_entry(entry: &BtrfsImageCacheEntry, btrfs: &impl BtrfsRootfsCommands) -> Result<()> {
+    if entry.rootfs_path.exists() {
+        btrfs
+            .delete_btrfs_subvolume(&entry.rootfs_path)
+            .with_context(|| {
+                format!(
+                    "failed to delete stale loftd btrfs image-source cache rootfs '{}'",
+                    entry.rootfs_path.display()
+                )
+            })?;
+    }
+    if entry.entry_dir.exists() {
+        remove_cache_entry_tree(&entry.entry_dir).with_context(|| {
+            format!(
+                "failed to remove stale loftd btrfs image-source cache entry '{}'",
+                entry.entry_dir.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn remove_cache_entry_tree(path: &Path) -> Result<()> {
+    make_directories_owner_writable(path)?;
+    fs::remove_dir_all(path)?;
+    Ok(())
+}
+
+fn make_directories_owner_writable(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to stat '{}'", path.display()))?;
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+
+    let mode = metadata.permissions().mode();
+    if mode & 0o200 == 0 {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700)).with_context(|| {
+            format!(
+                "failed to make loftd cache directory writable '{}'",
+                path.display()
+            )
+        })?;
+    }
+
+    for entry in
+        fs::read_dir(path).with_context(|| format!("failed to read '{}'", path.display()))?
+    {
+        make_directories_owner_writable(&entry?.path())?;
+    }
+    Ok(())
+}
+
+fn format_cache_metadata(rootfs: &ImageSourceRootfs) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("selected_image={}\n", rootfs.selected_reference));
+    if let Some(digest) = &rootfs.image_digest {
+        output.push_str(&format!("image_digest={digest}\n"));
+    }
+    output.push_str(&format_oci_process_config(&rootfs.process_config));
+    output
+}
+
+fn safe_digest_key(digest: &str) -> Result<String> {
+    let (algorithm, value) = digest
+        .split_once(':')
+        .ok_or_else(|| anyhow!("image digest '{digest}' must use algorithm:value form"))?;
+    if algorithm.is_empty() || value.is_empty() || !digest_is_known(digest) {
+        bail!("image digest '{digest}' must include non-empty algorithm and value");
+    }
+    for component in [algorithm, value] {
+        if component == "."
+            || component == ".."
+            || component.contains('/')
+            || component.contains('\\')
+        {
+            bail!("image digest '{digest}' is not safe for cache paths");
+        }
+        if !component
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        {
+            bail!("image digest '{digest}' is not safe for cache paths");
+        }
+    }
+    Ok(format!("{algorithm}-{value}"))
 }
 
 fn select_attempt(
@@ -214,6 +582,7 @@ fn parse_materializer_output(output: &str) -> Result<ImageSourceRootfs> {
             entrypoint: entrypoint.into_values().collect(),
             working_dir,
         },
+        cache_profile: ImageSourceCacheProfile::direct_uncached("unclassified"),
     })
 }
 
@@ -359,18 +728,24 @@ fn parse_oci_process_config_output(output: &str) -> Result<OciProcessConfig> {
 }
 
 fn print_oci_process_config(config: &OciProcessConfig) {
+    print!("{}", format_oci_process_config(config));
+}
+
+fn format_oci_process_config(config: &OciProcessConfig) -> String {
+    let mut output = String::new();
     for (index, value) in config.env.iter().enumerate() {
-        println!("oci_env.{index}={}", encode_hex(value));
+        output.push_str(&format!("oci_env.{index}={}\n", encode_hex(value)));
     }
     for (index, value) in config.cmd.iter().enumerate() {
-        println!("oci_cmd.{index}={}", encode_hex(value));
+        output.push_str(&format!("oci_cmd.{index}={}\n", encode_hex(value)));
     }
     for (index, value) in config.entrypoint.iter().enumerate() {
-        println!("oci_entrypoint.{index}={}", encode_hex(value));
+        output.push_str(&format!("oci_entrypoint.{index}={}\n", encode_hex(value)));
     }
     if let Some(working_dir) = &config.working_dir {
-        println!("oci_workdir={}", encode_hex(working_dir));
+        output.push_str(&format!("oci_workdir={}\n", encode_hex(working_dir)));
     }
+    output
 }
 
 fn encode_hex(value: &str) -> String {

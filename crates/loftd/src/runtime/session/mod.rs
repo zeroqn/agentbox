@@ -52,7 +52,10 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
     match plan.task_rootfs_backend {
         TaskRootfsBackend::BtrfsSnapshot => {
             let task_id = rootfs::task::new_task_id(&plan.workspace_slug);
-            let manager = TaskRootfsManager::new(plan.state_layout.root_dir().to_path_buf());
+            let manager = TaskRootfsManager::new(
+                plan.state_layout.root_dir().to_path_buf(),
+                plan.image_cache_dir.clone(),
+            );
             let handle = profiler.measure_result("task_rootfs_materialization", || {
                 manager.materialize_btrfs_from_buildah(
                     &plan.image_selection,
@@ -65,6 +68,21 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
             let lease = TaskRootfsLease::new(handle, HostBtrfsRootfsCommands);
             if let Some(digest) = lease.handle().image_digest() {
                 profiler.record_metadata("image_digest", digest);
+            }
+            let cache_profile = lease.handle().cache_profile();
+            profiler.record_metadata(
+                "task_rootfs_cache_status",
+                cache_profile.status.as_profile_value(),
+            );
+            if let Some(digest_key) = &cache_profile.digest_key {
+                profiler.record_metadata("task_rootfs_cache_digest_key", digest_key);
+            }
+            if let Some(cache_path) = &cache_profile.cache_path {
+                profiler
+                    .record_metadata("task_rootfs_cache_path", cache_path.display().to_string());
+            }
+            if let Some(reason) = &cache_profile.uncached_reason {
+                profiler.record_metadata("task_rootfs_cache_uncached_reason", reason);
             }
 
             {
