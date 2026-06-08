@@ -160,8 +160,10 @@ nix build .#agentbox-container
   path for ordinary host usage and uses pinned prebuilt `libkrunfw`.
 - `.#loftd-dev`: compile the workspace Rust host package and wire it to
   `deps/libkrunfw` through `.#libkrunfw-dev`. Use this target for local
-  libkrunfw/kernel configuration experiments; it intentionally pays the slow
-  firmware build cost.
+  libkrunfw/kernel configuration experiments; the local firmware build routes
+  C/Kbuild compiler calls through `sccache` by default, but repeat-build
+  speedups require a persistent `SCCACHE_DIR` or equivalent cache path visible
+  to the Nix build sandbox.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
   `fuse-overlayfs` and `buildah` into the runtime environment for
@@ -184,7 +186,9 @@ nix build .#agentbox-container
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
 - `.#libkrunfw-dev`: build local `deps/libkrunfw` for firmware/kernel
-  configuration experiments.
+  configuration experiments. This local source path wraps C/Kbuild `CC` and
+  `HOSTCC` with `sccache`; the default sandbox-local cache is safe but
+  ephemeral unless your Nix setup exposes a persistent writable cache location.
 - `.#libkrun`: build libkrun 1.18.1 from source (overrides nixpkgs 1.17.4)
   with net, sound, GPU, block, and input support enabled, linked against the
   pinned prebuilt `.#libkrunfw`.

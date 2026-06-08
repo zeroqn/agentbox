@@ -24,6 +24,7 @@
   perl,
   pkg-config,
   python3,
+  sccache,
   util-linux,
   xz,
   zlib,
@@ -114,6 +115,7 @@ let
       perl
       pkg-config
       python
+      sccache
       util-linux
       xz
       zlib
@@ -124,6 +126,27 @@ let
       ln -sf ${kernelTarball} tarballs/${kernelVersion}.tar.xz
       ln -sf ${kernelHardenedPatch} tarballs/linux-hardened-${kernelHardenedVersion}.patch
       cp config-libkrunfw_x86_64-kvm config-libkrunfw_x86_64
+
+      export SCCACHE_DIR="''${SCCACHE_DIR:-$NIX_BUILD_TOP/sccache}"
+      mkdir -p "$SCCACHE_DIR"
+
+      mkdir -p .nix-sccache-wrappers
+      cat > .nix-sccache-wrappers/cc <<EOF
+#!${stdenv.shell}
+exec ${sccache}/bin/sccache ${stdenv.cc}/bin/cc "\$@"
+EOF
+      cat > .nix-sccache-wrappers/cxx <<EOF
+#!${stdenv.shell}
+exec ${sccache}/bin/sccache ${stdenv.cc}/bin/c++ "\$@"
+EOF
+      chmod +x .nix-sccache-wrappers/cc .nix-sccache-wrappers/cxx
+
+      makeFlagsArray+=(
+        "CC=$PWD/.nix-sccache-wrappers/cc"
+        "HOSTCC=$PWD/.nix-sccache-wrappers/cc"
+        "CXX=$PWD/.nix-sccache-wrappers/cxx"
+        "HOSTCXX=$PWD/.nix-sccache-wrappers/cxx"
+      )
     '';
 
     makeFlags = [
