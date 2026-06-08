@@ -21,7 +21,7 @@ fn podman_prep_operation_order_keeps_root_setup_before_configs() {
 fn podman_prep_tools_are_backend_specific() {
     assert_eq!(
         super::required_tools(ContainerStoreBackend::Bind),
-        ["findmnt", "podman"]
+        ["podman"]
     );
     assert_eq!(
         super::required_tools(ContainerStoreBackend::RawDisk),

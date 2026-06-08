@@ -1002,12 +1002,15 @@ Existing `loftd-nix.raw` files are not migrated or deleted automatically.
   idmap/storage context.
 - By default, nested/rootless Podman storage is a workspace-scoped host state
   directory bind-mounted to guest `/home/dev/.local/share/containers`. The host
-  directory must live on btrfs so guest Podman can keep using the btrfs storage
-  driver; bind mode fails closed with guidance if the guest-visible store is not
-  btrfs-backed.
+  bind backend configures guest Podman with the native rootless `overlay`
+  storage driver. It does not configure `fuse-overlayfs` or require the host
+  state directory to be btrfs-backed.
 - Use `loftd --container-store raw-disk` to preserve the previous raw disk
-  carrier. In raw-disk mode, `loftd-containers.raw` remains exposed as
-  `LOFTD_CONTAINERS` / `loftd-containers` for rootless container storage.
+  carrier and btrfs Podman storage driver. In raw-disk mode,
+  `loftd-containers.raw` remains exposed as `LOFTD_CONTAINERS` /
+  `loftd-containers` for rootless container storage. Existing bind-mode
+  container stores initialized with a different driver may need manual reset or
+  migration before reuse with native overlay.
 
 `loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, validates
 that the prepared-root paths already exist, ensures `/tmp` is a tmpfs with

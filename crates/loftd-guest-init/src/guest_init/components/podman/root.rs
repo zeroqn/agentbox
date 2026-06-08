@@ -135,7 +135,7 @@ pub(in crate::guest_init) fn run_prep(
 
 fn required_tools(container_store_backend: ContainerStoreBackend) -> &'static [&'static str] {
     match container_store_backend {
-        ContainerStoreBackend::Bind => &["findmnt", "podman"],
+        ContainerStoreBackend::Bind => &["podman"],
         ContainerStoreBackend::RawDisk => &["blkid", "mount", "findmnt", "podman"],
     }
 }

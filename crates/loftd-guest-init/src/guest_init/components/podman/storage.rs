@@ -1,7 +1,6 @@
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::guest_init::command;
 use crate::guest_init::components::env::{ContainerStoreBackend, LoftdEnv};
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::podman::config::{
@@ -22,7 +21,7 @@ pub(in crate::guest_init) fn bootstrap(
     fs::create_dir_all(config_dir)?;
     crate::guest_init::components::rootless::runtime_dir::ensure_user_runtime_dir(identity)?;
     fs::create_dir_all(&runroot)?;
-    ensure_container_store_available(env_contract, mount)?;
+    ensure_container_store_available(env_contract)?;
 
     for path in [mount, storage.as_path(), config_dir, runroot.as_path()] {
         fs::create_dir_all(path)?;
@@ -30,7 +29,7 @@ pub(in crate::guest_init) fn bootstrap(
     }
     fs::write_file(
         &config_dir.join("storage.conf"),
-        &storage_conf(identity),
+        &storage_conf(identity, env_contract.container_store_backend),
         0o644,
     )?;
     fs::write_file(
@@ -55,9 +54,9 @@ pub(in crate::guest_init) fn bootstrap(
     Ok(())
 }
 
-fn ensure_container_store_available(env_contract: &LoftdEnv, mount: &Path) -> Result<()> {
+fn ensure_container_store_available(env_contract: &LoftdEnv) -> Result<()> {
     match env_contract.container_store_backend {
-        ContainerStoreBackend::Bind => ensure_bind_store_is_btrfs(mount),
+        ContainerStoreBackend::Bind => Ok(()),
         ContainerStoreBackend::RawDisk => {
             crate::guest_init::components::disk::containers::ensure_mounted(
                 &env_contract.containers_disk_label,
@@ -65,28 +64,6 @@ fn ensure_container_store_available(env_contract: &LoftdEnv, mount: &Path) -> Re
             )?;
             Ok(())
         }
-    }
-}
-
-fn ensure_bind_store_is_btrfs(mount: &Path) -> Result<()> {
-    let mount_text = mount
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("path is not valid UTF-8: {}", mount.display()))?;
-    let fstype = command::output_trimmed("findmnt", &["-no", "FSTYPE", "-T", mount_text])
-        .context("failed to inspect bind container store filesystem")?;
-    validate_bind_store_fstype(fstype.as_deref()).with_context(|| {
-        format!(
-            "bind container store '{}' requires a btrfs-backed host state directory; rerun with --container-store raw-disk to use loftd's raw btrfs disk fallback",
-            mount.display()
-        )
-    })
-}
-
-fn validate_bind_store_fstype(fstype: Option<&str>) -> Result<()> {
-    match fstype {
-        Some("btrfs") => Ok(()),
-        Some(other) => bail!("container store filesystem is '{other}', not 'btrfs'"),
-        None => bail!("container store filesystem could not be detected"),
     }
 }
 

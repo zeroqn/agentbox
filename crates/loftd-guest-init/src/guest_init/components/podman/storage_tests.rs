@@ -13,14 +13,25 @@ fn podman_storage_bootstrap_does_not_resize_btrfs_during_init() {
 }
 
 #[test]
-fn bind_store_btrfs_validation_accepts_only_btrfs() {
-    super::validate_bind_store_fstype(Some("btrfs")).expect("btrfs should pass");
+fn bind_store_bootstrap_no_longer_requires_btrfs_fstype_probe() {
+    assert!(
+        !STORAGE_SOURCE.contains("output_trimmed(\"findmnt\""),
+        "bind-mode prep must not require findmnt filesystem probing"
+    );
+    assert!(
+        !STORAGE_SOURCE.contains("requires a btrfs-backed host state directory"),
+        "bind-mode prep must not require a btrfs-backed host state directory"
+    );
+}
 
-    let ext4 = super::validate_bind_store_fstype(Some("ext4")).expect_err("ext4 should fail");
-    let missing = super::validate_bind_store_fstype(None).expect_err("missing fstype should fail");
-
-    assert!(ext4.to_string().contains("not 'btrfs'"));
-    assert!(missing.to_string().contains("could not be detected"));
+#[test]
+fn raw_disk_store_bootstrap_still_mounts_container_disk() {
+    assert!(
+        STORAGE_SOURCE.contains("disk::containers::ensure_mounted("),
+        "raw-disk prep must keep mounting the persistent container-store disk"
+    );
+    assert!(STORAGE_SOURCE.contains("containers_disk_label"));
+    assert!(STORAGE_SOURCE.contains("containers_disk_id"));
 }
 
 #[test]
