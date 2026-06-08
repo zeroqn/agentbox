@@ -204,6 +204,7 @@ mod tests {
     fn test_env() -> LoftdEnv {
         LoftdEnv {
             nix_overlay: false,
+            nix_host_overlay: false,
             containers_storage: false,
             use_passt: false,
             enter_as_root: false,

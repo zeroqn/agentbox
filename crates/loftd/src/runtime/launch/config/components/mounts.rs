@@ -4,7 +4,30 @@ use anyhow::{Result, anyhow};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::super::model::{BindMount, WORKSPACE_TARGET};
+use super::super::model::{BindMount, HostNixOverlay, NIX_TAG, NIX_TARGET, WORKSPACE_TARGET};
+
+pub(crate) fn mounts_with_host_nix_overlay(
+    mounts: &[BindMount],
+    host_nix_overlay: Option<&HostNixOverlay>,
+) -> Result<Vec<BindMount>> {
+    validate_mounts(mounts)?;
+    let Some(host_nix_overlay) = host_nix_overlay else {
+        return Ok(mounts.to_vec());
+    };
+    if mounts.iter().any(|mount| mount.target == NIX_TARGET) {
+        anyhow::bail!(
+            "loftd host /nix overlay owns {NIX_TARGET}; remove the duplicate user bind mount"
+        );
+    }
+    let mut with_nix = mounts.to_vec();
+    with_nix.push(BindMount {
+        source: host_nix_overlay.mergeddir.clone(),
+        tag: NIX_TAG.to_owned(),
+        target: NIX_TARGET.to_owned(),
+    });
+    validate_mounts(&with_nix)?;
+    Ok(with_nix)
+}
 
 pub(crate) fn workspace_mount(mounts: &[BindMount]) -> Result<&BindMount> {
     mounts

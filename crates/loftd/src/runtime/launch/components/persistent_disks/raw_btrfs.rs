@@ -234,12 +234,6 @@ pub(crate) mod test_support {
             self.mkfs_calls.borrow().len()
         }
 
-        pub(crate) fn push_probe(&self, fs_type: &str) {
-            self.probe_results
-                .borrow_mut()
-                .push_back(Ok(fs_type.to_owned()));
-        }
-
         pub(crate) fn push_probe_error(&self, message: &str) {
             self.probe_results
                 .borrow_mut()

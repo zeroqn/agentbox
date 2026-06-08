@@ -955,9 +955,10 @@ Loftd still does not create a shared/global rootless network namespace.
 After networking is ready, the helper dynamically loads `libkrun.so.1` or
 `libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), prepares a crun-style root
 export inside that same rootless namespace, and attaches that single prepared
-root plus two writable persistent disks. The prepared root is a bind-mounted
-view of the task rootfs with the workspace, Codex, Pi, Cargo, and sccache host
-directories grafted into their final guest paths before `krun_set_root`. Loftd
+root plus the writable persistent container-store disk. The prepared root is a
+bind-mounted view of the task rootfs with the workspace, Codex, Pi, Cargo,
+sccache, and host-prepared `/nix` overlay directories grafted into their final
+guest paths before `krun_set_root`. Loftd
 intentionally does not register one `krun_add_virtiofs3` device per developer
 path; keeping those binds inside the root export avoids the legacy x86
 IRQ/device exhaustion that can otherwise occur before libkrun's implicit vsock
@@ -975,15 +976,27 @@ python3 -m http.server 18080 --bind 0.0.0.0
 ./result/bin/loftd --passt -- bash -lc 'getent hosts host.docker.internal && curl -fsS http://host.docker.internal:18080/'
 ```
 
-- `loftd-nix.raw` exposed to the guest as `LOFTD_NIX` / `loftd-nix` for `/nix`;
-- `loftd-containers.raw` exposed as `LOFTD_CONTAINERS` / `loftd-containers` for
-  rootless container storage.
+For `/nix`, normal loftd launches now use a workspace-scoped host kernel
+overlayfs rather than attaching `loftd-nix.raw`. The lowerdir is the selected
+image cache rootfs under
+`$STATE/loftd/microvm/images/btrfs-snapshots/<digest-key>/rootfs/nix`; the
+upper, work, merged, and lease files live under the workspace slug state root at
+`$STATE/loftd/<workspace-slug>/nix-overlay/`. The VM worker mounts the overlay
+inside the helper namespace immediately before prepared-root grafting, then
+binds the merged view to guest `/nix`. Existing `loftd-nix.raw` files are not
+migrated or deleted automatically.
+
+- host-overlay `/nix` is signaled to the guest with `LOFTD_NIX_OVERLAY=1` and
+  `LOFTD_NIX_HOST_OVERLAY=1`; no `/nix` disk id/label is emitted in this mode.
+- `loftd-containers.raw` remains exposed as `LOFTD_CONTAINERS` /
+  `loftd-containers` for rootless container storage.
 
 `loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, validates
 that the prepared-root paths already exist, ensures `/tmp` is a tmpfs with
 `rw,exec,mode=1777`, verifies `/dev/net/tun` is the expected character device
-`10:200`, makes it mode `0666`, probes it with `TUNSETIFF`, prepares the
-persistent cache disks, exports the shell environment, and runs `fish -l` by
+`10:200`, makes it mode `0666`, probes it with `TUNSETIFF`, verifies the
+host-prepared `/nix` overlay in host-overlay mode, prepares the persistent
+container-store disk, exports the shell environment, and runs `fish -l` by
 default. For deterministic smoke tests, `loftd -- <command>` preserves the same
 guest bootstrap path but replaces the final guest command with the explicit argv
 after `--`.

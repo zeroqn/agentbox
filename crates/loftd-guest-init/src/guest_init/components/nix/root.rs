@@ -34,6 +34,7 @@ pub(in crate::guest_init) enum NixOperation {
     MountDisk,
     PreseedUpper,
     MountOverlay,
+    CreateSocketDir,
     StartDaemon,
     WriteReadyStatus,
 }
@@ -46,6 +47,17 @@ pub(in crate::guest_init) fn planned_operations() -> Vec<NixOperation> {
         NixOperation::MountDisk,
         NixOperation::PreseedUpper,
         NixOperation::MountOverlay,
+        NixOperation::CreateSocketDir,
+        NixOperation::StartDaemon,
+        NixOperation::WriteReadyStatus,
+    ]
+}
+
+#[cfg(test)]
+pub(in crate::guest_init) fn planned_host_overlay_operations() -> Vec<NixOperation> {
+    vec![
+        NixOperation::WriteRunningStatus,
+        NixOperation::CreateSocketDir,
         NixOperation::StartDaemon,
         NixOperation::WriteReadyStatus,
     ]
@@ -144,6 +156,10 @@ pub(in crate::guest_init) fn run_prep(
     if !process::is_root() {
         bail!("internal /nix overlay prep must run as root");
     }
+    if env_contract.nix_host_overlay {
+        return run_host_overlay_prep(profiler);
+    }
+
     profiler.measure_result(PROFILE_REQUIRE_TOOLS, || {
         for tool in ["blkid", "mount", "findmnt", "nix-daemon"] {
             command::require_on_path(tool)?;
@@ -203,6 +219,41 @@ pub(in crate::guest_init) fn run_prep(
     let _child = profiler.measure_result(PROFILE_START_DAEMON, || {
         command::spawn_background("nix-daemon", &["--daemon"]).context("failed to start nix-daemon")
     })?;
+    Ok(())
+}
+
+fn run_host_overlay_prep(profiler: &mut impl ProfileRecorder) -> Result<()> {
+    profiler.measure_result(PROFILE_REQUIRE_TOOLS, || {
+        command::require_on_path("nix-daemon")?;
+        Ok(())
+    })?;
+    profiler.measure_result(PROFILE_PREPARE_RUN_DIRS, || {
+        fs::create_dir_all(Path::new(RUN_DIR))
+    })?;
+    profiler.measure_result(PROFILE_CREATE_SOCKET_DIR, || {
+        ensure_host_overlay_nix_is_directory(Path::new("/nix"))?;
+        fs::create_dir_all(Path::new("/nix/var/nix/daemon-socket"))
+            .context("failed to create nix-daemon socket directory on host-overlay /nix")
+    })?;
+    let _child = profiler.measure_result(PROFILE_START_DAEMON, || {
+        command::spawn_background("nix-daemon", &["--daemon"]).context("failed to start nix-daemon")
+    })?;
+    Ok(())
+}
+
+fn ensure_host_overlay_nix_is_directory(nix_dir: &Path) -> Result<()> {
+    let metadata = std::fs::metadata(nix_dir).with_context(|| {
+        format!(
+            "loftd host-overlay /nix path '{}' is missing",
+            nix_dir.display()
+        )
+    })?;
+    if !metadata.is_dir() {
+        bail!(
+            "loftd host-overlay /nix path '{}' is not a directory",
+            nix_dir.display()
+        );
+    }
     Ok(())
 }
 

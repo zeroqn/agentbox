@@ -185,6 +185,7 @@ impl EnterEnv {
 fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
     Ok(LoftdEnv {
         nix_overlay: env_flag_any(env, "LOFTD_NIX_OVERLAY", LEGACY_NIX_OVERLAY_ENV),
+        nix_host_overlay: env_flag(env, "LOFTD_NIX_HOST_OVERLAY"),
         containers_storage: env_flag_any(
             env,
             "LOFTD_CONTAINERS_STORAGE",
@@ -439,6 +440,7 @@ mod tests {
     fn loftd_env_accepts_host_disk_contract_names() {
         let env = EnterEnv::from_env(&env(&[
             ("LOFTD_NIX_OVERLAY", "1"),
+            ("LOFTD_NIX_HOST_OVERLAY", "1"),
             ("LOFTD_NIX_DISK_ID", "loftd-nix"),
             ("LOFTD_NIX_DISK_LABEL", "LOFTD_NIX"),
             ("LOFTD_CONTAINERS_STORAGE", "1"),
@@ -450,6 +452,7 @@ mod tests {
         .expect("env should parse");
 
         assert!(env.loftd.nix_overlay);
+        assert!(env.loftd.nix_host_overlay);
         assert!(env.loftd.containers_storage);
         assert!(!env.loftd.use_passt);
         assert_eq!(env.loftd.nix_disk_id, "loftd-nix");

@@ -28,6 +28,7 @@ const LEGACY_HOST_GID_ENV: &str = "AGENTBOX_HOST_GID";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct LoftdEnv {
     pub(in crate::guest_init) nix_overlay: bool,
+    pub(in crate::guest_init) nix_host_overlay: bool,
     pub(in crate::guest_init) containers_storage: bool,
     pub(in crate::guest_init) use_passt: bool,
     pub(in crate::guest_init) enter_as_root: bool,
@@ -43,6 +44,7 @@ impl LoftdEnv {
     pub(in crate::guest_init) fn from_process_env() -> Result<Self> {
         Ok(Self {
             nix_overlay: env_flag_any("LOFTD_NIX_OVERLAY", LEGACY_NIX_OVERLAY_ENV),
+            nix_host_overlay: env_flag("LOFTD_NIX_HOST_OVERLAY"),
             containers_storage: env_flag_any(
                 "LOFTD_CONTAINERS_STORAGE",
                 LEGACY_CONTAINERS_STORAGE_ENV,

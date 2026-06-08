@@ -10,8 +10,8 @@ use crate::logging::LogLevel;
 use super::components::{guest_init, mounts};
 use super::guest_env::guest_config_json;
 use super::model::{
-    BindMount, DiskAttachment, GuestInitOverrideMount, LOFTD_KRUN_CONFIG_PATH, LaunchConfig,
-    NetworkMode,
+    BindMount, DiskAttachment, GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH,
+    LaunchConfig, NetworkMode,
 };
 
 impl LaunchConfig {
@@ -95,6 +95,39 @@ impl LaunchConfig {
                 &mut out,
                 "guest_init_override_read_only",
                 if mount.read_only { "true" } else { "false" },
+            );
+        }
+        if let Some(overlay) = &self.host_nix_overlay {
+            push_field(
+                &mut out,
+                "host_nix_overlay.selected_reference",
+                &overlay.selected_reference,
+            );
+            push_field(
+                &mut out,
+                "host_nix_overlay.image_digest",
+                &overlay.image_digest,
+            );
+            push_field(&mut out, "host_nix_overlay.digest_key", &overlay.digest_key);
+            push_field(
+                &mut out,
+                "host_nix_overlay.lowerdir",
+                &overlay.lowerdir.display().to_string(),
+            );
+            push_field(
+                &mut out,
+                "host_nix_overlay.upperdir",
+                &overlay.upperdir.display().to_string(),
+            );
+            push_field(
+                &mut out,
+                "host_nix_overlay.workdir",
+                &overlay.workdir.display().to_string(),
+            );
+            push_field(
+                &mut out,
+                "host_nix_overlay.mergeddir",
+                &overlay.mergeddir.display().to_string(),
             );
         }
         push_field(&mut out, "ram_mib", &self.ram_mib.to_string());
@@ -220,6 +253,13 @@ impl LaunchConfig {
                     | "guest_init_override_source"
                     | "guest_init_override_target"
                     | "guest_init_override_read_only"
+                    | "host_nix_overlay.selected_reference"
+                    | "host_nix_overlay.image_digest"
+                    | "host_nix_overlay.digest_key"
+                    | "host_nix_overlay.lowerdir"
+                    | "host_nix_overlay.upperdir"
+                    | "host_nix_overlay.workdir"
+                    | "host_nix_overlay.mergeddir"
                     | "hostname"
                     | "ram_mib"
                     | "vcpus"
@@ -255,10 +295,12 @@ impl LaunchConfig {
         let mounts = parse_mounts(&fields, mounts)?;
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
+        let host_nix_overlay = parse_host_nix_overlay(&fields)?;
         Ok(Self {
             task_rootfs: PathBuf::from(required("task_rootfs")?),
             hostname: required("hostname")?,
             mounts,
+            host_nix_overlay,
             guest_init_override,
             disks: disks
                 .into_iter()
@@ -277,6 +319,32 @@ impl LaunchConfig {
             passt_fd: None,
         })
     }
+}
+
+fn parse_host_nix_overlay(fields: &BTreeMap<String, String>) -> Result<Option<HostNixOverlay>> {
+    let keys_present = [
+        "host_nix_overlay.selected_reference",
+        "host_nix_overlay.image_digest",
+        "host_nix_overlay.digest_key",
+        "host_nix_overlay.lowerdir",
+        "host_nix_overlay.upperdir",
+        "host_nix_overlay.workdir",
+        "host_nix_overlay.mergeddir",
+    ]
+    .iter()
+    .any(|key| fields.contains_key(*key));
+    if !keys_present {
+        return Ok(None);
+    }
+    Ok(Some(HostNixOverlay {
+        selected_reference: required_field(fields, "host_nix_overlay.selected_reference")?,
+        image_digest: required_field(fields, "host_nix_overlay.image_digest")?,
+        digest_key: required_field(fields, "host_nix_overlay.digest_key")?,
+        lowerdir: PathBuf::from(required_field(fields, "host_nix_overlay.lowerdir")?),
+        upperdir: PathBuf::from(required_field(fields, "host_nix_overlay.upperdir")?),
+        workdir: PathBuf::from(required_field(fields, "host_nix_overlay.workdir")?),
+        mergeddir: PathBuf::from(required_field(fields, "host_nix_overlay.mergeddir")?),
+    }))
 }
 
 #[derive(Default)]

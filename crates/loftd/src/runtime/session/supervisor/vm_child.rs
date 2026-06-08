@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
+use crate::runtime::session::nix_overlay;
 use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_path};
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
 use crate::runtime::session::supervisor::identity;
@@ -110,6 +111,12 @@ fn run_libkrun_in_current_namespace(
     task_state_dir: &Path,
     profiler: &mut LoftdHostProfiler,
 ) -> Result<()> {
+    let nix_overlay_mount = match config.host_nix_overlay.as_ref() {
+        Some(intent) => Some(profiler.measure_result("vm_worker_mount_nix_overlay", || {
+            nix_overlay::materialize_in_worker(intent)
+        })?),
+        None => None,
+    };
     let prepared_root = profiler.measure_result("vm_worker_prepare_root", || {
         prepared_root::prepare(config, task_state_dir)
     })?;
@@ -162,5 +169,12 @@ fn run_libkrun_in_current_namespace(
         profiler
             .record_vm_worker_libkrun_enter(session_duration.saturating_sub(configure_duration));
     }
-    result
+    match (result, nix_overlay_mount.map(|mount| mount.unmount())) {
+        (Ok(()), Some(Ok(()))) | (Ok(()), None) => Ok(()),
+        (Ok(()), Some(Err(cleanup_error))) => Err(cleanup_error),
+        (Err(run_error), Some(Ok(()))) | (Err(run_error), None) => Err(run_error),
+        (Err(run_error), Some(Err(cleanup_error))) => Err(cleanup_error.context(format!(
+            "failed to unmount loftd host /nix overlay after libkrun error: {run_error:#}"
+        ))),
+    }
 }

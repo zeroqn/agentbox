@@ -226,6 +226,7 @@ fn config() -> LaunchConfig {
             },
         ],
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("config should build")
 }

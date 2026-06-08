@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use crate::cli::RuntimeOptions;
 use crate::task_rootfs::TaskRootfsBackend;
 
+pub(crate) mod nix_overlay;
 mod profile;
 pub(crate) mod rootfs;
 pub(crate) mod supervisor;
@@ -66,6 +67,17 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                 )
             })?;
             let lease = TaskRootfsLease::new(handle, HostBtrfsRootfsCommands);
+            let nix_overlay_lease = profiler.measure_result("nix_overlay_lease", || {
+                nix_overlay::NixOverlayLease::acquire(plan.state_layout.root_dir(), lease.handle())
+            })?;
+            profiler.record_metadata(
+                "nix_overlay_lowerdir",
+                nix_overlay_lease.intent().lowerdir.display().to_string(),
+            );
+            profiler.record_metadata(
+                "nix_overlay_merged",
+                nix_overlay_lease.intent().mergeddir.display().to_string(),
+            );
             if let Some(digest) = lease.handle().image_digest() {
                 profiler.record_metadata("image_digest", digest);
             }
@@ -132,6 +144,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                             vcpus: config::resolve_cpu_count()?,
                             disks: disks.attachments(),
                             extra_env: disks.env_pairs(),
+                            host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
                         })
                     }) {
                         Ok(config) => {

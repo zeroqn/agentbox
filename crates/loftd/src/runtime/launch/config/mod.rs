@@ -10,8 +10,8 @@ pub(crate) use components::mounts::validate_mounts;
 pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
     BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment,
-    GuestInitOverrideMount, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, NetworkMode, PI_TAG,
-    PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+    GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec,
+    NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
 };
 
 #[cfg(test)]
@@ -23,7 +23,10 @@ impl LaunchConfig {
     /// Build the serialized helper/libkrun launch contract from explicit contributors.
     pub(crate) fn build_for_task(spec: LaunchSpec<'_>) -> Result<Self> {
         let ram_mib = components::resources::resolve_ram_mib(spec.mem_gib)?;
-        components::mounts::validate_mounts(spec.mounts)?;
+        let mounts = components::mounts::mounts_with_host_nix_overlay(
+            spec.mounts,
+            spec.host_nix_overlay.as_ref(),
+        )?;
         if let Some(mount) = &spec.guest_init_override {
             components::guest_init::validate_guest_init_override_mount(
                 mount,
@@ -52,7 +55,8 @@ impl LaunchConfig {
         Ok(Self {
             task_rootfs: spec.task_rootfs.to_path_buf(),
             hostname: spec.hostname.to_owned(),
-            mounts: spec.mounts.to_vec(),
+            mounts,
+            host_nix_overlay: spec.host_nix_overlay,
             guest_init_override: spec.guest_init_override,
             disks: spec.disks,
             ram_mib,

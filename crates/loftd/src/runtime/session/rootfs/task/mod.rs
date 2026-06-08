@@ -86,6 +86,21 @@ impl<C: BtrfsRootfsCommands> Drop for TaskRootfsLease<C> {
 }
 
 impl TaskRootfsHandle {
+    #[cfg(test)]
+    pub(crate) fn new_for_test(spec: TaskRootfsHandleTestSpec) -> Self {
+        Self {
+            task_id: spec.task_id,
+            task_dir: spec.task_dir,
+            rootfs_path: spec.rootfs_path,
+            backend: spec.backend,
+            selected_image_reference: spec.selected_image_reference,
+            image_digest: spec.image_digest,
+            process_config: spec.process_config,
+            cache_profile: spec.cache_profile,
+            preserve_debug: spec.preserve_debug,
+        }
+    }
+
     pub(crate) fn task_id(&self) -> &str {
         &self.task_id
     }
@@ -137,6 +152,19 @@ impl TaskRootfsHandle {
             self.rootfs_path.display()
         )
     }
+}
+
+#[cfg(test)]
+pub(crate) struct TaskRootfsHandleTestSpec {
+    pub(crate) task_id: String,
+    pub(crate) task_dir: PathBuf,
+    pub(crate) rootfs_path: PathBuf,
+    pub(crate) backend: TaskRootfsBackend,
+    pub(crate) selected_image_reference: String,
+    pub(crate) image_digest: Option<String>,
+    pub(crate) process_config: OciProcessConfig,
+    pub(crate) cache_profile: ImageSourceCacheProfile,
+    pub(crate) preserve_debug: bool,
 }
 
 #[derive(Debug, Clone)]

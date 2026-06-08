@@ -136,6 +136,7 @@ mod tests {
             task_rootfs: PathBuf::from("/tmp/rootfs"),
             hostname: "loftd-test".to_owned(),
             mounts: Vec::new(),
+            host_nix_overlay: None,
             guest_init_override: None,
             disks: Vec::new(),
             ram_mib: 1024,

@@ -1,7 +1,6 @@
 //! Persistent launch disk contributors.
 //!
-//! The aggregate preserves the existing Nix-then-containers ordering. Owner
-//! files below this module do not introduce new disk policy or validation.
+//! Host-overlay `/nix` mode prepares only the persistent container-store disk.
 
 use anyhow::Result;
 use std::path::Path;
@@ -15,20 +14,16 @@ pub(crate) mod raw_btrfs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PersistentDisks {
-    pub(crate) nix: RawBtrfsDisk,
     pub(crate) containers: RawBtrfsDisk,
 }
 
 impl PersistentDisks {
     pub(crate) fn attachments(&self) -> Vec<DiskAttachment> {
-        vec![
-            nix::attachment(&self.nix),
-            containers::attachment(&self.containers),
-        ]
+        vec![containers::attachment(&self.containers)]
     }
 
     pub(crate) fn env_pairs(&self) -> Vec<(String, String)> {
-        nix::env_pairs(&self.nix)
+        nix::host_overlay_env_pairs()
             .into_iter()
             .chain(containers::env_pairs(&self.containers))
             .collect()
@@ -52,9 +47,8 @@ fn prepare_with_runner(
     state_root: &Path,
     runner: &impl raw_btrfs::RawImageCommandRunner,
 ) -> Result<PersistentDisks> {
-    let nix = nix::prepare_with_runner(state_root, runner)?;
     let containers = containers::prepare_with_runner(state_root, runner)?;
-    Ok(PersistentDisks { nix, containers })
+    Ok(PersistentDisks { containers })
 }
 
 #[cfg(test)]
@@ -64,41 +58,31 @@ mod tests {
     use std::fs::File;
 
     #[test]
-    fn prepares_workspace_scoped_nix_and_container_store_raw_btrfs_disks() {
+    fn prepares_workspace_scoped_container_store_raw_btrfs_disk_only() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runner = FakeRunner::default();
 
         let disks = prepare_with_runner(temp.path(), &runner).expect("disks should prepare");
 
-        assert_eq!(disks.nix.status, RawBtrfsDiskStatus::Created);
-        assert_eq!(disks.nix.path, temp.path().join(nix::FILE_NAME));
-        assert_eq!(disks.nix.id, nix::ID);
-        assert_eq!(disks.nix.label, nix::LABEL);
+        assert!(!temp.path().join(nix::FILE_NAME).exists());
         assert_eq!(
             disks.containers.path,
             temp.path().join(containers::FILE_NAME)
         );
         assert_eq!(disks.containers.id, containers::ID);
         assert_eq!(disks.containers.label, containers::LABEL);
-        assert_eq!(runner.mkfs_call_count(), 2);
+        assert_eq!(runner.mkfs_call_count(), 1);
     }
 
     #[test]
     fn reuses_existing_valid_disks_without_formatting() {
         let temp = tempfile::tempdir().expect("tempdir");
-        for (name, size_bytes) in [
-            (nix::FILE_NAME, nix::SIZE_BYTES),
-            (containers::FILE_NAME, containers::SIZE_BYTES),
-        ] {
-            let file = File::create(temp.path().join(name)).expect("disk file");
-            file.set_len(size_bytes).expect("disk size");
-        }
+        let file = File::create(temp.path().join(containers::FILE_NAME)).expect("disk file");
+        file.set_len(containers::SIZE_BYTES).expect("disk size");
         let runner = FakeRunner::with_probe("btrfs");
-        runner.push_probe("btrfs");
 
         let disks = prepare_with_runner(temp.path(), &runner).expect("disks should prepare");
 
-        assert_eq!(disks.nix.status, RawBtrfsDiskStatus::Reused);
         assert_eq!(disks.containers.status, RawBtrfsDiskStatus::Reused);
         assert_eq!(runner.mkfs_call_count(), 0);
     }
@@ -106,14 +90,14 @@ mod tests {
     #[test]
     fn disk_validation_failure_is_classified_as_loftd_persistent_cache() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let file = File::create(temp.path().join(nix::FILE_NAME)).expect("disk file");
-        file.set_len(nix::SIZE_BYTES).expect("disk size");
+        let file = File::create(temp.path().join(containers::FILE_NAME)).expect("disk file");
+        file.set_len(containers::SIZE_BYTES).expect("disk size");
         let runner = FakeRunner::default();
         runner.push_probe_error("blkid exploded");
 
         let err = prepare_with_runner(temp.path(), &runner).expect_err("disk prep should fail");
 
-        assert!(format!("{err:#}").contains("failed to prepare loftd persistent /nix"));
+        assert!(format!("{err:#}").contains("failed to prepare loftd persistent container-store"));
         assert!(format!("{err:#}").contains("blkid exploded"));
     }
 
@@ -125,13 +109,10 @@ mod tests {
 
         let attachments = disks.attachments();
 
-        assert_eq!(attachments.len(), 2);
-        assert_eq!(attachments[0].id, nix::ID);
-        assert_eq!(attachments[0].path, temp.path().join(nix::FILE_NAME));
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].id, containers::ID);
+        assert_eq!(attachments[0].path, temp.path().join(containers::FILE_NAME));
         assert!(!attachments[0].read_only);
-        assert_eq!(attachments[1].id, containers::ID);
-        assert_eq!(attachments[1].path, temp.path().join(containers::FILE_NAME));
-        assert!(!attachments[1].read_only);
     }
 
     #[test]
@@ -146,8 +127,7 @@ mod tests {
             env,
             vec![
                 ("LOFTD_NIX_OVERLAY".to_owned(), "1".to_owned()),
-                ("LOFTD_NIX_DISK_ID".to_owned(), "loftd-nix".to_owned()),
-                ("LOFTD_NIX_DISK_LABEL".to_owned(), "LOFTD_NIX".to_owned()),
+                ("LOFTD_NIX_HOST_OVERLAY".to_owned(), "1".to_owned()),
                 ("LOFTD_CONTAINERS_STORAGE".to_owned(), "1".to_owned()),
                 (
                     "LOFTD_CONTAINERS_DISK_ID".to_owned(),
@@ -159,6 +139,8 @@ mod tests {
                 ),
             ]
         );
+        assert!(!env.iter().any(|(key, _)| key == "LOFTD_NIX_DISK_ID"));
+        assert!(!env.iter().any(|(key, _)| key == "LOFTD_NIX_DISK_LABEL"));
         assert!(env.iter().all(|(key, _)| !key.starts_with("AGENTBOX_")));
     }
 }

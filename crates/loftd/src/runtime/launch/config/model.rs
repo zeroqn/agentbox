@@ -14,6 +14,8 @@ pub const CARGO_TAG: &str = "loftd-cargo";
 pub const CARGO_TARGET: &str = "/home/dev/.cargo";
 pub const SCCACHE_TAG: &str = "loftd-sccache";
 pub const SCCACHE_TARGET: &str = "/home/dev/.cache/sccache";
+pub const NIX_TAG: &str = "loftd-nix";
+pub const NIX_TARGET: &str = "/nix";
 pub(super) const SCCACHE_DIR_ENV: &str = "SCCACHE_DIR";
 pub(super) const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
 pub(super) const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
@@ -55,6 +57,17 @@ pub(crate) struct DiskAttachment {
     pub(crate) id: String,
     pub(crate) path: PathBuf,
     pub(crate) read_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HostNixOverlay {
+    pub(crate) selected_reference: String,
+    pub(crate) image_digest: String,
+    pub(crate) digest_key: String,
+    pub(crate) lowerdir: PathBuf,
+    pub(crate) upperdir: PathBuf,
+    pub(crate) workdir: PathBuf,
+    pub(crate) mergeddir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +113,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) vcpus: u8,
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) extra_env: Vec<(String, String)>,
+    pub(crate) host_nix_overlay: Option<HostNixOverlay>,
 }
 
 /// Serialized helper/libkrun execution contract.
@@ -111,6 +125,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) task_rootfs: PathBuf,
     pub(crate) hostname: String,
     pub mounts: Vec<BindMount>,
+    pub(crate) host_nix_overlay: Option<HostNixOverlay>,
     pub(crate) guest_init_override: Option<GuestInitOverrideMount>,
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) ram_mib: u32,

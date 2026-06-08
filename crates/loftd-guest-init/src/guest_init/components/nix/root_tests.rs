@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use crate::guest_init::components::nix::root::{
     NixOperation, PreseedState, attempt_marker, classify_preseed_state, completion_sentinel,
-    planned_operations, planned_profile_labels, preseed_upper_with,
+    ensure_host_overlay_nix_is_directory, planned_host_overlay_operations, planned_operations,
+    planned_profile_labels, preseed_upper_with,
 };
 
 #[test]
@@ -20,13 +21,55 @@ fn nix_prep_operation_order_marks_ready_without_socket_wait() {
             NixOperation::MountDisk,
             NixOperation::PreseedUpper,
             NixOperation::MountOverlay,
+            NixOperation::CreateSocketDir,
             NixOperation::StartDaemon,
             NixOperation::WriteReadyStatus,
         ]
     );
     assert!(pos(NixOperation::MountDisk) < pos(NixOperation::PreseedUpper));
     assert!(pos(NixOperation::PreseedUpper) < pos(NixOperation::MountOverlay));
+    assert!(pos(NixOperation::MountOverlay) < pos(NixOperation::CreateSocketDir));
     assert!(pos(NixOperation::StartDaemon) < pos(NixOperation::WriteReadyStatus));
+}
+
+#[test]
+fn host_overlay_nix_prep_skips_raw_disk_and_guest_overlay_operations() {
+    let ops = planned_host_overlay_operations();
+
+    assert_eq!(
+        ops,
+        vec![
+            NixOperation::WriteRunningStatus,
+            NixOperation::CreateSocketDir,
+            NixOperation::StartDaemon,
+            NixOperation::WriteReadyStatus,
+        ]
+    );
+    assert!(!ops.contains(&NixOperation::FindDisk));
+    assert!(!ops.contains(&NixOperation::MountDisk));
+    assert!(!ops.contains(&NixOperation::PreseedUpper));
+    assert!(!ops.contains(&NixOperation::MountOverlay));
+}
+
+#[test]
+fn host_overlay_requires_nix_to_be_directory() {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let nix_file = dir.path().join("nix");
+    fs::write(&nix_file, "not a dir").expect("nix file");
+
+    let err = ensure_host_overlay_nix_is_directory(&nix_file)
+        .expect_err("host overlay /nix must be a directory");
+
+    assert!(format!("{err:#}").contains("is not a directory"));
+}
+
+#[test]
+fn host_overlay_accepts_nix_directory() {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let nix_dir = dir.path().join("nix");
+    fs::create_dir_all(&nix_dir).expect("nix dir");
+
+    ensure_host_overlay_nix_is_directory(&nix_dir).expect("directory");
 }
 
 #[test]

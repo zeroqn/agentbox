@@ -57,6 +57,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -130,6 +131,7 @@ fn launch_config_uses_explicit_guest_command() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -179,6 +181,7 @@ fn launch_config_round_trips_through_hex_line_format() {
             },
         ],
         extra_env: vec![("LOFTD_CONTAINERS_STORAGE".to_owned(), "1".to_owned())],
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -211,6 +214,99 @@ fn launch_config_round_trips_through_hex_line_format() {
 }
 
 #[test]
+fn launch_config_carries_host_nix_overlay_and_adds_reserved_nix_mount() {
+    let image_process_config = OciProcessConfig::default();
+    let overlay = HostNixOverlay {
+        selected_reference: "localhost/loftd:latest".to_owned(),
+        image_digest: "sha256:deadbeef".to_owned(),
+        digest_key: "sha256-deadbeef".to_owned(),
+        lowerdir: Path::new("/cache/btrfs-snapshots/sha256-deadbeef/rootfs/nix").to_path_buf(),
+        upperdir: Path::new("/state/workspace/nix-overlay/upper").to_path_buf(),
+        workdir: Path::new("/state/workspace/nix-overlay/work").to_path_buf(),
+        mergeddir: Path::new("/state/workspace/nix-overlay/merged").to_path_buf(),
+    };
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: Some(overlay.clone()),
+    })
+    .expect("host nix overlay config should build");
+
+    let nix_mount = config
+        .mounts
+        .iter()
+        .find(|mount| mount.target == "/nix")
+        .expect("/nix mount should be added");
+    assert_eq!(nix_mount.source, overlay.mergeddir);
+    assert_eq!(nix_mount.tag, "loftd-nix");
+    assert_eq!(config.host_nix_overlay, Some(overlay.clone()));
+
+    let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
+
+    assert_eq!(parsed.host_nix_overlay, Some(overlay));
+    assert_eq!(parsed, config);
+}
+
+#[test]
+fn launch_config_rejects_user_mount_that_collides_with_host_nix_overlay() {
+    let image_process_config = OciProcessConfig::default();
+    let mut mounts = test_mounts();
+    mounts.push(BindMount {
+        source: Path::new("/host/nix").to_path_buf(),
+        tag: "user-nix".to_owned(),
+        target: "/nix".to_owned(),
+    });
+    let err = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &mounts,
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: Some(HostNixOverlay {
+            selected_reference: "localhost/loftd:latest".to_owned(),
+            image_digest: "sha256:deadbeef".to_owned(),
+            digest_key: "sha256-deadbeef".to_owned(),
+            lowerdir: Path::new("/cache/rootfs/nix").to_path_buf(),
+            upperdir: Path::new("/state/nix-overlay/upper").to_path_buf(),
+            workdir: Path::new("/state/nix-overlay/work").to_path_buf(),
+            mergeddir: Path::new("/state/nix-overlay/merged").to_path_buf(),
+        }),
+    })
+    .expect_err("duplicate /nix mount should fail");
+
+    assert!(format!("{err:#}").contains("host /nix overlay owns /nix"));
+}
+
+#[test]
 fn launch_config_carries_publish_specs_from_launch_spec() {
     let publish = vec!["8080:80".to_owned(), "udp:5353:5353".to_owned()];
     let image_process_config = OciProcessConfig::default();
@@ -233,6 +329,7 @@ fn launch_config_carries_publish_specs_from_launch_spec() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -342,6 +439,7 @@ fn launch_config_rejects_config_codex_mounts() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect_err("config codex source should be rejected");
 
@@ -375,6 +473,7 @@ fn launch_config_requires_guest_init_override_to_be_read_only() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect_err("guest-init override bind must be read-only");
 
@@ -512,6 +611,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: vec![("LOFTD_CONTAINERS_STORAGE".to_owned(), "disk".to_owned())],
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -572,6 +672,7 @@ fn guest_debug_env_follows_effective_log_level() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
     assert!(!config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
@@ -595,6 +696,7 @@ fn guest_debug_env_follows_effective_log_level() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
     assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
@@ -622,6 +724,7 @@ fn profile_env_does_not_raise_guest_debug_level() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -651,6 +754,7 @@ fn passt_mode_sets_guest_passt_dns_gate() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -690,6 +794,7 @@ fn writes_loftd_config_json_under_task_rootfs() {
             "LOFTD_JSON_TEST".to_owned(),
             "line\nslash\\tab\t".to_owned(),
         )],
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
@@ -737,6 +842,7 @@ fn malformed_image_env_is_rejected() {
             vcpus: 2,
             disks: Vec::new(),
             extra_env: Vec::new(),
+            host_nix_overlay: None,
         })
         .expect_err("malformed image env should fail");
         assert!(err.to_string().contains("loftd image env entry"));
@@ -768,6 +874,7 @@ fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
         vcpus: 2,
         disks: Vec::new(),
         extra_env: Vec::new(),
+        host_nix_overlay: None,
     })
     .expect("launch config should build");
 
