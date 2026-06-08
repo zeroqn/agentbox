@@ -2,52 +2,52 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.18.8";
-    srcHash = "sha256-2+vX49GD/IZ1GhWBQC2nqqTV9ipC00W1JdRULVDxw8w=";
-    npmDepsHash = "sha256-KZNmwQgzdWUeZZ22NVTWD21JdBgXYRo8eXhYqDkUE3k=";
+    version = "0.18.10";
+    srcHash = "sha256-TmqJe2XqoBkCImviuCONecoWp+Uva1oird/NhHLX/Kc=";
+    npmDepsHash = "sha256-5HkxFQhNUORUcct6JGFth5kyFYTgF15qQKRa4wl5cxg=";
     nativeBinarySystems = {
       x86_64-linux = {
         omx-api = {
           asset = "omx-api-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-5pfhaS1i14nUYmryvVTD73qDS38LRQ6k+kfHCG86k9w=";
+          hash = "sha256-Qf+OtbVRplKMQyEst0mn4BbAKfuuGI0XIbHjcB6kXw8=";
         };
         omx-runtime = {
           asset = "omx-runtime-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-qAhQYh69RavLsM5F2SuMieASFXzJl8CslA7U+O0oXu8=";
+          hash = "sha256-QwnaR2iapZ5C2P370Csyf5PLJwiLT8YsLRGsgnGlxH8=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-SFQ22H3vX5/GQV0HxV+vh+330RHMkuV3zfZk0UeGXHU=";
+          hash = "sha256-fbvH3H45arYwJhMNm7l/+Ofsrln+hgph1OpuZSIZ/OI=";
         };
         omx-explore-harness = {
           asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-explore-harness";
-          hash = "sha256-v7MRhLdX2xPrFbz2T6QOFBbVt7fu3ioMPwex5v156n0=";
+          hash = "sha256-7nW51FAA1oYH2E+7ZFcRaCpQ84Tq0qbs2hIbjOr6nuw=";
         };
       };
       aarch64-linux = {
         omx-api = {
           asset = "omx-api-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-6ZmskOuAsAdv/6EWrqAiaLxdVVEyAOl0OxROEQhGzgk=";
+          hash = "sha256-wvhLMkkSmq6cUkK7KTM/lav0/qycYyj1L+UENgGHuZo=";
         };
         omx-runtime = {
           asset = "omx-runtime-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-jhZucTPlKIkAzUbpaT7INjL3smiqfTQlfgnw6Uy5ayI=";
+          hash = "sha256-HUYSXzUSeazG6v6TkYg2ZR1YHTGO5v6QPmTTNS2xt5Q=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-jBKOmsU5JwxiOHXrcr872+cuHWe43zAEvXNZNi6l/qo=";
+          hash = "sha256-MFOGxsJO6VK2ZfJL15woF4DtQHqMS+VeWKeFSlB1IbE=";
         };
         omx-explore-harness = {
           asset = "omx-explore-harness-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-explore-harness";
-          hash = "sha256-FCMKhwVqYXCir6DgANn/d7P/86FUJd+ipruu81iNzI8=";
+          hash = "sha256-iqJzRtIi2aL7k8W7JwJRSyOr1fc5J9iZExUxnBbwdYM=";
         };
       };
     };
@@ -88,11 +88,11 @@
   libkrunfwRelease = {
     owner = "zeroqn";
     repo = "libkrunfw";
-    tag = "agentbox-6e3ecf13face";
+    tag = "agentbox-0e45676bdb2e";
     systems = {
       x86_64-linux = {
         asset = "libkrunfw-x86_64-kvm-lto.tgz";
-        hash = "sha256-hNiT6Ap37K/sXeRScmRgptDaGC5q5uA8LSB19LRgNKk=";
+        hash = "sha256-LHcqpH+g3IZsG/3Qv84+QzLtTqswGvqj/bznV7X0EFg=";
       };
       aarch64-linux = {
         asset = "libkrunfw-aarch64.tgz";
@@ -110,7 +110,7 @@
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-fd80698f8109";
+    tag = "sha-35fb1c1f2267";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
@@ -125,7 +125,7 @@
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-3d2a5827c3ae";
+    tag = "sha-35fb1c1f2267";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
@@ -137,12 +137,12 @@
   rtkPrebuiltRelease = {
     owner = "rtk-ai";
     repo = "rtk";
-    tag = "v0.42.0";
+    tag = "v0.42.3";
     systems = {
       x86_64-linux = {
         asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
         binary = "rtk";
-        hash = "sha256-zdT4esl86Vj3G1OpkYgNatzEHMW8oQRBdaZGMJgBUr4=";
+        hash = "sha256-XfdkpjNwnLhdJIJY0IXSTslfqovKDmg1qTzVfK3E654=";
       };
     };
   };
