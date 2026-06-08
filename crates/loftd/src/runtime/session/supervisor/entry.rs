@@ -54,7 +54,7 @@ fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> 
         logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))
     })?;
     profiler.measure_result("helper_identity_configure", || {
-        identity::configure_helper_filesystem_identity(&config)
+        identity::configure_helper_filesystem_identity_for_launch(&config)
     })?;
     let task_state_dir = task_state_dir_from_config_path(config_path)?;
     profiler.record_metadata(

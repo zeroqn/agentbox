@@ -2,7 +2,9 @@
 //!
 //! Session code acquires the workspace lease and serializes the intent; the VM
 //! worker materializes the mount in the namespace that will also prepare the
-//! libkrun root graft.
+//! libkrun root graft. Host-overlay launch must place that worker under
+//! `buildah unshare` so kernel overlayfs sees the same rootless idmap as the
+//! image cache lowerdir.
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::fs::{self, File, OpenOptions};
@@ -177,13 +179,13 @@ impl NixOverlayCommands for HostNixOverlayCommands {
             .status()
             .with_context(|| {
                 format!(
-                    "failed to run loftd host /nix overlay mount for '{}'",
+                    "failed to run loftd host /nix overlay mount inside buildah-unshare VM worker namespace for '{}'",
                     intent.mergeddir.display()
                 )
             })?;
         if !status.success() {
             bail!(
-                "loftd host /nix overlay mount lowerdir='{}' upperdir='{}' workdir='{}' merged='{}' failed with {status}",
+                "loftd host /nix overlay mount inside buildah-unshare VM worker namespace lowerdir='{}' upperdir='{}' workdir='{}' merged='{}' failed with {status}; verify the helper was launched through `buildah unshare`, buildah is installed on PATH, and kernel overlayfs is allowed in the rootless Buildah user namespace",
                 intent.lowerdir.display(),
                 intent.upperdir.display(),
                 intent.workdir.display(),
@@ -199,13 +201,13 @@ impl NixOverlayCommands for HostNixOverlayCommands {
             .status()
             .with_context(|| {
                 format!(
-                    "failed to run loftd host /nix overlay unmount for '{}'",
+                    "failed to run loftd host /nix overlay unmount inside buildah-unshare VM worker namespace for '{}'",
                     intent.mergeddir.display()
                 )
             })?;
         if !status.success() {
             bail!(
-                "loftd host /nix overlay unmount '{}' failed with {status}; retaining lease/state for diagnostics",
+                "loftd host /nix overlay unmount inside buildah-unshare VM worker namespace '{}' failed with {status}; retaining lease/state for diagnostics and manual cleanup with `buildah unshare umount <merged>`",
                 intent.mergeddir.display()
             );
         }

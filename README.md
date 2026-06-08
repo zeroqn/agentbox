@@ -985,13 +985,19 @@ overlayfs rather than attaching `loftd-nix.raw`. The lowerdir is the selected
 image cache rootfs under
 `$STATE/loftd/microvm/images/btrfs-snapshots/<digest-key>/rootfs/nix`; the
 upper, work, merged, and lease files live under the workspace slug state root at
-`$STATE/loftd/<workspace-slug>/nix-overlay/`. The VM worker mounts the overlay
-inside the helper namespace immediately before prepared-root grafting, then
-binds the merged view to guest `/nix`. Existing `loftd-nix.raw` files are not
-migrated or deleted automatically.
+`$STATE/loftd/<workspace-slug>/nix-overlay/`. Host-overlay launches run the
+libkrun helper transaction through `buildah unshare`, so the VM worker mounts
+and later unmounts the overlay in the same rootless Buildah namespace that can
+see the selected image-cache lowerdir. The mount still happens immediately
+before prepared-root grafting, and the merged view is bound to guest `/nix`.
+Existing `loftd-nix.raw` files are not migrated or deleted automatically.
 
 - host-overlay `/nix` is signaled to the guest with `LOFTD_NIX_OVERLAY=1` and
   `LOFTD_NIX_HOST_OVERLAY=1`; no `/nix` disk id/label is emitted in this mode.
+- host-overlay `/nix` requires `buildah` on `PATH`; permission-denied kernel
+  overlay failures should be diagnosed from inside `buildah unshare`, because
+  plain outer-namespace `mount -t overlay` does not have the required rootless
+  idmap/storage context.
 - By default, nested/rootless Podman storage is a workspace-scoped host state
   directory bind-mounted to guest `/home/dev/.local/share/containers`. The host
   directory must live on btrfs so guest Podman can keep using the btrfs storage

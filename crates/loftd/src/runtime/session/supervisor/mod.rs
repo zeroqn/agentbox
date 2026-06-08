@@ -68,7 +68,7 @@ pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::launch::config::NetworkMode;
+    use crate::runtime::launch::config::{HostNixOverlay, NetworkMode};
     use crate::runtime::session::supervisor::identity::KeepIdLauncher;
     use std::path::PathBuf;
 
@@ -109,6 +109,24 @@ mod tests {
             identity::required_guest_config_u32(&config, "LOFTD_HOST_GID").unwrap(),
             993
         );
+    }
+
+    #[test]
+    fn buildah_host_nix_overlay_helper_keeps_namespace_root_filesystem_identity() {
+        let mut config = minimal_launch_config();
+        config.host_nix_overlay = Some(HostNixOverlay {
+            selected_reference: "localhost/loftd:latest".to_owned(),
+            image_digest: "sha256:deadbeef".to_owned(),
+            digest_key: "sha256-deadbeef".to_owned(),
+            lowerdir: PathBuf::from("/cache/rootfs/nix"),
+            upperdir: PathBuf::from("/state/nix-overlay/upper"),
+            workdir: PathBuf::from("/state/nix-overlay/work"),
+            mergeddir: PathBuf::from("/state/nix-overlay/merged"),
+        });
+        config.guest_config_env.clear();
+
+        identity::configure_helper_filesystem_identity_for_launch(&config)
+            .expect("host overlay helper should preserve buildah namespace-root fs identity");
     }
 
     #[test]
