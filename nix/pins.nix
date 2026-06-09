@@ -88,11 +88,11 @@
   libkrunfwRelease = {
     owner = "zeroqn";
     repo = "libkrunfw";
-    tag = "agentbox-0e45676bdb2e";
+    tag = "agentbox-2c4f2a9c5171";
     systems = {
       x86_64-linux = {
         asset = "libkrunfw-x86_64-kvm-lto.tgz";
-        hash = "sha256-LHcqpH+g3IZsG/3Qv84+QzLtTqswGvqj/bznV7X0EFg=";
+        hash = "sha256-oYXzBRuPayONr78eWH5uPU+BZdhRJ+TSuCtTVe+caoE=";
       };
       aarch64-linux = {
         asset = "libkrunfw-aarch64.tgz";
