@@ -1026,6 +1026,14 @@ and later unmounts the overlay in the same rootless Buildah namespace that can
 see the selected image-cache lowerdir. The mount still happens immediately
 before prepared-root grafting, and the merged view is bound to guest `/nix`.
 Existing `loftd-nix.raw` files are not migrated or deleted automatically.
+When a mutable image tag resolves to a new digest, the host-overlay lowerdir
+follows the newly selected image cache entry while the workspace-scoped upper,
+work, and merged directories are reused. This intentionally preserves packages
+or files written into the overlay upperdir while exposing updated lower-image
+store objects that are not shadowed by upperdir entries or overlay whiteouts.
+It is not a Nix database merge or repair step: persistent Nix profiles, gcroots,
+database rows, and whiteouts can still describe a mixed state and may require
+manual cleanup or a workspace overlay reset if they become inconsistent.
 
 - host-overlay `/nix` is signaled to the guest with `LOFTD_NIX_OVERLAY=1` and
   `LOFTD_NIX_HOST_OVERLAY=1`; no `/nix` disk id/label is emitted in this mode.

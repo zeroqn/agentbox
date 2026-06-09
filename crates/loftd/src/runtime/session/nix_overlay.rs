@@ -82,8 +82,7 @@ impl NixOverlayLease {
         })?;
 
         let intent = intent_from_task_rootfs(&paths, handle)?;
-        validate_existing_state(&paths.lease_state, &intent)?;
-        write_state(&paths.lease_state, &intent)?;
+        record_state(&paths.lease_state, &intent)?;
         Ok(Self {
             intent,
             _lock_file: lock_file,
@@ -261,26 +260,24 @@ fn intent_from_task_rootfs(
     })
 }
 
-fn validate_existing_state(path: &Path, intent: &HostNixOverlay) -> Result<()> {
-    let Ok(text) = fs::read_to_string(path) else {
-        return Ok(());
-    };
-    let state = parse_state(&text);
-    let prior_digest = state.get("image_digest").map(String::as_str);
-    let prior_lowerdir = state.get("lowerdir").map(String::as_str);
-    if prior_digest == Some(intent.image_digest.as_str())
-        && prior_lowerdir == Some(&intent.lowerdir.display().to_string())
-    {
-        return Ok(());
+fn record_state(path: &Path, intent: &HostNixOverlay) -> Result<()> {
+    if let Ok(text) = fs::read_to_string(path) {
+        let state = parse_state(&text);
+        let prior_digest = state.get("image_digest").map(String::as_str);
+        let prior_lowerdir = state.get("lowerdir").map(String::as_str);
+        let lowerdir = intent.lowerdir.display().to_string();
+        if prior_digest != Some(intent.image_digest.as_str()) || prior_lowerdir != Some(&lowerdir) {
+            tracing::debug!(
+                state = %path.display(),
+                prior_digest = ?prior_digest,
+                prior_lowerdir = ?prior_lowerdir,
+                image_digest = %intent.image_digest,
+                lowerdir = %intent.lowerdir.display(),
+                "loftd host /nix overlay lowerdir changed; preserving workspace overlay upper/work/merged state"
+            );
+        }
     }
-    bail!(
-        "loftd host /nix overlay state '{}' belongs to image digest {:?} lowerdir {:?}, refusing to reuse with digest '{}' lowerdir '{}'; reset the workspace nix-overlay state before switching images",
-        path.display(),
-        prior_digest,
-        prior_lowerdir,
-        intent.image_digest,
-        intent.lowerdir.display()
-    )
+    write_state(path, intent)
 }
 
 fn write_state(path: &Path, intent: &HostNixOverlay) -> Result<()> {
@@ -422,23 +419,34 @@ mod tests {
     }
 
     #[test]
-    fn existing_state_for_different_digest_is_refused() {
+    fn existing_state_for_different_digest_rewrites_lowerdir_without_rescoping_overlay() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let state = temp.path().join("lease.state");
-        fs::write(&state, "image_digest=sha256:old\nlowerdir=/old/nix\n").expect("state");
-        let intent = HostNixOverlay {
-            selected_reference: "localhost/loftd:latest".to_owned(),
-            image_digest: "sha256:new".to_owned(),
-            digest_key: "sha256-new".to_owned(),
-            lowerdir: PathBuf::from("/new/nix"),
-            upperdir: PathBuf::from("/state/nix-overlay/upper"),
-            workdir: PathBuf::from("/state/nix-overlay/work"),
-            mergeddir: PathBuf::from("/state/nix-overlay/merged"),
-        };
+        let workspace_state = temp.path().join("state/workspace");
+        let paths = NixOverlayPaths::new(&workspace_state);
+        fs::create_dir_all(&paths.root).expect("overlay root");
+        fs::write(
+            &paths.lease_state,
+            "selected_reference=localhost/loftd:latest\nimage_digest=sha256:old\ndigest_key=sha256-old\nlowerdir=/old/nix\nupperdir=/state/nix-overlay/upper\nworkdir=/state/nix-overlay/work\nmergeddir=/state/nix-overlay/merged\n",
+        )
+        .expect("old state");
+        let cache_entry = temp.path().join("image-cache/btrfs-snapshots/sha256-new");
+        fs::create_dir_all(cache_entry.join("rootfs/nix")).expect("cache lowerdir");
+        let handle = task_handle(cache_entry.clone(), Some("sha256:new"), Some("sha256-new"));
 
-        let err = validate_existing_state(&state, &intent).expect_err("mismatch refused");
+        let lease = NixOverlayLease::acquire(&workspace_state, &handle).expect("lease");
 
-        assert!(format!("{err:#}").contains("refusing to reuse"));
+        assert_eq!(lease.intent().lowerdir, cache_entry.join("rootfs/nix"));
+        assert_eq!(lease.intent().upperdir, paths.upperdir);
+        assert_eq!(lease.intent().workdir, paths.workdir);
+        assert_eq!(lease.intent().mergeddir, paths.mergeddir);
+        let state = fs::read_to_string(&paths.lease_state).expect("rewritten state");
+        assert!(state.contains("image_digest=sha256:new\n"));
+        assert!(state.contains(&format!(
+            "lowerdir={}\n",
+            cache_entry.join("rootfs/nix").display()
+        )));
+        assert!(!state.contains("image_digest=sha256:old\n"));
+        assert!(!state.contains("lowerdir=/old/nix\n"));
     }
 
     #[test]
