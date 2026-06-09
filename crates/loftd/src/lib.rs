@@ -47,6 +47,39 @@ pub fn entrypoint() -> ExitCode {
                 }
             }
         }
+        CliAction::Images {
+            command,
+            log_settings,
+        } => {
+            if let Err(err) = logging::init_tracing(&log_settings) {
+                eprintln!("loftd: {err:#}");
+                return ExitCode::from(1);
+            }
+            match runtime::run_image_command(image_cache_command_from_cli(command)) {
+                Ok(output) => {
+                    print!("{output}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("loftd: {err:#}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+    }
+}
+
+fn image_cache_command_from_cli(
+    command: cli::ImagesCommand,
+) -> runtime::session::rootfs::image_source::ImageCacheCommand {
+    match command {
+        cli::ImagesCommand::Sync { reference } => {
+            runtime::session::rootfs::image_source::ImageCacheCommand::Sync { reference }
+        }
+        cli::ImagesCommand::List => runtime::session::rootfs::image_source::ImageCacheCommand::List,
+        cli::ImagesCommand::Remove { target } => {
+            runtime::session::rootfs::image_source::ImageCacheCommand::Remove { target }
+        }
     }
 }
 

@@ -28,7 +28,10 @@ impl ContainerStoreBackend {
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf"
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
+  loftd images list
+  loftd images sync ghcr.io/example/loftd:dev
+  loftd images remove sha256-feedface"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -155,12 +158,51 @@ pub(crate) enum CliCommand {
         #[arg(value_name = "PATH")]
         path: PathBuf,
     },
+
+    #[command(
+        name = "images",
+        about = "Manage loftd's local Buildah-backed image snapshot cache"
+    )]
+    Images {
+        #[command(subcommand)]
+        command: ImagesCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
+pub(crate) enum ImagesCommand {
+    #[command(
+        name = "sync",
+        about = "Sync one Buildah image reference into loftd's local image cache"
+    )]
+    Sync {
+        #[arg(value_name = "REFERENCE")]
+        reference: String,
+    },
+
+    #[command(name = "list", about = "List loftd's local image cache entries")]
+    List,
+
+    #[command(
+        name = "remove",
+        about = "Remove a loftd image cache entry by digest or digest key"
+    )]
+    Remove {
+        #[arg(value_name = "DIGEST_OR_KEY")]
+        target: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CliAction {
     Run(RuntimeOptions),
-    DecodeLaunchConf { path: PathBuf },
+    DecodeLaunchConf {
+        path: PathBuf,
+    },
+    Images {
+        command: ImagesCommand,
+        log_settings: LogSettings,
+    },
 }
 
 impl Cli {
@@ -168,6 +210,10 @@ impl Cli {
         if let Some(command) = self.command.clone() {
             match command {
                 CliCommand::DecodeLaunchConf { path } => CliAction::DecodeLaunchConf { path },
+                CliCommand::Images { command } => CliAction::Images {
+                    command,
+                    log_settings: LogSettings::from_process_env(self.log_level, self.debug),
+                },
             }
         } else {
             CliAction::Run(self.into_runtime_options())
@@ -502,5 +548,53 @@ mod tests {
             Cli::try_parse_from(["loftd", "--mem", "0"]).expect_err("zero memory should fail");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+    #[test]
+    fn parses_images_sync_subcommand() {
+        let cli = Cli::try_parse_from(["loftd", "images", "sync", "ghcr.io/example/loftd:dev"])
+            .expect("images sync should parse");
+
+        match cli.into_action() {
+            crate::cli::CliAction::Images { command, .. } => assert_eq!(
+                command,
+                crate::cli::ImagesCommand::Sync {
+                    reference: "ghcr.io/example/loftd:dev".to_owned()
+                }
+            ),
+            other => panic!("expected images action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_images_list_and_remove_subcommands() {
+        let list =
+            Cli::try_parse_from(["loftd", "images", "list"]).expect("images list should parse");
+        let remove = Cli::try_parse_from(["loftd", "images", "remove", "sha256-feedface"])
+            .expect("images remove should parse");
+
+        match list.into_action() {
+            crate::cli::CliAction::Images { command, .. } => {
+                assert_eq!(command, crate::cli::ImagesCommand::List);
+            }
+            other => panic!("expected images list action, got {other:?}"),
+        }
+        match remove.into_action() {
+            crate::cli::CliAction::Images { command, .. } => assert_eq!(
+                command,
+                crate::cli::ImagesCommand::Remove {
+                    target: "sha256-feedface".to_owned()
+                }
+            ),
+            other => panic!("expected images remove action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn images_words_after_delimiter_remain_guest_command() {
+        let cli = Cli::try_parse_from(["loftd", "--", "images", "list"])
+            .expect("delimited images words should parse as guest command");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(options.guest_command, ["images", "list"]);
     }
 }

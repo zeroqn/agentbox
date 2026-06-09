@@ -10,6 +10,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use crate::cli::RuntimeOptions;
+use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
 
 pub(crate) mod host_tools;
 pub(crate) mod launch;
@@ -34,6 +35,10 @@ impl RuntimeProfileScope {
 
 pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -> Result<ExitCode> {
     session::run(options, profile_scope)
+}
+
+pub(crate) fn run_image_command(command: ImageCacheCommand) -> Result<String> {
+    session::run_image_command(command)
 }
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {

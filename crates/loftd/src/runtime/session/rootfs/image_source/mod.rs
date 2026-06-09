@@ -13,6 +13,11 @@ use crate::runtime::session::rootfs::task::{
 };
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
+mod commands;
+#[cfg(test)]
+pub(crate) use commands::ImageCacheCommandOutput;
+pub(crate) use commands::{ImageCacheCommand, run_image_cache_command};
+
 const BTRFS_IMAGE_CACHE_DIR: &str = "btrfs-snapshots";
 const CACHE_ROOTFS_DIR: &str = "rootfs";
 const CACHE_METADATA_FILE: &str = "metadata";

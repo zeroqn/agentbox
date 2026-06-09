@@ -1,9 +1,11 @@
 use anyhow::{Context, Result, bail};
 use std::env;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::cli::RuntimeOptions;
+use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
 use crate::task_rootfs::TaskRootfsBackend;
 
 pub(crate) mod nix_overlay;
@@ -17,6 +19,30 @@ use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentD
 use profile::LoftdHostProfiler;
 use rootfs::task::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
 use supervisor::{HostSupervisor, Supervisor};
+
+pub(crate) fn run_image_command(command: ImageCacheCommand) -> Result<String> {
+    let cwd = env::current_dir()?
+        .canonicalize()
+        .context("failed to canonicalize current directory for loftd image cache command")?;
+    let xdg_state_home = env::var_os("XDG_STATE_HOME").map(PathBuf::from);
+    let xdg_config_home = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    let home_dir = env::var_os("HOME").map(PathBuf::from);
+    let config =
+        crate::config::state::read_config(xdg_config_home.as_deref(), home_dir.as_deref())?;
+    let state_layout = crate::state::resolve_state_layout_from_parts(
+        &cwd,
+        xdg_state_home.as_deref(),
+        home_dir.as_deref(),
+        config.state_location_override(),
+    )?;
+    let output = rootfs::image_source::run_image_cache_command(
+        command,
+        &state_layout.image_cache_dir(),
+        &rootfs::image_source::HostBuildahCommands,
+        &HostBtrfsRootfsCommands,
+    )?;
+    Ok(output.render_stdout())
+}
 
 pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -> Result<ExitCode> {
     let mut profiler = LoftdHostProfiler::new_started_at(

@@ -867,6 +867,30 @@ contract. `--pull-latest` refreshes the canonical image through Buildah before
 cache lookup, and `--image` uses exactly the supplied image reference with
 `--pull=missing`. `--image` and `--pull-latest` are mutually exclusive.
 
+Loftd also exposes a local image-cache management surface:
+
+```bash
+loftd images list
+loftd images sync ghcr.io/example/loftd:dev
+loftd images remove sha256-feedface
+loftd images remove sha256:feedface
+```
+
+`loftd images list` is read-only and reports digest-keyed btrfs image-source
+cache entries plus a non-mutating Buildah digest-match status when cache
+metadata includes a selected image reference. It does not repair, delete, or
+mutate Buildah images. The `loftd images sync <reference>` command asks Buildah
+to materialize that
+reference into loftd's image-cache staging area, then populates or repairs only
+the selected digest-key cache entry; it does not push to remotes or delete
+unrelated cache entries. `loftd images remove <digest-or-key>` removes the
+selected loftd cache entry by digest (`sha256:...`) or digest key
+(`sha256-...`). Removal is
+cache-first: loftd attempts `buildah rmi <selected-reference>` only when a fresh
+Buildah image inspect proves the selected reference still resolves to the same
+digest recorded in the cache metadata. Missing, digestless, ambiguous, or
+mismatched local Buildah images are left in place and reported as skipped.
+
 Loftd uses **task rootfs backend** terminology for the host-side mechanism that
 materializes the clean task root filesystem. The default backend is
 `btrfs-snapshot`: loftd keeps a digest-keyed btrfs image-source snapshot cache
