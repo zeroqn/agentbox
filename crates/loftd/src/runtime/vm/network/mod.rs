@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use std::ffi::CString;
+use std::ffi::{CString, OsStr, OsString};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -9,6 +9,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::config::NetworkMode;
 use crate::runtime::publish::tsi_pasta_tcp_forwards;
 
@@ -38,7 +39,7 @@ impl NetworkManagerSession {
                 task_state_dir.display()
             )
         })?;
-        ensure_executable_available(PASTA_PROGRAM)?;
+        ensure_executable_available(runtime_tool_program(RuntimeTool::Pasta), PASTA_PROGRAM)?;
         let tcp_forwards = pasta_tcp_forwards_for(network_mode, publish)?;
         let holder = spawn_netns_holder()?;
         let plan = pasta_plan(holder.pid(), &tcp_forwards);
@@ -82,7 +83,7 @@ pub(crate) struct PasstWorkerSession {
 
 impl PasstWorkerSession {
     pub(crate) fn start(publish: &[String]) -> Result<Self> {
-        ensure_executable_available(PASST_PROGRAM)?;
+        ensure_executable_available(runtime_tool_program(RuntimeTool::Passt), PASST_PROGRAM)?;
         let (passt_fd, child_fd) = passt_socketpair()?;
         let plan = passt_plan(child_fd.as_raw_fd(), publish)?;
         let mut command = plan.command();
@@ -194,19 +195,31 @@ pub(crate) fn enter_netns(holder_pid: libc::pid_t) -> Result<()> {
     Ok(())
 }
 
-fn ensure_executable_available(program: &str) -> Result<()> {
-    let status = Command::new(program)
+fn ensure_executable_available(program: OsString, name: &str) -> Result<()> {
+    let status = Command::new(&program)
         .arg("--help")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .with_context(|| format!("loftd requires {program} on PATH for host alias networking"))?;
+        .with_context(|| {
+            format!(
+                "loftd requires {name} for host alias networking; resolved helper path was {}",
+                display_program(&program)
+            )
+        })?;
     if status.success() {
         Ok(())
     } else {
-        bail!("loftd requires executable {program}, but `{program} --help` failed with {status}")
+        bail!(
+            "loftd requires executable {name}, but `{}` --help failed with {status}",
+            display_program(&program)
+        )
     }
+}
+
+fn display_program(program: &OsStr) -> String {
+    program.to_string_lossy().into_owned()
 }
 
 struct HolderGuard {

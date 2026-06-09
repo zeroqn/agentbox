@@ -34,7 +34,7 @@ The packaging boundary where the host `loftd` binary is dynamically linked becau
 _Avoid_: static loftd host artifact
 
 **loftd prebuilt**:
-The Nix package for a pinned neutral dynamic Linux `loftd-<arch>-unknown-linux-gnu` release asset; Nix patches ordinary ELF runtime dependencies and this repo wraps runtime tools plus the `libkrun`/`libkrunfw` library path.
+The Nix package for a pinned neutral dynamic Linux `loftd-<arch>-unknown-linux-gnu` release asset; Nix patches ordinary ELF runtime dependencies and provides package-relative helper plus `libkrun`/`libkrunfw` paths without wrapping `bin/loftd`.
 _Avoid_: flake-locked release asset; static/standalone host loftd; pinned wrapper script
 
 **static loftd guest init build**:

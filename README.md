@@ -62,17 +62,20 @@ managed sidecar.
   is `btrfs-snapshot`.
 - `libkrun.so` at runtime for experimental `agentbox microvm` and `loftd`
   direct boot. The normal host binaries do not link to libkrun at build time;
-  the Nix `.#agentbox` package wraps the binary with this repo's
-  libkrun/libkrunfw library path, and source/debug builds can set
+  the Nix `.#agentbox` package wraps the agentbox binary with this repo's
+  libkrun/libkrunfw library path, while the Nix `.#loftd` source package keeps
+  `bin/loftd` as a raw ELF and resolves libkrun from `$out/lib/loftd` before
+  falling back to sonames. Source/debug builds can set
   `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for agentbox microvm or
   `LOFTD_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for loftd.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
-  default TSI and `--passt` mode; included in the Nix `.#loftd`,
+  default TSI and `--passt` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
 - `btrfs`, `mkfs.btrfs`, and `blkid` on the host for microvm btrfs-snapshot
   storage, first-time libkrun/microvm raw-image creation, and reuse validation
-  (`btrfs-progs` + `util-linux`; included in `nix develop`, and `btrfs` is
-  included in the Nix `.#agentbox` and `.#agentbox-prebuilt` runtime wrappers).
+  (`btrfs-progs` + `util-linux`; included in `nix develop`, included in the
+  Nix `.#loftd` helper dir, and `btrfs` is included in the Nix `.#agentbox` and
+  `.#agentbox-prebuilt` runtime wrappers).
   Task-rootfs btrfs snapshot and delete commands run through `buildah unshare`.
   Rootless btrfs-snapshot cleanup also requires the backing btrfs mount to allow
   user-owned subvolume removal; add `user_subvol_rm_allowed` to that mount's
@@ -155,11 +158,11 @@ nix build .#agentbox-container
 ### Build outputs
 
 - `.#agentbox`: compile from source.
-- `.#loftd`: compile the workspace Rust host package and wrap it with the
-  pinned prebuilt `libkrun`/`libkrunfw` runtime library path. This intentionally
-  shares the same Rust package derivation as `.#agentbox` for now, so the raw
-  dynamic `loftd` binary is available at `libexec/loftd` while the wrapped CLI is
-  available at `bin/loftd`.
+- `.#loftd`: compile the workspace Rust host package with `$out/bin/loftd` as a
+  raw dynamic ELF. Runtime helpers are installed under
+  `$out/libexec/loftd-helpers`, and the pinned prebuilt `libkrun`/`libkrunfw`
+  libraries are exposed under `$out/lib/loftd`, so source-built loftd no longer
+  needs a wrapper script or duplicate `$out/libexec/loftd` payload.
 - `.#loftd-dev`: compile the workspace Rust host package and wire it to local
   `deps/libkrunfw` through `.#libkrunfw-dev`. Use this target for local
   libkrunfw/kernel configuration experiments; the local firmware build routes
@@ -172,8 +175,9 @@ nix build .#agentbox-container
   `agentbox container` sidecar mode and experimental `agentbox microvm`
   cache misses.
 - `.#loftd-prebuilt`: install a pinned published neutral dynamic Linux `loftd`
-  asset, patch ordinary ELF runtime dependencies with Nix, and wrap it with
-  this flake's runtime tools and `libkrun`/`libkrunfw` library path. If a system
+  asset as raw `$out/bin/loftd`, patch ordinary ELF runtime dependencies with
+  Nix, and provide the same package-relative helper and `$out/lib/loftd`
+  library layout as source-built `.#loftd`. If a system
   lacks a neutral pinned asset, or is still pinned to a legacy flake-locked
   asset, it fails with a clear diagnostic until a matching neutral `sha-*`
   release is published and pinned.
@@ -959,8 +963,13 @@ bind-address suffixes, interfaces, and exclusions:
 Loftd still does not create a shared/global rootless network namespace.
 
 After networking is ready, the helper dynamically loads `libkrun.so.1` or
-`libkrun.so` (or `LOFTD_LIBKRUN_LIBRARY` when set), prepares a crun-style root
-export inside that same rootless namespace, and attaches that single prepared
+`libkrun.so` from `$out/lib/loftd` when running from a Nix `.#loftd` package,
+then falls back to normal soname lookup; `LOFTD_LIBKRUN_LIBRARY` still wins when
+set. Host tool lookup follows the same wrapper-free pattern: per-tool overrides
+(`LOFTD_BUILDAH`, `LOFTD_BTRFS`, `LOFTD_MKFS_BTRFS`, `LOFTD_BLKID`,
+`LOFTD_PASTA`, `LOFTD_PASST`) win first, then `LOFTD_HELPER_BINARY_DIR`, then
+`$out/libexec/loftd-helpers`, then `PATH` for source/debug runs. The helper
+prepares a crun-style root export inside that same rootless namespace, and attaches that single prepared
 root plus the writable persistent container-store disk. The prepared root is a
 bind-mounted view of the task rootfs with the workspace, Codex, Pi, Cargo,
 sccache, and host-prepared `/nix` overlay directories grafted into their final
@@ -1217,11 +1226,12 @@ The `agentbox-<arch>-unknown-linux-musl` asset is the portable static/musl
 agentbox CLI. The `loftd-<arch>-unknown-linux-gnu` asset is a neutral dynamic
 Linux ELF packaging input and intentionally non-standalone: it must not contain
 release-builder `/nix/store/<hash>-...` references, and Nix packaging patches
-its ordinary ELF runtime dependencies before wrapping the libkrun/runtime-tool
+its ordinary ELF runtime dependencies before wiring the libkrun/runtime-tool
 environment.
 For ordinary source-built loftd usage with pinned prebuilt libkrun firmware,
 prefer `nix build .#loftd`; use `nix build .#loftd-prebuilt` only for the
-explicit pinned release-asset packaging path, or the published
+explicit pinned release-asset packaging path with the same wrapper-free helper
+layout, or the published
 `ghcr.io/<repo-owner>/loftd` image. Use `nix build .#loftd-dev` only when local
 `deps/libkrunfw` experiments are intended.
 

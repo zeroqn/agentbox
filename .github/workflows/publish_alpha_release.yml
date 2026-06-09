@@ -47,7 +47,7 @@ jobs:
           mkdir -p dist
           install -m 0755 result-agentbox-musl/bin/agentbox "dist/${agentbox_asset_name}"
 
-          raw_loftd_path="result-loftd/libexec/loftd"
+          raw_loftd_path="result-loftd/bin/loftd"
           test -x "${raw_loftd_path}"
           if [ "$(dd if="${raw_loftd_path}" bs=2 count=1 2>/dev/null)" = "#!" ]; then
             echo "refusing to publish loftd wrapper script as ${loftd_asset_name}" >&2
@@ -113,7 +113,7 @@ jobs:
 
           Assets:
           - \`${{ steps.prep.outputs.agentbox_asset_name }}\`: portable static/musl agentbox CLI.
-          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: neutral dynamically linked loftd ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wraps the libkrun/runtime-tool environment. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
+          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: neutral dynamically linked loftd ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wires libkrun/runtime-tool dependencies. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
 
           The \`alpha\` prerelease is reused on every push to main.
           The matching \`${{ steps.prep.outputs.release_tag }}\` prerelease is the revision-addressed binary set for this exact revision.

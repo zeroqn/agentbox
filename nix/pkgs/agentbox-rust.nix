@@ -10,6 +10,7 @@ let
     pkgs.btrfs-progs
     pkgs.fuse-overlayfs
     pkgs.passt
+    pkgs.util-linux
   ];
   runtimeWrapperArgs =
     [
@@ -37,9 +38,24 @@ let
     };
 
     postInstall = ''
-      install -Dm755 "$out/bin/loftd" "$out/libexec/loftd"
+      mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd"
+      ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah"
+      ln -s ${pkgs.btrfs-progs}/bin/btrfs "$out/libexec/loftd-helpers/btrfs"
+      ln -s ${pkgs.btrfs-progs}/bin/mkfs.btrfs "$out/libexec/loftd-helpers/mkfs.btrfs"
+      ln -s ${pkgs.util-linux}/bin/blkid "$out/libexec/loftd-helpers/blkid"
+      ln -s ${pkgs.passt}/bin/pasta "$out/libexec/loftd-helpers/pasta"
+      ln -s ${pkgs.passt}/bin/passt "$out/libexec/loftd-helpers/passt"
+      ${pkgs.lib.optionalString (libkrun != null) ''
+        for library in ${pkgs.lib.getLib libkrun}/lib/libkrun.so*; do
+          ln -s "$library" "$out/lib/loftd/$(basename "$library")"
+        done
+      ''}
+      ${pkgs.lib.optionalString (libkrunfw != null) ''
+        for library in ${pkgs.lib.getLib libkrunfw}/lib/libkrunfw.so*; do
+          ln -s "$library" "$out/lib/loftd/$(basename "$library")"
+        done
+      ''}
       wrapProgram "$out/bin/agentbox" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
-      wrapProgram "$out/bin/loftd" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
     '';
   };
 

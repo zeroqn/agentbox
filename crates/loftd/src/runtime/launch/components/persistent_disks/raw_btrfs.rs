@@ -3,6 +3,8 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RawDiskSpec {
     pub(crate) file_name: &'static str,
@@ -38,7 +40,7 @@ pub(crate) struct HostRawImageCommandRunner;
 
 impl RawImageCommandRunner for HostRawImageCommandRunner {
     fn mkfs_btrfs(&self, path: &Path, label: &str, spec: &RawDiskSpec) -> Result<()> {
-        let output = Command::new("mkfs.btrfs")
+        let output = Command::new(runtime_tool_program(RuntimeTool::MkfsBtrfs))
             .arg("-f")
             .arg("-L")
             .arg(label)
@@ -65,7 +67,7 @@ impl RawImageCommandRunner for HostRawImageCommandRunner {
     }
 
     fn probe_fs_type(&self, path: &Path, spec: &RawDiskSpec) -> Result<String> {
-        let output = Command::new("blkid")
+        let output = Command::new(runtime_tool_program(RuntimeTool::Blkid))
             .arg("-o")
             .arg("value")
             .arg("-s")

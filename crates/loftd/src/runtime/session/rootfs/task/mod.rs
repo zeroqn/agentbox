@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::plan::ImageSelection;
 use crate::runtime::session::rootfs::image_source::{
     self, BuildahCommands, ImageSourceCacheProfile, OciProcessConfig,
@@ -326,7 +327,7 @@ fn cleanup_task_dir(task_dir: &Path, commands: &impl BtrfsRootfsCommands) -> Res
 }
 
 fn run_buildah_unshare_btrfs_subvolume(action: &str, paths: &[&Path]) -> Result<()> {
-    let output = Command::new("buildah")
+    let output = Command::new(runtime_tool_program(RuntimeTool::Buildah))
         .arg("unshare")
         .arg("btrfs")
         .arg("subvolume")
@@ -353,7 +354,7 @@ fn run_buildah_unshare_btrfs_subvolume(action: &str, paths: &[&Path]) -> Result<
 }
 
 fn run_btrfs_subvolume(action: &str, paths: &[&Path]) -> Result<()> {
-    let output = Command::new("btrfs")
+    let output = Command::new(runtime_tool_program(RuntimeTool::Btrfs))
         .arg("subvolume")
         .arg(action)
         .args(paths)

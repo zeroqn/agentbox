@@ -6,6 +6,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::logging::INTERNAL_LOG_LEVEL_ENV;
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
@@ -76,7 +77,7 @@ fn build_helper_command(
         config_path,
         config,
         host_profile_enabled,
-        which_buildah().is_some(),
+        buildah_available(),
     )
 }
 
@@ -123,7 +124,7 @@ fn build_buildah_unshare_helper_command(
 
     tracing::debug!("loftd libkrun helper will run inside buildah unshare for host /nix overlay");
     Ok(HelperCommandSpec {
-        program: OsString::from("buildah"),
+        program: runtime_tool_program(RuntimeTool::Buildah),
         env: helper_env(log_level, host_profile_enabled),
         args: vec![
             OsString::from("unshare"),
@@ -163,10 +164,16 @@ fn helper_env(
     env
 }
 
-fn which_buildah() -> Option<std::path::PathBuf> {
+fn buildah_available() -> bool {
+    let program = runtime_tool_program(RuntimeTool::Buildah);
+    let program = program.to_string_lossy();
+    program.contains('/') || which_in_path(&program).is_some()
+}
+
+fn which_in_path(program: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
-        .map(|dir| dir.join("buildah"))
+        .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
 }
 

@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::plan::ImageSelection;
 use crate::runtime::session::rootfs::task::{
     BtrfsRootfsCommands, UnsharedBtrfsRootfsCommands, snapshot_mounted_rootfs,
@@ -757,7 +758,7 @@ fn encode_hex(value: &str) -> String {
 }
 
 fn run_buildah(args: &[&str]) -> Result<String> {
-    let output = Command::new("buildah")
+    let output = Command::new(runtime_tool_program(RuntimeTool::Buildah))
         .args(args)
         .stdin(Stdio::null())
         .output()
@@ -780,7 +781,7 @@ fn run_buildah(args: &[&str]) -> Result<String> {
 }
 
 fn run_buildah_status(args: &[&str]) -> Result<bool> {
-    let status = match Command::new("buildah")
+    let status = match Command::new(runtime_tool_program(RuntimeTool::Buildah))
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

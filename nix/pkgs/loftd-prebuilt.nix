@@ -25,24 +25,8 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
         pkgs.btrfs-progs
         pkgs.fuse-overlayfs
         pkgs.passt
+        pkgs.util-linux
       ];
-      runtimeLibraryPath = pkgs.lib.makeLibraryPath (
-        pkgs.lib.optionals (libkrun != null) [ (pkgs.lib.getLib libkrun) ]
-        ++ pkgs.lib.optionals (libkrunfw != null) [ (pkgs.lib.getLib libkrunfw) ]
-      );
-      runtimeWrapperArgs =
-        [
-          "--prefix"
-          "PATH"
-          ":"
-          (pkgs.lib.makeBinPath runtimeTools)
-        ]
-        ++ pkgs.lib.optionals (runtimeLibraryPath != "") [
-          "--prefix"
-          "LD_LIBRARY_PATH"
-          ":"
-          runtimeLibraryPath
-        ];
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "loftd";
@@ -56,7 +40,6 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
       nativeBuildInputs = [
         pkgs.autoPatchelfHook
         pkgs.binutils
-        pkgs.makeWrapper
       ];
 
       buildInputs = [
@@ -77,8 +60,24 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
         fi
         readelf -h "$src" >/dev/null
 
-        install -Dm755 "$src" "$out/libexec/loftd"
-        makeWrapper "$out/libexec/loftd" "$out/bin/loftd" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
+        install -Dm755 "$src" "$out/bin/loftd"
+        mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd"
+        ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah"
+        ln -s ${pkgs.btrfs-progs}/bin/btrfs "$out/libexec/loftd-helpers/btrfs"
+        ln -s ${pkgs.btrfs-progs}/bin/mkfs.btrfs "$out/libexec/loftd-helpers/mkfs.btrfs"
+        ln -s ${pkgs.util-linux}/bin/blkid "$out/libexec/loftd-helpers/blkid"
+        ln -s ${pkgs.passt}/bin/pasta "$out/libexec/loftd-helpers/pasta"
+        ln -s ${pkgs.passt}/bin/passt "$out/libexec/loftd-helpers/passt"
+        ${pkgs.lib.optionalString (libkrun != null) ''
+          for library in ${pkgs.lib.getLib libkrun}/lib/libkrun.so*; do
+            ln -s "$library" "$out/lib/loftd/$(basename "$library")"
+          done
+        ''}
+        ${pkgs.lib.optionalString (libkrunfw != null) ''
+          for library in ${pkgs.lib.getLib libkrunfw}/lib/libkrunfw.so*; do
+            ln -s "$library" "$out/lib/loftd/$(basename "$library")"
+          done
+        ''}
 
         runHook postInstall
       '';
@@ -89,7 +88,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
       };
 
       meta = {
-        description = "Prebuilt neutral dynamic loftd binary patched and wrapped with this flake's runtime environment";
+        description = "Prebuilt neutral dynamic loftd binary patched with package-relative runtime helpers";
         homepage = "https://github.com/${loftdPrebuiltRelease.owner}/${loftdPrebuiltRelease.repo}";
         license = pkgs.lib.licenses.mit;
         mainProgram = "loftd";

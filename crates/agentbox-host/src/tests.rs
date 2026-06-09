@@ -132,7 +132,7 @@ fn publish_alpha_release_uploads_agentbox_and_neutral_loftd_assets() {
         "agentbox_asset_name=\"agentbox-${arch}-unknown-linux-musl\"",
         "loftd_asset_name=\"loftd-${arch}-unknown-linux-gnu\"",
         "install -m 0755 result-agentbox-musl/bin/agentbox",
-        "raw_loftd_path=\"result-loftd/libexec/loftd\"",
+        "raw_loftd_path=\"result-loftd/bin/loftd\"",
         "refusing to publish loftd wrapper script",
         "refusing to publish non-ELF loftd asset",
         "readelf -h \"${raw_loftd_path}\" > /dev/null",
@@ -193,10 +193,28 @@ fn publish_alpha_release_notes_escape_markdown_backticks_for_shell_heredoc() {
 fn loftd_package_exposes_stable_raw_elf_payload_for_release_workflow() {
     for required in [
         "nativeBuildInputs = [ pkgs.makeWrapper ];",
-        "install -Dm755 \"$out/bin/loftd\" \"$out/libexec/loftd\"",
-        "wrapProgram \"$out/bin/loftd\"",
+        r#"mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd""#,
+        r#"ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah""#,
+        r#"ln -s ${pkgs.btrfs-progs}/bin/btrfs "$out/libexec/loftd-helpers/btrfs""#,
+        r#"ln -s ${pkgs.btrfs-progs}/bin/mkfs.btrfs "$out/libexec/loftd-helpers/mkfs.btrfs""#,
+        r#"ln -s ${pkgs.util-linux}/bin/blkid "$out/libexec/loftd-helpers/blkid""#,
+        r#"ln -s ${pkgs.passt}/bin/pasta "$out/libexec/loftd-helpers/pasta""#,
+        r#"ln -s ${pkgs.passt}/bin/passt "$out/libexec/loftd-helpers/passt""#,
+        "${pkgs.lib.getLib libkrun}/lib/libkrun.so*",
+        "${pkgs.lib.getLib libkrunfw}/lib/libkrunfw.so*",
+        r#"wrapProgram "$out/bin/agentbox""#,
     ] {
         assert!(AGENTBOX_RUST_NIX.contains(required), "missing {required}");
+    }
+
+    for removed in [
+        r#"install -Dm755 "$out/bin/loftd" "$out/libexec/loftd""#,
+        r#"wrapProgram "$out/bin/loftd""#,
+    ] {
+        assert!(
+            !AGENTBOX_RUST_NIX.contains(removed),
+            "still contains {removed}"
+        );
     }
 }
 
@@ -336,10 +354,11 @@ fn nix_agentbox_packages_provide_microvm_storage_helpers_at_runtime() {
         "pkgs.buildah",
         "pkgs.btrfs-progs",
         "pkgs.fuse-overlayfs",
+        "pkgs.util-linux",
         "\"PATH\"",
         "runtimeWrapperArgs",
         "wrapProgram \"$out/bin/agentbox\"",
-        "wrapProgram \"$out/bin/loftd\"",
+        "loftd-helpers",
     ] {
         assert!(AGENTBOX_RUST_NIX.contains(required), "missing {required}");
     }
@@ -390,42 +409,33 @@ fn loftd_prebuilt_package_pins_and_patches_neutral_elf() {
         "pkgs.buildah",
         "pkgs.btrfs-progs",
         "pkgs.fuse-overlayfs",
-        "\"LD_LIBRARY_PATH\"",
+        "pkgs.util-linux",
         "pkgs.lib.getLib libkrun",
         "pkgs.lib.getLib libkrunfw",
-        "magic=\"$(dd if=\"$src\" bs=4 count=1",
-        "\"7f454c46\"",
-        "readelf -h \"$src\" >/dev/null",
-        "install -Dm755 \"$src\" \"$out/libexec/loftd\"",
-        "makeWrapper \"$out/libexec/loftd\" \"$out/bin/loftd\"",
+        r#"magic="$(dd if="$src" bs=4 count=1"#,
+        r#""7f454c46""#,
+        r#"readelf -h "$src" >/dev/null"#,
+        r#"install -Dm755 "$src" "$out/bin/loftd""#,
+        r#"mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd""#,
+        r#"ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah""#,
+        r#"ln -s ${pkgs.util-linux}/bin/blkid "$out/libexec/loftd-helpers/blkid""#,
         "Do not pin wrapper-script release assets",
         "after a neutral sha-* release is published",
-        "mainProgram = \"loftd\";",
+        r#"mainProgram = "loftd";"#,
         "sourceProvenance = [ pkgs.lib.sourceTypes.binaryNativeCode ];",
     ] {
         assert!(LOFTD_PREBUILT_NIX.contains(required), "missing {required}");
     }
-}
 
-#[test]
-fn loftd_prebuilt_updater_rejects_legacy_store_refs_and_updates_loftd_pin() {
-    for required in [
-        "Usage: update-loftd-prebuilt.sh",
-        "loftd-x86_64-unknown-linux-gnu",
-        "loftd-aarch64-unknown-linux-gnu",
-        "newest sha-* prerelease containing the selected loftd asset",
-        "upstream asset blocker",
-        "wrapper script, not raw ELF",
-        "not an ELF payload",
-        "b\"\\x7fELF\"",
-        "sha256-",
-        "loftdPrebuiltRelease",
-        "systems = { };",
-        "failed to locate loftdPrebuiltRelease.systems block",
+    for removed in [
+        r#"install -Dm755 "$src" "$out/libexec/loftd""#,
+        r#"makeWrapper "$out/libexec/loftd" "$out/bin/loftd""#,
+        "runtimeWrapperArgs",
+        r#""LD_LIBRARY_PATH""#,
     ] {
         assert!(
-            UPDATE_LOFTD_PREBUILT_SH.contains(required),
-            "missing {required}"
+            !LOFTD_PREBUILT_NIX.contains(removed),
+            "still contains {removed}"
         );
     }
 
@@ -436,11 +446,13 @@ fn loftd_prebuilt_updater_rejects_legacy_store_refs_and_updates_loftd_pin() {
 fn loftd_prebuilt_docs_define_neutral_asset_contract() {
     for required in [
         "nix build .#loftd-prebuilt",
-        "`.#loftd`: compile the workspace Rust host package and wrap it with the\n  pinned prebuilt `libkrun`/`libkrunfw` runtime library path",
-        "This intentionally\n  shares the same Rust package derivation as `.#agentbox` for now",
-        "raw\n  dynamic `loftd` binary is available at `libexec/loftd`",
+        "`.#loftd`: compile the workspace Rust host package with `$out/bin/loftd` as a\n  raw dynamic ELF",
+        "Runtime helpers are installed under\n  `$out/libexec/loftd-helpers`",
+        "source-built loftd no longer\n  needs a wrapper script or duplicate `$out/libexec/loftd` payload",
         "`.#loftd-dev`: compile the workspace Rust host package and wire it to local\n  `deps/libkrunfw`",
         "`.#loftd-prebuilt`: install a pinned published neutral dynamic Linux `loftd`",
+        "provide the same package-relative helper and `$out/lib/loftd`
+  library layout as source-built `.#loftd`",
         "lacks a neutral pinned asset",
         "loftd-<arch>-unknown-linux-gnu",
         "neutral dynamic\nLinux ELF packaging input",

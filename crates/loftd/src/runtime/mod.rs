@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use crate::cli::RuntimeOptions;
 
+pub(crate) mod host_tools;
 pub(crate) mod launch;
 pub(crate) mod publish;
 pub(crate) mod session;

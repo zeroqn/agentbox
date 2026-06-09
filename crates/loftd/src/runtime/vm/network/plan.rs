@@ -1,7 +1,10 @@
 //! pasta/passt command-plan construction.
 
 use anyhow::Result;
+use std::ffi::OsString;
 use std::process::{Command, Stdio};
+
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 
 use crate::runtime::publish::{PasstPublishProtocol, passt_publish_specs};
 
@@ -13,7 +16,7 @@ pub(crate) const PASST_PROGRAM: &str = "passt";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProxyCommandPlan {
-    pub(crate) program: String,
+    pub(crate) program: OsString,
     pub(crate) args: Vec<String>,
     pub(crate) fd: Option<i32>,
 }
@@ -62,7 +65,7 @@ pub(crate) fn pasta_plan(holder_pid: libc::pid_t, tcp_forwards: &[String]) -> Pr
     ]);
 
     ProxyCommandPlan {
-        program: PASTA_PROGRAM.to_owned(),
+        program: runtime_tool_program(RuntimeTool::Pasta),
         args,
         fd: None,
     }
@@ -82,7 +85,7 @@ pub(crate) fn passt_plan(fd: i32, publish: &[String]) -> Result<ProxyCommandPlan
     args.push("--quiet".to_owned());
 
     Ok(ProxyCommandPlan {
-        program: PASST_PROGRAM.to_owned(),
+        program: runtime_tool_program(RuntimeTool::Passt),
         args,
         fd: Some(fd),
     })

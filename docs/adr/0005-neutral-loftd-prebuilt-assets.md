@@ -7,9 +7,10 @@ ELF payloads named `loftd-<arch>-unknown-linux-gnu`. They are packaging inputs,
 not standalone portable executables and not flake-locked Nix outputs.
 
 The GitHub release workflow strips release-builder `/nix/store/<hash>-...`
-interpreter and RPATH references before upload. The Nix package then uses `autoPatchelfHook` to
-bind ordinary ELF dependencies to the consuming flake and wraps the binary with
-runtime tools plus the `libkrun`/`libkrunfw` library path.
+interpreter and RPATH references before upload. The Nix package then uses
+`autoPatchelfHook` to bind ordinary ELF dependencies to the consuming flake and
+provides package-relative runtime tools plus `libkrun`/`libkrunfw` paths without
+wrapping `bin/loftd`.
 
 ## Context
 
@@ -30,8 +31,8 @@ neutral upstream asset plus Nix-side patching in the package that consumes it.
   `/nix/store/<hash>-...` references.
 - Use `autoPatchelfHook` in `.#loftd-prebuilt` for ordinary ELF runtime
   dependencies.
-- Keep `libkrun` and `libkrunfw` runtime-loaded through wrapper library-path
-  semantics instead of making them required ELF `NEEDED` dependencies.
+- Keep `libkrun` and `libkrunfw` runtime-loaded through package-relative
+  lookup semantics instead of making them required ELF `NEEDED` dependencies.
 
 ## Consequences
 

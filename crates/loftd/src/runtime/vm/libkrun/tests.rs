@@ -323,6 +323,24 @@ fn libkrun_loader_prefers_explicit_library_override_before_sonames() {
 }
 
 #[test]
+fn libkrun_loader_tries_package_relative_libraries_before_sonames() {
+    assert_eq!(
+        planned_libkrun_load_order_for_exe(
+            None,
+            Some(std::path::PathBuf::from(
+                "/nix/store/hash-agentbox/bin/loftd"
+            ))
+        ),
+        vec![
+            "/nix/store/hash-agentbox/lib/loftd/libkrun.so.1",
+            "/nix/store/hash-agentbox/lib/loftd/libkrun.so",
+            "libkrun.so.1",
+            "libkrun.so",
+        ]
+    );
+}
+
+#[test]
 fn compat_net_features_match_libkrun_header_contract() {
     assert_eq!(
         LOFTD_LIBKRUN_COMPAT_NET_FEATURES,

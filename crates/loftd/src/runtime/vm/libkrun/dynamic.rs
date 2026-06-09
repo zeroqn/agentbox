@@ -3,7 +3,9 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use crate::runtime::host_tools::package_root_from_exe;
 
 use super::api::LibkrunApi;
 
@@ -80,8 +82,8 @@ impl DynamicLibkrunApi {
         }
 
         let mut last_error = None;
-        for name in DEFAULT_LIBKRUN_NAMES {
-            match Self::open(name) {
+        for name in default_libkrun_candidates() {
+            match Self::open(&name) {
                 Ok(api) => return Ok(api),
                 Err(err) => last_error = Some(err),
             }
@@ -230,10 +232,39 @@ pub(crate) fn planned_libkrun_load_order(override_value: Option<&str>) -> Vec<St
     {
         return vec![value.to_owned()];
     }
-    DEFAULT_LIBKRUN_NAMES
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect()
+    planned_default_libkrun_load_order(std::env::current_exe().ok())
+}
+
+fn default_libkrun_candidates() -> Vec<String> {
+    planned_default_libkrun_load_order(std::env::current_exe().ok())
+}
+
+fn planned_default_libkrun_load_order(current_exe: Option<PathBuf>) -> Vec<String> {
+    let mut candidates = Vec::new();
+    if let Some(exe) = current_exe
+        && let Some(root) = package_root_from_exe(&exe)
+    {
+        candidates.extend(
+            DEFAULT_LIBKRUN_NAMES
+                .iter()
+                .map(|name| root.join("lib/loftd").join(name).display().to_string()),
+        );
+    }
+    candidates.extend(DEFAULT_LIBKRUN_NAMES.iter().map(|name| (*name).to_owned()));
+    candidates
+}
+
+#[cfg(test)]
+pub(crate) fn planned_libkrun_load_order_for_exe(
+    override_value: Option<&str>,
+    current_exe: Option<PathBuf>,
+) -> Vec<String> {
+    if let Some(value) = override_value
+        && !value.trim().is_empty()
+    {
+        return vec![value.to_owned()];
+    }
+    planned_default_libkrun_load_order(current_exe)
 }
 
 impl Drop for DynamicLibkrunApi {
