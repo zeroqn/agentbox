@@ -17,6 +17,8 @@ enum Call {
     FreeCtx(u32),
     InitLog(u32),
     SetVmConfig(u32, u8, u32),
+    CheckNestedVirt,
+    SetNestedVirt(u32, bool),
     SetRoot(u32, String),
     AddDisk(u32, String, String, bool),
     AddNetUnixstream(u32, i32, u32),
@@ -35,6 +37,7 @@ struct FakeLibkrunApi {
     calls: Rc<RefCell<Vec<Call>>>,
     fail_call: Option<&'static str>,
     net_dhcp_flag_unsupported: bool,
+    nested_check_result: Option<i32>,
 }
 
 impl FakeLibkrunApi {
@@ -43,6 +46,7 @@ impl FakeLibkrunApi {
             calls,
             fail_call: None,
             net_dhcp_flag_unsupported: false,
+            nested_check_result: Some(1),
         }
     }
 
@@ -51,6 +55,7 @@ impl FakeLibkrunApi {
             calls,
             fail_call: Some(fail_call),
             net_dhcp_flag_unsupported: false,
+            nested_check_result: Some(1),
         }
     }
 
@@ -59,7 +64,13 @@ impl FakeLibkrunApi {
             calls,
             fail_call: None,
             net_dhcp_flag_unsupported: true,
+            nested_check_result: Some(1),
         }
+    }
+
+    fn nested_check_result(mut self, result: Option<i32>) -> Self {
+        self.nested_check_result = result;
+        self
     }
 
     fn rc(&self, call: &'static str) -> i32 {
@@ -88,6 +99,18 @@ impl LibkrunApi for FakeLibkrunApi {
             .borrow_mut()
             .push(Call::SetVmConfig(ctx_id, vcpus, ram_mib));
         Ok(self.rc("krun_set_vm_config"))
+    }
+
+    fn check_nested_virt(&mut self) -> Result<Option<i32>> {
+        self.calls.borrow_mut().push(Call::CheckNestedVirt);
+        Ok(self.nested_check_result)
+    }
+
+    fn set_nested_virt(&mut self, ctx_id: u32, enabled: bool) -> Result<i32> {
+        self.calls
+            .borrow_mut()
+            .push(Call::SetNestedVirt(ctx_id, enabled));
+        Ok(self.rc("krun_set_nested_virt"))
     }
 
     fn set_root(&mut self, ctx_id: u32, root_path: &Path) -> Result<i32> {
@@ -315,6 +338,20 @@ fn passt_net_flags_match_libkrun_header_width() {
 }
 
 #[test]
+fn nested_virt_symbol_resolution_allows_missing_check_but_requires_set() {
+    let set_symbol = std::ptr::dangling_mut::<std::os::raw::c_void>();
+    assert_eq!(
+        nested_virt_symbol_presence_for_test(None, Some(set_symbol))
+            .expect("missing diagnostic check symbol should be accepted"),
+        (false, true)
+    );
+
+    let err = nested_virt_symbol_presence_for_test(Some(set_symbol), None)
+        .expect_err("missing set symbol should fail");
+    assert!(format!("{err:#}").contains("krun_set_nested_virt"));
+}
+
+#[test]
 fn fake_api_records_direct_libkrun_v1_call_order() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
@@ -325,9 +362,11 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
     assert_eq!(calls[0], Call::InitLog(4));
     assert_eq!(calls[1], Call::CreateCtx);
     assert_eq!(calls[2], Call::SetVmConfig(7, 2, 4096));
-    assert_eq!(calls[3], Call::SetRoot(7, "/rootfs".to_owned()));
+    assert_eq!(calls[3], Call::CheckNestedVirt);
+    assert_eq!(calls[4], Call::SetNestedVirt(7, true));
+    assert_eq!(calls[5], Call::SetRoot(7, "/rootfs".to_owned()));
     assert_eq!(
-        calls[4],
+        calls[6],
         Call::AddDisk(
             7,
             "loftd-nix".to_owned(),
@@ -336,7 +375,7 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
         )
     );
     assert_eq!(
-        calls[5],
+        calls[7],
         Call::AddDisk(
             7,
             "loftd-containers".to_owned(),
@@ -344,11 +383,11 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
             false,
         )
     );
-    assert_eq!(calls[6], Call::DisableImplicitConsole(7));
-    assert_eq!(calls[7], Call::AddVirtioConsoleDefault(7, 0, 1, 2));
-    assert_eq!(calls[8], Call::SetWorkdir(7, "/workspace".to_owned()));
+    assert_eq!(calls[8], Call::DisableImplicitConsole(7));
+    assert_eq!(calls[9], Call::AddVirtioConsoleDefault(7, 0, 1, 2));
+    assert_eq!(calls[10], Call::SetWorkdir(7, "/workspace".to_owned()));
     assert_eq!(
-        calls[9],
+        calls[11],
         Call::SetExec(
             7,
             "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
@@ -356,12 +395,57 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
             vec![("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
         )
     );
-    assert_eq!(calls[10], Call::StartEnter(7));
+    assert_eq!(calls[12], Call::StartEnter(7));
     assert_eq!(
         calls.len(),
-        11,
+        13,
         "TSI default must not call krun_set_env, passt APIs, profile cmdline, or per-bind virtiofs devices"
     );
+}
+
+#[test]
+fn nested_virt_setup_failure_is_setup_failure_and_frees_context() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let err = DirectLibkrunLauncher::new(FakeLibkrunApi::failing(
+        calls.clone(),
+        "krun_set_nested_virt",
+    ))
+    .start_enter(&config())
+    .expect_err("nested virt setup failure should fail");
+
+    assert!(format!("{err:#}").contains("libkrun setup failed: krun_set_nested_virt"));
+    let calls = calls.borrow();
+    assert!(calls.contains(&Call::FreeCtx(7)));
+    assert!(!calls.contains(&Call::StartEnter(7)));
+}
+
+#[test]
+fn nested_virt_check_unsupported_failure_or_absent_still_sets_nested_virt() {
+    for check_result in [Some(0), Some(-5), None] {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        DirectLibkrunLauncher::new(
+            FakeLibkrunApi::new(calls.clone()).nested_check_result(check_result),
+        )
+        .start_enter(&config())
+        .expect("launch should continue after non-fatal nested check diagnostic");
+
+        let calls = calls.borrow();
+        let check_index = calls
+            .iter()
+            .position(|call| matches!(call, Call::CheckNestedVirt))
+            .expect("nested support check should be attempted");
+        let set_index = calls
+            .iter()
+            .position(|call| matches!(call, Call::SetNestedVirt(7, true)))
+            .expect("nested virt should still be requested");
+        let start_index = calls
+            .iter()
+            .position(|call| matches!(call, Call::StartEnter(7)))
+            .expect("launch should start");
+
+        assert!(check_index < set_index);
+        assert!(set_index < start_index);
+    }
 }
 
 #[test]
@@ -492,6 +576,11 @@ fn profile_setup_runs_after_exec_and_before_pre_enter_hook() {
                 assert!(
                     calls
                         .iter()
+                        .any(|call| matches!(call, Call::SetNestedVirt(7, true)))
+                );
+                assert!(
+                    calls
+                        .iter()
                         .any(|call| matches!(call, Call::SetProfilePath(..)))
                 );
                 assert!(
@@ -509,6 +598,10 @@ fn profile_setup_runs_after_exec_and_before_pre_enter_hook() {
         .expect("launch should succeed");
 
     let calls = calls.borrow();
+    let nested_set_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetNestedVirt(7, true)))
+        .expect("nested virt should be configured");
     let set_exec_index = calls
         .iter()
         .position(|call| matches!(call, Call::SetExec(..)))
@@ -534,6 +627,7 @@ fn profile_setup_runs_after_exec_and_before_pre_enter_hook() {
         calls[set_cmdline_index],
         Call::SetKernelCmdlineAppend(7, PROFILE_KERNEL_CMDLINE_APPEND.to_owned())
     );
+    assert!(nested_set_index < set_exec_index);
     assert!(set_exec_index < set_profile_index);
     assert!(set_profile_index < set_cmdline_index);
     assert!(set_cmdline_index < start_index);

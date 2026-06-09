@@ -31,6 +31,8 @@ type KrunInitLog = unsafe extern "C" fn(i32, u32, u32, u32) -> i32;
 type KrunCreateCtx = unsafe extern "C" fn() -> i32;
 type KrunFreeCtx = unsafe extern "C" fn(u32) -> i32;
 type KrunSetVmConfig = unsafe extern "C" fn(u32, u8, u32) -> i32;
+type KrunCheckNestedVirt = unsafe extern "C" fn() -> i32;
+type KrunSetNestedVirt = unsafe extern "C" fn(u32, bool) -> i32;
 type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunAddDisk = unsafe extern "C" fn(u32, *const c_char, *const c_char, bool) -> i32;
 type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
@@ -51,6 +53,8 @@ pub(crate) struct DynamicLibkrunApi {
     create_ctx: KrunCreateCtx,
     free_ctx: KrunFreeCtx,
     set_vm_config: KrunSetVmConfig,
+    check_nested_virt: Option<KrunCheckNestedVirt>,
+    set_nested_virt: KrunSetNestedVirt,
     set_root: KrunSetRoot,
     add_disk: KrunAddDisk,
     disable_implicit_console: KrunDisableImplicitConsole,
@@ -93,6 +97,11 @@ impl DynamicLibkrunApi {
             bail!("failed to load {name}: {}", dlerror_string());
         }
 
+        let nested_virt_symbols = unsafe {
+            // SAFETY: symbols are resolved from a successfully opened libkrun handle.
+            resolve_nested_virt_symbols(|name| Ok(load_optional_symbol(handle, name)))?
+        };
+
         let api = unsafe {
             // SAFETY: symbols are resolved from a successfully opened libkrun handle and
             // transmuted to signatures verified against the local libkrun 1.18 header.
@@ -116,6 +125,12 @@ impl DynamicLibkrunApi {
                     handle,
                     "krun_set_vm_config",
                 )?),
+                check_nested_virt: nested_virt_symbols
+                    .check
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunCheckNestedVirt>(symbol)),
+                set_nested_virt: std::mem::transmute::<*mut c_void, KrunSetNestedVirt>(
+                    nested_virt_symbols.set,
+                ),
                 set_root: std::mem::transmute::<*mut c_void, KrunSetRoot>(load_symbol(
                     handle,
                     "krun_set_root",
@@ -167,6 +182,34 @@ impl DynamicLibkrunApi {
         };
         Ok(api)
     }
+}
+
+struct NestedVirtSymbols {
+    check: Option<*mut c_void>,
+    set: *mut c_void,
+}
+
+fn resolve_nested_virt_symbols(
+    mut resolve: impl FnMut(&str) -> Result<Option<*mut c_void>>,
+) -> Result<NestedVirtSymbols> {
+    let check = resolve("krun_check_nested_virt")?;
+    let set = resolve("krun_set_nested_virt")?.ok_or_else(|| {
+        anyhow!("failed to resolve libkrun symbol krun_set_nested_virt: symbol is unavailable")
+    })?;
+    Ok(NestedVirtSymbols { check, set })
+}
+
+#[cfg(test)]
+pub(crate) fn nested_virt_symbol_presence_for_test(
+    check: Option<*mut c_void>,
+    set: Option<*mut c_void>,
+) -> Result<(bool, bool)> {
+    let symbols = resolve_nested_virt_symbols(|name| match name {
+        "krun_check_nested_virt" => Ok(check),
+        "krun_set_nested_virt" => Ok(set),
+        _ => Ok(None),
+    })?;
+    Ok((symbols.check.is_some(), !symbols.set.is_null()))
 }
 
 fn explicit_libkrun_library_override() -> Result<Option<String>> {
@@ -240,6 +283,19 @@ impl LibkrunApi for DynamicLibkrunApi {
     fn set_vm_config(&mut self, ctx_id: u32, vcpus: u8, ram_mib: u32) -> Result<i32> {
         // SAFETY: function pointer resolved from libkrun with verified signature.
         Ok(unsafe { (self.set_vm_config)(ctx_id, vcpus, ram_mib) })
+    }
+
+    fn check_nested_virt(&mut self) -> Result<Option<i32>> {
+        let Some(check_nested_virt) = self.check_nested_virt else {
+            return Ok(None);
+        };
+        // SAFETY: optional function pointer resolved from libkrun with upstream-compatible signature.
+        Ok(Some(unsafe { check_nested_virt() }))
+    }
+
+    fn set_nested_virt(&mut self, ctx_id: u32, enabled: bool) -> Result<i32> {
+        // SAFETY: function pointer resolved from libkrun with verified signature.
+        Ok(unsafe { (self.set_nested_virt)(ctx_id, enabled) })
     }
 
     fn set_root(&mut self, ctx_id: u32, root_path: &Path) -> Result<i32> {

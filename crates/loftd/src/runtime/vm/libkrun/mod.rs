@@ -10,7 +10,10 @@ pub(crate) use dynamic::DynamicLibkrunApi;
 pub(crate) use launcher::DirectLibkrunLauncher;
 
 #[cfg(test)]
-use dynamic::{LOFTD_LIBKRUN_COMPAT_NET_FEATURES, planned_libkrun_load_order};
+use dynamic::{
+    LOFTD_LIBKRUN_COMPAT_NET_FEATURES, nested_virt_symbol_presence_for_test,
+    planned_libkrun_load_order,
+};
 
 #[cfg(test)]
 mod tests;

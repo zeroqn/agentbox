@@ -1022,10 +1022,22 @@ default. For deterministic smoke tests, `loftd -- <command>` preserves the same
 guest bootstrap path but replaces the final guest command with the explicit argv
 after `--`.
 
-Nested KVM is intentionally deferred for loftd direct-libkrun mode. This pass
-does not create `/dev/kvm` manually and does not claim nested virtualization
-support; future nested support should make `/dev/kvm` appear through the
-libkrun/runtime stack after nested virtualization is correctly enabled.
+Loftd direct-libkrun mode requests nested virtualization before guest entry with
+libkrun's `krun_check_nested_virt`/`krun_set_nested_virt` APIs, matching the
+crun `krun.nested_virt=1` flow used by agentbox's OCI/libkrun path. This exposes
+VMX/SVM to the guest when the host or outer VM already supports nested KVM; it
+does not bind-mount host `/dev/kvm` and does not create `/dev/kvm` manually. The
+node should appear from the guest KVM driver and devtmpfs, after which
+`loftd-guest-init` makes it world-accessible for the default non-root task user.
+
+If `/dev/kvm` is still absent inside the loftd guest, confirm the host has
+`/dev/kvm`, then check the relevant host nested parameter: Intel hosts should
+report `Y` or `1` from `/sys/module/kvm_intel/parameters/nested`, and AMD hosts
+should report `Y` or `1` from `/sys/module/kvm_amd/parameters/nested`. Also
+confirm the active libkrun firmware/kernel is KVM-capable (`CONFIG_KVM=y` plus
+the relevant `CONFIG_KVM_INTEL=y` and/or `CONFIG_KVM_AMD=y`) and that devtmpfs is
+enabled. Guest-side diagnostics usually start with
+`dmesg | grep -Ei 'kvm|vmx|svm'`.
 
 Phase 4 completion was validated with targeted `loftd` and `loftd-guest-init`
 unit tests plus a focused local-image libkrun smoke test. The smoke used a local

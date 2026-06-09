@@ -80,6 +80,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             .set_vm_config(ctx_id, config.vcpus, config.ram_mib)?;
         check_setup("krun_set_vm_config", rc)?;
         tracing::debug!(ctx_id, "krun_set_vm_config: complete");
+        self.configure_nested_virt(ctx_id)?;
         tracing::debug!(ctx_id, rootfs = %config.task_rootfs.display(), "krun_set_root: begin");
         let rc = self.api.set_root(ctx_id, &config.task_rootfs)?;
         check_setup("krun_set_root", rc)?;
@@ -167,6 +168,42 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         let rc = self.api.start_enter(ctx_id)?;
         tracing::debug!(ctx_id, rc, "krun_start_enter: returned");
         check_start("krun_start_enter", rc)
+    }
+
+    fn configure_nested_virt(&mut self, ctx_id: u32) -> Result<()> {
+        tracing::debug!(ctx_id, "krun_check_nested_virt: begin");
+        match self.api.check_nested_virt()? {
+            Some(1) => {
+                tracing::debug!(
+                    ctx_id,
+                    "krun_check_nested_virt: host nested virtualization supported"
+                );
+            }
+            Some(0) => {
+                tracing::warn!(
+                    ctx_id,
+                    "krun_check_nested_virt: host nested virtualization is not reported as supported; requesting nested virtualization anyway"
+                );
+            }
+            Some(rc) => {
+                tracing::warn!(
+                    ctx_id,
+                    rc,
+                    "krun_check_nested_virt: support check failed; requesting nested virtualization anyway"
+                );
+            }
+            None => {
+                tracing::debug!(
+                    ctx_id,
+                    "krun_check_nested_virt: optional diagnostic symbol unavailable; requesting nested virtualization anyway"
+                );
+            }
+        }
+        tracing::debug!(ctx_id, "krun_set_nested_virt: begin");
+        let rc = self.api.set_nested_virt(ctx_id, true)?;
+        check_setup("krun_set_nested_virt", rc)?;
+        tracing::debug!(ctx_id, "krun_set_nested_virt: complete");
+        Ok(())
     }
 }
 
