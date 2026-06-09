@@ -90,10 +90,6 @@ impl LaunchPlan {
             bind_mounts.len(),
         )?);
         crate::runtime::launch::config::validate_mounts(&bind_mounts)?;
-        if container_store_backend == ContainerStoreBackend::Bind {
-            bind_mounts.push(mounts::containers_store::prepare(&state_layout)?);
-            crate::runtime::launch::config::validate_mounts(&bind_mounts)?;
-        }
         let task_rootfs_backend = options
             .rootfs_backend
             .or_else(|| config.task_rootfs_backend())
@@ -286,7 +282,7 @@ mod tests {
         );
         assert_eq!(plan.image_selection.selected_reference(), DEFAULT_IMAGE);
         assert_eq!(plan.task_rootfs_backend, TaskRootfsBackend::BtrfsSnapshot);
-        assert_eq!(plan.container_store_backend, ContainerStoreBackend::Bind);
+        assert_eq!(plan.container_store_backend, ContainerStoreBackend::RawDisk);
         assert_eq!(plan.log_level, LogLevel::Off);
         assert!(!plan.debug);
         assert!(!plan.config_diagnostics.config_loaded);
@@ -314,7 +310,7 @@ mod tests {
                 .find(|mount| mount.target == target)
                 .expect("mount should exist")
         };
-        assert_eq!(plan.bind_mounts.len(), 6);
+        assert_eq!(plan.bind_mounts.len(), 5);
         assert_eq!(mount("/workspace").source, workspace);
         assert_eq!(mount("/home/dev/.codex").source, home.join(".codex"));
         assert_eq!(mount("/home/dev/.pi").source, home.join(".pi"));
@@ -326,14 +322,10 @@ mod tests {
             mount("/home/dev/.cache/sccache").source,
             plan.state_layout.sccache_dir()
         );
-        assert_eq!(
-            mount("/home/dev/.local/share/containers").source,
-            plan.state_layout.root_dir().join("containers")
-        );
         assert!(home.join(".codex").is_dir());
         assert!(home.join(".pi").is_dir());
         assert!(plan.state_layout.root_dir().join("cargo").is_dir());
-        assert!(plan.state_layout.root_dir().join("containers").is_dir());
+        assert!(!plan.state_layout.root_dir().join("containers").exists());
         assert_eq!(
             fs::metadata(plan.state_layout.sccache_dir())
                 .expect("sccache metadata")
@@ -499,13 +491,11 @@ mod tests {
     }
 
     #[test]
-    fn raw_disk_container_store_does_not_add_container_bind_mount() {
+    fn default_raw_disk_container_store_does_not_add_container_bind_mount() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
-        let mut options = runtime_options();
-        options.container_store_backend = Some(ContainerStoreBackend::RawDisk);
 
         let plan = LaunchPlan::from_env_values(
-            options,
+            runtime_options(),
             PathBuf::from("/tmp/project"),
             Some(dir.path().join("state").as_path()),
             Some(dir.path().join("config").as_path()),

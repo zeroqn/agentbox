@@ -2,7 +2,6 @@ use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 
 use crate::guest_init::command;
-use crate::guest_init::components::env::ContainerStoreBackend;
 use crate::guest_init::components::home::identity::DevIdentity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,16 +36,10 @@ impl PodmanToolPaths {
     }
 }
 
-pub(in crate::guest_init) fn storage_conf(
-    identity: &DevIdentity,
-    container_store_backend: ContainerStoreBackend,
-) -> String {
+pub(in crate::guest_init) fn storage_conf(identity: &DevIdentity) -> String {
     let graphroot = "/home/dev/.local/share/containers/storage";
     let runroot = format!("/run/user/{}/containers", identity.uid);
-    let driver = match container_store_backend {
-        ContainerStoreBackend::Bind => "overlay",
-        ContainerStoreBackend::RawDisk => "btrfs",
-    };
+    let driver = "btrfs";
     format!(
         r#"[storage]
 driver = "{driver}"

@@ -794,8 +794,9 @@ Container-store disk maintenance:
 ```
 
 These commands manage only the current workspace's `loftd-containers.raw` disk
-used by `--container-store raw-disk`. They do not touch the bind-backed
-container store and do not resize or reset loftd's host `/nix` overlay state.
+used by the raw-disk container store. They do not inspect or migrate any legacy
+host-directory container store and do not resize or reset loftd's host `/nix`
+overlay state.
 `resize` is grow-only: `--size` accepts bytes or binary suffixes such as `K`,
 `M`, `G`, `T`, `KiB`, `MiB`, `GiB`, and `TiB`, and the requested size must be
 larger than the current raw file. It grows the host sparse file first, then
@@ -1109,24 +1110,21 @@ manual cleanup or a workspace overlay reset if they become inconsistent.
   overlay failures should be diagnosed from inside `buildah unshare`, because
   plain outer-namespace `mount -t overlay` does not have the required rootless
   idmap/storage context.
-- By default, nested/rootless Podman storage is a workspace-scoped host state
-  directory bind-mounted to guest `/home/dev/.local/share/containers`. The host
-  bind backend configures guest Podman with the native rootless `overlay`
-  storage driver. It does not configure `fuse-overlayfs` or require the host
-  state directory to be btrfs-backed.
-- Use `loftd --container-store raw-disk` to preserve the previous raw disk
-  carrier and btrfs Podman storage driver. In raw-disk mode,
-  `loftd-containers.raw` remains exposed as `LOFTD_CONTAINERS` /
-  `loftd-containers` for rootless container storage. Existing bind-mode
-  container stores initialized with a different driver may need manual reset or
-  migration before reuse with native overlay.
+- Nested/rootless Podman storage uses the workspace-scoped
+  `loftd-containers.raw` btrfs disk by default. The host exposes that disk as
+  `LOFTD_CONTAINERS` / `loftd-containers` for guest rootless container storage,
+  and guest Podman uses the `btrfs` storage driver.
+- `loftd --container-store raw-disk` remains accepted as an explicit
+  compatibility spelling for the only supported container-store backend.
+  `--container-store bind` is not supported, and loftd does not migrate old
+  host-directory container stores.
 
 `loftd-guest-init enter` reads only `LOFTD_*` guest contract variables, validates
 that the prepared-root paths already exist, ensures `/tmp` is a tmpfs with
 `rw,exec,mode=1777`, verifies `/dev/net/tun` is the expected character device
 `10:200`, makes it mode `0666`, probes it with `TUNSETIFF`, verifies the
 host-prepared `/nix` overlay in host-overlay mode, prepares the selected
-container-store backend, exports the shell environment, and runs `fish -l` by
+raw-disk container-store backend, exports the shell environment, and runs `fish -l` by
 default. For deterministic smoke tests, `loftd -- <command>` preserves the same
 guest bootstrap path but replaces the final guest command with the explicit argv
 after `--`.

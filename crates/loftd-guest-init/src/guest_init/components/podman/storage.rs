@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::guest_init::components::env::{ContainerStoreBackend, LoftdEnv};
+use crate::guest_init::components::env::LoftdEnv;
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::podman::config::{
     PodmanToolPaths, containers_conf, policy_json, registries_conf, storage_conf,
@@ -29,7 +29,7 @@ pub(in crate::guest_init) fn bootstrap(
     }
     fs::write_file(
         &config_dir.join("storage.conf"),
-        &storage_conf(identity, env_contract.container_store_backend),
+        &storage_conf(identity),
         0o644,
     )?;
     fs::write_file(
@@ -55,16 +55,11 @@ pub(in crate::guest_init) fn bootstrap(
 }
 
 fn ensure_container_store_available(env_contract: &LoftdEnv) -> Result<()> {
-    match env_contract.container_store_backend {
-        ContainerStoreBackend::Bind => Ok(()),
-        ContainerStoreBackend::RawDisk => {
-            crate::guest_init::components::disk::containers::ensure_mounted(
-                &env_contract.containers_disk_label,
-                &env_contract.containers_disk_id,
-            )?;
-            Ok(())
-        }
-    }
+    crate::guest_init::components::disk::containers::ensure_mounted(
+        &env_contract.containers_disk_label,
+        &env_contract.containers_disk_id,
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

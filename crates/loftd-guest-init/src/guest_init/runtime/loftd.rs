@@ -96,7 +96,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     debug_breadcrumb("read-env complete");
     debug_breadcrumb("validate-prepared-root starting");
     profiler.measure_result("validate-prepared-root", || {
-        validate_prepared_root_paths(&prepared_root_targets(&env_contract.loftd))
+        validate_prepared_root_paths(&prepared_root_targets())
     })?;
     debug_breadcrumb("validate-prepared-root complete");
     profiler.measure_result("ensure-tmp-tmpfs", ensure_tmp_tmpfs_mounted)?;
@@ -214,12 +214,8 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
     })
 }
 
-fn prepared_root_targets(env: &LoftdEnv) -> Vec<&'static str> {
-    let mut targets = PREPARED_ROOT_TARGETS.to_vec();
-    if env.containers_storage && env.container_store_backend == ContainerStoreBackend::Bind {
-        targets.push(crate::guest_init::components::disk::containers::MOUNT_POINT);
-    }
-    targets
+fn prepared_root_targets() -> Vec<&'static str> {
+    PREPARED_ROOT_TARGETS.to_vec()
 }
 
 fn env_flag_any(env: &impl EnvSource, primary: &str, legacy: &str) -> bool {
@@ -504,18 +500,14 @@ mod tests {
     }
 
     #[test]
-    fn loftd_env_accepts_bind_container_store_backend() {
-        let env = EnterEnv::from_env(&env(&[
+    fn loftd_env_rejects_bind_container_store_backend() {
+        let err = EnterEnv::from_env(&env(&[
             ("LOFTD_CONTAINERS_STORAGE", "1"),
             (CONTAINERS_STORE_ENV, "bind"),
         ]))
-        .expect("bind backend should parse");
+        .expect_err("bind backend should fail");
 
-        assert!(env.loftd.containers_storage);
-        assert_eq!(
-            env.loftd.container_store_backend,
-            ContainerStoreBackend::Bind
-        );
+        assert!(err.to_string().contains(CONTAINERS_STORE_ENV));
     }
 
     #[test]
@@ -527,24 +519,15 @@ mod tests {
     }
 
     #[test]
-    fn prepared_root_targets_are_backend_specific_for_container_store() {
-        let raw = EnterEnv::from_env(&env(&[
+    fn prepared_root_targets_exclude_raw_disk_container_store_mount() {
+        let _raw = EnterEnv::from_env(&env(&[
             ("LOFTD_CONTAINERS_STORAGE", "1"),
             (CONTAINERS_STORE_ENV, "raw-disk"),
         ]))
         .expect("raw env should parse");
-        let bind = EnterEnv::from_env(&env(&[
-            ("LOFTD_CONTAINERS_STORAGE", "1"),
-            (CONTAINERS_STORE_ENV, "bind"),
-        ]))
-        .expect("bind env should parse");
 
         assert!(
-            !prepared_root_targets(&raw.loftd)
-                .contains(&crate::guest_init::components::disk::containers::MOUNT_POINT)
-        );
-        assert!(
-            prepared_root_targets(&bind.loftd)
+            !prepared_root_targets()
                 .contains(&crate::guest_init::components::disk::containers::MOUNT_POINT)
         );
     }

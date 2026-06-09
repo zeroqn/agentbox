@@ -28,18 +28,14 @@ const LEGACY_HOST_GID_ENV: &str = "AGENTBOX_HOST_GID";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::guest_init) enum ContainerStoreBackend {
-    Bind,
     RawDisk,
 }
 
 impl ContainerStoreBackend {
     pub(in crate::guest_init) fn parse_env_value(value: &str) -> Result<Self> {
         match value {
-            "bind" => Ok(Self::Bind),
             "raw-disk" => Ok(Self::RawDisk),
-            _ => anyhow::bail!(
-                "{CONTAINERS_STORE_ENV} must be either 'bind' or 'raw-disk' (got '{value}')"
-            ),
+            _ => anyhow::bail!("{CONTAINERS_STORE_ENV} must be 'raw-disk' (got '{value}')"),
         }
     }
 

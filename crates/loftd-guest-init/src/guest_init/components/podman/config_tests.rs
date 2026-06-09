@@ -1,4 +1,3 @@
-use crate::guest_init::components::env::ContainerStoreBackend;
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::podman::config::{
     PodmanToolPaths, containers_conf, policy_json, registries_conf, storage_conf,
@@ -6,22 +5,9 @@ use crate::guest_init::components::podman::config::{
 use std::path::PathBuf;
 
 #[test]
-fn podman_prep_generates_overlay_storage_config_for_bind_store() {
+fn podman_prep_generates_btrfs_storage_config_for_container_store() {
     let identity = DevIdentity::new(1000, 1000, PathBuf::from("fish"));
-    let conf = storage_conf(&identity, ContainerStoreBackend::Bind);
-    assert!(conf.contains("driver = \"overlay\""));
-    assert!(conf.contains("graphroot = \"/home/dev/.local/share/containers/storage\""));
-    assert!(conf.contains("runroot = \"/run/user/1000/containers\""));
-    assert!(!conf.contains("fuse-overlayfs"));
-    assert!(!conf.contains("driver = \"btrfs\""));
-    assert!(!conf.contains("driver = \"vfs\""));
-    assert!(!conf.contains("mount_program"));
-}
-
-#[test]
-fn podman_prep_keeps_btrfs_storage_config_for_raw_disk_store() {
-    let identity = DevIdentity::new(1000, 1000, PathBuf::from("fish"));
-    let conf = storage_conf(&identity, ContainerStoreBackend::RawDisk);
+    let conf = storage_conf(&identity);
     assert!(conf.contains("driver = \"btrfs\""));
     assert!(conf.contains("graphroot = \"/home/dev/.local/share/containers/storage\""));
     assert!(conf.contains("runroot = \"/run/user/1000/containers\""));

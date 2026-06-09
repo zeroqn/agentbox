@@ -13,19 +13,19 @@ fn podman_storage_bootstrap_does_not_resize_btrfs_during_init() {
 }
 
 #[test]
-fn bind_store_bootstrap_no_longer_requires_btrfs_fstype_probe() {
+fn container_store_bootstrap_does_not_probe_bind_store_fstype() {
     assert!(
         !STORAGE_SOURCE.contains("output_trimmed(\"findmnt\""),
-        "bind-mode prep must not require findmnt filesystem probing"
+        "container-store prep must not use the removed host-directory filesystem probe path"
     );
     assert!(
         !STORAGE_SOURCE.contains("requires a btrfs-backed host state directory"),
-        "bind-mode prep must not require a btrfs-backed host state directory"
+        "container-store prep must not require a btrfs-backed host state directory"
     );
 }
 
 #[test]
-fn raw_disk_store_bootstrap_still_mounts_container_disk() {
+fn container_store_bootstrap_mounts_raw_disk() {
     assert!(
         STORAGE_SOURCE.contains("disk::containers::ensure_mounted("),
         "raw-disk prep must keep mounting the persistent container-store disk"
@@ -35,9 +35,9 @@ fn raw_disk_store_bootstrap_still_mounts_container_disk() {
 }
 
 #[test]
-fn podman_storage_bootstrap_does_not_recursively_chown_bind_store() {
+fn podman_storage_bootstrap_does_not_recursively_chown_container_store() {
     assert!(
         !STORAGE_SOURCE.contains("chown -R"),
-        "bind-mode prep must not recursively chown arbitrary host state"
+        "container-store prep must not recursively chown arbitrary host state"
     );
 }

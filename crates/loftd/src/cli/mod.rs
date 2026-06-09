@@ -14,18 +14,16 @@ pub(crate) struct VolumeSpec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContainerStoreBackend {
-    Bind,
     RawDisk,
 }
 
 impl ContainerStoreBackend {
-    pub(crate) const DEFAULT: Self = Self::Bind;
+    pub(crate) const DEFAULT: Self = Self::RawDisk;
 
     pub(crate) fn parse_config_value(value: &str) -> Result<Self, String> {
         match value {
-            "bind" => Ok(Self::Bind),
             "raw-disk" => Ok(Self::RawDisk),
-            _ => Err("allowed values are bind and raw-disk".to_owned()),
+            _ => Err("allowed value is raw-disk".to_owned()),
         }
     }
 }
@@ -107,7 +105,7 @@ pub(crate) struct Cli {
         value_name = "BACKEND",
         value_parser = parse_container_store_backend_arg,
         help = "Override the nested Podman container-store backend for this run",
-        long_help = "Override the nested Podman container-store backend for this run. Allowed values are bind and raw-disk. If omitted, loftd bind-mounts a persistent host state directory into the guest."
+        long_help = "Override the nested Podman container-store backend for this run. The only allowed value is raw-disk, which is also the default."
     )]
     container_store_backend: Option<ContainerStoreBackend>,
 
@@ -682,18 +680,11 @@ mod tests {
     }
 
     #[test]
-    fn container_store_backend_accepts_bind_and_raw_disk() {
-        let bind = Cli::try_parse_from(["loftd", "--container-store", "bind"])
-            .expect("bind container store should parse")
-            .into_runtime_options();
+    fn container_store_backend_accepts_raw_disk_only() {
         let raw = Cli::try_parse_from(["loftd", "--container-store", "raw-disk"])
             .expect("raw disk container store should parse")
             .into_runtime_options();
 
-        assert_eq!(
-            bind.container_store_backend,
-            Some(ContainerStoreBackend::Bind)
-        );
         assert_eq!(
             raw.container_store_backend,
             Some(ContainerStoreBackend::RawDisk)
@@ -702,9 +693,12 @@ mod tests {
 
     #[test]
     fn container_store_backend_rejects_invalid_values() {
+        let bind_err = Cli::try_parse_from(["loftd", "--container-store", "bind"])
+            .expect_err("bind container store should fail");
         let err = Cli::try_parse_from(["loftd", "--container-store", "auto"])
             .expect_err("unknown container store should fail");
 
+        assert_eq!(bind_err.kind(), clap::error::ErrorKind::ValueValidation);
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 

@@ -17,7 +17,6 @@ pub(super) const LABEL: &str = "LOFTD_CONTAINERS";
 pub(super) const SIZE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub(super) const STORAGE_ENV: &str = "LOFTD_CONTAINERS_STORAGE";
 pub(super) const STORE_ENV: &str = "LOFTD_CONTAINERS_STORE";
-pub(super) const STORE_BIND: &str = "bind";
 pub(super) const STORE_RAW_DISK: &str = "raw-disk";
 
 const SPEC: RawDiskSpec = RawDiskSpec {
@@ -64,13 +63,6 @@ pub(super) fn attachment(disk: &RawBtrfsDisk) -> DiskAttachment {
         path: disk.path.clone(),
         read_only: false,
     }
-}
-
-pub(super) fn bind_env_pairs() -> [(String, String); 2] {
-    [
-        (STORAGE_ENV.to_owned(), "1".to_owned()),
-        (STORE_ENV.to_owned(), STORE_BIND.to_owned()),
-    ]
 }
 
 pub(super) fn raw_disk_env_pairs(disk: &RawBtrfsDisk) -> [(String, String); 4] {
