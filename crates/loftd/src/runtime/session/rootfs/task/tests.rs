@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::session::profile::RootfsMaterializationRecorder;
 use crate::runtime::session::rootfs::image_source::{
     BuildahCommands, ImageSourceCacheProfile, ImageSourceCacheStatus, OciProcessConfig,
 };
@@ -157,6 +158,27 @@ impl BuildahCommands for FakeBuildahCommands {
     }
 }
 
+#[derive(Debug, Default)]
+struct RecordingRootfsProfile {
+    labels: Vec<&'static str>,
+}
+
+impl RecordingRootfsProfile {
+    fn labels(&self) -> Vec<&'static str> {
+        self.labels.clone()
+    }
+}
+
+impl RootfsMaterializationRecorder for RecordingRootfsProfile {
+    fn measure_result<T, F>(&mut self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        self.labels.push(label);
+        f()
+    }
+}
+
 #[test]
 fn manager_materializes_btrfs_task_rootfs_handle_from_buildah_source() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
@@ -197,6 +219,46 @@ fn manager_materializes_btrfs_task_rootfs_handle_from_buildah_source() {
     assert_eq!(
         handle.cache_profile().digest_key.as_deref(),
         Some("sha256-feedface")
+    );
+}
+
+#[test]
+fn manager_profile_starts_with_task_directory_reset() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let state_root = temp.path().join("state");
+    let task_id = "task-profile";
+    let rootfs_path = state_root
+        .join(TASKS_DIR)
+        .join(task_id)
+        .join(BTRFS_ROOTFS_DIR);
+    let buildah =
+        FakeBuildahCommands::success(&rootfs_path, DEFAULT_IMAGE).with_image_digest("sha256:local");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+    let manager = TaskRootfsManager::new(state_root, temp.path().join("image-cache"));
+    let mut profile = RecordingRootfsProfile::default();
+
+    manager
+        .materialize_btrfs_from_buildah_profiled(
+            &ImageSelection::PreferLocalhostThenCanonical,
+            task_id,
+            false,
+            &buildah,
+            &btrfs,
+            &mut profile,
+        )
+        .expect("handle should materialize");
+
+    assert_eq!(
+        profile.labels(),
+        vec![
+            "task_rootfs_materialization:reset_task_dir",
+            "task_rootfs_materialization:buildah_version",
+            "task_rootfs_materialization:select_image_attempt",
+            "task_rootfs_materialization:resolve_image_digest",
+            "task_rootfs_materialization:cache_entry_read",
+            "task_rootfs_materialization:buildah_materializer",
+            "task_rootfs_materialization:cache_population",
+        ]
     );
 }
 

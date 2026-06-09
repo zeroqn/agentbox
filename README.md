@@ -857,7 +857,22 @@ session, task state cleanup, and early guest bootstrap. Btrfs rootfs profile
 metadata includes `task_rootfs_cache_status` (`hit`, `miss-populated`,
 `miss-rebuilt`, or `direct-uncached`), `task_rootfs_cache_digest_key` when a
 known digest keys the cache entry, optional `task_rootfs_cache_path`, and
-`task_rootfs_cache_uncached_reason` for direct uncached runs. The host report keeps
+`task_rootfs_cache_uncached_reason` for direct uncached runs. The
+`task_rootfs_materialization` row remains the aggregate rootfs phase; when
+profiling is enabled, subordinate rows such as
+`task_rootfs_materialization:reset_task_dir`,
+`task_rootfs_materialization:buildah_version`,
+`task_rootfs_materialization:select_image_attempt`,
+`task_rootfs_materialization:resolve_image_digest`,
+`task_rootfs_materialization:cache_entry_read`,
+`task_rootfs_materialization:cache_snapshot`,
+`task_rootfs_materialization:buildah_materializer`, and
+`task_rootfs_materialization:cache_population` show the host-side path that ran.
+Cache-hit runs usually stop at `cache_snapshot`, direct-uncached runs skip cache
+population, and `buildah_materializer` intentionally treats the Buildah
+unshare child as a black box. These detail rows are diagnostics for the path
+taken and should not be treated as an additive replacement for the aggregate
+row. The host report keeps
 the aggregate `helper_session` row and, when profiling is enabled, also emits
 scoped helper/VM-worker host reports with `profile_scope` metadata for the
 helper command build/spawn/wait path, helper setup, passt handoff, VM-worker

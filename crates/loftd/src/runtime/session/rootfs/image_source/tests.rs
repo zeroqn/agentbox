@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::session::profile::RootfsMaterializationRecorder;
 use std::cell::RefCell;
 
 #[derive(Debug)]
@@ -265,6 +266,27 @@ fn call_materialize(
     materialize_btrfs_source_rootfs(selection, task_rootfs, cache_root, commands, btrfs)
 }
 
+#[derive(Debug, Default)]
+struct RecordingRootfsProfile {
+    labels: Vec<&'static str>,
+}
+
+impl RecordingRootfsProfile {
+    fn labels(&self) -> Vec<&'static str> {
+        self.labels.clone()
+    }
+}
+
+impl RootfsMaterializationRecorder for RecordingRootfsProfile {
+    fn measure_result<T, F>(&mut self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        self.labels.push(label);
+        f()
+    }
+}
+
 #[test]
 fn default_selection_uses_localhost_with_pull_never_when_present() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
@@ -316,6 +338,43 @@ fn default_selection_uses_localhost_with_pull_never_when_present() {
                 "never",
                 task_rootfs.to_str().unwrap()
             ],
+        ]
+    );
+}
+
+#[test]
+fn profile_records_miss_subphases_without_child_internals() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let task_rootfs = temp.path().join("rootfs");
+    let output = format!(
+        "selected_image={DEFAULT_IMAGE}\nimage_digest=sha256:local\nrootfs_path={}\n",
+        task_rootfs.display()
+    );
+    let commands = FakeBuildahCommands::new(true, &task_rootfs)
+        .with_image_digest("sha256:local")
+        .with_output(output);
+    let btrfs = FakeBtrfsRootfsCommands::new();
+    let mut profile = RecordingRootfsProfile::default();
+
+    materialize_btrfs_source_rootfs_profiled(
+        &ImageSelection::PreferLocalhostThenCanonical,
+        &task_rootfs,
+        &temp.path().join("cache"),
+        &commands,
+        &btrfs,
+        &mut profile,
+    )
+    .expect("local image should materialize");
+
+    assert_eq!(
+        profile.labels(),
+        vec![
+            "task_rootfs_materialization:buildah_version",
+            "task_rootfs_materialization:select_image_attempt",
+            "task_rootfs_materialization:resolve_image_digest",
+            "task_rootfs_materialization:cache_entry_read",
+            "task_rootfs_materialization:buildah_materializer",
+            "task_rootfs_materialization:cache_population",
         ]
     );
 }
@@ -532,6 +591,53 @@ fn cache_hit_reuses_source_without_unshare_materializer() {
             .iter()
             .any(|arg| matches!(arg.as_str(), "from" | "mount" | "umount" | "rm"))
     }));
+}
+
+#[test]
+fn profile_records_cache_hit_snapshot_without_materializer_or_population() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    write_guest_init(&entry.rootfs_path, "hash-loftd", 0o755);
+    let source = ImageSourceRootfs {
+        selected_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig {
+            env: vec!["PATH=/nix/store/fish/bin".to_owned()],
+            ..OciProcessConfig::default()
+        },
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    let task_rootfs = temp.path().join("task-rootfs");
+    let commands = FakeBuildahCommands::new(false, &task_rootfs)
+        .with_image_digest("sha256:feedface")
+        .fail_on_unshare();
+    let btrfs = FakeBtrfsRootfsCommands::new();
+    let mut profile = RecordingRootfsProfile::default();
+
+    materialize_btrfs_source_rootfs_profiled(
+        &ImageSelection::PreferLocalhostThenCanonical,
+        &task_rootfs,
+        &cache_root,
+        &commands,
+        &btrfs,
+        &mut profile,
+    )
+    .expect("cache hit should materialize task rootfs");
+
+    assert_eq!(
+        profile.labels(),
+        vec![
+            "task_rootfs_materialization:buildah_version",
+            "task_rootfs_materialization:select_image_attempt",
+            "task_rootfs_materialization:resolve_image_digest",
+            "task_rootfs_materialization:cache_entry_read",
+            "task_rootfs_materialization:cache_snapshot",
+        ]
+    );
 }
 
 #[test]

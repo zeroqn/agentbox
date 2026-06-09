@@ -103,15 +103,18 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                 plan.state_layout.root_dir().to_path_buf(),
                 plan.image_cache_dir.clone(),
             );
-            let handle = profiler.measure_result("task_rootfs_materialization", || {
-                manager.materialize_btrfs_from_buildah(
-                    &plan.image_selection,
-                    &task_id,
-                    plan.preserve_debug,
-                    &rootfs::image_source::HostBuildahCommands,
-                    &HostBtrfsRootfsCommands,
-                )
-            })?;
+            let handle =
+                profiler.measure_result_with("task_rootfs_materialization", |profiler| {
+                    let mut rootfs_profile = profiler.rootfs_materialization_recorder();
+                    manager.materialize_btrfs_from_buildah_profiled(
+                        &plan.image_selection,
+                        &task_id,
+                        plan.preserve_debug,
+                        &rootfs::image_source::HostBuildahCommands,
+                        &HostBtrfsRootfsCommands,
+                        &mut rootfs_profile,
+                    )
+                })?;
             let lease = TaskRootfsLease::new(handle, HostBtrfsRootfsCommands);
             let nix_overlay_lease = profiler.measure_result("nix_overlay_lease", || {
                 nix_overlay::NixOverlayLease::acquire(plan.state_layout.root_dir(), lease.handle())

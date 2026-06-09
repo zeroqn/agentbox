@@ -6,6 +6,9 @@ use std::process::{Command, Stdio};
 
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::plan::ImageSelection;
+use crate::runtime::session::profile::{
+    DisabledRootfsMaterializationRecorder, RootfsMaterializationRecorder,
+};
 use crate::runtime::session::rootfs::image_source::{
     self, BuildahCommands, ImageSourceCacheProfile, OciProcessConfig,
 };
@@ -190,16 +193,39 @@ impl TaskRootfsManager {
         buildah: &impl BuildahCommands,
         btrfs: &impl BtrfsRootfsCommands,
     ) -> Result<TaskRootfsHandle> {
+        let mut profile = DisabledRootfsMaterializationRecorder;
+        self.materialize_btrfs_from_buildah_profiled(
+            selection,
+            task_id,
+            preserve_debug,
+            buildah,
+            btrfs,
+            &mut profile,
+        )
+    }
+
+    pub(in crate::runtime::session) fn materialize_btrfs_from_buildah_profiled(
+        &self,
+        selection: &ImageSelection,
+        task_id: &str,
+        preserve_debug: bool,
+        buildah: &impl BuildahCommands,
+        btrfs: &impl BtrfsRootfsCommands,
+        profile: &mut impl RootfsMaterializationRecorder,
+    ) -> Result<TaskRootfsHandle> {
         let task_dir = self.state_root.join(TASKS_DIR).join(task_id);
-        reset_task_dir(&task_dir, btrfs)?;
+        profile.measure_result("task_rootfs_materialization:reset_task_dir", || {
+            reset_task_dir(&task_dir, btrfs)
+        })?;
         let rootfs_path = task_dir.join(BTRFS_ROOTFS_DIR);
 
-        let source_rootfs = image_source::materialize_btrfs_source_rootfs(
+        let source_rootfs = image_source::materialize_btrfs_source_rootfs_profiled(
             selection,
             &rootfs_path,
             &self.image_cache_root,
             buildah,
             btrfs,
+            profile,
         )
         .map_err(|err| {
             cleanup_after_materialization_failure(&task_dir, btrfs, preserve_debug, err)

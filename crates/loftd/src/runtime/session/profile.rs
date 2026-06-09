@@ -118,6 +118,12 @@ impl LoftdHostProfiler {
         result
     }
 
+    pub(in crate::runtime::session) fn rootfs_materialization_recorder(
+        &mut self,
+    ) -> LoftdRootfsMaterializationRecorder<'_> {
+        LoftdRootfsMaterializationRecorder { profiler: self }
+    }
+
     pub(in crate::runtime::session) fn write_vm_worker_wait_details(
         &self,
         task_state_dir: &Path,
@@ -282,6 +288,36 @@ impl LoftdHostProfiler {
     }
 }
 
+pub(in crate::runtime::session) trait RootfsMaterializationRecorder {
+    fn measure_result<T, F>(&mut self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>;
+}
+
+pub(in crate::runtime::session) struct DisabledRootfsMaterializationRecorder;
+
+impl RootfsMaterializationRecorder for DisabledRootfsMaterializationRecorder {
+    fn measure_result<T, F>(&mut self, _label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        f()
+    }
+}
+
+pub(in crate::runtime::session) struct LoftdRootfsMaterializationRecorder<'a> {
+    profiler: &'a mut LoftdHostProfiler,
+}
+
+impl RootfsMaterializationRecorder for LoftdRootfsMaterializationRecorder<'_> {
+    fn measure_result<T, F>(&mut self, label: &'static str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        self.profiler.measure_result(label, f)
+    }
+}
+
 fn host_profile_env_enabled() -> bool {
     matches!(
         std::env::var(LOFTD_HOST_PROFILE_ENV).as_deref(),
@@ -421,6 +457,20 @@ mod tests {
         profiler
             .measure_result("task_rootfs_materialization", || Ok(()))
             .expect("phase should pass");
+        for label in [
+            "task_rootfs_materialization:reset_task_dir",
+            "task_rootfs_materialization:buildah_version",
+            "task_rootfs_materialization:select_image_attempt",
+            "task_rootfs_materialization:resolve_image_digest",
+            "task_rootfs_materialization:cache_entry_read",
+            "task_rootfs_materialization:cache_snapshot",
+            "task_rootfs_materialization:buildah_materializer",
+            "task_rootfs_materialization:cache_population",
+        ] {
+            profiler
+                .measure_result(label, || Ok(()))
+                .expect("rootfs profile detail should pass");
+        }
         profiler
             .measure_result("persistent_disk_preparation", || Ok(()))
             .expect("phase should pass");
@@ -466,6 +516,14 @@ mod tests {
             "workspace_canonicalization",
             "launch_plan_build",
             "task_rootfs_materialization",
+            "task_rootfs_materialization:reset_task_dir",
+            "task_rootfs_materialization:buildah_version",
+            "task_rootfs_materialization:select_image_attempt",
+            "task_rootfs_materialization:resolve_image_digest",
+            "task_rootfs_materialization:cache_entry_read",
+            "task_rootfs_materialization:cache_snapshot",
+            "task_rootfs_materialization:buildah_materializer",
+            "task_rootfs_materialization:cache_population",
             "persistent_disk_preparation",
             "guest_init_resolution",
             "launch_config_build",

@@ -8,6 +8,9 @@ use std::process::{Command, Stdio};
 
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::plan::ImageSelection;
+use crate::runtime::session::profile::{
+    DisabledRootfsMaterializationRecorder, RootfsMaterializationRecorder,
+};
 use crate::runtime::session::rootfs::task::{
     BtrfsRootfsCommands, UnsharedBtrfsRootfsCommands, snapshot_mounted_rootfs,
 };
@@ -208,27 +211,61 @@ pub(crate) fn materialize_btrfs_source_rootfs(
     commands: &impl BuildahCommands,
     btrfs: &impl BtrfsRootfsCommands,
 ) -> Result<ImageSourceRootfs> {
-    commands
-        .run(&["--version"])
+    let mut profile = DisabledRootfsMaterializationRecorder;
+    materialize_btrfs_source_rootfs_profiled(
+        selection,
+        destination,
+        image_cache_root,
+        commands,
+        btrfs,
+        &mut profile,
+    )
+}
+
+pub(in crate::runtime::session) fn materialize_btrfs_source_rootfs_profiled(
+    selection: &ImageSelection,
+    destination: &Path,
+    image_cache_root: &Path,
+    commands: &impl BuildahCommands,
+    btrfs: &impl BtrfsRootfsCommands,
+    profile: &mut impl RootfsMaterializationRecorder,
+) -> Result<ImageSourceRootfs> {
+    profile
+        .measure_result("task_rootfs_materialization:buildah_version", || {
+            commands.run(&["--version"])
+        })
         .context("failed to verify buildah; btrfs-snapshot task rootfs requires buildah")?;
 
-    let attempt = select_attempt(selection, commands)?;
-    let resolved_digest = resolve_attempt_digest(&attempt, commands)?;
+    let attempt = profile
+        .measure_result("task_rootfs_materialization:select_image_attempt", || {
+            select_attempt(selection, commands)
+        })?;
+    let resolved_digest = profile
+        .measure_result("task_rootfs_materialization:resolve_image_digest", || {
+            resolve_attempt_digest(&attempt, commands)
+        })?;
     let mut invalid_cached_entry = false;
 
     if let Some(digest) = resolved_digest.as_deref() {
-        let entry = BtrfsImageCacheEntry::new(image_cache_root, digest)?;
-        match read_valid_cache_entry(&entry) {
+        let (entry, cached_entry) =
+            profile.measure_result("task_rootfs_materialization:cache_entry_read", || {
+                let entry = BtrfsImageCacheEntry::new(image_cache_root, digest)?;
+                let cached_entry = read_valid_cache_entry(&entry);
+                Ok((entry, cached_entry))
+            })?;
+        match cached_entry {
             Ok(Some(cached)) => {
-                snapshot_mounted_rootfs(&entry.rootfs_path, destination, btrfs).with_context(
-                    || {
+                profile
+                    .measure_result("task_rootfs_materialization:cache_snapshot", || {
+                        snapshot_mounted_rootfs(&entry.rootfs_path, destination, btrfs)
+                    })
+                    .with_context(|| {
                         format!(
                             "failed to btrfs-snapshot cached image rootfs '{}' to task rootfs '{}'",
                             entry.rootfs_path.display(),
                             destination.display()
                         )
-                    },
-                )?;
+                    })?;
                 return Ok(ImageSourceRootfs {
                     selected_reference: attempt.reference,
                     image_digest: Some(entry.digest.clone()),
@@ -250,7 +287,10 @@ pub(crate) fn materialize_btrfs_source_rootfs(
         }
     }
 
-    let materialized = materialize_task_rootfs_from_buildah(&attempt, destination, commands)?;
+    let materialized = profile
+        .measure_result("task_rootfs_materialization:buildah_materializer", || {
+            materialize_task_rootfs_from_buildah(&attempt, destination, commands)
+        })?;
     let Some(digest) = materialized.image_digest.as_deref() else {
         return Ok(ImageSourceRootfs {
             cache_profile: ImageSourceCacheProfile::direct_uncached("unknown-digest"),
@@ -258,15 +298,19 @@ pub(crate) fn materialize_btrfs_source_rootfs(
         });
     };
 
-    let entry = BtrfsImageCacheEntry::new(image_cache_root, digest)?;
-    let rebuilt = invalid_cached_entry || entry.entry_dir.exists();
-    populate_cache_entry(&entry, &materialized, btrfs).with_context(|| {
-        format!(
-            "failed to populate loftd btrfs image-source cache entry '{}' from task rootfs '{}'",
-            entry.entry_dir.display(),
-            materialized.rootfs_path.display()
-        )
-    })?;
+    let (entry, rebuilt) =
+        profile.measure_result("task_rootfs_materialization:cache_population", || {
+            let entry = BtrfsImageCacheEntry::new(image_cache_root, digest)?;
+            let rebuilt = invalid_cached_entry || entry.entry_dir.exists();
+            populate_cache_entry(&entry, &materialized, btrfs).with_context(|| {
+                format!(
+                    "failed to populate loftd btrfs image-source cache entry '{}' from task rootfs '{}'",
+                    entry.entry_dir.display(),
+                    materialized.rootfs_path.display()
+                )
+            })?;
+            Ok((entry, rebuilt))
+        })?;
 
     Ok(ImageSourceRootfs {
         cache_profile: ImageSourceCacheProfile::populated(&entry, rebuilt),
