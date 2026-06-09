@@ -6,12 +6,14 @@ use std::process::ExitCode;
 
 use crate::cli::RuntimeOptions;
 use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
+use crate::runtime::session::task_control::TaskControlCommand;
 use crate::task_rootfs::TaskRootfsBackend;
 
 pub(crate) mod nix_overlay;
 mod profile;
 pub(crate) mod rootfs;
 pub(crate) mod supervisor;
+pub(crate) mod task_control;
 
 use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec};
@@ -42,6 +44,24 @@ pub(crate) fn run_image_command(command: ImageCacheCommand) -> Result<String> {
         &HostBtrfsRootfsCommands,
     )?;
     Ok(output.render_stdout())
+}
+
+pub(crate) fn run_task_control_command(command: TaskControlCommand) -> Result<String> {
+    let cwd = env::current_dir()?
+        .canonicalize()
+        .context("failed to canonicalize current directory for loftd task control command")?;
+    let xdg_state_home = env::var_os("XDG_STATE_HOME").map(PathBuf::from);
+    let xdg_config_home = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    let home_dir = env::var_os("HOME").map(PathBuf::from);
+    let config =
+        crate::config::state::read_config(xdg_config_home.as_deref(), home_dir.as_deref())?;
+    let state_layout = crate::state::resolve_state_layout_from_parts(
+        &cwd,
+        xdg_state_home.as_deref(),
+        home_dir.as_deref(),
+        config.state_location_override(),
+    )?;
+    task_control::run_task_control_command(command, state_layout.app_dir())
 }
 
 pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -> Result<ExitCode> {
@@ -186,10 +206,26 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                 "loftd libkrun launch"
                             );
 
+                            let active_task = task_control::ActiveTaskSpec {
+                                task_id: lease.handle().task_id().to_owned(),
+                                workspace_slug: plan.workspace_slug.clone(),
+                                workspace_dir: plan.workspace_dir.clone(),
+                                task_dir: lease.handle().task_dir().to_path_buf(),
+                                image_reference: lease
+                                    .handle()
+                                    .selected_image_reference()
+                                    .to_owned(),
+                                image_digest: lease.handle().image_digest().map(str::to_owned),
+                            };
                             BtrfsHostRunResult::Helper(profiler.measure_result_with(
                                 "helper_session",
                                 |profiler| {
-                                    HostSupervisor.run(&config, lease.handle().task_dir(), profiler)
+                                    HostSupervisor.run(
+                                        &config,
+                                        lease.handle().task_dir(),
+                                        profiler,
+                                        &active_task,
+                                    )
                                 },
                             ))
                         }
@@ -202,6 +238,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
             let cleanup_result = if plan.preserve_debug {
                 let hint = lease.handle().preserve_debug_hint();
                 profiler.measure_result("task_state_cleanup", || {
+                    task_control::remove_active_task(lease.handle().task_dir())?;
                     let result = lease.preserve();
                     if let rootfs::task::CleanupResult::Preserved(path) = &result {
                         eprintln!(
@@ -212,7 +249,10 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                     Ok(result)
                 })
             } else {
-                profiler.measure_result("task_state_cleanup", || lease.cleanup())
+                profiler.measure_result("task_state_cleanup", || {
+                    task_control::remove_active_task(lease.handle().task_dir())?;
+                    lease.cleanup()
+                })
             };
             finalize_profiled_btrfs_run(host_run_result, cleanup_result, || {
                 profiler.emit_to_stderr();

@@ -10,6 +10,7 @@ pub(crate) mod vm_child;
 
 use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::session::profile::LoftdHostProfiler;
+use crate::runtime::session::task_control::ActiveTaskSpec;
 
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
 
@@ -42,6 +43,7 @@ pub(crate) trait Supervisor {
         config: &LaunchConfig,
         task_state_dir: &Path,
         profiler: &mut LoftdHostProfiler,
+        active_task: &ActiveTaskSpec,
     ) -> Result<ChildStatus>;
 }
 
@@ -54,10 +56,11 @@ impl Supervisor for HostSupervisor {
         config: &LaunchConfig,
         task_state_dir: &Path,
         profiler: &mut LoftdHostProfiler,
+        active_task: &ActiveTaskSpec,
     ) -> Result<ChildStatus> {
         let config_path = task_state_dir.join("launch.conf");
         config.write_to(&config_path)?;
-        command::run_helper_process(config, &config_path, profiler)
+        command::run_helper_process(config, &config_path, profiler, active_task)
     }
 }
 

@@ -31,7 +31,9 @@ impl ContainerStoreBackend {
     after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
   loftd images list
   loftd images sync ghcr.io/example/loftd:dev
-  loftd images remove sha256-feedface"
+  loftd images remove sha256-feedface
+  loftd ps
+  loftd kill <task-id>"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -167,6 +169,15 @@ pub(crate) enum CliCommand {
         #[command(subcommand)]
         command: ImagesCommand,
     },
+
+    #[command(name = "ps", about = "List active loftd task VMs across workspaces")]
+    Ps,
+
+    #[command(name = "kill", about = "Terminate an active loftd task VM")]
+    Kill {
+        #[arg(value_name = "TASK_ID")]
+        task_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
@@ -203,6 +214,13 @@ pub(crate) enum CliAction {
         command: ImagesCommand,
         log_settings: LogSettings,
     },
+    Ps {
+        log_settings: LogSettings,
+    },
+    Kill {
+        task_id: String,
+        log_settings: LogSettings,
+    },
 }
 
 impl Cli {
@@ -212,6 +230,13 @@ impl Cli {
                 CliCommand::DecodeLaunchConf { path } => CliAction::DecodeLaunchConf { path },
                 CliCommand::Images { command } => CliAction::Images {
                     command,
+                    log_settings: LogSettings::from_process_env(self.log_level, self.debug),
+                },
+                CliCommand::Ps => CliAction::Ps {
+                    log_settings: LogSettings::from_process_env(self.log_level, self.debug),
+                },
+                CliCommand::Kill { task_id } => CliAction::Kill {
+                    task_id,
                     log_settings: LogSettings::from_process_env(self.log_level, self.debug),
                 },
             }
@@ -586,6 +611,24 @@ mod tests {
                 }
             ),
             other => panic!("expected images remove action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_task_control_ps_and_kill_subcommands() {
+        let ps = Cli::try_parse_from(["loftd", "ps"]).expect("ps should parse");
+        let kill =
+            Cli::try_parse_from(["loftd", "kill", "workspace-1-42"]).expect("kill should parse");
+
+        match ps.into_action() {
+            crate::cli::CliAction::Ps { .. } => {}
+            other => panic!("expected ps action, got {other:?}"),
+        }
+        match kill.into_action() {
+            crate::cli::CliAction::Kill { task_id, .. } => {
+                assert_eq!(task_id, "workspace-1-42");
+            }
+            other => panic!("expected kill action, got {other:?}"),
         }
     }
 

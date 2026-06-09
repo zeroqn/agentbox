@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use crate::cli::RuntimeOptions;
 use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
+use crate::runtime::session::task_control::TaskControlCommand;
 
 pub(crate) mod host_tools;
 pub(crate) mod launch;
@@ -39,6 +40,10 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
 
 pub(crate) fn run_image_command(command: ImageCacheCommand) -> Result<String> {
     session::run_image_command(command)
+}
+
+pub(crate) fn run_task_control_command(command: TaskControlCommand) -> Result<String> {
+    session::run_task_control_command(command)
 }
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {

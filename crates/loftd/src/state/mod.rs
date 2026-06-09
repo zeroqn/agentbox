@@ -12,6 +12,10 @@ pub(crate) struct StateLayout {
 }
 
 impl StateLayout {
+    pub(crate) fn app_dir(&self) -> &Path {
+        &self.app_dir
+    }
+
     pub(crate) fn root_dir(&self) -> &Path {
         &self.root_dir
     }
@@ -140,5 +144,18 @@ mod tests {
 
         assert_eq!(layout.root_dir(), &state_home.join("loftd").join("project"));
         assert_ne!(layout.root_dir(), workspace.join(".agentbox"));
+    }
+
+    #[test]
+    fn resolve_state_layout_exposes_app_root_for_cross_workspace_management() {
+        let layout = resolve_state_layout_from_parts(
+            Path::new("/tmp/project"),
+            Some(Path::new("/tmp/xdg-state")),
+            Some(Path::new("/tmp/home")),
+            None,
+        )
+        .expect("layout should resolve");
+
+        assert_eq!(layout.app_dir(), Path::new("/tmp/xdg-state/loftd"));
     }
 }

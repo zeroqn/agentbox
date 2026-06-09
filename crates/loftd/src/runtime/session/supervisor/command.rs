@@ -1,9 +1,12 @@
 //! Host-side libkrun helper command construction and process spawning.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::OsString;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::logging::INTERNAL_LOG_LEVEL_ENV;
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
@@ -11,11 +14,15 @@ use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
 use crate::runtime::session::supervisor::{ChildStatus, LIBKRUN_ENTER_HELPER_ARG};
+use crate::runtime::session::task_control::{
+    ActiveTaskSpec, ProcessIdentity, remove_active_task, write_active_task,
+};
 
 pub(crate) fn run_helper_process(
     config: &LaunchConfig,
     config_path: &Path,
     profiler: &mut LoftdHostProfiler,
+    active_task: &ActiveTaskSpec,
 ) -> Result<ChildStatus> {
     let host_profile_enabled = profiler.is_enabled();
     let spec = profiler.measure_result("helper_command_build", || {
@@ -29,6 +36,18 @@ pub(crate) fn run_helper_process(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    // SAFETY: this pre-exec hook only calls async-signal-safe libc setsid in
+    // the child process before exec. A dedicated session and process group give
+    // loftd a bounded task-level control identity for `loftd kill`.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() >= 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
     let mut child = profiler.measure_result("helper_spawn_process", || {
         command.spawn().with_context(|| {
         format!(
@@ -38,6 +57,19 @@ pub(crate) fn run_helper_process(
         })
     })?;
     tracing::debug!(pid = child.id(), "loftd libkrun helper spawned");
+    let process = match ProcessIdentity::from_spawned_process(child.id(), child.id(), child.id()) {
+        Ok(process) => process,
+        Err(err) => {
+            terminate_spawned_child_group(&mut child);
+            let _ = remove_active_task(&active_task.task_dir);
+            return Err(err).context("failed to identify active loftd task after helper spawn");
+        }
+    };
+    if let Err(err) = write_active_task(active_task.clone(), process) {
+        terminate_spawned_child_group(&mut child);
+        let _ = remove_active_task(&active_task.task_dir);
+        return Err(err).context("failed to record active loftd task after helper spawn");
+    }
     let status = profiler.measure_result("helper_wait_process", || {
         child
             .wait()
@@ -48,6 +80,34 @@ pub(crate) fn run_helper_process(
         Some(code) => ChildStatus::exited(code),
         None => ChildStatus::signaled(),
     })
+}
+
+fn terminate_spawned_child_group(child: &mut Child) {
+    let _ = kill_spawned_process_group(child.id(), libc::SIGTERM);
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(_) => break,
+        }
+    }
+    let _ = kill_spawned_process_group(child.id(), libc::SIGKILL);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn kill_spawned_process_group(pgid: u32, signal: i32) -> Result<()> {
+    let pgid = i32::try_from(pgid).context("spawned process group id does not fit in i32")?;
+    if pgid <= 1 {
+        bail!("refusing to signal unsafe spawned process group id {pgid}");
+    }
+    let rc = unsafe { libc::kill(-pgid, signal) };
+    if rc == 0 {
+        return Ok(());
+    }
+    Err(std::io::Error::last_os_error())
+        .with_context(|| format!("failed to signal spawned helper process group {pgid}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
