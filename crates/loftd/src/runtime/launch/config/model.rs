@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::logging::LogLevel;
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
@@ -45,6 +45,92 @@ pub struct BindMount {
     pub source: PathBuf,
     pub tag: String,
     pub target: String,
+    pub source_kind: BindMountSourceKind,
+    pub read_only: bool,
+}
+
+impl BindMount {
+    pub(crate) fn directory(
+        source: impl Into<PathBuf>,
+        tag: impl Into<String>,
+        target: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            tag: tag.into(),
+            target: target.into(),
+            source_kind: BindMountSourceKind::Directory,
+            read_only: false,
+        }
+    }
+
+    pub(crate) fn file(
+        source: impl Into<PathBuf>,
+        tag: impl Into<String>,
+        target: impl Into<String>,
+        read_only: bool,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            tag: tag.into(),
+            target: target.into(),
+            source_kind: BindMountSourceKind::File,
+            read_only,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BindMountSourceKind {
+    Directory,
+    File,
+}
+
+impl BindMountSourceKind {
+    pub(crate) fn as_config_value(self) -> &'static str {
+        match self {
+            Self::Directory => "directory",
+            Self::File => "file",
+        }
+    }
+
+    pub(crate) fn parse_config_value(value: &str) -> Result<Self> {
+        match value {
+            "directory" => Ok(Self::Directory),
+            "file" => Ok(Self::File),
+            _ => anyhow::bail!("loftd launch config bind mount source_kind is invalid"),
+        }
+    }
+}
+
+pub(crate) fn canonical_mount_target(target: &str) -> Result<String> {
+    let path = Path::new(target);
+    if !path.is_absolute() {
+        anyhow::bail!("loftd bind mount target '{target}' must be absolute");
+    }
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(value) => {
+                let value = value.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("loftd bind mount target '{target}' must be valid UTF-8")
+                })?;
+                components.push(value);
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                anyhow::bail!("loftd bind mount target '{target}' must not contain '..'");
+            }
+            Component::Prefix(_) => {
+                anyhow::bail!("loftd bind mount target '{target}' has an unsupported prefix");
+            }
+        }
+    }
+    if components.is_empty() {
+        anyhow::bail!("loftd bind mount target must not be /");
+    }
+    Ok(format!("/{}", components.join("/")))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

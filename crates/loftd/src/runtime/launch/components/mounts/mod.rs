@@ -33,11 +33,7 @@ pub(crate) fn prepare_dev_mounts(
 }
 
 fn bind_mount(source: &Path, tag: &str, target: &str) -> BindMount {
-    BindMount {
-        source: source.to_path_buf(),
-        tag: tag.to_owned(),
-        target: target.to_owned(),
-    }
+    BindMount::directory(source, tag, target)
 }
 
 #[cfg(test)]

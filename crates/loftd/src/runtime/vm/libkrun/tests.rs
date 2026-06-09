@@ -278,31 +278,11 @@ fn passt_publish_config() -> LaunchConfig {
 
 fn test_mounts() -> Vec<BindMount> {
     vec![
-        BindMount {
-            source: Path::new("/workspace-src").to_path_buf(),
-            tag: WORKSPACE_TAG.to_owned(),
-            target: WORKSPACE_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/home/host/.codex").to_path_buf(),
-            tag: CODEX_TAG.to_owned(),
-            target: CODEX_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/home/host/.pi").to_path_buf(),
-            tag: PI_TAG.to_owned(),
-            target: PI_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/state/project/cargo").to_path_buf(),
-            tag: CARGO_TAG.to_owned(),
-            target: CARGO_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/state/sccache").to_path_buf(),
-            tag: SCCACHE_TAG.to_owned(),
-            target: SCCACHE_TARGET.to_owned(),
-        },
+        BindMount::directory("/workspace-src", WORKSPACE_TAG, WORKSPACE_TARGET),
+        BindMount::directory("/home/host/.codex", CODEX_TAG, CODEX_TARGET),
+        BindMount::directory("/home/host/.pi", PI_TAG, PI_TARGET),
+        BindMount::directory("/state/project/cargo", CARGO_TAG, CARGO_TARGET),
+        BindMount::directory("/state/sccache", SCCACHE_TAG, SCCACHE_TARGET),
     ]
 }
 

@@ -1,13 +1,16 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{ContainerStoreBackend, RuntimeOptions};
+use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec};
 use crate::config;
 use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
 use crate::runtime::launch::components::mounts;
-use crate::runtime::launch::config::{BindMount, NetworkMode};
+use crate::runtime::launch::config::{
+    BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
+};
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -81,6 +84,12 @@ impl LaunchPlan {
             .container_store_backend
             .unwrap_or(ContainerStoreBackend::DEFAULT);
         let mut bind_mounts = mounts::prepare_dev_mounts(&workspace_dir, home_dir, &state_layout)?;
+        bind_mounts.extend(prepare_user_volume_mounts(
+            &options.volumes,
+            &workspace_dir,
+            bind_mounts.len(),
+        )?);
+        crate::runtime::launch::config::validate_mounts(&bind_mounts)?;
         if container_store_backend == ContainerStoreBackend::Bind {
             bind_mounts.push(mounts::containers_store::prepare(&state_layout)?);
             crate::runtime::launch::config::validate_mounts(&bind_mounts)?;
@@ -120,6 +129,71 @@ impl LaunchPlan {
             },
         })
     }
+}
+
+fn prepare_user_volume_mounts(
+    volumes: &[VolumeSpec],
+    workspace_dir: &Path,
+    tag_start: usize,
+) -> Result<Vec<BindMount>> {
+    volumes
+        .iter()
+        .enumerate()
+        .map(|(index, volume)| prepare_user_volume_mount(volume, workspace_dir, tag_start + index))
+        .collect()
+}
+
+fn prepare_user_volume_mount(
+    volume: &VolumeSpec,
+    workspace_dir: &Path,
+    tag_index: usize,
+) -> Result<BindMount> {
+    let target = validate_user_volume_target(&volume.target)?;
+    let source = absolute_source_path(&volume.source, workspace_dir);
+    let source = fs::canonicalize(&source)
+        .with_context(|| format!("failed to inspect volume source '{}'", source.display()))?;
+    let metadata = fs::metadata(&source)
+        .with_context(|| format!("failed to inspect volume source '{}'", source.display()))?;
+    let source_kind = if metadata.is_dir() {
+        BindMountSourceKind::Directory
+    } else if metadata.is_file() {
+        BindMountSourceKind::File
+    } else {
+        anyhow::bail!(
+            "loftd volume source '{}' must be a file or directory",
+            source.display()
+        );
+    };
+    let tag = format!("loftd-user-volume-{tag_index}");
+    match source_kind {
+        BindMountSourceKind::Directory => Ok(BindMount {
+            source,
+            tag,
+            target,
+            source_kind,
+            read_only: volume.read_only,
+        }),
+        BindMountSourceKind::File => Ok(BindMount::file(source, tag, target, volume.read_only)),
+    }
+}
+
+fn absolute_source_path(source: &Path, workspace_dir: &Path) -> PathBuf {
+    if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        workspace_dir.join(source)
+    }
+}
+
+fn validate_user_volume_target(target: &str) -> Result<String> {
+    let target = canonical_mount_target(target)?;
+    if target == NIX_TARGET {
+        anyhow::bail!("loftd volume target {NIX_TARGET} is reserved");
+    }
+    if target.contains(".config/codex") {
+        anyhow::bail!("loftd volume target must not include .config/codex");
+    }
+    Ok(target)
 }
 
 fn derive_runtime_hostname(workspace_slug: &str) -> String {
@@ -163,9 +237,9 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
-    use crate::cli::{ContainerStoreBackend, RuntimeOptions};
+    use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec};
     use crate::logging::{LogLevel, LogSettings};
-    use crate::runtime::launch::config::NetworkMode;
+    use crate::runtime::launch::config::{BindMountSourceKind, NetworkMode};
     use crate::runtime::launch::plan::{ImageSelection, LaunchPlan};
     use crate::task_rootfs::TaskRootfsBackend;
     use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -185,6 +259,7 @@ mod tests {
             mem_gib: None,
             network_mode: NetworkMode::Tsi,
             publish: Vec::new(),
+            volumes: Vec::new(),
             guest_command: Vec::new(),
         }
     }
@@ -516,5 +591,126 @@ mod tests {
         .expect("plan should build");
 
         assert_eq!(plan.publish, ["8080:80", "8443:443"]);
+    }
+
+    #[test]
+    fn launch_plan_appends_user_directory_and_file_volumes() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let workspace = dir.path().join("project");
+        let home = dir.path().join("home");
+        let source_dir = dir.path().join("host-dir");
+        let source_file = workspace.join("host-file");
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+        fs::create_dir_all(&source_dir).expect("source dir");
+        fs::write(&source_file, "data").expect("source file");
+        let mut options = runtime_options();
+        options.volumes = vec![
+            VolumeSpec {
+                source: source_dir.clone(),
+                target: "/guest/dir".to_owned(),
+                read_only: false,
+            },
+            VolumeSpec {
+                source: PathBuf::from("host-file"),
+                target: "/guest/file".to_owned(),
+                read_only: true,
+            },
+        ];
+
+        let plan = LaunchPlan::from_env_values(
+            options,
+            workspace.clone(),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(home.as_path()),
+        )
+        .expect("plan should build");
+
+        let dir_mount = plan
+            .bind_mounts
+            .iter()
+            .find(|mount| mount.target == "/guest/dir")
+            .expect("dir volume mount");
+        assert_eq!(dir_mount.source, source_dir);
+        assert_eq!(dir_mount.source_kind, BindMountSourceKind::Directory);
+        assert!(!dir_mount.read_only);
+
+        let file_mount = plan
+            .bind_mounts
+            .iter()
+            .find(|mount| mount.target == "/guest/file")
+            .expect("file volume mount");
+        assert_eq!(file_mount.source, source_file);
+        assert_eq!(file_mount.source_kind, BindMountSourceKind::File);
+        assert!(file_mount.read_only);
+    }
+
+    #[test]
+    fn launch_plan_rejects_user_volume_reserved_or_duplicate_targets() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let workspace = dir.path().join("project");
+        let home = dir.path().join("home");
+        let source = dir.path().join("host-dir");
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+        fs::create_dir_all(&source).expect("source dir");
+
+        for target in [
+            "/",
+            "/.",
+            "/nix",
+            "/nix//",
+            "/workspace",
+            "/workspace/",
+            "/workspace/.",
+            "/home/dev/.codex",
+            "/home/dev/.codex/./",
+        ] {
+            let mut options = runtime_options();
+            options.volumes = vec![VolumeSpec {
+                source: source.clone(),
+                target: target.to_owned(),
+                read_only: false,
+            }];
+            let err = LaunchPlan::from_env_values(
+                options,
+                workspace.clone(),
+                Some(dir.path().join("state").as_path()),
+                Some(dir.path().join("config").as_path()),
+                Some(home.as_path()),
+            )
+            .expect_err("reserved or duplicate target should fail");
+
+            let error = format!("{err:#}");
+            assert!(
+                error.contains("reserved")
+                    || error.contains("duplicated")
+                    || error.contains("must not be /"),
+                "unexpected error for {target}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_plan_rejects_missing_user_volume_source() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let workspace = dir.path().join("project");
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+        let mut options = runtime_options();
+        options.volumes = vec![VolumeSpec {
+            source: PathBuf::from("missing"),
+            target: "/guest/missing".to_owned(),
+            read_only: false,
+        }];
+
+        let err = LaunchPlan::from_env_values(
+            options,
+            workspace,
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect_err("missing source should fail");
+
+        assert!(format!("{err:#}").contains("failed to inspect volume source"));
     }
 }

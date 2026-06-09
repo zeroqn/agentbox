@@ -1007,6 +1007,23 @@ bind-address suffixes, interfaces, and exclusions:
 
 Loftd still does not create a shared/global rootless network namespace.
 
+Use repeatable `-v, --volume SOURCE:TARGET[:ro|:rw]` to add host bind mounts
+to the prepared root. `SOURCE` may be a host file or directory; relative
+sources are resolved from the workspace. `TARGET` must be an absolute guest
+path. Omitting the mode defaults to read-write, `:rw` is explicit read-write,
+and `:ro` remounts the bind target read-only after grafting:
+
+```bash
+./result/bin/loftd -v /host/cache:/home/dev/project-cache -- bash -lc 'ls /home/dev/project-cache'
+./result/bin/loftd --volume /host/config.json:/workspace/config.json:ro -- cat /workspace/config.json
+```
+
+User volumes are additive only: they do not replace `/workspace`, `/nix`, or
+the built-in Codex/Pi/Cargo/sccache/container-store mounts, and duplicate guest
+targets are rejected. Loftd intentionally does not support Podman SELinux
+suffixes (`:z`, `:Z`), ownership mutation (`:U`), propagation flags, named
+volumes, or anonymous volumes.
+
 After networking is ready, the helper dynamically loads `libkrun.so.1` or
 `libkrun.so` from `$out/lib/loftd` when running from a Nix `.#loftd` package,
 then falls back to normal soname lookup; `LOFTD_LIBKRUN_LIBRARY` still wins when
@@ -1145,6 +1162,7 @@ Each run ensures these host-backed paths and grafts them into the prepared root:
 - `~/.pi` -> `/home/dev/.pi`
 - `<state-root>/cargo` -> `/home/dev/.cargo`
 - `<loftd-state>/sccache` -> `/home/dev/.cache/sccache`
+- each `-v, --volume SOURCE:TARGET[:ro|:rw]` -> the requested absolute `TARGET`
 
 This keeps Codex, Pi, Cargo, and compiler-cache state outside the repo while
 matching the existing agentbox task-volume contract.

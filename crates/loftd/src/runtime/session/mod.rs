@@ -352,6 +352,7 @@ mod tests {
             mem_gib: None,
             network_mode: config::NetworkMode::Tsi,
             publish: Vec::new(),
+            volumes: Vec::new(),
             guest_command: Vec::new(),
         }
     }

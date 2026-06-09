@@ -10,8 +10,8 @@ use crate::logging::LogLevel;
 use super::components::{guest_init, mounts};
 use super::guest_env::guest_config_json;
 use super::model::{
-    BindMount, DiskAttachment, GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH,
-    LaunchConfig, NetworkMode,
+    BindMount, BindMountSourceKind, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
+    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, NetworkMode,
 };
 
 impl LaunchConfig {
@@ -83,6 +83,16 @@ impl LaunchConfig {
             );
             push_field(&mut out, &format!("mount.{index}.tag"), &mount.tag);
             push_field(&mut out, &format!("mount.{index}.target"), &mount.target);
+            push_field(
+                &mut out,
+                &format!("mount.{index}.source_kind"),
+                mount.source_kind.as_config_value(),
+            );
+            push_field(
+                &mut out,
+                &format!("mount.{index}.read_only"),
+                if mount.read_only { "true" } else { "false" },
+            );
         }
         if let Some(mount) = &self.guest_init_override {
             push_field(
@@ -203,6 +213,12 @@ impl LaunchConfig {
                     "source" => mount.source = Some(PathBuf::from(value)),
                     "tag" => mount.tag = Some(value),
                     "target" => mount.target = Some(value),
+                    "source_kind" => {
+                        mount.source_kind = Some(BindMountSourceKind::parse_config_value(&value)?);
+                    }
+                    "read_only" => {
+                        mount.read_only = Some(parse_bool_field(key, &value)?);
+                    }
                     _ => anyhow::bail!("loftd launch config contains unknown key {key}"),
                 }
             } else if let Some(rest) = key.strip_prefix("disk.") {
@@ -214,13 +230,7 @@ impl LaunchConfig {
                     "id" => disk.id = Some(value),
                     "path" => disk.path = Some(PathBuf::from(value)),
                     "read_only" => {
-                        disk.read_only = Some(match value.as_str() {
-                            "true" => true,
-                            "false" => false,
-                            _ => anyhow::bail!(
-                                "loftd launch config disk entry {key} has invalid read_only"
-                            ),
-                        });
+                        disk.read_only = Some(parse_bool_field(key, &value)?);
                     }
                     _ => anyhow::bail!("loftd launch config contains unknown key {key}"),
                 }
@@ -352,6 +362,8 @@ struct PartialBindMount {
     source: Option<PathBuf>,
     tag: Option<String>,
     target: Option<String>,
+    source_kind: Option<BindMountSourceKind>,
+    read_only: Option<bool>,
 }
 
 impl PartialBindMount {
@@ -366,6 +378,8 @@ impl PartialBindMount {
             target: self
                 .target
                 .ok_or_else(|| anyhow!("loftd launch config mount.{index} missing target"))?,
+            source_kind: self.source_kind.unwrap_or(BindMountSourceKind::Directory),
+            read_only: self.read_only.unwrap_or(false),
         })
     }
 }
@@ -427,11 +441,11 @@ fn parse_mounts(
 ) -> Result<Vec<BindMount>> {
     let has_indexed_mounts = !indexed_mounts.is_empty();
     let mounts = if !has_indexed_mounts {
-        vec![BindMount {
-            source: PathBuf::from(required_field(fields, "workspace_source")?),
-            tag: required_field(fields, "workspace_tag")?,
-            target: required_field(fields, "workspace_target")?,
-        }]
+        vec![BindMount::directory(
+            PathBuf::from(required_field(fields, "workspace_source")?),
+            required_field(fields, "workspace_tag")?,
+            required_field(fields, "workspace_target")?,
+        )]
     } else {
         indexed_mounts
             .into_iter()
@@ -440,11 +454,11 @@ fn parse_mounts(
     };
 
     if has_indexed_mounts && has_legacy_workspace_fields(fields) {
-        let legacy = BindMount {
-            source: PathBuf::from(required_field(fields, "workspace_source")?),
-            tag: required_field(fields, "workspace_tag")?,
-            target: required_field(fields, "workspace_target")?,
-        };
+        let legacy = BindMount::directory(
+            PathBuf::from(required_field(fields, "workspace_source")?),
+            required_field(fields, "workspace_tag")?,
+            required_field(fields, "workspace_target")?,
+        );
         let workspace = mounts::workspace_mount(&mounts)?;
         if *workspace != legacy {
             anyhow::bail!(
@@ -455,6 +469,14 @@ fn parse_mounts(
 
     mounts::validate_mounts(&mounts)?;
     Ok(mounts)
+}
+
+fn parse_bool_field(key: &str, value: &str) -> Result<bool> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => anyhow::bail!("loftd launch config entry {key} has invalid boolean value"),
+    }
 }
 
 fn has_legacy_workspace_fields(fields: &BTreeMap<String, String>) -> bool {

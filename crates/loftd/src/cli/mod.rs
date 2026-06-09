@@ -5,6 +5,13 @@ use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::launch::config::NetworkMode;
 use crate::task_rootfs::TaskRootfsBackend;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VolumeSpec {
+    pub(crate) source: PathBuf,
+    pub(crate) target: String,
+    pub(crate) read_only: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContainerStoreBackend {
     Bind,
@@ -138,6 +145,17 @@ pub(crate) struct Cli {
     publish: Vec<String>,
 
     #[arg(
+        short = 'v',
+        long = "volume",
+        value_name = "SOURCE:TARGET[:ro|:rw]",
+        value_parser = parse_volume_arg,
+        action = ArgAction::Append,
+        help = "Bind-mount a host file or directory into the guest; repeatable",
+        long_help = "Bind-mount a host file or directory into the guest; repeatable. Syntax is SOURCE:TARGET, SOURCE:TARGET:rw, or SOURCE:TARGET:ro. Omitted mode defaults to read-write. SELinux, ownership, and propagation options are not supported."
+    )]
+    volumes: Vec<VolumeSpec>,
+
+    #[arg(
         value_name = "COMMAND",
         last = true,
         num_args = 1..,
@@ -265,6 +283,7 @@ impl Cli {
                 NetworkMode::Tsi
             },
             publish: self.publish,
+            volumes: self.volumes,
             guest_command: self.guest_command,
         }
     }
@@ -285,6 +304,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
     pub(crate) publish: Vec<String>,
+    pub(crate) volumes: Vec<VolumeSpec>,
     pub(crate) guest_command: Vec<String>,
 }
 
@@ -316,11 +336,50 @@ fn parse_publish_arg(value: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
+fn parse_volume_arg(value: &str) -> Result<VolumeSpec, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("volume spec must not be empty".to_owned());
+    }
+    let parts = value.split(':').collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return Err("volume spec must use SOURCE:TARGET syntax".to_owned());
+    }
+    if parts.len() > 3 {
+        return Err(
+            "volume spec supports only SOURCE:TARGET, SOURCE:TARGET:ro, or SOURCE:TARGET:rw"
+                .to_owned(),
+        );
+    }
+    let source = parts[0].trim();
+    let target = parts[1].trim();
+    if source.is_empty() {
+        return Err("volume source must not be empty".to_owned());
+    }
+    if target.is_empty() {
+        return Err("volume target must not be empty".to_owned());
+    }
+    let read_only = match parts.get(2).map(|part| part.trim()) {
+        None | Some("rw") => false,
+        Some("ro") => true,
+        Some(option) => {
+            return Err(format!(
+                "volume option '{option}' is not supported; use ro or rw"
+            ));
+        }
+    };
+    Ok(VolumeSpec {
+        source: PathBuf::from(source),
+        target: target.to_owned(),
+        read_only,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use crate::cli::{Cli, ContainerStoreBackend};
+    use crate::cli::{Cli, ContainerStoreBackend, VolumeSpec};
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::NetworkMode;
     use crate::task_rootfs::TaskRootfsBackend;
@@ -356,6 +415,7 @@ mod tests {
         assert!(options.debug);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
         assert!(options.publish.is_empty());
+        assert!(options.volumes.is_empty());
         assert_eq!(options.log_settings.level, LogLevel::Debug);
         assert!(options.guest_command.is_empty());
     }
@@ -375,6 +435,58 @@ mod tests {
         let options = cli.into_runtime_options();
 
         assert_eq!(options.publish, ["8080:80", "8443:443"]);
+    }
+
+    #[test]
+    fn volume_flag_is_repeatable_and_parses_access_modes() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "-v",
+            "/host/dir:/guest/dir",
+            "--volume",
+            "/host/file:/guest/file:ro",
+            "-v",
+            "/host/cache:/home/dev/cache:rw",
+        ])
+        .expect("volume flags should parse");
+        let options = cli.into_runtime_options();
+
+        assert_eq!(
+            options.volumes,
+            [
+                VolumeSpec {
+                    source: "/host/dir".into(),
+                    target: "/guest/dir".to_owned(),
+                    read_only: false,
+                },
+                VolumeSpec {
+                    source: "/host/file".into(),
+                    target: "/guest/file".to_owned(),
+                    read_only: true,
+                },
+                VolumeSpec {
+                    source: "/host/cache".into(),
+                    target: "/home/dev/cache".to_owned(),
+                    read_only: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn volume_rejects_empty_or_unsupported_specs() {
+        for args in [
+            ["loftd", "-v", ""],
+            ["loftd", "-v", "/host-only"],
+            ["loftd", "-v", ":/guest"],
+            ["loftd", "-v", "/host:"],
+            ["loftd", "-v", "/host:/guest:z"],
+            ["loftd", "-v", "/host:/guest:"],
+            ["loftd", "-v", "/host:/guest:ro:rshared"],
+        ] {
+            let err = Cli::try_parse_from(args).expect_err("volume spec should fail");
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        }
     }
 
     #[test]
@@ -407,6 +519,7 @@ mod tests {
         let options = cli.into_runtime_options();
 
         assert_eq!(options.publish, ["8080:80"]);
+        assert!(options.volumes.is_empty());
         assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
     }
 

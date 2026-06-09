@@ -2,9 +2,10 @@
 
 use anyhow::{Result, anyhow};
 use std::collections::BTreeSet;
-use std::path::Path;
 
-use super::super::model::{BindMount, HostNixOverlay, NIX_TAG, NIX_TARGET, WORKSPACE_TARGET};
+use super::super::model::{
+    BindMount, HostNixOverlay, NIX_TAG, NIX_TARGET, WORKSPACE_TARGET, canonical_mount_target,
+};
 
 pub(crate) fn mounts_with_host_nix_overlay(
     mounts: &[BindMount],
@@ -20,11 +21,11 @@ pub(crate) fn mounts_with_host_nix_overlay(
         );
     }
     let mut with_nix = mounts.to_vec();
-    with_nix.push(BindMount {
-        source: host_nix_overlay.mergeddir.clone(),
-        tag: NIX_TAG.to_owned(),
-        target: NIX_TARGET.to_owned(),
-    });
+    with_nix.push(BindMount::directory(
+        host_nix_overlay.mergeddir.clone(),
+        NIX_TAG,
+        NIX_TARGET,
+    ));
     validate_mounts(&with_nix)?;
     Ok(with_nix)
 }
@@ -46,10 +47,12 @@ pub fn validate_mounts(mounts: &[BindMount]) -> Result<()> {
         if mount.tag.trim().is_empty() {
             anyhow::bail!("loftd bind mount tag cannot be empty");
         }
-        if !Path::new(&mount.target).is_absolute() {
+        let canonical_target = canonical_mount_target(&mount.target)?;
+        if canonical_target != mount.target {
             anyhow::bail!(
-                "loftd bind mount target '{}' must be absolute",
-                mount.target
+                "loftd bind mount target '{}' must be canonical absolute path '{}'",
+                mount.target,
+                canonical_target
             );
         }
         if mount.target.contains(".config/codex")

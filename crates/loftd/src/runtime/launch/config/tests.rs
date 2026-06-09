@@ -7,31 +7,11 @@ use tempfile::tempdir;
 
 fn test_mounts() -> Vec<BindMount> {
     vec![
-        BindMount {
-            source: Path::new("/workspace-src").to_path_buf(),
-            tag: WORKSPACE_TAG.to_owned(),
-            target: WORKSPACE_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/home/host/.codex").to_path_buf(),
-            tag: CODEX_TAG.to_owned(),
-            target: CODEX_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/home/host/.pi").to_path_buf(),
-            tag: PI_TAG.to_owned(),
-            target: PI_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/state/project/cargo").to_path_buf(),
-            tag: CARGO_TAG.to_owned(),
-            target: CARGO_TARGET.to_owned(),
-        },
-        BindMount {
-            source: Path::new("/state/sccache").to_path_buf(),
-            tag: SCCACHE_TAG.to_owned(),
-            target: SCCACHE_TARGET.to_owned(),
-        },
+        BindMount::directory("/workspace-src", WORKSPACE_TAG, WORKSPACE_TARGET),
+        BindMount::directory("/home/host/.codex", CODEX_TAG, CODEX_TARGET),
+        BindMount::directory("/home/host/.pi", PI_TAG, PI_TARGET),
+        BindMount::directory("/state/project/cargo", CARGO_TAG, CARGO_TARGET),
+        BindMount::directory("/state/sccache", SCCACHE_TAG, SCCACHE_TARGET),
     ]
 }
 
@@ -214,6 +194,50 @@ fn launch_config_round_trips_through_hex_line_format() {
 }
 
 #[test]
+fn launch_config_round_trips_volume_source_kind_and_access_mode() {
+    let mut mounts = test_mounts();
+    mounts.push(BindMount::file(
+        "/host/config.json",
+        "loftd-user-volume-5",
+        "/workspace/config.json",
+        true,
+    ));
+    let image_process_config = OciProcessConfig::default();
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &mounts,
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+    })
+    .expect("launch config should build");
+
+    let decoded = decode_text_for_debug(&config.serialize()).expect("debug decode");
+    assert!(decoded.contains("mount.5.source_kind=file\n"));
+    assert!(decoded.contains("mount.5.read_only=true\n"));
+
+    let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
+
+    assert_eq!(parsed, config);
+    assert_eq!(parsed.mounts[5].source_kind, BindMountSourceKind::File);
+    assert!(parsed.mounts[5].read_only);
+}
+
+#[test]
 fn launch_config_carries_host_nix_overlay_and_adds_reserved_nix_mount() {
     let image_process_config = OciProcessConfig::default();
     let overlay = HostNixOverlay {
@@ -267,11 +291,7 @@ fn launch_config_carries_host_nix_overlay_and_adds_reserved_nix_mount() {
 fn launch_config_rejects_user_mount_that_collides_with_host_nix_overlay() {
     let image_process_config = OciProcessConfig::default();
     let mut mounts = test_mounts();
-    mounts.push(BindMount {
-        source: Path::new("/host/nix").to_path_buf(),
-        tag: "user-nix".to_owned(),
-        target: "/nix".to_owned(),
-    });
+    mounts.push(BindMount::directory("/host/nix", "user-nix", "/nix"));
     let err = LaunchConfig::build_for_task(LaunchSpec {
         task_rootfs: Path::new("/state/task/rootfs"),
         hostname: "loftd-workspace",
@@ -304,6 +324,51 @@ fn launch_config_rejects_user_mount_that_collides_with_host_nix_overlay() {
     .expect_err("duplicate /nix mount should fail");
 
     assert!(format!("{err:#}").contains("host /nix overlay owns /nix"));
+}
+
+#[test]
+fn launch_config_rejects_noncanonical_reserved_target_aliases() {
+    let image_process_config = OciProcessConfig::default();
+    for target in ["/workspace/", "/workspace/.", "/nix//"] {
+        let mut mounts = test_mounts();
+        mounts.push(BindMount::directory("/host/alias", "user-alias", target));
+
+        let err = LaunchConfig::build_for_task(LaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            hostname: "loftd-workspace",
+            mounts: &mounts,
+            guest_init_override: None,
+            guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+            guest_command: &[],
+            image_process_config: &image_process_config,
+            mem_gib: Some(4),
+            log_level: LogLevel::Off,
+            network_mode: NetworkMode::Tsi,
+            publish: &[],
+            profile: false,
+            root: false,
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+            host_nix_overlay: Some(HostNixOverlay {
+                selected_reference: "localhost/loftd:latest".to_owned(),
+                image_digest: "sha256:deadbeef".to_owned(),
+                digest_key: "sha256-deadbeef".to_owned(),
+                lowerdir: Path::new("/cache/rootfs/nix").to_path_buf(),
+                upperdir: Path::new("/state/nix-overlay/upper").to_path_buf(),
+                workdir: Path::new("/state/nix-overlay/work").to_path_buf(),
+                mergeddir: Path::new("/state/nix-overlay/merged").to_path_buf(),
+            }),
+        })
+        .expect_err("target aliases should fail before prepared-root normalization");
+
+        assert!(
+            format!("{err:#}").contains("canonical absolute path"),
+            "unexpected error for {target}: {err:#}"
+        );
+    }
 }
 
 #[test]
@@ -406,12 +471,33 @@ fn launch_config_legacy_workspace_fields_fall_back_to_single_workspace_mount() {
     assert!(parsed.publish.is_empty());
     assert_eq!(
         parsed.mounts,
-        [BindMount {
-            source: Path::new("/workspace-src").to_path_buf(),
-            tag: WORKSPACE_TAG.to_owned(),
-            target: WORKSPACE_TARGET.to_owned(),
-        }]
+        [BindMount::directory(
+            "/workspace-src",
+            WORKSPACE_TAG,
+            WORKSPACE_TARGET
+        )]
     );
+}
+
+#[test]
+fn launch_config_indexed_mounts_default_to_directory_read_write_for_legacy_configs() {
+    let mut text = String::new();
+    push_field(&mut text, "task_rootfs", "/state/task/rootfs");
+    push_field(&mut text, "hostname", "loftd-workspace");
+    push_field(&mut text, "mount.0.source", "/workspace-src");
+    push_field(&mut text, "mount.0.tag", WORKSPACE_TAG);
+    push_field(&mut text, "mount.0.target", WORKSPACE_TARGET);
+    push_field(&mut text, "ram_mib", "4096");
+    push_field(&mut text, "vcpus", "2");
+    push_field(&mut text, "log_level", "off");
+    push_field(&mut text, "network_mode", "tsi");
+    push_field(&mut text, "workdir", "/workspace");
+    push_field(&mut text, "exec_path", "/loftd-guest-init");
+
+    let parsed = LaunchConfig::parse(&text).expect("legacy indexed config should parse");
+
+    assert_eq!(parsed.mounts[0].source_kind, BindMountSourceKind::Directory);
+    assert!(!parsed.mounts[0].read_only);
 }
 
 #[test]
