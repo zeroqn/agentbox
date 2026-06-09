@@ -782,7 +782,37 @@ Run/help:
 ./result/bin/loftd -- bash -lc 'echo ok'
 ./result/bin/loftd ps
 ./result/bin/loftd kill <task-id>
+./result/bin/loftd container-store resize --size 128G
+./result/bin/loftd container-store reset --force
 ```
+
+Container-store disk maintenance:
+
+```bash
+./result/bin/loftd container-store resize --size 128G
+./result/bin/loftd container-store reset --force
+```
+
+These commands manage only the current workspace's `loftd-containers.raw` disk
+used by `--container-store raw-disk`. They do not touch the bind-backed
+container store and do not resize or reset loftd's host `/nix` overlay state.
+`resize` is grow-only: `--size` accepts bytes or binary suffixes such as `K`,
+`M`, `G`, `T`, `KiB`, `MiB`, `GiB`, and `TiB`, and the requested size must be
+larger than the current raw file. It grows the host sparse file first, then
+starts a narrow one-shot direct-libkrun maintenance VM that runs
+`loftd-guest-init internal resize containers` to expand the guest btrfs
+filesystem. If that guest resize fails after the host file has grown, loftd does
+not shrink or roll back the file; fix the reported VM/guest problem and rerun
+the same resize command.
+
+`reset` is destructive and requires `--force`. It refuses to run while the
+current workspace has running, pid-reused, unreadable, or unscannable task
+records, deletes an existing regular `loftd-containers.raw`, and recreates the
+default 64 GiB sparse btrfs image without launching a VM. Stale-only task
+records are reported as cleanup information and do not block either command.
+For a manual smoke test on a host with Buildah, btrfs-progs, and libkrun
+available, run `loftd --container-store raw-disk` once, then run the `resize`
+and `reset --force` commands above.
 
 When `--mem` is omitted, loftd now sizes the direct-libkrun VM to 80% of host
 memory rounded down to whole GiB, matching agentbox libkrun mode. Pass

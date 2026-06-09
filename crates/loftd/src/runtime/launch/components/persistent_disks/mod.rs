@@ -14,6 +14,29 @@ mod containers;
 mod nix;
 pub(crate) mod raw_btrfs;
 
+pub(crate) fn grow_container_store(
+    state_root: &Path,
+    target_size_bytes: u64,
+) -> Result<RawBtrfsDisk> {
+    containers::grow_with_runner(state_root, target_size_bytes, &HostRawImageCommandRunner)
+}
+
+pub(crate) fn recreate_container_store(state_root: &Path) -> Result<RawBtrfsDisk> {
+    containers::recreate_with_runner(state_root, &HostRawImageCommandRunner)
+}
+
+pub(crate) fn container_store_attachment(disk: &RawBtrfsDisk) -> DiskAttachment {
+    containers::attachment(disk)
+}
+
+pub(crate) fn container_store_raw_disk_env_pairs(disk: &RawBtrfsDisk) -> [(String, String); 4] {
+    containers::raw_disk_env_pairs(disk)
+}
+
+pub(crate) fn container_store_default_size_bytes() -> u64 {
+    containers::default_size_bytes()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PersistentDisks {
     container_store: PersistentContainerStore,

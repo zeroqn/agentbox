@@ -9,12 +9,13 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use crate::cli::RuntimeOptions;
+use crate::cli::{ContainerStoreCommand, ContainerStoreOptions, RuntimeOptions};
 use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
 use crate::runtime::session::task_control::TaskControlCommand;
 
 pub(crate) mod host_tools;
 pub(crate) mod launch;
+pub(crate) mod maintenance;
 pub(crate) mod publish;
 pub(crate) mod session;
 pub(crate) mod vm;
@@ -40,6 +41,13 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
 
 pub(crate) fn run_image_command(command: ImageCacheCommand) -> Result<String> {
     session::run_image_command(command)
+}
+
+pub(crate) fn run_container_store_command(
+    command: ContainerStoreCommand,
+    options: ContainerStoreOptions,
+) -> Result<String> {
+    maintenance::run_container_store_command(command, options)
 }
 
 pub(crate) fn run_task_control_command(command: TaskControlCommand) -> Result<String> {

@@ -39,6 +39,8 @@ impl ContainerStoreBackend {
   loftd images list
   loftd images sync ghcr.io/example/loftd:dev
   loftd images remove sha256-feedface
+  loftd container-store resize --size 128G
+  loftd container-store reset --force
   loftd ps
   loftd kill <task-id>"
 )]
@@ -171,6 +173,15 @@ pub(crate) struct Cli {
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
 pub(crate) enum CliCommand {
     #[command(
+        name = "container-store",
+        about = "Maintain loftd's workspace-scoped raw container-store disk"
+    )]
+    ContainerStore {
+        #[command(subcommand)]
+        command: ContainerStoreCommand,
+    },
+
+    #[command(
         name = "decode-launch-conf",
         about = "Decode a hex-encoded loftd launch.conf for debugging"
     )]
@@ -195,6 +206,31 @@ pub(crate) enum CliCommand {
     Kill {
         #[arg(value_name = "TASK_ID")]
         task_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
+pub(crate) enum ContainerStoreCommand {
+    #[command(
+        name = "resize",
+        about = "Grow the raw container-store disk and guest btrfs filesystem"
+    )]
+    Resize {
+        #[arg(
+            long = "size",
+            value_name = "SIZE",
+            help = "New grow-only container-store disk size, for example 128G"
+        )]
+        size: String,
+    },
+
+    #[command(
+        name = "reset",
+        about = "Delete and recreate the raw container-store disk"
+    )]
+    Reset {
+        #[arg(long = "force", action = ArgAction::SetTrue, help = "Confirm destructive container-store disk reset")]
+        force: bool,
     },
 }
 
@@ -228,6 +264,10 @@ pub(crate) enum CliAction {
     DecodeLaunchConf {
         path: PathBuf,
     },
+    ContainerStore {
+        command: ContainerStoreCommand,
+        options: ContainerStoreOptions,
+    },
     Images {
         command: ImagesCommand,
         log_settings: LogSettings,
@@ -245,6 +285,10 @@ impl Cli {
     pub(crate) fn into_action(self) -> CliAction {
         if let Some(command) = self.command.clone() {
             match command {
+                CliCommand::ContainerStore { command } => CliAction::ContainerStore {
+                    command,
+                    options: self.container_store_options(),
+                },
                 CliCommand::DecodeLaunchConf { path } => CliAction::DecodeLaunchConf { path },
                 CliCommand::Images { command } => CliAction::Images {
                     command,
@@ -260,6 +304,16 @@ impl Cli {
             }
         } else {
             CliAction::Run(self.into_runtime_options())
+        }
+    }
+
+    fn container_store_options(&self) -> ContainerStoreOptions {
+        ContainerStoreOptions {
+            image: self.image.clone(),
+            pull_latest: self.pull_latest,
+            guest_init: self.guest_init.clone(),
+            mem_gib: self.mem_gib,
+            log_settings: LogSettings::from_process_env(self.log_level, self.debug),
         }
     }
 
@@ -287,6 +341,15 @@ impl Cli {
             guest_command: self.guest_command,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContainerStoreOptions {
+    pub(crate) image: Option<String>,
+    pub(crate) pull_latest: bool,
+    pub(crate) guest_init: Option<PathBuf>,
+    pub(crate) mem_gib: Option<u32>,
+    pub(crate) log_settings: LogSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -742,6 +805,45 @@ mod tests {
                 assert_eq!(task_id, "workspace-1-42");
             }
             other => panic!("expected kill action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_container_store_resize_and_reset_subcommands() {
+        let resize = Cli::try_parse_from(["loftd", "container-store", "resize", "--size", "128G"])
+            .expect("container-store resize should parse");
+        let reset = Cli::try_parse_from(["loftd", "container-store", "reset", "--force"])
+            .expect("container-store reset should parse");
+
+        match resize.into_action() {
+            crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
+                command,
+                crate::cli::ContainerStoreCommand::Resize {
+                    size: "128G".to_owned()
+                }
+            ),
+            other => panic!("expected container-store resize action, got {other:?}"),
+        }
+        match reset.into_action() {
+            crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
+                command,
+                crate::cli::ContainerStoreCommand::Reset { force: true }
+            ),
+            other => panic!("expected container-store reset action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn container_store_reset_accepts_missing_force_for_runtime_error() {
+        let reset = Cli::try_parse_from(["loftd", "container-store", "reset"])
+            .expect("runtime should produce force-specific error");
+
+        match reset.into_action() {
+            crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
+                command,
+                crate::cli::ContainerStoreCommand::Reset { force: false }
+            ),
+            other => panic!("expected container-store reset action, got {other:?}"),
         }
     }
 

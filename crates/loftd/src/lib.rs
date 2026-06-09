@@ -35,6 +35,22 @@ pub fn entrypoint() -> ExitCode {
             options,
             runtime::RuntimeProfileScope::from_started_at(host_session_started_at),
         ),
+        CliAction::ContainerStore { command, options } => {
+            if let Err(err) = logging::init_tracing(&options.log_settings) {
+                eprintln!("loftd: {err:#}");
+                return ExitCode::from(1);
+            }
+            match runtime::run_container_store_command(command, options) {
+                Ok(output) => {
+                    print!("{output}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("loftd: {err:#}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         CliAction::DecodeLaunchConf { path } => {
             match runtime::launch::config::LaunchConfig::decode_file_for_debug(&path) {
                 Ok(decoded) => {

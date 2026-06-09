@@ -164,6 +164,39 @@ pub(crate) fn run_task_control_command(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkspaceTaskGateReport {
+    pub(crate) stale_task_ids: Vec<String>,
+}
+
+pub(crate) fn ensure_workspace_has_no_running_tasks(
+    workspace_state_root: &Path,
+    inspector: &impl ProcessInspector,
+) -> Result<WorkspaceTaskGateReport> {
+    let mut stale_task_ids = Vec::new();
+    let mut blockers = Vec::new();
+
+    for record in list_workspace_records(workspace_state_root)? {
+        match inspector.status(&record.process) {
+            ActiveTaskStatus::Stale => stale_task_ids.push(record.task_id),
+            status @ (ActiveTaskStatus::Running
+            | ActiveTaskStatus::PidReused
+            | ActiveTaskStatus::Unreadable) => {
+                blockers.push(format!("{} ({})", record.task_id, status.as_str()))
+            }
+        }
+    }
+
+    if !blockers.is_empty() {
+        bail!(
+            "refusing container-store disk maintenance while current workspace has active or unsafe task records: {}",
+            blockers.join(", ")
+        );
+    }
+
+    Ok(WorkspaceTaskGateReport { stale_task_ids })
+}
+
 fn render_ps(app_dir: &Path, inspector: &impl ProcessInspector) -> Result<String> {
     let rows = list_records(app_dir)?
         .into_iter()
@@ -290,6 +323,36 @@ fn ensure_running(record: &ActiveTaskRecord, inspector: &impl ProcessInspector) 
             record.task_id
         ),
     }
+}
+
+fn list_workspace_records(workspace_state_root: &Path) -> Result<Vec<ActiveTaskRecord>> {
+    let mut records = Vec::new();
+    let tasks_dir = workspace_state_root.join("tasks");
+    if !tasks_dir.exists() {
+        return Ok(records);
+    }
+    if !tasks_dir.is_dir() {
+        bail!(
+            "failed to scan current workspace tasks: '{}' is not a directory",
+            tasks_dir.display()
+        );
+    }
+
+    for task_entry in fs::read_dir(&tasks_dir)
+        .with_context(|| format!("failed to read tasks directory '{}'", tasks_dir.display()))?
+    {
+        let task_entry = task_entry?;
+        let task_path = task_entry.path();
+        if !task_path.is_dir() {
+            continue;
+        }
+        let record_path = active_record_path(&task_path);
+        if record_path.is_file() {
+            records.push(read_active_task_record(&record_path)?);
+        }
+    }
+    records.sort_by(|left, right| left.task_id.cmp(&right.task_id));
+    Ok(records)
 }
 
 fn list_records(app_dir: &Path) -> Result<Vec<ActiveTaskRecord>> {
@@ -808,6 +871,74 @@ mod tests {
 
         assert!(format!("{err:#}").contains("reused"));
         assert!(signaler.signals.is_empty());
+    }
+
+    #[test]
+    fn workspace_task_gate_scans_only_current_workspace_and_allows_stale() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let current = dir.path().join("loftd/workspace-a");
+        let unrelated = dir.path().join("loftd/workspace-b");
+        write_active_task_record(&record("stale-a", current.join("tasks/stale-a")))
+            .expect("write current stale");
+        write_active_task_record(&record("running-b", unrelated.join("tasks/running-b")))
+            .expect("write unrelated running");
+
+        let report = ensure_workspace_has_no_running_tasks(
+            &current,
+            &StaticInspector::new(vec![ActiveTaskStatus::Stale]),
+        )
+        .expect("stale-only current workspace should not block");
+
+        assert_eq!(report.stale_task_ids, ["stale-a"]);
+    }
+
+    #[test]
+    fn workspace_task_gate_blocks_running_reused_and_unreadable_records() {
+        for status in [
+            ActiveTaskStatus::Running,
+            ActiveTaskStatus::PidReused,
+            ActiveTaskStatus::Unreadable,
+        ] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let workspace = dir.path().join("loftd/workspace-a");
+            write_active_task_record(&record("task-a", workspace.join("tasks/task-a")))
+                .expect("write task");
+
+            let err = ensure_workspace_has_no_running_tasks(
+                &workspace,
+                &StaticInspector::new(vec![status]),
+            )
+            .expect_err("unsafe task status should block");
+
+            assert!(format!("{err:#}").contains(status.as_str()));
+        }
+    }
+
+    #[test]
+    fn workspace_task_gate_treats_record_read_failure_as_blocker() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = dir.path().join("loftd/workspace-a");
+        let task_dir = workspace.join("tasks/task-a");
+        fs::create_dir_all(&task_dir).expect("task dir");
+        fs::write(active_record_path(&task_dir), "not an active-task record").expect("bad record");
+
+        let err = ensure_workspace_has_no_running_tasks(&workspace, &StaticInspector::new(vec![]))
+            .expect_err("record read failure should block");
+
+        assert!(format!("{err:#}").contains("failed to parse"));
+    }
+
+    #[test]
+    fn workspace_task_gate_treats_scan_failure_as_blocker() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = dir.path().join("loftd/workspace-a");
+        fs::create_dir_all(&workspace).expect("workspace dir");
+        fs::write(workspace.join("tasks"), "not a directory").expect("tasks file");
+
+        let err = ensure_workspace_has_no_running_tasks(&workspace, &StaticInspector::new(vec![]))
+            .expect_err("scan failure should block");
+
+        assert!(format!("{err:#}").contains("not a directory"));
     }
 
     #[test]

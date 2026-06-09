@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -103,8 +103,98 @@ pub(crate) fn prepare_with_runner(
     spec: &RawDiskSpec,
     runner: &impl RawImageCommandRunner,
 ) -> Result<RawBtrfsDisk> {
-    let path = state_root.join(spec.file_name);
+    let path = raw_disk_path(state_root, spec);
     prepare_path_with_runner(&path, spec, runner)
+}
+
+pub(crate) fn raw_disk_path(state_root: &Path, spec: &RawDiskSpec) -> PathBuf {
+    state_root.join(spec.file_name)
+}
+
+pub(crate) fn grow_existing_with_runner(
+    state_root: &Path,
+    spec: &RawDiskSpec,
+    target_size_bytes: u64,
+    runner: &impl RawImageCommandRunner,
+) -> Result<RawBtrfsDisk> {
+    let path = raw_disk_path(state_root, spec);
+    let current_len = inspect_existing_regular_file(&path, spec)?
+        .ok_or_else(|| anyhow!("{} '{}' does not exist; run loftd with --container-store raw-disk first or use reset --force to create it", spec.diagnostic_name, path.display()))?;
+    if target_size_bytes <= current_len {
+        bail!(
+            "requested {} size {} bytes must be greater than current size {} bytes for '{}'",
+            spec.diagnostic_name,
+            target_size_bytes,
+            current_len,
+            path.display()
+        );
+    }
+    validate_existing(&path, spec, runner)?;
+    File::options()
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("failed to open '{}' for resize", path.display()))?
+        .set_len(target_size_bytes)
+        .with_context(|| {
+            format!(
+                "failed to grow {} '{}' to {} bytes",
+                spec.diagnostic_name,
+                path.display(),
+                target_size_bytes
+            )
+        })?;
+
+    Ok(RawBtrfsDisk {
+        size_bytes: target_size_bytes,
+        ..disk(path, spec, RawBtrfsDiskStatus::Reused)
+    })
+}
+
+pub(crate) fn recreate_with_runner(
+    state_root: &Path,
+    spec: &RawDiskSpec,
+    runner: &impl RawImageCommandRunner,
+) -> Result<RawBtrfsDisk> {
+    let path = raw_disk_path(state_root, spec);
+    if inspect_existing_regular_file(&path, spec)?.is_some() {
+        fs::remove_file(&path).with_context(|| {
+            format!(
+                "failed to remove existing {} '{}'",
+                spec.diagnostic_name,
+                path.display()
+            )
+        })?;
+    }
+    prepare_path_with_runner(&path, spec, runner)
+}
+
+pub(crate) fn inspect_existing_regular_file(
+    path: &Path,
+    spec: &RawDiskSpec,
+) -> Result<Option<u64>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to inspect '{}'", path.display()));
+        }
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        bail!(
+            "existing {} path '{}' is a symlink; refusing to follow it",
+            spec.diagnostic_name,
+            path.display()
+        );
+    }
+    if !file_type.is_file() {
+        bail!(
+            "existing {} path '{}' is not a regular file; refusing to overwrite it",
+            spec.diagnostic_name,
+            path.display()
+        );
+    }
+    Ok(Some(metadata.len()))
 }
 
 fn prepare_path_with_runner(
@@ -158,23 +248,20 @@ fn validate_existing(
     spec: &RawDiskSpec,
     runner: &impl RawImageCommandRunner,
 ) -> Result<()> {
-    let metadata = path
-        .metadata()
-        .with_context(|| format!("failed to inspect '{}'", path.display()))?;
-    if !metadata.is_file() {
-        anyhow::bail!(
-            "existing {} path '{}' is not a regular file; refusing to overwrite it",
+    let metadata_len = inspect_existing_regular_file(path, spec)?.ok_or_else(|| {
+        anyhow!(
+            "existing {} '{}' disappeared during validation",
             spec.diagnostic_name,
             path.display()
-        );
-    }
+        )
+    })?;
 
-    if metadata.len() < spec.size_bytes {
+    if metadata_len < spec.size_bytes {
         anyhow::bail!(
             "existing {} '{}' is {} bytes, below the required {} bytes; stop the VM, extend it with 'truncate -s {} {}', then retry",
             spec.diagnostic_name,
             path.display(),
-            metadata.len(),
+            metadata_len,
             spec.size_bytes,
             spec.size_hint,
             path.display()
@@ -205,6 +292,89 @@ fn disk(path: PathBuf, spec: &RawDiskSpec, status: RawBtrfsDiskStatus) -> RawBtr
         label: spec.label.to_owned(),
         size_bytes: spec.size_bytes,
         status,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    const TEST_SPEC: RawDiskSpec = RawDiskSpec {
+        file_name: "disk.raw",
+        id: "disk",
+        label: "DISK",
+        size_bytes: 8,
+        size_hint: "8B",
+        diagnostic_name: "test raw disk",
+    };
+
+    #[test]
+    fn grow_existing_rejects_equal_smaller_and_missing_sizes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runner = test_support::FakeRunner::with_probe("btrfs");
+        let path = temp.path().join(TEST_SPEC.file_name);
+
+        let missing = grow_existing_with_runner(temp.path(), &TEST_SPEC, 16, &runner)
+            .expect_err("missing disk should fail");
+        assert!(format!("{missing:#}").contains("does not exist"));
+
+        fs::write(&path, b"12345678").expect("disk file");
+        let equal = grow_existing_with_runner(temp.path(), &TEST_SPEC, 8, &runner)
+            .expect_err("equal size should fail");
+        assert!(format!("{equal:#}").contains("greater than current size"));
+
+        let smaller = grow_existing_with_runner(temp.path(), &TEST_SPEC, 7, &runner)
+            .expect_err("smaller size should fail");
+        assert!(format!("{smaller:#}").contains("greater than current size"));
+    }
+
+    #[test]
+    fn grow_existing_rejects_symlink_before_probe_or_growth() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        fs::write(&target, b"12345678").expect("target");
+        symlink(&target, temp.path().join(TEST_SPEC.file_name)).expect("symlink");
+        let runner = test_support::FakeRunner::with_probe("btrfs");
+
+        let err = grow_existing_with_runner(temp.path(), &TEST_SPEC, 16, &runner)
+            .expect_err("symlink should fail");
+
+        assert!(format!("{err:#}").contains("symlink"));
+        assert_eq!(runner.mkfs_call_count(), 0);
+        assert_eq!(fs::metadata(&target).expect("target metadata").len(), 8);
+    }
+
+    #[test]
+    fn recreate_rejects_symlink_before_delete() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        fs::write(&target, b"keep").expect("target");
+        symlink(&target, temp.path().join(TEST_SPEC.file_name)).expect("symlink");
+        let runner = test_support::FakeRunner::default();
+
+        let err = recreate_with_runner(temp.path(), &TEST_SPEC, &runner)
+            .expect_err("symlink should fail");
+
+        assert!(format!("{err:#}").contains("symlink"));
+        assert_eq!(fs::read(&target).expect("target"), b"keep");
+        assert_eq!(runner.mkfs_call_count(), 0);
+    }
+
+    #[test]
+    fn grow_existing_extends_file_after_validation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join(TEST_SPEC.file_name);
+        fs::write(&path, b"12345678").expect("disk file");
+        let runner = test_support::FakeRunner::with_probe("btrfs");
+
+        let disk = grow_existing_with_runner(temp.path(), &TEST_SPEC, 16, &runner)
+            .expect("grow should work");
+
+        assert_eq!(disk.path, path);
+        assert_eq!(disk.size_bytes, 16);
+        assert_eq!(fs::metadata(&disk.path).expect("metadata").len(), 16);
+        assert_eq!(runner.mkfs_call_count(), 0);
     }
 }
 

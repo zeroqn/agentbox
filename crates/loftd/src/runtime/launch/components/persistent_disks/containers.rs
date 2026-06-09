@@ -37,6 +37,27 @@ pub(super) fn prepare_with_runner(
         .context("failed to prepare loftd persistent container-store dev cache disk")
 }
 
+pub(crate) fn grow_with_runner(
+    state_root: &Path,
+    target_size_bytes: u64,
+    runner: &impl raw_btrfs::RawImageCommandRunner,
+) -> Result<RawBtrfsDisk> {
+    raw_btrfs::grow_existing_with_runner(state_root, &SPEC, target_size_bytes, runner)
+        .context("failed to grow loftd persistent container-store dev cache disk")
+}
+
+pub(crate) fn recreate_with_runner(
+    state_root: &Path,
+    runner: &impl raw_btrfs::RawImageCommandRunner,
+) -> Result<RawBtrfsDisk> {
+    raw_btrfs::recreate_with_runner(state_root, &SPEC, runner)
+        .context("failed to reset loftd persistent container-store dev cache disk")
+}
+
+pub(crate) fn default_size_bytes() -> u64 {
+    SIZE_BYTES
+}
+
 pub(super) fn attachment(disk: &RawBtrfsDisk) -> DiskAttachment {
     DiskAttachment {
         id: disk.id.clone(),
