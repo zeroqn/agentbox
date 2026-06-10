@@ -18,7 +18,6 @@ let
     "OMX_API_BIN=${ohMyCodex}/bin/omx-api"
     "OMX_RUNTIME_BINARY=${ohMyCodex}/bin/omx-runtime"
     "OMX_SPARKSHELL_BIN=${ohMyCodex}/bin/omx-sparkshell"
-    "OMX_EXPLORE_BIN=${ohMyCodex}/bin/omx-explore-harness"
   ];
 
   agentboxEnv = [

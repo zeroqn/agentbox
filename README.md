@@ -1264,7 +1264,7 @@ The container provides:
 - interactive `fish` + `starship`
 - Codex CLI, bubblewrap (`bwrap`), Pi (`pi`), and `oh-my-codex` (`omx`)
 - cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)
-- prebuilt OMX native helpers (`omx-api`, `omx-runtime`, `omx-sparkshell`, and `omx-explore-harness`) with matching `OMX_*` binary override environment variables preset
+- prebuilt OMX native helpers (`omx-api`, `omx-runtime`, and `omx-sparkshell`) with matching `OMX_*` binary override environment variables preset
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`

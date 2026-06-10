@@ -22,11 +22,6 @@
           binary = "omx-sparkshell";
           hash = "sha256-h2glysQuzlyqYaPI4JXUUmMiOz//Z5KZt/SyrDRA07I=";
         };
-        omx-explore-harness = {
-          asset = "omx-explore-harness-x86_64-unknown-linux-musl.tar.xz";
-          binary = "omx-explore-harness";
-          hash = "sha256-jXNxAJuE59Suoz9PEDGMBCbg4cDk40VdHoxIL+DjTGk=";
-        };
       };
       aarch64-linux = {
         omx-api = {
@@ -43,11 +38,6 @@
           asset = "omx-sparkshell-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
           hash = "sha256-WT92Kpfh2ikLTXeWbHKSCPtzYjLod5B1FYCO0s/6OXA=";
-        };
-        omx-explore-harness = {
-          asset = "omx-explore-harness-aarch64-unknown-linux-musl.tar.xz";
-          binary = "omx-explore-harness";
-          hash = "sha256-jI6pCISbpUbAdI/feQQPZSBhQ8Ohl+rXxTbh/RTe7Zk=";
         };
       };
     };

@@ -30,7 +30,6 @@ let
     omx-api = "OMX_API_BIN";
     omx-runtime = "OMX_RUNTIME_BINARY";
     omx-sparkshell = "OMX_SPARKSHELL_BIN";
-    omx-explore-harness = "OMX_EXPLORE_BIN";
   };
   wrapNativeBinaryArgs = pkgs.lib.concatStringsSep " " (
     pkgs.lib.mapAttrsToList (

@@ -10,7 +10,6 @@ required_products=(
   omx-api
   omx-runtime
   omx-sparkshell
-  omx-explore-harness
 )
 
 for cmd in curl jq nix-prefetch-url nix python3; do
