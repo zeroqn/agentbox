@@ -1,7 +1,13 @@
-{ pkgs, libkrunfw }:
-let
-  libkrunSrc = ../../deps/libkrun;
-in
+{
+  pkgs,
+  pins,
+  libkrunfw,
+  libkrunSrc ? pkgs.fetchFromGitHub {
+    inherit (pins.libkrunSource) owner repo rev;
+    hash = pins.libkrunSource.srcHash;
+  },
+  cargoDepsHash ? pins.libkrunSource.cargoDepsHash,
+}:
 (pkgs.libkrun.override {
   inherit libkrunfw;
 
@@ -15,6 +21,6 @@ in
   src = libkrunSrc;
   cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
     src = libkrunSrc;
-    hash = "sha256-2ZjrOdrwnR1oaGmCZc/13LIlH3qPI7g9kBaYAEpwpSE=";
+    hash = cargoDepsHash;
   };
 })

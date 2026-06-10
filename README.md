@@ -138,15 +138,13 @@ env -u LD_PRELOAD some-foreign-binary --flag
 
 ```bash
 nix build .#loftd
-nix build .#loftd-dev
+nix build ./nix/dev#loftd-dev
 nix build .#agentbox-prebuilt
 nix build .#loftd-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
 nix build .#libkrunfw
-nix build .#libkrunfw-dev
 nix build .#libkrun
-nix build .#libkrun-dev
 nix build .#crun
 nix build .#podman
 nix build .#container-lib-policy-seccomp-json
@@ -162,12 +160,15 @@ nix build .#agentbox-container
   `$out/libexec/loftd-helpers`, and the pinned prebuilt `libkrun`/`libkrunfw`
   libraries are exposed under `$out/lib/loftd`, so source-built loftd no longer
   needs a wrapper script or duplicate `$out/libexec/loftd` payload.
-- `.#loftd-dev`: compile the workspace Rust host package and wire it to local
-  `deps/libkrunfw` through `.#libkrunfw-dev`. Use this target for local
-  libkrunfw/kernel configuration experiments; the local firmware build routes
-  C/Kbuild compiler calls through `sccache` by default, but repeat-build
-  speedups require a persistent `SCCACHE_DIR` or equivalent cache path visible
-  to the Nix build sandbox.
+- `./nix/dev#loftd-dev`: local-checkout-only development build of the
+  workspace Rust host package wired to the checked-out `deps/libkrun` and
+  `deps/libkrunfw` submodules through the submodule-aware dev flake. Use this
+  target for local libkrun/libkrunfw or kernel configuration experiments;
+  downstream flakes that consume this repository via `github:` should use
+  non-dev root outputs instead. The local firmware build routes C/Kbuild
+  compiler calls through `sccache` by default, but repeat-build speedups require
+  a persistent `SCCACHE_DIR` or equivalent cache path visible to the Nix build
+  sandbox.
 - `.#agentbox-prebuilt`: install pinned published binary (currently pinned for
   `x86_64-linux`; use `.#agentbox` elsewhere). This package brings
   `fuse-overlayfs` and `buildah` into the runtime environment for
@@ -189,15 +190,11 @@ nix build .#agentbox-container
   pinned for `x86_64-linux`).
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
-- `.#libkrunfw-dev`: build local `deps/libkrunfw` for firmware/kernel
-  configuration experiments. This local source path wraps C/Kbuild `CC` and
-  `HOSTCC` with `sccache`; the default sandbox-local cache is safe but
-  ephemeral unless your Nix setup exposes a persistent writable cache location.
 - `.#libkrun`: build libkrun 1.18.1 from source (overrides nixpkgs 1.17.4)
   with net, sound, GPU, block, and input support enabled, linked against the
-  pinned prebuilt `.#libkrunfw`.
-- `.#libkrun-dev`: build the same libkrun source linked against local
-  `.#libkrunfw-dev`.
+  pinned prebuilt `.#libkrunfw`. Local libkrun/libkrunfw source builds are kept
+  in local-checkout-only `./nix/dev#loftd-dev` so downstream-safe root package
+  outputs do not depend on local submodule checkouts.
 - `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
   override, krun handler support, raw data disk annotation support,
   `krun.nested_virt` support, and `pkgs.passt` on crun's runtime `PATH`.
@@ -1344,8 +1341,10 @@ For ordinary source-built loftd usage with pinned prebuilt libkrun firmware,
 prefer `nix build .#loftd`; use `nix build .#loftd-prebuilt` only for the
 explicit pinned release-asset packaging path with the same wrapper-free helper
 layout, or the published
-`ghcr.io/<repo-owner>/loftd` image. Use `nix build .#loftd-dev` only when local
-`deps/libkrunfw` experiments are intended.
+`ghcr.io/<repo-owner>/loftd` image. Use `nix build ./nix/dev#loftd-dev`
+only from a local checkout with initialized `deps/libkrun` and `deps/libkrunfw`
+submodules when local libkrun/libkrunfw experiments are intended; `github:`
+downstream consumers should use root non-dev outputs.
 
 ---
 
@@ -1370,6 +1369,12 @@ Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-rtk-prebuilt.sh
+```
+
+Refresh pinned `zeroqn/libkrun` source and Cargo vendor metadata in `nix/pins.nix`:
+
+```bash
+nix develop --command ./scripts/update-libkrun.sh
 ```
 
 Refresh pinned `zeroqn/libkrunfw` release metadata in `nix/pins.nix`:

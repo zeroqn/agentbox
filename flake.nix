@@ -2,7 +2,6 @@
   description = "Rust CLI for launching a Podman shell inside a Nix-based container";
 
   inputs = {
-    self.submodules = true;
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgsMaster.url = "github:NixOS/nixpkgs/master";
   };
@@ -44,16 +43,8 @@
           libkrunfw = pkgs.callPackage ./nix/pkgs/libkrunfw.nix {
             inherit pins;
           };
-          libkrunfwDev = pkgs.callPackage ./nix/pkgs/libkrunfw.nix {
-            inherit pins;
-            useLocalSource = true;
-          };
           libkrun = import ./nix/pkgs/libkrun.nix {
-            inherit pkgs libkrunfw;
-          };
-          libkrunDev = import ./nix/pkgs/libkrun.nix {
-            inherit pkgs;
-            libkrunfw = libkrunfwDev;
+            inherit pkgs pins libkrunfw;
           };
           prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix {
             inherit
@@ -71,15 +62,6 @@
               libkrun
               libkrunfw
               ;
-          };
-          rustPackagesDev = import ./nix/pkgs/agentbox-rust.nix {
-            inherit
-              self
-              pkgs
-              pins
-              ;
-            libkrun = libkrunDev;
-            libkrunfw = libkrunfwDev;
           };
           crun = import ./nix/pkgs/crun.nix {
             inherit pkgs libkrun libkrunfw;
@@ -112,15 +94,12 @@
           symposium = symposium;
           agentbox = rustPackages.rustPackage;
           loftd = rustPackages.rustPackage;
-          loftd-dev = rustPackagesDev.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           loftd-prebuilt = prebuiltLoftd;
           agentbox-musl = rustPackages.agentboxMuslPackage;
           agentbox-container = agentboxImage;
           libkrunfw = libkrunfw;
-          libkrunfw-dev = libkrunfwDev;
           libkrun = libkrun;
-          libkrun-dev = libkrunDev;
           crun = crun;
           podman = podman;
           container = loftdImage;

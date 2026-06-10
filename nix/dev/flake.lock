@@ -1,0 +1,66 @@
+{
+  "nodes": {
+    "agentbox": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "nixpkgsMaster": "nixpkgsMaster"
+      },
+      "locked": {
+        "path": "../..",
+        "type": "path"
+      },
+      "original": {
+        "path": "../..",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1780749050,
+        "narHash": "sha256-3av0pIjlOWQ6rDbNOmpUSvbNnJkGORQKKjb4LtCZsIY=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "a799d3e3886da994fa307f817a6bc705ae538eeb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgsMaster": {
+      "locked": {
+        "lastModified": 1780931832,
+        "narHash": "sha256-SkwDb6dklNGgcdkfNI2/+HesQZjXCSeGQgaIvSj6uuU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "c725eea837ffd18b390331675929e808c2858868",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "master",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "agentbox": "agentbox",
+        "nixpkgs": [
+          "agentbox",
+          "nixpkgs"
+        ],
+        "nixpkgsMaster": [
+          "agentbox",
+          "nixpkgsMaster"
+        ]
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

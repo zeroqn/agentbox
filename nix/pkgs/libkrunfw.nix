@@ -29,6 +29,7 @@
   xz,
   zlib,
   useLocalSource ? false,
+  libkrunfwSrc ? ../../deps/libkrunfw,
   variant ? null,
 }:
 
@@ -92,7 +93,7 @@ let
     pname = "libkrunfw";
     version = "${release.tag}-local";
 
-    src = ../../deps/libkrunfw;
+    src = libkrunfwSrc;
 
     nativeBuildInputs = [
       bc
