@@ -99,28 +99,61 @@ fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
 fn publish_image_workflows_publish_separate_loftd_and_agentbox_names() {
     for workflow in [PUBLISH_IMAGE_YML, PUBLISH_DEV_IMAGE_YML] {
         for required in [
-            "nix build .#agentbox-container -o result-agentbox-container --print-out-paths > agentbox-container-path.txt",
-            "nix build .#container -o result-loftd-container --print-out-paths > loftd-container-path.txt",
-            "docker load --input \"$(cat agentbox-container-path.txt)\"",
-            "docker load --input \"$(cat loftd-container-path.txt)\"",
-            "docker image inspect localhost/agentbox:latest > /dev/null",
-            "docker run --rm --entrypoint /bin/agentbox-guest-init localhost/agentbox:latest --help > /dev/null",
-            "docker image inspect localhost/loftd:latest > /dev/null",
-            "docker run --rm --entrypoint /bin/loftd-guest-init localhost/loftd:latest --help > /dev/null",
-            "loftd_image=ghcr.io/${owner}/loftd",
-            "agentbox_image=ghcr.io/${owner}/agentbox",
-            "docker tag localhost/agentbox:latest \"${{ steps.image_meta.outputs.agentbox_image }}:${{ steps.image_meta.outputs.tag1 }}\"",
-            "docker tag localhost/agentbox:latest \"${{ steps.image_meta.outputs.agentbox_image }}:${{ steps.image_meta.outputs.tag2 }}\"",
-            "docker tag localhost/loftd:latest \"${{ steps.image_meta.outputs.loftd_image }}:${{ steps.image_meta.outputs.tag1 }}\"",
-            "docker tag localhost/loftd:latest \"${{ steps.image_meta.outputs.loftd_image }}:${{ steps.image_meta.outputs.tag2 }}\"",
-            "docker push \"${target_image}:${{ steps.image_meta.outputs.tag1 }}\"",
-            "docker push \"${target_image}:${{ steps.image_meta.outputs.tag2 }}\"",
+            "strategy:",
+            "fail-fast: false",
+            "matrix:",
+            "include:",
+            "image_name: agentbox",
+            "flake_attr: agentbox-container",
+            "local_image: localhost/agentbox:latest",
+            "init_binary: /bin/agentbox-guest-init",
+            "image_name: loftd",
+            "flake_attr: container",
+            "local_image: localhost/loftd:latest",
+            "init_binary: /bin/loftd-guest-init",
+            r#"nix build ".#${{ matrix.flake_attr }}" -o "result-${{ matrix.image_name }}-container" --print-out-paths > "${{ matrix.image_name }}-container-path.txt""#,
+            r#"docker load --input "$(cat "${{ matrix.image_name }}-container-path.txt")""#,
+            r#"docker image inspect "${{ matrix.local_image }}" > /dev/null"#,
+            r#"docker run --rm --entrypoint "${{ matrix.init_binary }}" "${{ matrix.local_image }}" --help > /dev/null"#,
+            "target_image=ghcr.io/${owner}/${{ matrix.image_name }}",
+            r#"docker tag "${{ matrix.local_image }}" "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag1 }}""#,
+            r#"docker tag "${{ matrix.local_image }}" "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag2 }}""#,
+            r#"docker push "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag1 }}""#,
+            r#"docker push "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag2 }}""#,
         ] {
             assert!(workflow.contains(required), "missing {required}");
         }
 
-        assert!(!workflow.contains("nix build .#agentbox-musl"));
-        assert!(!workflow.contains("source_image=\"localhost/loftd:latest\""));
+        for forbidden in [
+            "nix build .#agentbox-musl",
+            "source_image=\"localhost/loftd:latest\"",
+            "nix build .#agentbox-container -o result-agentbox-container --print-out-paths > agentbox-container-path.txt",
+            "nix build .#container -o result-loftd-container --print-out-paths > loftd-container-path.txt",
+            "docker load --input \"$(cat agentbox-container-path.txt)\"",
+            "docker load --input \"$(cat loftd-container-path.txt)\"",
+            "for target_image in",
+            "docker push --all-tags",
+            "steps.image_meta.outputs.agentbox_image",
+            "steps.image_meta.outputs.loftd_image",
+        ] {
+            assert!(!workflow.contains(forbidden), "forbidden {forbidden}");
+        }
+    }
+
+    for required in [
+        r#"if [ "${GITHUB_REF_TYPE}" = "tag" ]; then"#,
+        "tag1=${GITHUB_REF_NAME}",
+        "tag1=latest",
+        "tag2=sha-${short_sha}",
+    ] {
+        assert!(PUBLISH_IMAGE_YML.contains(required), "missing {required}");
+    }
+
+    for required in ["tag1=dev", "tag2=sha-${short_sha}"] {
+        assert!(
+            PUBLISH_DEV_IMAGE_YML.contains(required),
+            "missing {required}"
+        );
     }
 }
 

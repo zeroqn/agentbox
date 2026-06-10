@@ -12,34 +12,39 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image_name: agentbox
+            flake_attr: agentbox-container
+            local_image: localhost/agentbox:latest
+            init_binary: /bin/agentbox-guest-init
+          - image_name: loftd
+            flake_attr: container
+            local_image: localhost/loftd:latest
+            init_binary: /bin/loftd-guest-init
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-      - name: Build agentbox container archive
-        run: nix build .#agentbox-container -o result-agentbox-container --print-out-paths > agentbox-container-path.txt
-      - name: Build loftd container archive
-        run: nix build .#container -o result-loftd-container --print-out-paths > loftd-container-path.txt
-      - name: Free runner disk before loading images
+      - name: Build ${{ matrix.image_name }} container archive
+        run: nix build ".#${{ matrix.flake_attr }}" -o "result-${{ matrix.image_name }}-container" --print-out-paths > "${{ matrix.image_name }}-container-path.txt"
+      - name: Free runner disk before loading ${{ matrix.image_name }} image
         run: |
           df -h
           nix-collect-garbage -d
           docker system prune -af || true
           df -h
-      - name: Load agentbox container archive
-        run: docker load --input "$(cat agentbox-container-path.txt)"
-      - name: Load loftd container archive
-        run: docker load --input "$(cat loftd-container-path.txt)"
-      - name: Verify separate guest init payloads in images
+      - name: Load ${{ matrix.image_name }} container archive
+        run: docker load --input "$(cat "${{ matrix.image_name }}-container-path.txt")"
+      - name: Verify ${{ matrix.image_name }} guest init payload
         run: |
           set -euo pipefail
 
-          docker image inspect localhost/agentbox:latest > /dev/null
-          docker run --rm --entrypoint /bin/agentbox-guest-init localhost/agentbox:latest --help > /dev/null
-
-          docker image inspect localhost/loftd:latest > /dev/null
-          docker run --rm --entrypoint /bin/loftd-guest-init localhost/loftd:latest --help > /dev/null
+          docker image inspect "${{ matrix.local_image }}" > /dev/null
+          docker run --rm --entrypoint "${{ matrix.init_binary }}" "${{ matrix.local_image }}" --help > /dev/null
       - name: Compute image tags
         id: image_meta
         run: |
@@ -49,12 +54,8 @@ jobs:
           short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
 
           {
-            echo "loftd_image=ghcr.io/${owner}/loftd"
-            echo "agentbox_image=ghcr.io/${owner}/agentbox"
+            echo "target_image=ghcr.io/${owner}/${{ matrix.image_name }}"
             echo "short_sha=${short_sha}"
-          } >> "${GITHUB_OUTPUT}"
-
-          {
             echo "tag1=dev"
             echo "tag2=sha-${short_sha}"
           } >> "${GITHUB_OUTPUT}"
@@ -64,23 +65,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Tag images for GHCR
+      - name: Tag ${{ matrix.image_name }} image for GHCR
         run: |
           set -euo pipefail
 
-          docker tag localhost/agentbox:latest "${{ steps.image_meta.outputs.agentbox_image }}:${{ steps.image_meta.outputs.tag1 }}"
-          docker tag localhost/agentbox:latest "${{ steps.image_meta.outputs.agentbox_image }}:${{ steps.image_meta.outputs.tag2 }}"
-
-          docker tag localhost/loftd:latest "${{ steps.image_meta.outputs.loftd_image }}:${{ steps.image_meta.outputs.tag1 }}"
-          docker tag localhost/loftd:latest "${{ steps.image_meta.outputs.loftd_image }}:${{ steps.image_meta.outputs.tag2 }}"
-      - name: Push images to GHCR
+          docker tag "${{ matrix.local_image }}" "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag1 }}"
+          docker tag "${{ matrix.local_image }}" "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag2 }}"
+      - name: Push ${{ matrix.image_name }} image to GHCR
         run: |
           set -euo pipefail
 
-          for target_image in \
-            "${{ steps.image_meta.outputs.agentbox_image }}" \
-            "${{ steps.image_meta.outputs.loftd_image }}"
-          do
-            docker push "${target_image}:${{ steps.image_meta.outputs.tag1 }}"
-            docker push "${target_image}:${{ steps.image_meta.outputs.tag2 }}"
-          done
+          docker push "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag1 }}"
+          docker push "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag2 }}"
