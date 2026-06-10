@@ -143,7 +143,6 @@ nix build .#agentbox-prebuilt
 nix build .#loftd-prebuilt
 nix build .#agentbox-musl
 nix build .#rtk-prebuilt
-nix build .#reasonix
 nix build .#libkrunfw
 nix build .#libkrunfw-dev
 nix build .#libkrun
@@ -186,7 +185,6 @@ nix build .#agentbox-container
   build or expose `bin/loftd`; the host `loftd` binary is always dynamically
   linked so it can load `libkrun.so`/`libkrunfw.so` from the package or dev
   shell runtime library path.
-- `.#reasonix`: build the pinned DeepSeek-Reasonix CLI from the release source rev.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
@@ -1264,7 +1262,7 @@ agentbox repos and containers.
 The container provides:
 
 - interactive `fish` + `starship`
-- Codex CLI, bubblewrap (`bwrap`), Pi (`pi`), Reasonix (`reasonix`/`dsnix`), and `oh-my-codex` (`omx`)
+- Codex CLI, bubblewrap (`bwrap`), Pi (`pi`), and `oh-my-codex` (`omx`)
 - cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)
 - prebuilt OMX native helpers (`omx-api`, `omx-runtime`, `omx-sparkshell`, and `omx-explore-harness`) with matching `OMX_*` binary override environment variables preset
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
@@ -1390,12 +1388,6 @@ Refresh pinned Pi coding agent source/npm metadata in `nix/pins.nix` from `earen
 
 ```bash
 nix develop --command ./scripts/update-pi-coding-agent.sh
-```
-
-Refresh pinned Reasonix source/npm metadata in `nix/pins.nix` from the latest `esengine/DeepSeek-Reasonix` release target rev:
-
-```bash
-nix develop --command ./scripts/update-reasonix.sh
 ```
 
 Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix` (including bundled Linux-musl native helper asset hashes):

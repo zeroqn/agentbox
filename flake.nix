@@ -32,9 +32,6 @@
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
-          reasonix = import ./nix/pkgs/reasonix.nix {
-            inherit pkgs pins;
-          };
           symposium = import ./nix/pkgs/symposium.nix {
             inherit pkgs;
           };
@@ -100,7 +97,6 @@
               ohMyCodex
               opencode
               piCodingAgent
-              reasonix
               rtkPrebuilt
               containerLibPolicySeccompJson
               libkrun
@@ -118,7 +114,6 @@
           oh-my-codex = ohMyCodex;
           opencode = opencode;
           pi-coding-agent = piCodingAgent;
-          reasonix = reasonix;
           symposium = symposium;
           agentbox = rustPackages.rustPackage;
           loftd = rustPackages.rustPackage;
@@ -150,7 +145,6 @@
             ohMyCodex = packages.oh-my-codex;
             opencode = packages.opencode;
             piCodingAgent = packages.pi-coding-agent;
-            reasonix = packages.reasonix;
             rtkPrebuilt = packages.rtk-prebuilt or null;
             containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
             libkrun = packages.libkrun;

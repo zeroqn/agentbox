@@ -11,8 +11,6 @@ const NIX_STORE_DB_CHECK_NIX: &str = include_str!("../../../nix/image/nix-store-
 const PINS_NIX: &str = include_str!("../../../nix/pins.nix");
 const SECCOMP_JSON_NIX: &str =
     include_str!("../../../nix/pkgs/container-lib-policy-seccomp-json.nix");
-const REASONIX_NIX: &str = include_str!("../../../nix/pkgs/reasonix.nix");
-const UPDATE_REASONIX_SH: &str = include_str!("../../../scripts/update-reasonix.sh");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
 const AGENTBOX_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/agentbox-prebuilt.nix");
 const LOFTD_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/loftd-prebuilt.nix");
@@ -960,60 +958,6 @@ fn image_does_not_wire_symposium_package_into_container_layers() {
     assert!(!CONTAINER_NIX.contains("symposium"));
     assert!(!IMAGE_CHECKS_NIX.contains("symposium"));
     assert!(!LAYERS.contains("symposium"));
-}
-
-#[test]
-fn image_wires_reasonix_package_into_agent_layer() {
-    for required in [
-        "reasonix = import ./nix/pkgs/reasonix.nix",
-        "reasonix = reasonix;",
-        "reasonix = packages.reasonix;",
-    ] {
-        assert!(FLAKE_NIX.contains(required), "missing {required}");
-    }
-
-    assert!(CONTAINER_NIX.contains("piCodingAgent, reasonix, rtkPrebuilt"));
-    assert!(CONTAINER_NIX.contains("piCodingAgent reasonix rtkPrebuilt"));
-    assert!(IMAGE_CHECKS_NIX.contains("piCodingAgent, reasonix, rtkPrebuilt"));
-    assert!(LAYERS.contains("piCodingAgent, reasonix, rtkPrebuilt"));
-
-    let agent_packages = nix_list_body(LAYERS, "agentImagePackages");
-    assert!(agent_packages.contains("reasonix"));
-    assert!(!nix_list_body(LAYERS, "toolingImagePackages").contains("reasonix"));
-}
-
-#[test]
-fn reasonix_package_builds_from_pinned_source_with_update_script() {
-    for required in [
-        "reasonix = {",
-        "owner = \"esengine\";",
-        "repo = \"DeepSeek-Reasonix\";",
-        "rev = \"28d95059c72885a2f2a23d5732336488e32374c2\";",
-        "npmDepsHash = \"sha256-",
-    ] {
-        assert!(PINS_NIX.contains(required), "missing {required}");
-    }
-
-    for required in [
-        "pkgs.buildNpmPackage",
-        "npmDepsHash = pins.reasonix.npmDepsHash;",
-        "substituteInPlace package.json",
-        "makeWrapper ${pkgs.nodejs}/bin/node $out/bin/reasonix",
-        "makeWrapper ${pkgs.nodejs}/bin/node $out/bin/dsnix",
-        "sourceTypes.fromSource",
-    ] {
-        assert!(REASONIX_NIX.contains(required), "missing {required}");
-    }
-
-    for required in [
-        "https://api.github.com/repos/$owner/$repo/releases/latest",
-        "target_commitish",
-        "nix-prefetch-url --print-path --unpack",
-        "nix build --no-link .#reasonix",
-        "npmDepsHash",
-    ] {
-        assert!(UPDATE_REASONIX_SH.contains(required), "missing {required}");
-    }
 }
 
 #[test]
