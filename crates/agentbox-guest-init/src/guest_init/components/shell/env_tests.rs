@@ -25,7 +25,7 @@ fn libkrun_runtime_derives_parent_shell_environment_before_podman_prep() {
         shell_env
             .vars
             .iter()
-            .any(|(key, value)| key == "PATH" && value.starts_with("/run/agentbox/idmap-bin:"))
+            .any(|(key, value)| key == "PATH" && value.starts_with("/run/agentbox/wrappers/bin:"))
     );
     assert!(shell_env.vars.contains(&(
         "DOCKER_HOST".to_owned(),

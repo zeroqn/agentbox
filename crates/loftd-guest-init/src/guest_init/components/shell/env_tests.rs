@@ -30,7 +30,7 @@ fn internal_runtime_derives_parent_shell_environment_before_podman_prep() {
         shell_env
             .vars
             .iter()
-            .any(|(key, value)| key == "PATH" && value.starts_with("/run/loftd/idmap-bin:"))
+            .any(|(key, value)| key == "PATH" && value.starts_with("/run/loftd/wrappers/bin:"))
     );
     assert!(shell_env.vars.contains(&(
         "DOCKER_HOST".to_owned(),

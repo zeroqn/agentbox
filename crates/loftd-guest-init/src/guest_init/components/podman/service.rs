@@ -11,13 +11,13 @@ use std::time::{Duration, Instant};
 use crate::guest_init::command;
 use crate::guest_init::components::env::{DEV_USER, PODMAN_LOG_PATH};
 use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::components::rootless::idmap::WRAPPER_BIN_DIR;
 use crate::guest_init::{fs as guest_fs, process};
 
 pub(in crate::guest_init) const REAL_PODMAN_ENV: &str = "LOFTD_REAL_PODMAN";
 const SERVICE_LOCK_FILE: &str = "service.lock";
 const SOCKET_SUBDIR: &str = "podman";
 const SOCKET_FILE: &str = "podman.sock";
-const IDMAP_BIN_DIR: &str = "/run/loftd/idmap-bin";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct PodmanServicePaths {
@@ -215,7 +215,7 @@ fn service_environment(
         ("XDG_STATE_HOME".to_owned(), format!("{home}/.local/state")),
         ("XDG_CACHE_HOME".to_owned(), format!("{home}/.cache")),
         ("TMPDIR".to_owned(), format!("{home}/.cache/tmp")),
-        ("PATH".to_owned(), format!("{IDMAP_BIN_DIR}:{path}")),
+        ("PATH".to_owned(), format!("{WRAPPER_BIN_DIR}:{path}")),
     ];
     preserve_if_present(&mut env, "SSL_CERT_FILE");
     preserve_if_present(&mut env, "NIX_SSL_CERT_FILE");

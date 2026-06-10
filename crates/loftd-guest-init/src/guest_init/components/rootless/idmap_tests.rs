@@ -5,29 +5,22 @@ use std::os::unix::fs::PermissionsExt;
 use tempfile::tempdir;
 
 use crate::guest_init::components::rootless::idmap::{
-    HELPER_DIR, helper_metadata_is_ready, installed_helper_is_ready, source_helper_on_path,
+    WRAPPER_BIN_DIR, helper_metadata_is_ready, installed_helper_is_ready, source_helper_in_path,
 };
 
 #[test]
 fn idmap_source_lookup_skips_installed_helper_dir_when_alternate_exists() {
     let temp = tempdir().unwrap();
-    let helper_dir = temp.path().join("idmap-bin");
+    let wrapper_dir = temp.path().join("wrappers/bin");
     let source_dir = temp.path().join("source-bin");
-    fs::create_dir_all(&helper_dir).unwrap();
+    fs::create_dir_all(&wrapper_dir).unwrap();
     fs::create_dir_all(&source_dir).unwrap();
-    make_executable(&helper_dir.join("newuidmap"));
+    make_executable(&wrapper_dir.join("newuidmap"));
     make_executable(&source_dir.join("newuidmap"));
-    let old_path = env::var_os("PATH");
-    unsafe {
-        env::set_var(
-            "PATH",
-            format!("{}:{}", helper_dir.display(), source_dir.display()),
-        )
-    };
+    let path = env::join_paths([wrapper_dir.as_path(), source_dir.as_path()]).unwrap();
 
-    let source = source_helper_on_path("newuidmap", &helper_dir).unwrap();
+    let source = source_helper_in_path("newuidmap", &wrapper_dir, &path).unwrap();
 
-    restore_path(old_path);
     assert_eq!(source, source_dir.join("newuidmap"));
 }
 
@@ -37,30 +30,26 @@ fn idmap_source_lookup_allows_existing_installed_helper_as_idempotent_fallback_w
         return;
     }
     let temp = tempdir().unwrap();
-    let helper_dir = temp.path().join("idmap-bin");
-    fs::create_dir_all(&helper_dir).unwrap();
-    make_setuid_executable(&helper_dir.join("newuidmap"));
-    let old_path = env::var_os("PATH");
-    unsafe { env::set_var("PATH", helper_dir.display().to_string()) };
+    let wrapper_dir = temp.path().join("wrappers/bin");
+    fs::create_dir_all(&wrapper_dir).unwrap();
+    make_setuid_executable(&wrapper_dir.join("newuidmap"));
+    let path = env::join_paths([wrapper_dir.as_path()]).unwrap();
 
-    let source = source_helper_on_path("newuidmap", &helper_dir).unwrap();
+    let source = source_helper_in_path("newuidmap", &wrapper_dir, &path).unwrap();
 
-    restore_path(old_path);
-    assert_eq!(source, helper_dir.join("newuidmap"));
+    assert_eq!(source, wrapper_dir.join("newuidmap"));
 }
 
 #[test]
 fn idmap_source_lookup_rejects_non_setuid_installed_helper_without_alternate() {
     let temp = tempdir().unwrap();
-    let helper_dir = temp.path().join("idmap-bin");
-    fs::create_dir_all(&helper_dir).unwrap();
-    make_executable(&helper_dir.join("newuidmap"));
-    let old_path = env::var_os("PATH");
-    unsafe { env::set_var("PATH", helper_dir.display().to_string()) };
+    let wrapper_dir = temp.path().join("wrappers/bin");
+    fs::create_dir_all(&wrapper_dir).unwrap();
+    make_executable(&wrapper_dir.join("newuidmap"));
+    let path = env::join_paths([wrapper_dir.as_path()]).unwrap();
 
-    let err = source_helper_on_path("newuidmap", &helper_dir).unwrap_err();
+    let err = source_helper_in_path("newuidmap", &wrapper_dir, &path).unwrap_err();
 
-    restore_path(old_path);
     assert!(err.to_string().contains("required tool 'newuidmap'"));
 }
 
@@ -94,8 +83,8 @@ fn idmap_installed_helper_readiness_rejects_non_root_owned_test_file() {
 }
 
 #[test]
-fn idmap_helper_dir_stays_loftd_run_path() {
-    assert_eq!(HELPER_DIR, "/run/loftd/idmap-bin");
+fn idmap_wrapper_dir_stays_loftd_run_path() {
+    assert_eq!(WRAPPER_BIN_DIR, "/run/loftd/wrappers/bin");
 }
 
 fn make_executable(path: &std::path::Path) {
@@ -115,11 +104,4 @@ fn write_helper_with_mode(path: &std::path::Path, mode: u32) -> std::io::Result<
     let mut perms = fs::metadata(path)?.permissions();
     perms.set_mode(mode);
     fs::set_permissions(path, perms)
-}
-
-fn restore_path(old_path: Option<std::ffi::OsString>) {
-    match old_path {
-        Some(value) => unsafe { env::set_var("PATH", value) },
-        None => unsafe { env::remove_var("PATH") },
-    }
 }

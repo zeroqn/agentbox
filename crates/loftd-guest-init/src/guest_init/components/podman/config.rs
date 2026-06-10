@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::guest_init::command;
 use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::components::rootless::idmap::WRAPPER_BIN_DIR;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct PodmanToolPaths {
@@ -60,7 +61,7 @@ compose_warning_logs = false
 events_logger = "file"
 runtime = "crun"
 conmon_path = ["{}"]
-helper_binaries_dir = ["{}", "{}", "{}", "/run/loftd/idmap-bin"]
+helper_binaries_dir = ["{}", "{}", "{}", "{WRAPPER_BIN_DIR}"]
 
 [engine.runtimes]
 crun = ["{}"]

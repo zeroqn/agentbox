@@ -9,7 +9,7 @@ use crate::guest_init::fs;
 
 const SUBID_START: u32 = 100_000;
 const SUBID_COUNT: u32 = 65_536;
-pub(in crate::guest_init) const HELPER_DIR: &str = "/run/loftd/idmap-bin";
+pub(in crate::guest_init) const WRAPPER_BIN_DIR: &str = "/run/loftd/wrappers/bin";
 
 pub(in crate::guest_init) fn prepare(identity: &DevIdentity) -> Result<()> {
     materialize_subid_files(identity)?;
@@ -50,10 +50,10 @@ fn reject_subid_overlap(candidate: u32, name: &str) -> Result<()> {
 }
 
 fn install_helper(name: &str) -> Result<()> {
-    let helper_dir = Path::new(HELPER_DIR);
-    fs::create_dir_all(helper_dir)?;
-    let dst = helper_dir.join(name);
-    let src = source_helper_on_path(name, helper_dir)?;
+    let wrapper_dir = Path::new(WRAPPER_BIN_DIR);
+    fs::create_dir_all(wrapper_dir)?;
+    let dst = wrapper_dir.join(name);
+    let src = source_helper_on_path(name, wrapper_dir)?;
     if src == dst || installed_helper_is_ready(&dst) {
         return Ok(());
     }
@@ -113,14 +113,22 @@ fn helper_metadata_is_ready(is_file: bool, mode: u32, uid: u32, gid: u32) -> boo
     is_file && uid == 0 && gid == 0 && mode & 0o111 != 0 && mode & 0o4000 != 0
 }
 
-fn source_helper_on_path(name: &str, helper_dir: &Path) -> Result<PathBuf> {
+fn source_helper_on_path(name: &str, wrapper_dir: &Path) -> Result<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path)
-        .filter(|dir| dir != helper_dir)
+    source_helper_in_path(name, wrapper_dir, &path)
+}
+
+fn source_helper_in_path(
+    name: &str,
+    wrapper_dir: &Path,
+    path: &std::ffi::OsStr,
+) -> Result<PathBuf> {
+    std::env::split_paths(path)
+        .filter(|dir| dir != wrapper_dir)
         .map(|dir| dir.join(name))
         .find(|candidate| command::is_executable(candidate))
         .or_else(|| {
-            let existing = helper_dir.join(name);
+            let existing = wrapper_dir.join(name);
             installed_helper_is_ready(&existing).then_some(existing)
         })
         .ok_or_else(|| anyhow!("required tool '{name}' is not available on PATH"))

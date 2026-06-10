@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::guest_init::components::env::DEV_USER;
 use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::components::rootless::idmap::WRAPPER_BIN_DIR;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct ShellEnvironment {
@@ -41,7 +42,7 @@ pub(in crate::guest_init) fn derive(
     }
     if containers_storage {
         let path = env::var("PATH").unwrap_or_default();
-        vars.push(("PATH".to_owned(), format!("/run/agentbox/idmap-bin:{path}")));
+        vars.push(("PATH".to_owned(), format!("{WRAPPER_BIN_DIR}:{path}")));
     }
     ShellEnvironment {
         vars,

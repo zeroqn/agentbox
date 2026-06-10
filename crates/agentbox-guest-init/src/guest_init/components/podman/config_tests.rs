@@ -30,6 +30,7 @@ fn podman_prep_generates_containers_config_for_rootless_libkrun() {
         "netavark",
         "aardvark-dns",
         "/nix/store/passt/bin",
+        "/run/agentbox/wrappers/bin",
         "crun = [\"/nix/store/crun/bin/crun\"]",
         "network_backend = \"netavark\"",
     ] {

@@ -62,7 +62,7 @@ fn podman_service_command_uses_real_binary_and_rootless_env() {
     assert!(
         plan.env
             .iter()
-            .any(|(key, value)| key == "PATH" && value.starts_with("/run/loftd/idmap-bin:"))
+            .any(|(key, value)| key == "PATH" && value.starts_with("/run/loftd/wrappers/bin:"))
     );
 
     restore_env(REAL_PODMAN_ENV, old_real);
