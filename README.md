@@ -891,6 +891,22 @@ use `--log-level debug`, `--log-level trace`, or the compatibility form
 `--debug` separately when verbose diagnostic logs are needed. Stdout remains
 reserved for guest command output.
 
+Loftd troubleshooting FAQ:
+
+- If the interactive shell appears to hang during startup, check the host
+  `RLIMIT_NOFILE` limits inherited by the process that launched loftd:
+
+  ```bash
+  ulimit -Sn
+  ulimit -Hn
+  ```
+
+  Loftd raises the helper's soft `nofile` limit to the inherited hard limit
+  before starting libkrun, but it cannot raise above that hard limit. If
+  `ulimit -Hn` is low, raise the hard limit in the actual parent launcher
+  context first, such as the shell, tmux session, systemd unit, or service that
+  starts `loftd`, then start loftd again from that context.
+
 Active task control is loftd-native and does not use host Podman as a runtime
 backend:
 
