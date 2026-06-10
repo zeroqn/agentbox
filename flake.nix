@@ -26,9 +26,6 @@
           ohMyCodex = import ./nix/pkgs/oh-my-codex.nix {
             inherit pkgs pins;
           };
-          opencode = import ./nix/pkgs/opencode.nix {
-            inherit pkgs pins;
-          };
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
@@ -95,7 +92,6 @@
               pkgs
               pkgsMaster
               ohMyCodex
-              opencode
               piCodingAgent
               rtkPrebuilt
               containerLibPolicySeccompJson
@@ -112,7 +108,6 @@
         {
           default = rustPackages.rustPackage;
           oh-my-codex = ohMyCodex;
-          opencode = opencode;
           pi-coding-agent = piCodingAgent;
           symposium = symposium;
           agentbox = rustPackages.rustPackage;
@@ -143,7 +138,6 @@
           mkImageChecks = imageVariant: import ./nix/image/checks.nix {
             inherit pkgs pkgsMaster imageVariant;
             ohMyCodex = packages.oh-my-codex;
-            opencode = packages.opencode;
             piCodingAgent = packages.pi-coding-agent;
             rtkPrebuilt = packages.rtk-prebuilt or null;
             containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;

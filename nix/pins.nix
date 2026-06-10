@@ -43,12 +43,6 @@
     };
   };
 
-  opencode = {
-    version = "1.14.48";
-    srcHash = "sha256-gyybqabTco+5ZeWv4lCX8t/R9Jm3tYsA8wVvkrxkEYQ=";
-    nodeModulesHash = "sha256-94uXrhyGqW016U6LPE/xIfZGoDOzyUto5DyQrYYePds=";
-  };
-
   piCodingAgent = {
     version = "0.79.1";
     owner = "earendil-works";

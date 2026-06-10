@@ -1378,12 +1378,6 @@ Refresh pinned `zeroqn/libkrunfw` release metadata in `nix/pins.nix`:
 nix develop --command ./scripts/update-libkrunfw.sh
 ```
 
-Refresh pinned OpenCode release metadata in `nix/pins.nix` from `anomalyco/opencode`:
-
-```bash
-nix develop --command ./scripts/update-opencode.sh
-```
-
 Refresh pinned Pi coding agent source/npm metadata in `nix/pins.nix` from `earendil-works/pi`:
 
 ```bash

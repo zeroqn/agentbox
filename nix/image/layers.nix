@@ -1,4 +1,4 @@
-{ pkgs, pkgsMaster, ohMyCodex, opencode, piCodingAgent, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, fishConfig, starshipConfig, imageVariant ? "agentbox" }:
+{ pkgs, pkgsMaster, ohMyCodex, piCodingAgent, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, fishConfig, starshipConfig, imageVariant ? "agentbox" }:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
