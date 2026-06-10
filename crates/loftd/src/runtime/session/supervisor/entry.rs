@@ -9,6 +9,7 @@ use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::supervisor::LIBKRUN_ENTER_HELPER_ARG;
 use crate::runtime::session::supervisor::identity;
+use crate::runtime::session::supervisor::rlimits;
 use crate::runtime::session::supervisor::vm_child::{self, VmWorkerGuard};
 use crate::runtime::vm::network::{NetworkManagerSession, PasstWorkerSession, status_exit_code};
 
@@ -55,6 +56,9 @@ fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> 
     })?;
     profiler.measure_result("helper_identity_configure", || {
         identity::configure_helper_filesystem_identity_for_launch(&config)
+    })?;
+    profiler.measure_result("helper_nofile_rlimit_raise", || {
+        rlimits::raise_host_nofile_soft_limit()
     })?;
     let task_state_dir = task_state_dir_from_config_path(config_path)?;
     profiler.record_metadata(

@@ -6,6 +6,7 @@ use std::process::ExitCode;
 pub(crate) mod command;
 pub(crate) mod entry;
 pub(crate) mod identity;
+pub(crate) mod rlimits;
 pub(crate) mod vm_child;
 
 use crate::runtime::launch::config::LaunchConfig;
