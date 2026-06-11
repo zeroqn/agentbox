@@ -776,7 +776,7 @@ Run/help:
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
 ./result/bin/loftd ps
-./result/bin/loftd kill <task-id>
+./result/bin/loftd kill <task-id-or-handle>
 ./result/bin/loftd container-store resize --size 128G
 ./result/bin/loftd container-store reset --force
 ```
@@ -912,19 +912,22 @@ backend:
 
 ```bash
 loftd ps
-loftd kill <task-id>
+loftd kill <task-id-or-handle>
 ```
 
 `loftd ps` scans loftd's app state and lists active task VM records across all
-workspaces by default. The human-readable table includes task id, status, helper
-PID/session identity, start timestamp, image, and workspace slug. It is an
-active-task view only: completed task history, log inspection, JSON/API output,
-restart/pause/exec operations, and Podman-backed management are intentionally out
-of scope. `loftd kill <task-id>` validates the recorded process and session
-identity before signaling the task process group, sends `SIGTERM`, waits
-briefly, and escalates to `SIGKILL` only if the task is still running. Stale
-records or reused process ids are reported instead of signaled, and successful
-kill requests remove the active record from subsequent `ps` output.
+workspaces by default. The human-readable table includes a short handle, full task
+id, status, helper PID/session identity, start timestamp, image, and workspace
+slug. For a full task id like `agentbox-4138-178109091122334455`, the handle is
+`agentbox-4138`, so `loftd kill agentbox-4138` can target that task without
+typing the opaque suffix. It is an active-task view only: completed task history,
+log inspection, JSON/API output, restart/pause/exec operations, and Podman-backed
+management are intentionally out of scope. `loftd kill <task-id-or-handle>`
+validates the recorded process and session identity before signaling the task
+process group, sends `SIGTERM`, waits briefly, and escalates to `SIGKILL` only if
+the task is still running. Ambiguous handles, stale records, or reused process ids
+are reported instead of signaled, and successful kill requests remove the active
+record from subsequent `ps` output.
 
 To inspect a preserved task `launch.conf`, decode its internal hex line format:
 

@@ -211,21 +211,64 @@ fn render_ps(app_dir: &Path, inspector: &impl ProcessInspector) -> Result<String
 
 fn kill_task(
     app_dir: &Path,
-    task_id: &str,
+    task_selector: &str,
     inspector: &impl ProcessInspector,
     signaler: &mut impl TaskSignaler,
     sleep: impl FnOnce(Duration),
 ) -> Result<String> {
-    let matches = list_records(app_dir)?
-        .into_iter()
-        .filter(|record| record.task_id == task_id)
+    let records = list_records(app_dir)?;
+    let exact_matches = records
+        .iter()
+        .filter(|record| record.task_id == task_selector)
         .collect::<Vec<_>>();
 
-    match matches.as_slice() {
-        [] => bail!("no active loftd task with id '{task_id}'"),
-        [record] => kill_record(record, inspector, signaler, sleep),
-        _ => bail!("multiple active loftd task records matched id '{task_id}'; refusing to kill"),
+    match exact_matches.as_slice() {
+        [record] => return kill_record(record, inspector, signaler, sleep),
+        [] => {}
+        _ => bail!(
+            "multiple active loftd task records matched id '{task_selector}'; refusing to kill"
+        ),
     }
+
+    let handle_matches = records
+        .iter()
+        .filter(|record| task_handle(&record.task_id) == Some(task_selector))
+        .collect::<Vec<_>>();
+
+    match handle_matches.as_slice() {
+        [] => bail!("no active loftd task with id or handle '{task_selector}'"),
+        [record] => kill_record(record, inspector, signaler, sleep),
+        _ => bail!(
+            "multiple active loftd task records matched handle '{task_selector}'; refusing to kill; candidates: {}",
+            format_task_candidates(&handle_matches)
+        ),
+    }
+}
+
+fn task_handle(task_id: &str) -> Option<&str> {
+    let (handle, suffix) = task_id.rsplit_once('-')?;
+    if handle.is_empty()
+        || !handle.contains('-')
+        || suffix.is_empty()
+        || !suffix.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(handle)
+}
+
+fn format_task_candidates(records: &[&ActiveTaskRecord]) -> String {
+    records
+        .iter()
+        .map(|record| {
+            let handle = task_handle(&record.task_id).unwrap_or(&record.task_id);
+            format!(
+                "{} (handle {handle}, workspace {})",
+                record.task_id, record.workspace_slug
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn kill_record(
@@ -403,8 +446,8 @@ fn is_non_workspace_state_dir(name: Option<&OsStr>) -> bool {
 
 fn render_task_table(rows: &[TaskRow]) -> String {
     let mut lines = vec![format!(
-        "{:<36} {:<10} {:>7} {:>7} {:>12}  {:<24} WORKSPACE",
-        "TASK ID", "STATUS", "PID", "SID", "STARTED", "IMAGE"
+        "{:<24} {:<36} {:<10} {:>7} {:>7} {:>12}  {:<24} WORKSPACE",
+        "HANDLE", "TASK ID", "STATUS", "PID", "SID", "STARTED", "IMAGE"
     )];
     for row in rows {
         let digest = row
@@ -413,8 +456,10 @@ fn render_task_table(rows: &[TaskRow]) -> String {
             .as_deref()
             .map(|digest| format!("@{digest}"))
             .unwrap_or_default();
+        let handle = task_handle(&row.record.task_id).unwrap_or(&row.record.task_id);
         lines.push(format!(
-            "{:<36} {:<10} {:>7} {:>7} {:>12}  {:<24} {}",
+            "{:<24} {:<36} {:<10} {:>7} {:>7} {:>12}  {:<24} {}",
+            truncate(handle, 24),
             truncate(&row.record.task_id, 36),
             row.status.as_str(),
             row.record.process.pid,
@@ -734,6 +779,126 @@ mod tests {
         assert!(output.contains("TASK ID"));
         assert!(output.contains("running"));
         assert!(output.contains("workspace-a"));
+    }
+
+    #[test]
+    fn ps_renders_short_handle_column_for_new_task_ids() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let task_id = "agentbox-4138-178109091122334455";
+        write_active_task_record(&record(task_id, task_dir)).expect("write task record");
+
+        let output = render_ps(
+            &app_dir,
+            &StaticInspector::new(vec![ActiveTaskStatus::Running]),
+        )
+        .expect("render ps");
+
+        assert!(output.contains("HANDLE"));
+        assert!(output.contains("agentbox-4138"));
+        assert!(output.contains(task_id));
+    }
+
+    #[test]
+    fn task_handle_extracts_workspace_pid_from_task_id() {
+        assert_eq!(
+            task_handle("agentbox-4138-178109091122334455"),
+            Some("agentbox-4138")
+        );
+        assert_eq!(task_handle("agentbox-4138"), None);
+        assert_eq!(task_handle("agentbox-4138-suffix"), None);
+    }
+
+    #[test]
+    fn kill_accepts_exact_derived_short_handle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        let task_id = "agentbox-4138-178109091122334455";
+        write_active_task_record(&record(task_id, task_dir)).expect("write task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+
+        let output = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+            .expect("kill task by handle");
+
+        assert!(output.contains(task_id));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert!(!record_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_arbitrary_shorter_prefix_even_when_unique() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("agentbox-4138-178109091122334455", task_dir))
+            .expect("write task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "agentbox-41", &inspector, &mut signaler, |_| {})
+            .expect_err("arbitrary prefix should not resolve");
+
+        assert!(format!("{err:#}").contains("id or handle"));
+        assert!(signaler.signals.is_empty());
+        assert!(record_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_ambiguous_short_handle_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let first_dir = app_dir.join("workspace-a/tasks/task-a");
+        let second_dir = app_dir.join("workspace-b/tasks/task-b");
+        let first_path = active_record_path(&first_dir);
+        let second_path = active_record_path(&second_dir);
+        write_active_task_record(&record("agentbox-4138-111", first_dir))
+            .expect("write first task record");
+        write_active_task_record(&record("agentbox-4138-222", second_dir))
+            .expect("write second task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+            .expect_err("ambiguous handle should refuse kill");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("matched handle 'agentbox-4138'"));
+        assert!(message.contains("agentbox-4138-111"));
+        assert!(message.contains("agentbox-4138-222"));
+        assert!(signaler.signals.is_empty());
+        assert!(first_path.exists());
+        assert!(second_path.exists());
+    }
+
+    #[test]
+    fn kill_exact_full_id_wins_over_handle_matches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let exact_dir = app_dir.join("workspace-a/tasks/exact");
+        let handle_dir = app_dir.join("workspace-b/tasks/handle");
+        let exact_path = active_record_path(&exact_dir);
+        let handle_path = active_record_path(&handle_dir);
+        write_active_task_record(&record("agentbox-4138", exact_dir))
+            .expect("write exact task record");
+        write_active_task_record(&record("agentbox-4138-111", handle_dir))
+            .expect("write handle task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+
+        let output = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+            .expect("exact task id should win");
+
+        assert!(output.contains("agentbox-4138"));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert!(!exact_path.exists());
+        assert!(handle_path.exists());
     }
 
     #[test]
