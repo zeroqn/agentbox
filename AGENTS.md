@@ -22,11 +22,16 @@ It also supports an optional host-side `fuse-overlayfs` mount rooted under
 ## Working Style
 
 - Keep changes narrow and consistent with the host/guest crate ownership split.
-- Prefer extending host tests under `crates/agentbox-host/src/` when changing
-  CLI, runtime, Podman, mount, or state behavior.
-- Prefer extending guest tests under `crates/agentbox-guest-init/src/` when
-  changing in-guest bootstrap, root/user setup, guest Podman prep, or status
-  behavior.
+- Write host-crate behavioral tests under `crates/agentbox-host/src/`. These
+  tests exercise the host crate's own public or internal APIs (CLI, runtime,
+  Podman orchestration, mount, state). Do not add loftd-specific tests or
+  cross-cutting repository-invariant checks (documentation strings, ADR prose,
+  Nix file content assertions) here.
+- Write guest-crate behavioral tests under `crates/agentbox-guest-init/src/`.
+  These tests exercise in-guest bootstrap, root/user setup, guest Podman prep,
+  or status logic.
+- Write loftd host-crate tests under `crates/loftd/src/`.
+- Write loftd guest-crate tests under `crates/loftd-guest-init/src/`.
 - Update `README.md` whenever user-visible behavior, requirements, or run
   commands change.
 - Preserve any existing user changes in the worktree. Do not revert unrelated

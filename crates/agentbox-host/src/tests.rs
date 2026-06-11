@@ -1,6 +1,4 @@
 const FLAKE_NIX: &str = include_str!("../../../flake.nix");
-const README_MD: &str = include_str!("../../../README.md");
-const CONTEXT_MD: &str = include_str!("../../../CONTEXT.md");
 const ADR_0005_NEUTRAL_LOFTD_PREBUILT_ASSETS_MD: &str =
     include_str!("../../../docs/adr/0005-neutral-loftd-prebuilt-assets.md");
 const LAYERS: &str = include_str!("../../../nix/image/layers.nix");
@@ -476,41 +474,6 @@ fn loftd_prebuilt_package_pins_and_patches_neutral_elf() {
     }
 
     assert!(!UPDATE_LOFTD_PREBUILT_SH.contains("agentboxPrebuiltRelease"));
-}
-
-#[test]
-fn loftd_prebuilt_docs_define_neutral_asset_contract() {
-    for required in [
-        "nix build .#loftd-prebuilt",
-        "`.#loftd`: compile the workspace Rust host package with `$out/bin/loftd` as a\n  raw dynamic ELF",
-        "Runtime helpers are installed under\n  `$out/libexec/loftd-helpers`",
-        "source-built loftd no longer\n  needs a wrapper script or duplicate `$out/libexec/loftd` payload",
-        "`./nix/dev#loftd-dev`: local-checkout-only development build of the\n  workspace Rust host package wired to the checked-out `deps/libkrun` and\n  `deps/libkrunfw` submodules",
-        "`.#loftd-prebuilt`: install a pinned published neutral dynamic Linux `loftd`",
-        "provide the same package-relative helper and `$out/lib/loftd`
-  library layout as source-built `.#loftd`",
-        "lacks a neutral pinned asset",
-        "loftd-<arch>-unknown-linux-gnu",
-        "neutral dynamic\nLinux ELF packaging input",
-        "raw-ELF `sha-*` release",
-        "nix develop --command ./scripts/update-loftd-prebuilt.sh",
-        "rejects wrapper-script assets, legacy",
-        "concrete\n`/nix/store/<hash>-...` references",
-        "For ordinary source-built loftd usage with pinned prebuilt libkrun firmware",
-        "use `nix build .#loftd-prebuilt` only for the\nexplicit pinned release-asset packaging path",
-        "Use `nix build ./nix/dev#loftd-dev`\nonly from a local checkout with initialized `deps/libkrun` and `deps/libkrunfw`\nsubmodules when local libkrun/libkrunfw experiments are intended",
-        "Nix `loftd`,\n`loftd-prebuilt`, and development\nshell paths include `pkgs.passt`",
-    ] {
-        assert!(README_MD.contains(required), "missing {required}");
-    }
-
-    for required in [
-        "**loftd prebuilt**:",
-        "pinned neutral dynamic Linux `loftd-<arch>-unknown-linux-gnu` release asset",
-        "Nix patches ordinary ELF runtime dependencies",
-    ] {
-        assert!(CONTEXT_MD.contains(required), "missing {required}");
-    }
 }
 
 #[test]
