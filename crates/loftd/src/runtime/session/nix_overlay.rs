@@ -1,10 +1,11 @@
 //! Workspace-scoped host kernel-overlayfs ownership for guest `/nix`.
 //!
 //! Session code acquires the workspace lease and serializes the intent; the VM
-//! worker materializes the mount in the namespace that will also prepare the
-//! libkrun root graft. Host-overlay launch must place that worker under
-//! `buildah unshare` so kernel overlayfs sees the same rootless idmap as the
-//! image cache lowerdir.
+//! worker materializes the mount in the keep-id user namespace (unshare
+//! --map-users + --setuid 0 --keep-caps) that will also prepare the libkrun
+//! root graft. Namespace root capabilities (CAP_SYS_ADMIN, CAP_DAC_OVERRIDE,
+//! CAP_CHOWN) satisfy overlayfs requirements while the identity mapping
+//! host_uid:host_uid:1 preserves file ownership visibility into the guest VM.
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::fs::{self, File, OpenOptions};

@@ -316,12 +316,6 @@ fn current_gid() -> u32 {
 }
 
 pub(crate) fn configure_helper_filesystem_identity_for_launch(config: &LaunchConfig) -> Result<()> {
-    if config.host_nix_overlay.is_some() {
-        tracing::debug!(
-            "loftd internal: preserving buildah-unshare namespace-root filesystem identity for host /nix overlay"
-        );
-        return Ok(());
-    }
     configure_helper_filesystem_identity(config)
 }
 

@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -747,6 +747,12 @@ fn run_btrfs_rootfs_child_with_commands(
             destination.display()
         )
     })?;
+    fix_rootfs_ownership(destination).with_context(|| {
+        format!(
+            "failed to fix rootfs ownership for '{}'",
+            destination.display()
+        )
+    })?;
 
     println!("selected_image={image_ref}");
     if let Some(digest) = image_digest {
@@ -755,6 +761,53 @@ fn run_btrfs_rootfs_child_with_commands(
     println!("rootfs_path={}", destination.display());
     print_oci_process_config(&process_config);
     Ok(())
+}
+
+fn fix_rootfs_ownership(rootfs: &Path) -> Result<()> {
+    if !rootfs.exists() {
+        return Ok(());
+    }
+    fix_ownership_recursive(rootfs)
+}
+
+fn fix_ownership_recursive(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to stat '{}'", path.display()))?;
+    let uid = metadata.uid();
+    let gid = metadata.gid();
+    if uid == 0 || gid == 0 {
+        let new_uid = if uid == 0 { 1 } else { uid };
+        let new_gid = if gid == 0 { 1 } else { gid };
+        // SAFETY: fchownat with AT_SYMLINK_NOFOLLOW; we own the path.
+        let rc = unsafe {
+            libc::fchownat(
+                libc::AT_FDCWD,
+                path_cstr(path)?.as_ptr(),
+                new_uid,
+                new_gid,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("failed to chown '{}'", path.display()));
+        }
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)
+            .with_context(|| format!("failed to read dir '{}'", path.display()))?
+        {
+            let entry =
+                entry.with_context(|| format!("failed to read entry in '{}'", path.display()))?;
+            fix_ownership_recursive(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn path_cstr(path: &Path) -> Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes()).context("path contains interior NUL")
 }
 
 fn inspect_oci_process_config(
