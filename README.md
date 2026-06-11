@@ -210,7 +210,8 @@ nix build .#agentbox-container
   aardvark-dns, passt, and docker-compose.
 - `.#agentbox-container`: agentbox-compatible Podman image archive named
   `localhost/agentbox:latest` for the existing `agentbox` runtime variants;
-  includes the same rootless Podman tooling, including Buildah.
+  includes the same rootless Podman tooling, including Buildah, and Nix
+  formatting tooling such as `nixfmt`.
 
 ### Nix store / DB diagnostics
 

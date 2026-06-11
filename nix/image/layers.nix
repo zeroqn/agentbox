@@ -329,6 +329,7 @@ let
     pkgs.fzf
     pkgs.gh
     pkgs.neovim
+    pkgs.nixfmt
   ]
   ++ pkgs.lib.optional (rtkPrebuilt != null) rtkPrebuilt
   ++ [
