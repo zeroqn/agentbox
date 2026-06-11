@@ -753,6 +753,12 @@ fn run_btrfs_rootfs_child_with_commands(
             destination.display()
         )
     })?;
+    fix_nix_store_ownership(destination).with_context(|| {
+        format!(
+            "failed to fix nix store ownership for '{}'",
+            destination.display()
+        )
+    })?;
 
     println!("selected_image={image_ref}");
     if let Some(digest) = image_digest {
@@ -768,6 +774,48 @@ fn fix_rootfs_ownership(rootfs: &Path) -> Result<()> {
         return Ok(());
     }
     fix_ownership_recursive(rootfs)
+}
+
+fn fix_nix_store_ownership(rootfs: &Path) -> Result<()> {
+    let store = rootfs.join("nix/store");
+    if !store.exists() {
+        return Ok(());
+    }
+    // SAFETY: fchownat with AT_SYMLINK_NOFOLLOW; we own the rootfs snapshot.
+    // In production this runs inside the keep-id namespace as uid 0 with
+    // CAP_CHOWN where gid 30000 is unconditionally mapped; the chown always
+    // succeeds. Gracefully skip when the caller lacks the capability or the
+    // gid is not mapped (e.g. test harnesses).
+    let rc = unsafe {
+        libc::fchownat(
+            libc::AT_FDCWD,
+            path_cstr(&store)?.as_ptr(),
+            u32::MAX,
+            30000,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        let code = err.raw_os_error();
+        // EPERM: caller lacks CAP_CHOWN outside the keep-id namespace.
+        // EINVAL: gid 30000 is not mapped in the caller's user namespace.
+        // Both are expected when running outside the keep-id namespace
+        // (e.g. test harnesses); in production the chown always succeeds.
+        if code == Some(libc::EPERM) || code == Some(libc::EINVAL) {
+            tracing::debug!("skipping nix store chown for '{}': {err}", store.display());
+        } else {
+            return Err(err).with_context(|| {
+                format!(
+                    "failed to chown '{}' to :nixbld (gid 30000)",
+                    store.display()
+                )
+            });
+        }
+    }
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o1775))
+        .with_context(|| format!("failed to chmod '{}' to 1775", store.display()))?;
+    Ok(())
 }
 
 fn fix_ownership_recursive(path: &Path) -> Result<()> {

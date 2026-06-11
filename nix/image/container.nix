@@ -74,6 +74,8 @@ let
       cat >> ./etc/passwd <<'EOF_PASSWD'
       ${layers.nixBuilderPasswdEntries}
       EOF_PASSWD
+      chown 0:nixbld ./nix/store
+      chmod 1775 ./nix/store
       chown -R 1000:1000 ./home/dev ./workspace
     '';
 
