@@ -40,7 +40,7 @@ impl ContainerStoreBackend {
   loftd container-store resize --size 128G
   loftd container-store reset --force
   loftd ps
-  loftd kill <task-id-or-handle-prefix>"
+  loftd kill <task-id-or-handle-selector>"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -202,7 +202,7 @@ pub(crate) enum CliCommand {
 
     #[command(name = "kill", about = "Terminate an active loftd task VM")]
     Kill {
-        #[arg(value_name = "TASK_ID_OR_HANDLE_PREFIX")]
+        #[arg(value_name = "TASK_ID_OR_HANDLE_SELECTOR")]
         task_id: String,
     },
 }

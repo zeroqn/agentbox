@@ -268,13 +268,75 @@ fn resolve_task_selector<'a>(
         .collect::<Vec<_>>();
 
     match handle_prefix_matches.as_slice() {
-        [record] => Ok(record),
-        [] => bail!("no active loftd task with id, handle, or handle prefix '{task_selector}'"),
+        [record] => return Ok(record),
+        [] => {}
         _ => bail!(
             "multiple active loftd task records matched handle prefix '{task_selector}'; refusing to kill; candidates: {}",
             format_task_candidates(&handle_prefix_matches)
         ),
     }
+
+    let Some(abbreviated_selector) = parse_abbreviated_handle_selector(task_selector)? else {
+        bail!("no active loftd task with id, handle, or handle prefix '{task_selector}'");
+    };
+
+    let abbreviated_matches = records
+        .iter()
+        .filter(|record| {
+            task_handle(&record.task_id)
+                .is_some_and(|handle| abbreviated_handle_matches(handle, &abbreviated_selector))
+        })
+        .collect::<Vec<_>>();
+
+    match abbreviated_matches.as_slice() {
+        [record] => Ok(record),
+        [] => bail!(
+            "no active loftd task with id, handle, or handle prefix, and no abbreviated handle selector matched '{task_selector}'"
+        ),
+        _ => bail!(
+            "multiple active loftd task records matched abbreviated handle selector '{task_selector}'; refusing to kill; candidates: {}",
+            format_task_candidates(&abbreviated_matches)
+        ),
+    }
+}
+
+struct AbbreviatedHandleSelector<'a> {
+    name_prefix: &'a str,
+    number_prefix: &'a str,
+}
+
+fn parse_abbreviated_handle_selector(
+    task_selector: &str,
+) -> Result<Option<AbbreviatedHandleSelector<'_>>> {
+    let Some((name_prefix, number_prefix)) = task_selector.rsplit_once('-') else {
+        return Ok(None);
+    };
+
+    if name_prefix.chars().count() < MIN_HANDLE_PREFIX_LEN {
+        bail!(
+            "abbreviated handle selector '{task_selector}' has a name prefix that is too short; use at least {MIN_HANDLE_PREFIX_LEN} characters before '-'"
+        );
+    }
+
+    if number_prefix.is_empty() || !number_prefix.chars().all(|ch| ch.is_ascii_digit()) {
+        bail!(
+            "abbreviated handle selector '{task_selector}' must end with a non-empty numeric displayed-handle segment prefix"
+        );
+    }
+
+    Ok(Some(AbbreviatedHandleSelector {
+        name_prefix,
+        number_prefix,
+    }))
+}
+
+fn abbreviated_handle_matches(handle: &str, selector: &AbbreviatedHandleSelector<'_>) -> bool {
+    let Some((handle_name, handle_number)) = handle.rsplit_once('-') else {
+        return false;
+    };
+
+    handle_name.starts_with(selector.name_prefix)
+        && handle_number.starts_with(selector.number_prefix)
 }
 
 fn task_handle(task_id: &str) -> Option<&str> {
@@ -883,6 +945,86 @@ mod tests {
     }
 
     #[test]
+    fn kill_accepts_unique_abbreviated_handle_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let target_dir = app_dir.join("workspace-a/tasks/target");
+        let other_agentbox_dir = app_dir.join("workspace-b/tasks/other-agentbox");
+        let muvm_dir = app_dir.join("workspace-c/tasks/muvm");
+        let target_path = active_record_path(&target_dir);
+        let other_agentbox_path = active_record_path(&other_agentbox_dir);
+        let muvm_path = active_record_path(&muvm_dir);
+        write_active_task_record(&record("agentbox-1845-111", target_dir))
+            .expect("write target task record");
+        write_active_task_record(&record("agentbox-8874-222", other_agentbox_dir))
+            .expect("write other agentbox task record");
+        write_active_task_record(&record("muvm-3871-333", muvm_dir))
+            .expect("write muvm task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+
+        let output = kill_task(&app_dir, "ag-18", &inspector, &mut signaler, |_| {})
+            .expect("kill by abbreviated handle selector");
+
+        assert!(output.contains("agentbox-1845-111"));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert!(!target_path.exists());
+        assert!(other_agentbox_path.exists());
+        assert!(muvm_path.exists());
+    }
+
+    #[test]
+    fn kill_accepts_numeric_prefix_in_abbreviated_handle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let agentbox_dir = app_dir.join("workspace-a/tasks/agentbox");
+        let target_dir = app_dir.join("workspace-b/tasks/muvm");
+        let agentbox_path = active_record_path(&agentbox_dir);
+        let target_path = active_record_path(&target_dir);
+        write_active_task_record(&record("agentbox-1845-111", agentbox_dir))
+            .expect("write agentbox task record");
+        write_active_task_record(&record("muvm-3871-222", target_dir))
+            .expect("write target task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+
+        let output = kill_task(&app_dir, "mu-38", &inspector, &mut signaler, |_| {})
+            .expect("kill by abbreviated numeric prefix");
+
+        assert!(output.contains("muvm-3871-222"));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert!(agentbox_path.exists());
+        assert!(!target_path.exists());
+    }
+
+    #[test]
+    fn kill_literal_hyphenated_handle_prefix_precedes_abbreviated_matching() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let literal_prefix_dir = app_dir.join("workspace-a/tasks/literal-prefix");
+        let abbreviated_match_dir = app_dir.join("workspace-b/tasks/abbreviated-match");
+        let literal_prefix_path = active_record_path(&literal_prefix_dir);
+        let abbreviated_match_path = active_record_path(&abbreviated_match_dir);
+        write_active_task_record(&record("ag-18-test-111", literal_prefix_dir))
+            .expect("write literal-prefix task record");
+        write_active_task_record(&record("agentbox-1845-222", abbreviated_match_dir))
+            .expect("write abbreviated-match task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+
+        let output = kill_task(&app_dir, "ag-18", &inspector, &mut signaler, |_| {})
+            .expect("literal prefix should win");
+
+        assert!(output.contains("ag-18-test-111"));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert!(!literal_prefix_path.exists());
+        assert!(abbreviated_match_path.exists());
+    }
+
+    #[test]
     fn kill_rejects_one_character_handle_prefix_even_when_unique() {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_dir = dir.path().join("loftd");
@@ -897,6 +1039,25 @@ mod tests {
             .expect_err("one-character prefix should not resolve");
 
         assert!(format!("{err:#}").contains("too short"));
+        assert!(signaler.signals.is_empty());
+        assert!(record_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_too_short_abbreviated_name_prefix_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("agentbox-1845-111", task_dir))
+            .expect("write task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "a-18", &inspector, &mut signaler, |_| {})
+            .expect_err("too-short abbreviated name prefix should not resolve");
+
+        assert!(format!("{err:#}").contains("name prefix that is too short"));
         assert!(signaler.signals.is_empty());
         assert!(record_path.exists());
     }
@@ -953,6 +1114,114 @@ mod tests {
         assert!(signaler.signals.is_empty());
         assert!(first_path.exists());
         assert!(second_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_ambiguous_abbreviated_handle_prefix_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let first_dir = app_dir.join("workspace-a/tasks/task-a");
+        let second_dir = app_dir.join("workspace-b/tasks/task-b");
+        let first_path = active_record_path(&first_dir);
+        let second_path = active_record_path(&second_dir);
+        write_active_task_record(&record("agentbox-1845-111", first_dir))
+            .expect("write first task record");
+        write_active_task_record(&record("agentic-1800-222", second_dir))
+            .expect("write second task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "ag-18", &inspector, &mut signaler, |_| {})
+            .expect_err("ambiguous abbreviated selector should refuse kill");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("matched abbreviated handle selector 'ag-18'"));
+        assert!(message.contains("agentbox-1845-111"));
+        assert!(message.contains("agentic-1800-222"));
+        assert!(signaler.signals.is_empty());
+        assert!(first_path.exists());
+        assert!(second_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_malformed_abbreviated_handle_prefix_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let first_dir = app_dir.join("workspace-a/tasks/task-a");
+        let second_dir = app_dir.join("workspace-b/tasks/task-b");
+        let first_path = active_record_path(&first_dir);
+        let second_path = active_record_path(&second_dir);
+        write_active_task_record(&record("agentbox-1845-111", first_dir))
+            .expect("write first task record");
+        write_active_task_record(&record("muvm-3871-222", second_dir))
+            .expect("write second task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "ag-x", &inspector, &mut signaler, |_| {})
+            .expect_err("non-numeric abbreviated selector should not resolve");
+
+        assert!(format!("{err:#}").contains("non-empty numeric displayed-handle segment prefix"));
+        assert!(signaler.signals.is_empty());
+        assert!(first_path.exists());
+        assert!(second_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_empty_numeric_abbreviated_handle_prefix_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("agentbox-1845-111", task_dir))
+            .expect("write task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "ag-", &inspector, &mut signaler, |_| {})
+            .expect_err("empty numeric abbreviated selector should not resolve");
+
+        assert!(format!("{err:#}").contains("non-empty numeric displayed-handle segment prefix"));
+        assert!(signaler.signals.is_empty());
+        assert!(record_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_unmatched_abbreviated_handle_prefix_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("agentbox-1845-111", task_dir))
+            .expect("write task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "ag-99", &inspector, &mut signaler, |_| {})
+            .expect_err("unmatched abbreviated selector should not resolve");
+
+        assert!(format!("{err:#}").contains("no abbreviated handle selector matched 'ag-99'"));
+        assert!(signaler.signals.is_empty());
+        assert!(record_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_compressed_handle_prefix_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("agentbox-1845-111", task_dir))
+            .expect("write task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "ag18", &inspector, &mut signaler, |_| {})
+            .expect_err("compressed selector should not resolve");
+
+        assert!(format!("{err:#}").contains("id, handle, or handle prefix"));
+        assert!(signaler.signals.is_empty());
+        assert!(record_path.exists());
     }
 
     #[test]
