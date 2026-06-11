@@ -9,6 +9,7 @@ const IMAGE_CONFIG_NIX: &str = include_str!("../../../nix/image/config.nix");
 const IMAGE_CHECKS_NIX: &str = include_str!("../../../nix/image/checks.nix");
 const NIX_STORE_DB_CHECK_NIX: &str = include_str!("../../../nix/image/nix-store-db-check.nix");
 const PINS_NIX: &str = include_str!("../../../nix/pins.nix");
+const NIX_DEV_FLAKE_NIX: &str = include_str!("../../../nix/dev/flake.nix");
 const SECCOMP_JSON_NIX: &str =
     include_str!("../../../nix/pkgs/container-lib-policy-seccomp-json.nix");
 const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
@@ -80,7 +81,6 @@ fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
         r#"agentboxImage = mkImage "agentbox";"#,
         "agentbox = rustPackages.rustPackage;",
         "loftd = rustPackages.rustPackage;",
-        "loftd-dev = rustPackagesDev.rustPackage;",
         "prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix",
         "loftd-prebuilt = prebuiltLoftd;",
         "container = loftdImage;",
@@ -91,6 +91,11 @@ fn flake_exposes_loftd_container_and_agentbox_container_outputs() {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
     assert!(!FLAKE_NIX.contains("loftd-musl"));
+    assert!(!FLAKE_NIX.contains("loftd-dev ="));
+    assert!(
+        NIX_DEV_FLAKE_NIX.contains("loftd-dev = rustPackages.rustPackage;"),
+        "dev sub-flake should expose loftd-dev"
+    );
 }
 
 #[test]
@@ -480,7 +485,7 @@ fn loftd_prebuilt_docs_define_neutral_asset_contract() {
         "`.#loftd`: compile the workspace Rust host package with `$out/bin/loftd` as a\n  raw dynamic ELF",
         "Runtime helpers are installed under\n  `$out/libexec/loftd-helpers`",
         "source-built loftd no longer\n  needs a wrapper script or duplicate `$out/libexec/loftd` payload",
-        "`.#loftd-dev`: compile the workspace Rust host package and wire it to local\n  `deps/libkrunfw`",
+        "`./nix/dev#loftd-dev`: local-checkout-only development build of the\n  workspace Rust host package wired to the checked-out `deps/libkrun` and\n  `deps/libkrunfw` submodules",
         "`.#loftd-prebuilt`: install a pinned published neutral dynamic Linux `loftd`",
         "provide the same package-relative helper and `$out/lib/loftd`
   library layout as source-built `.#loftd`",
@@ -493,7 +498,7 @@ fn loftd_prebuilt_docs_define_neutral_asset_contract() {
         "concrete\n`/nix/store/<hash>-...` references",
         "For ordinary source-built loftd usage with pinned prebuilt libkrun firmware",
         "use `nix build .#loftd-prebuilt` only for the\nexplicit pinned release-asset packaging path",
-        "Use `nix build .#loftd-dev` only when local\n`deps/libkrunfw` experiments are intended",
+        "Use `nix build ./nix/dev#loftd-dev`\nonly from a local checkout with initialized `deps/libkrun` and `deps/libkrunfw`\nsubmodules when local libkrun/libkrunfw experiments are intended",
         "Nix `loftd`,\n`loftd-prebuilt`, and development\nshell paths include `pkgs.passt`",
     ] {
         assert!(README_MD.contains(required), "missing {required}");
