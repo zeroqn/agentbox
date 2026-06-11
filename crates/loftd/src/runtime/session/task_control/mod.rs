@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const ACTIVE_RECORD_FILE: &str = "active-task";
 const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 const PROC_ROOT: &str = "/proc";
+const MIN_HANDLE_PREFIX_LEN: usize = 2;
 const TERM_GRACE: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,13 +218,22 @@ fn kill_task(
     sleep: impl FnOnce(Duration),
 ) -> Result<String> {
     let records = list_records(app_dir)?;
+    let record = resolve_task_selector(&records, task_selector)?;
+
+    kill_record(record, inspector, signaler, sleep)
+}
+
+fn resolve_task_selector<'a>(
+    records: &'a [ActiveTaskRecord],
+    task_selector: &str,
+) -> Result<&'a ActiveTaskRecord> {
     let exact_matches = records
         .iter()
         .filter(|record| record.task_id == task_selector)
         .collect::<Vec<_>>();
 
     match exact_matches.as_slice() {
-        [record] => return kill_record(record, inspector, signaler, sleep),
+        [record] => return Ok(record),
         [] => {}
         _ => bail!(
             "multiple active loftd task records matched id '{task_selector}'; refusing to kill"
@@ -236,11 +246,33 @@ fn kill_task(
         .collect::<Vec<_>>();
 
     match handle_matches.as_slice() {
-        [] => bail!("no active loftd task with id or handle '{task_selector}'"),
-        [record] => kill_record(record, inspector, signaler, sleep),
+        [record] => return Ok(record),
+        [] => {}
         _ => bail!(
             "multiple active loftd task records matched handle '{task_selector}'; refusing to kill; candidates: {}",
             format_task_candidates(&handle_matches)
+        ),
+    }
+
+    if task_selector.chars().count() < MIN_HANDLE_PREFIX_LEN {
+        bail!(
+            "handle prefix '{task_selector}' is too short; use at least {MIN_HANDLE_PREFIX_LEN} characters or an exact task id/handle"
+        );
+    }
+
+    let handle_prefix_matches = records
+        .iter()
+        .filter(|record| {
+            task_handle(&record.task_id).is_some_and(|handle| handle.starts_with(task_selector))
+        })
+        .collect::<Vec<_>>();
+
+    match handle_prefix_matches.as_slice() {
+        [record] => Ok(record),
+        [] => bail!("no active loftd task with id, handle, or handle prefix '{task_selector}'"),
+        _ => bail!(
+            "multiple active loftd task records matched handle prefix '{task_selector}'; refusing to kill; candidates: {}",
+            format_task_candidates(&handle_prefix_matches)
         ),
     }
 }
@@ -831,7 +863,27 @@ mod tests {
     }
 
     #[test]
-    fn kill_rejects_arbitrary_shorter_prefix_even_when_unique() {
+    fn kill_accepts_unique_handle_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        let task_id = "agentbox-4138-178109091122334455";
+        write_active_task_record(&record(task_id, task_dir)).expect("write task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+
+        let output =
+            kill_task(&app_dir, "ag", &inspector, &mut signaler, |_| {}).expect("kill by prefix");
+
+        assert!(output.contains(task_id));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert!(!record_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_one_character_handle_prefix_even_when_unique() {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_dir = dir.path().join("loftd");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
@@ -841,10 +893,10 @@ mod tests {
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "agentbox-41", &inspector, &mut signaler, |_| {})
-            .expect_err("arbitrary prefix should not resolve");
+        let err = kill_task(&app_dir, "a", &inspector, &mut signaler, |_| {})
+            .expect_err("one-character prefix should not resolve");
 
-        assert!(format!("{err:#}").contains("id or handle"));
+        assert!(format!("{err:#}").contains("too short"));
         assert!(signaler.signals.is_empty());
         assert!(record_path.exists());
     }
@@ -874,6 +926,83 @@ mod tests {
         assert!(signaler.signals.is_empty());
         assert!(first_path.exists());
         assert!(second_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_ambiguous_handle_prefix_without_signaling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let first_dir = app_dir.join("workspace-a/tasks/task-a");
+        let second_dir = app_dir.join("workspace-b/tasks/task-b");
+        let first_path = active_record_path(&first_dir);
+        let second_path = active_record_path(&second_dir);
+        write_active_task_record(&record("agentbox-3415-111", first_dir))
+            .expect("write first task record");
+        write_active_task_record(&record("agentic-2222-333", second_dir))
+            .expect("write second task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(&app_dir, "ag", &inspector, &mut signaler, |_| {})
+            .expect_err("ambiguous prefix should refuse kill");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("matched handle prefix 'ag'"));
+        assert!(message.contains("agentbox-3415-111"));
+        assert!(message.contains("agentic-2222-333"));
+        assert!(signaler.signals.is_empty());
+        assert!(first_path.exists());
+        assert!(second_path.exists());
+    }
+
+    #[test]
+    fn kill_rejects_full_id_prefix_that_is_not_a_handle_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("agentbox-3415-111", task_dir))
+            .expect("write task record");
+        let inspector = StaticInspector::new(vec![]);
+        let mut signaler = RecordingSignaler::default();
+
+        let err = kill_task(
+            &app_dir,
+            "agentbox-3415-1",
+            &inspector,
+            &mut signaler,
+            |_| {},
+        )
+        .expect_err("full id prefix should not resolve through handle prefix matching");
+
+        assert!(format!("{err:#}").contains("id, handle, or handle prefix"));
+        assert!(signaler.signals.is_empty());
+        assert!(record_path.exists());
+    }
+
+    #[test]
+    fn kill_exact_handle_wins_over_longer_handle_prefix_matches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let exact_handle_dir = app_dir.join("workspace-a/tasks/exact-handle");
+        let prefix_dir = app_dir.join("workspace-b/tasks/prefix");
+        let exact_handle_path = active_record_path(&exact_handle_dir);
+        let prefix_path = active_record_path(&prefix_dir);
+        write_active_task_record(&record("agentbox-4138-111", exact_handle_dir))
+            .expect("write exact-handle task record");
+        write_active_task_record(&record("agentbox-4138-extra-222", prefix_dir))
+            .expect("write prefix task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+
+        let output = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+            .expect("exact handle should win");
+
+        assert!(output.contains("agentbox-4138-111"));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert!(!exact_handle_path.exists());
+        assert!(prefix_path.exists());
     }
 
     #[test]

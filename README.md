@@ -776,7 +776,7 @@ Run/help:
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
 ./result/bin/loftd ps
-./result/bin/loftd kill <task-id-or-handle>
+./result/bin/loftd kill <task-id-or-handle-prefix>
 ./result/bin/loftd container-store resize --size 128G
 ./result/bin/loftd container-store reset --force
 ```
@@ -912,7 +912,7 @@ backend:
 
 ```bash
 loftd ps
-loftd kill <task-id-or-handle>
+loftd kill <task-id-or-handle-prefix>
 ```
 
 `loftd ps` scans loftd's app state and lists active task VM records across all
@@ -920,14 +920,17 @@ workspaces by default. The human-readable table includes a short handle, full ta
 id, status, helper PID/session identity, start timestamp, image, and workspace
 slug. For a full task id like `agentbox-4138-178109091122334455`, the handle is
 `agentbox-4138`, so `loftd kill agentbox-4138` can target that task without
-typing the opaque suffix. It is an active-task view only: completed task history,
-log inspection, JSON/API output, restart/pause/exec operations, and Podman-backed
-management are intentionally out of scope. `loftd kill <task-id-or-handle>`
-validates the recorded process and session identity before signaling the task
-process group, sends `SIGTERM`, waits briefly, and escalates to `SIGKILL` only if
-the task is still running. Ambiguous handles, stale records, or reused process ids
-are reported instead of signaled, and successful kill requests remove the active
-record from subsequent `ps` output.
+typing the opaque suffix. You can also use a displayed-handle prefix of at least
+two characters, such as `loftd kill ag`, when that prefix uniquely matches one
+visible handle. Prefix matching is only against displayed handles, not full task
+ids. It is an active-task view only: completed task history, log inspection,
+JSON/API output, restart/pause/exec operations, and Podman-backed management are
+intentionally out of scope. `loftd kill <task-id-or-handle-prefix>` validates the
+recorded process and session identity before signaling the task process group,
+sends `SIGTERM`, waits briefly, and escalates to `SIGKILL` only if the task is
+still running. Ambiguous handles or handle prefixes, too-short prefixes, stale
+records, or reused process ids are reported instead of signaled, and successful
+kill requests remove the active record from subsequent `ps` output.
 
 To inspect a preserved task `launch.conf`, decode its internal hex line format:
 
