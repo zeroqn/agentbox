@@ -33,6 +33,7 @@
           libkrun = import ../../nix/pkgs/libkrun.nix {
             inherit pkgs pins libkrunfw;
             libkrunSrc = root + "/deps/libkrun";
+            usePrebuilt = false;
           };
           rustPackages = import ../../nix/pkgs/agentbox-rust.nix {
             self = root;

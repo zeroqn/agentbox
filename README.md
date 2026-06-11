@@ -145,6 +145,7 @@ nix build .#agentbox-musl
 nix build .#rtk-prebuilt
 nix build .#libkrunfw
 nix build .#libkrun
+nix build .#libkrun-source
 nix build .#crun
 nix build .#podman
 nix build .#container-lib-policy-seccomp-json
@@ -157,9 +158,9 @@ nix build .#agentbox-container
 - `.#agentbox`: compile from source.
 - `.#loftd`: compile the workspace Rust host package with `$out/bin/loftd` as a
   raw dynamic ELF. Runtime helpers are installed under
-  `$out/libexec/loftd-helpers`, and the pinned prebuilt `libkrun`/`libkrunfw`
-  libraries are exposed under `$out/lib/loftd`, so source-built loftd no longer
-  needs a wrapper script or duplicate `$out/libexec/loftd` payload.
+  `$out/libexec/loftd-helpers`, and the shared `libkrun`/`libkrunfw` packages
+  are exposed under `$out/lib/loftd`, so source-built loftd no longer needs a
+  wrapper script or duplicate `$out/libexec/loftd` payload.
 - `./nix/dev#loftd-dev`: local-checkout-only development build of the
   workspace Rust host package wired to the checked-out `deps/libkrun` and
   `deps/libkrunfw` submodules through the submodule-aware dev flake. Use this
@@ -190,11 +191,17 @@ nix build .#agentbox-container
   pinned for `x86_64-linux`).
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
-- `.#libkrun`: build libkrun 1.18.1 from source (overrides nixpkgs 1.17.4)
-  with net, sound, GPU, block, and input support enabled, linked against the
-  pinned prebuilt `.#libkrunfw`. Local libkrun/libkrunfw source builds are kept
-  in local-checkout-only `./nix/dev#loftd-dev` so downstream-safe root package
-  outputs do not depend on local submodule checkouts.
+- `.#libkrun`: install the pinned `zeroqn/libkrun` `loftd-*` prebuilt release
+  asset for the current system once `nix/pins.nix` has
+  `libkrunRelease.enabled = true`. Until the first complete prebuilt release is
+  published and pinned, this output deliberately falls back to building libkrun
+  1.18.1 from source (overrides nixpkgs 1.17.4) with net, sound, GPU, block,
+  and input support enabled, linked against the pinned prebuilt `.#libkrunfw`.
+  The prebuilt package normalizes upstream Linux `lib64` payloads into
+  `$out/lib` and regenerates `libkrun.pc` for the Nix store path.
+- `.#libkrun-source`: always build libkrun from source with the same full
+  feature set, regardless of `libkrunRelease.enabled`. Use this as the root
+  fallback for debugging prebuilt assets.
 - `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
   override, krun handler support, raw data disk annotation support,
   `krun.nested_virt` support, and `pkgs.passt` on crun's runtime `PATH`.
@@ -1404,6 +1411,19 @@ Refresh pinned `zeroqn/libkrun` source and Cargo vendor metadata in `nix/pins.ni
 
 ```bash
 nix develop --command ./scripts/update-libkrun.sh
+```
+
+After the `deps/libkrun` `loftd` branch publishes a complete prebuilt release,
+refresh pinned `zeroqn/libkrun` release metadata from the newest matching
+`loftd-*` tag that contains both first-pass Linux assets. This flips
+`libkrunRelease.enabled` to `true`, so root `.#libkrun` and every shared
+consumer (`.#crun`, `.#podman`, `.#agentbox`, `.#loftd`, images, and
+`.#loftd-prebuilt`) use the same pinned prebuilt libkrun package. If no complete
+release exists yet, the command fails without changing the source-build
+bootstrap path:
+
+```bash
+nix develop --command ./scripts/update-libkrun.sh --prebuilt-release
 ```
 
 Refresh pinned `zeroqn/libkrunfw` release metadata in `nix/pins.nix`:

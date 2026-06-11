@@ -68,6 +68,26 @@
     cargoDepsHash = "sha256-2ZjrOdrwnR1oaGmCZc/13LIlH3qPI7g9kBaYAEpwpSE=";
   };
 
+  libkrunRelease = {
+    owner = "zeroqn";
+    repo = "libkrun";
+    # Bootstrap value. Prebuilt libkrun is disabled until
+    # scripts/update-libkrun.sh --prebuilt-release finds a single loftd-* release
+    # containing every required first-pass Linux asset.
+    enabled = false;
+    tag = "";
+    systems = {
+      x86_64-linux = {
+        asset = "libkrun-x86_64-linux-full.tgz";
+        hash = "";
+      };
+      aarch64-linux = {
+        asset = "libkrun-aarch64-linux-full.tgz";
+        hash = "";
+      };
+    };
+  };
+
   libkrunfwRelease = {
     owner = "zeroqn";
     repo = "libkrunfw";

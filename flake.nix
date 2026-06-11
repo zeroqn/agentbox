@@ -46,6 +46,10 @@
           libkrun = import ./nix/pkgs/libkrun.nix {
             inherit pkgs pins libkrunfw;
           };
+          libkrunSourcePackage = import ./nix/pkgs/libkrun.nix {
+            inherit pkgs pins libkrunfw;
+            usePrebuilt = false;
+          };
           prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix {
             inherit
               pkgs
@@ -100,6 +104,7 @@
           agentbox-container = agentboxImage;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
+          libkrun-source = libkrunSourcePackage;
           crun = crun;
           podman = podman;
           container = loftdImage;
