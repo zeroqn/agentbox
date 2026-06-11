@@ -38,6 +38,10 @@ pkgs.stdenv.mkDerivation {
     pkgs.pipewire
   ];
 
+  appendRunpaths = [
+    "${lib.getLib libkrunfw}/lib"
+  ];
+
   installPhase = ''
     runHook preInstall
 
@@ -73,14 +77,6 @@ Cflags: -I''${includedir}
 PC_EOF
 
     runHook postInstall
-  '';
-
-  postFixup = ''
-    for lib in "$out/lib"/libkrun.so.*; do
-      if [ -f "$lib" ] && [ ! -L "$lib" ]; then
-        patchelf --add-rpath ${lib.getLib libkrunfw}/lib "$lib"
-      fi
-    done
   '';
 
   meta = {
