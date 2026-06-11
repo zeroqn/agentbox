@@ -145,7 +145,6 @@ nix build .#agentbox-musl
 nix build .#rtk-prebuilt
 nix build .#libkrunfw
 nix build .#libkrun
-nix build .#libkrun-source
 nix build .#crun
 nix build .#podman
 nix build .#container-lib-policy-seccomp-json
@@ -192,16 +191,12 @@ nix build .#agentbox-container
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
 - `.#libkrun`: install the pinned `zeroqn/libkrun` `loftd-*` prebuilt release
-  asset for the current system once `nix/pins.nix` has
-  `libkrunRelease.enabled = true`. Until the first complete prebuilt release is
-  published and pinned, this output deliberately falls back to building libkrun
-  1.18.1 from source (overrides nixpkgs 1.17.4) with net, sound, GPU, block,
-  and input support enabled, linked against the pinned prebuilt `.#libkrunfw`.
-  The prebuilt package normalizes upstream Linux `lib64` payloads into
-  `$out/lib` and regenerates `libkrun.pc` for the Nix store path.
-- `.#libkrun-source`: always build libkrun from source with the same full
-  feature set, regardless of `libkrunRelease.enabled`. Use this as the root
-  fallback for debugging prebuilt assets.
+  asset for the current system, matching `.#libkrunfw`'s release-asset model.
+  Root consumers (`.#crun`, `.#podman`, `.#agentbox`, `.#loftd`, images, and
+  `.#loftd-prebuilt`) all use this pinned prebuilt package. The package
+  normalizes upstream Linux `lib64` payloads into `$out/lib` and regenerates
+  `libkrun.pc` for the Nix store path. Local source development for libkrun is
+  intentionally limited to the submodule-aware dev flake (`./nix/dev#loftd-dev`).
 - `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
   override, krun handler support, raw data disk annotation support,
   `krun.nested_virt` support, and `pkgs.passt` on crun's runtime `PATH`.
@@ -1407,23 +1402,15 @@ Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:
 nix develop --command ./scripts/update-rtk-prebuilt.sh
 ```
 
-Refresh pinned `zeroqn/libkrun` source and Cargo vendor metadata in `nix/pins.nix`:
+Refresh pinned `zeroqn/libkrun` prebuilt release metadata in `nix/pins.nix`
+from the newest matching `loftd-*` tag that contains both required Linux assets.
+Root `.#libkrun` and every shared consumer (`.#crun`, `.#podman`, `.#agentbox`,
+`.#loftd`, images, and `.#loftd-prebuilt`) use the same pinned prebuilt libkrun
+package. Local source builds stay in the submodule-aware dev flake and use the
+checked-out `deps/libkrun` submodule:
 
 ```bash
 nix develop --command ./scripts/update-libkrun.sh
-```
-
-After the `deps/libkrun` `loftd` branch publishes a complete prebuilt release,
-refresh pinned `zeroqn/libkrun` release metadata from the newest matching
-`loftd-*` tag that contains both first-pass Linux assets. This flips
-`libkrunRelease.enabled` to `true`, so root `.#libkrun` and every shared
-consumer (`.#crun`, `.#podman`, `.#agentbox`, `.#loftd`, images, and
-`.#loftd-prebuilt`) use the same pinned prebuilt libkrun package. If no complete
-release exists yet, the command fails without changing the source-build
-bootstrap path:
-
-```bash
-nix develop --command ./scripts/update-libkrun.sh --prebuilt-release
 ```
 
 Refresh pinned `zeroqn/libkrunfw` release metadata in `nix/pins.nix`:

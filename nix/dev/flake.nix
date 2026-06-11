@@ -30,11 +30,22 @@
             libkrunfwSrc = root + "/deps/libkrunfw";
             useLocalSource = true;
           };
-          libkrun = import ../../nix/pkgs/libkrun.nix {
-            inherit pkgs pins libkrunfw;
-            libkrunSrc = root + "/deps/libkrun";
-            usePrebuilt = false;
-          };
+          libkrunSrc = root + "/deps/libkrun";
+          libkrun = (pkgs.libkrun.override {
+            inherit libkrunfw;
+
+            withBlk = true;
+            withNet = true;
+            withGpu = true;
+            withSound = true;
+            withInput = true;
+          }).overrideAttrs (_oldAttrs: {
+            version = "1.18.1-loftd-profile";
+            src = libkrunSrc;
+            cargoDeps = pkgs.rustPlatform.importCargoLock {
+              lockFile = libkrunSrc + "/Cargo.lock";
+            };
+          });
           rustPackages = import ../../nix/pkgs/agentbox-rust.nix {
             self = root;
             inherit

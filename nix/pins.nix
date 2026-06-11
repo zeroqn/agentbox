@@ -60,30 +60,18 @@
     hash = "sha256-m3VSAlFq7ktF2dQRq4AMIP5PevlxZqk7fwfVsWwaTs0=";
   };
 
-  libkrunSource = {
-    owner = "zeroqn";
-    repo = "libkrun";
-    rev = "998d970a1a5ec3af7c5e1a7e47e407320e94d9ed";
-    srcHash = "sha256-XYPTcvPPVnBpD/pY3FkcYx4537Btfv1NeGrWoTz2I5c=";
-    cargoDepsHash = "sha256-2ZjrOdrwnR1oaGmCZc/13LIlH3qPI7g9kBaYAEpwpSE=";
-  };
-
   libkrunRelease = {
     owner = "zeroqn";
     repo = "libkrun";
-    # Bootstrap value. Prebuilt libkrun is disabled until
-    # scripts/update-libkrun.sh --prebuilt-release finds a single loftd-* release
-    # containing every required first-pass Linux asset.
-    enabled = false;
-    tag = "";
+    tag = "loftd-ad8a40428d15";
     systems = {
       x86_64-linux = {
         asset = "libkrun-x86_64-linux-full.tgz";
-        hash = "";
+        hash = "sha256-VzACYEPtXk6+OH1EDQj3fmBkonlUubPsfuXxolxVbWw=";
       };
       aarch64-linux = {
         asset = "libkrun-aarch64-linux-full.tgz";
-        hash = "";
+        hash = "sha256-EXkJT3r+s6TDigY0h8djTxxx8bqtsT2wucxZUZzfGQs=";
       };
     };
   };

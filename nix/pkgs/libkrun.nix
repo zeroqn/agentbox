@@ -2,120 +2,83 @@
   pkgs,
   pins,
   libkrunfw,
-  libkrunSrc ? pkgs.fetchFromGitHub {
-    inherit (pins.libkrunSource) owner repo rev;
-    hash = pins.libkrunSource.srcHash;
-  },
-  cargoDepsHash ? pins.libkrunSource.cargoDepsHash,
-  usePrebuilt ? (pins.libkrunRelease.enabled or false),
-  prebuiltSrc ? null,
 }:
 
 let
   lib = pkgs.lib;
   system = pkgs.stdenv.hostPlatform.system;
-  release = pins.libkrunRelease or {
-    enabled = false;
-    systems = { };
-  };
+  release = pins.libkrunRelease;
   systemPins =
     release.systems.${system}
       or (throw "unsupported prebuilt libkrun system or missing libkrunRelease pin: ${system}");
+in
+pkgs.stdenv.mkDerivation {
+  pname = "libkrun";
+  version = release.tag;
 
-  sourceBuild = (pkgs.libkrun.override {
-    inherit libkrunfw;
+  src = pkgs.fetchurl {
+    url = "https://github.com/${release.owner}/${release.repo}/releases/download/${release.tag}/${systemPins.asset}";
+    hash = systemPins.hash;
+  };
 
-    withBlk = true;
-    withNet = true;
-    withGpu = true;
-    withSound = true;
-    withInput = true;
-  }).overrideAttrs (_oldAttrs: {
-    version = "1.18.1-loftd-profile";
-    src = libkrunSrc;
-    cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
-      src = libkrunSrc;
-      hash = cargoDepsHash;
-    };
-  });
+  sourceRoot = ".";
+  dontBuild = true;
 
-  prebuilt = pkgs.stdenv.mkDerivation {
-    pname = "libkrun";
-    version = release.tag;
+  nativeBuildInputs = [
+    pkgs.autoPatchelfHook
+    pkgs.pkg-config
+  ];
 
-    src =
-      if prebuiltSrc != null then
-        prebuiltSrc
-      else
-        pkgs.fetchurl {
-          url = "https://github.com/${release.owner}/${release.repo}/releases/download/${release.tag}/${systemPins.asset}";
-          hash = systemPins.hash;
-        };
+  buildInputs = [
+    libkrunfw
+    pkgs.libcap_ng
+    pkgs.libepoxy
+    pkgs.libdrm
+    pkgs.virglrenderer
+    pkgs.pipewire
+  ];
 
-    sourceRoot = ".";
-    dontBuild = true;
+  installPhase = ''
+    runHook preInstall
 
-    nativeBuildInputs = [
-      pkgs.autoPatchelfHook
-      pkgs.pkg-config
-    ];
+    mkdir -p "$out/lib" "$out/include" "$out/lib/pkgconfig"
 
-    buildInputs = [
-      libkrunfw
-      pkgs.libcap_ng
-      pkgs.libepoxy
-      pkgs.libdrm
-      pkgs.virglrenderer
-      pkgs.pipewire
-    ];
+    if [ -d lib64 ]; then
+      cp -a lib64/. "$out/lib/"
+    elif [ -d lib ]; then
+      cp -a lib/. "$out/lib/"
+    else
+      cp -a libkrun.so* "$out/lib/"
+    fi
 
-    installPhase = ''
-      runHook preInstall
+    if [ -d include ]; then
+      cp -a include/. "$out/include/"
+    fi
 
-      mkdir -p "$out/lib" "$out/include" "$out/lib/pkgconfig"
+    for header in libkrun.h libkrun_display.h libkrun_input.h; do
+      test -f "$out/include/$header"
+    done
 
-      if [ -d lib64 ]; then
-        cp -a lib64/. "$out/lib/"
-      elif [ -d lib ]; then
-        cp -a lib/. "$out/lib/"
-      else
-        cp -a libkrun.so* "$out/lib/"
-      fi
-
-      if [ -d include ]; then
-        cp -a include/. "$out/include/"
-      fi
-
-      for header in libkrun.h libkrun_display.h libkrun_input.h; do
-        test -f "$out/include/$header"
-      done
-
-      cat > "$out/lib/pkgconfig/libkrun.pc" <<EOF
+    cat > "$out/lib/pkgconfig/libkrun.pc" <<PC_EOF
 prefix=$out
-exec_prefix=\''${prefix}
-libdir=\''${prefix}/lib
-includedir=\''${prefix}/include
+exec_prefix=''${prefix}
+libdir=''${prefix}/lib
+includedir=''${prefix}/include
 
 Name: libkrun
 Description: Dynamic library for creating microVM-based process sandboxes
 Version: 1.18.0
-Libs: -L\''${libdir} -lkrun
-Cflags: -I\''${includedir}
-EOF
+Libs: -L''${libdir} -lkrun
+Cflags: -I''${includedir}
+PC_EOF
 
-      runHook postInstall
-    '';
+    runHook postInstall
+  '';
 
-    passthru = {
-      sourcePackage = sourceBuild;
-    };
-
-    meta = {
-      description = "Pinned prebuilt full-feature libkrun shared library for loftd and agentbox";
-      homepage = "https://github.com/${release.owner}/${release.repo}";
-      license = with lib.licenses; [ asl20 ];
-      platforms = lib.attrNames release.systems;
-    };
+  meta = {
+    description = "Pinned prebuilt full-feature libkrun shared library for loftd and agentbox";
+    homepage = "https://github.com/${release.owner}/${release.repo}";
+    license = with lib.licenses; [ asl20 ];
+    platforms = lib.attrNames release.systems;
   };
-in
-if usePrebuilt then prebuilt else sourceBuild
+}
