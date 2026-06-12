@@ -12,6 +12,7 @@ use crate::logging::INTERNAL_LOG_LEVEL_ENV;
 use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
+use crate::runtime::session::supervisor::sigwinch::SigwinchForwarder;
 use crate::runtime::session::supervisor::{ChildStatus, LIBKRUN_ENTER_HELPER_ARG};
 use crate::runtime::session::task_control::{
     ActiveTaskSpec, ProcessIdentity, remove_active_task, write_active_task,
@@ -64,6 +65,15 @@ pub(crate) fn run_helper_process(
             return Err(err).context("failed to identify active loftd task after helper spawn");
         }
     };
+    let _sigwinch_forwarder = match start_sigwinch_forwarder(process.pgid) {
+        Ok(forwarder) => forwarder,
+        Err(err) => {
+            terminate_spawned_child_group(&mut child);
+            let _ = remove_active_task(&active_task.task_dir);
+            return Err(err)
+                .context("failed to start loftd helper SIGWINCH forwarder after helper spawn");
+        }
+    };
     if let Err(err) = write_active_task(active_task.clone(), process) {
         terminate_spawned_child_group(&mut child);
         let _ = remove_active_task(&active_task.task_dir);
@@ -94,6 +104,18 @@ fn terminate_spawned_child_group(child: &mut Child) {
     let _ = kill_spawned_process_group(child.id(), libc::SIGKILL);
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn start_sigwinch_forwarder(pgid: u32) -> Result<Option<SigwinchForwarder>> {
+    if !stdin_is_tty() {
+        return Ok(None);
+    }
+    SigwinchForwarder::start(pgid).map(Some)
+}
+
+fn stdin_is_tty() -> bool {
+    // Only interactive tty-bound helpers need SIGWINCH rebroadcasting.
+    unsafe { libc::isatty(libc::STDIN_FILENO) == 1 }
 }
 
 fn kill_spawned_process_group(pgid: u32, signal: i32) -> Result<()> {

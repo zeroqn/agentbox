@@ -708,8 +708,7 @@ Current implemented milestone:
   execs the default `fish -l` shell.
 
 Current limitations: direct microvm inbound port publishing is intentionally
-unavailable, terminal resize has only the narrow default virtio-console hook
-wired so far, and real VM smoke validation is still pending. See
+unavailable, and real VM smoke validation is still pending. See
 `docs/microvm-smoke.md` for the manual smoke checklist and current not-tested
 items.
 
