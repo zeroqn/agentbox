@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -71,12 +72,15 @@ impl ImageSyncReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImageCacheListEntry {
-    pub(crate) digest_key: String,
+    pub(crate) digest_key: Option<String>,
     pub(crate) digest: Option<String>,
     pub(crate) selected_reference: Option<String>,
+    pub(crate) repository: String,
+    pub(crate) tag: String,
+    pub(crate) image_id: Option<String>,
     pub(crate) status: ImageCacheEntryStatus,
     pub(crate) buildah_status: BuildahMatchStatus,
-    pub(crate) entry_dir: PathBuf,
+    pub(crate) entry_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +88,7 @@ pub(crate) enum ImageCacheEntryStatus {
     Complete,
     Incomplete,
     Invalid,
+    Uncached,
 }
 
 impl ImageCacheEntryStatus {
@@ -92,6 +97,7 @@ impl ImageCacheEntryStatus {
             Self::Complete => "complete",
             Self::Incomplete => "incomplete",
             Self::Invalid => "invalid",
+            Self::Uncached => "uncached",
         }
     }
 }
@@ -104,6 +110,7 @@ pub(crate) enum BuildahMatchStatus {
     NoReference,
     NoCacheDigest,
     InvalidCache,
+    LocalOnly,
 }
 
 impl BuildahMatchStatus {
@@ -115,6 +122,7 @@ impl BuildahMatchStatus {
             Self::NoReference => "no-reference",
             Self::NoCacheDigest => "no-cache-digest",
             Self::InvalidCache => "invalid-cache",
+            Self::LocalOnly => "local-only",
         }
     }
 }
@@ -181,9 +189,11 @@ fn sync_image_cache(
     buildah: &impl BuildahCommands,
     btrfs: &impl BtrfsRootfsCommands,
 ) -> Result<ImageSyncReport> {
-    if reference.trim().is_empty() {
+    let reference = reference.trim();
+    if reference.is_empty() {
         bail!("image reference must not be empty");
     }
+    let reference = resolve_sync_reference(reference, image_cache_root, buildah)?;
 
     let staging = ImageCacheStagingDir::create(image_cache_root)?;
     let staging_rootfs = staging.path().join(CACHE_ROOTFS_DIR);
@@ -223,24 +233,24 @@ fn list_image_cache(
     buildah: &impl BuildahCommands,
 ) -> Result<Vec<ImageCacheListEntry>> {
     let cache_dir = image_cache_root.join(BTRFS_IMAGE_CACHE_DIR);
-    if !cache_dir.exists() {
-        return Ok(Vec::new());
+    let buildah_rows = read_buildah_inventory(buildah);
+    let mut entries = Vec::new();
+
+    if cache_dir.exists() {
+        for dir_entry in fs::read_dir(&cache_dir).with_context(|| {
+            format!("failed to read loftd image cache '{}'", cache_dir.display())
+        })? {
+            let dir_entry = dir_entry?;
+            let file_type = dir_entry.file_type()?;
+            if !file_type.is_dir() {
+                continue;
+            }
+            let digest_key = dir_entry.file_name().to_string_lossy().to_string();
+            entries.push(read_list_entry(digest_key, dir_entry.path(), buildah));
+        }
     }
 
-    let mut entries = Vec::new();
-    for dir_entry in fs::read_dir(&cache_dir)
-        .with_context(|| format!("failed to read loftd image cache '{}'", cache_dir.display()))?
-    {
-        let dir_entry = dir_entry?;
-        let file_type = dir_entry.file_type()?;
-        if !file_type.is_dir() {
-            continue;
-        }
-        let digest_key = dir_entry.file_name().to_string_lossy().to_string();
-        entries.push(read_list_entry(digest_key, dir_entry.path(), buildah));
-    }
-    entries.sort_by(|left, right| left.digest_key.cmp(&right.digest_key));
-    Ok(entries)
+    Ok(enrich_list_entries(entries, buildah_rows))
 }
 
 fn read_list_entry(
@@ -251,14 +261,14 @@ fn read_list_entry(
     let rootfs_path = entry_dir.join(CACHE_ROOTFS_DIR);
     let metadata_path = entry_dir.join(CACHE_METADATA_FILE);
     if !rootfs_path.is_dir() || !metadata_path.is_file() {
-        return ImageCacheListEntry {
+        return ImageCacheListEntry::cached(
             digest_key,
-            digest: digest_from_digest_key(&entry_dir),
-            selected_reference: None,
-            status: ImageCacheEntryStatus::Incomplete,
-            buildah_status: BuildahMatchStatus::NoReference,
+            digest_from_digest_key(&entry_dir),
+            None,
+            ImageCacheEntryStatus::Incomplete,
+            BuildahMatchStatus::NoReference,
             entry_dir,
-        };
+        );
     }
 
     match fs::read_to_string(&metadata_path)
@@ -287,23 +297,23 @@ fn read_list_entry(
             } else {
                 BuildahMatchStatus::InvalidCache
             };
-            ImageCacheListEntry {
+            ImageCacheListEntry::cached(
                 digest_key,
                 digest,
-                selected_reference: Some(selected_reference),
+                Some(selected_reference),
                 status,
                 buildah_status,
                 entry_dir,
-            }
+            )
         }
-        Err(_) => ImageCacheListEntry {
+        Err(_) => ImageCacheListEntry::cached(
             digest_key,
-            digest: digest_from_digest_key(&entry_dir),
-            selected_reference: None,
-            status: ImageCacheEntryStatus::Invalid,
-            buildah_status: BuildahMatchStatus::InvalidCache,
+            digest_from_digest_key(&entry_dir),
+            None,
+            ImageCacheEntryStatus::Invalid,
+            BuildahMatchStatus::InvalidCache,
             entry_dir,
-        },
+        ),
     }
 }
 
@@ -318,7 +328,7 @@ fn remove_image_cache_entry(
         bail!("image cache remove target must not be empty");
     }
 
-    let entry = resolve_remove_target(image_cache_root, target)?;
+    let entry = resolve_remove_target(image_cache_root, target, buildah)?;
     if !entry.entry_dir.exists() {
         bail!(
             "loftd image cache entry '{}' does not exist",
@@ -348,15 +358,413 @@ fn remove_image_cache_entry(
     })
 }
 
-fn resolve_remove_target(image_cache_root: &Path, target: &str) -> Result<BtrfsImageCacheEntry> {
-    if target.contains(':') {
-        return BtrfsImageCacheEntry::new(image_cache_root, target);
+fn resolve_remove_target(
+    image_cache_root: &Path,
+    target: &str,
+    buildah: &impl BuildahCommands,
+) -> Result<BtrfsImageCacheEntry> {
+    if let Some(entry) = exact_digest_entry(image_cache_root, target)? {
+        return Ok(entry);
     }
-    validate_digest_key_target(target)?;
-    let digest = digest_from_digest_key_path_component(target).ok_or_else(|| {
-        anyhow!("loftd image cache target '{target}' is not a supported digest key")
-    })?;
-    BtrfsImageCacheEntry::new(image_cache_root, &digest)
+
+    match resolve_local_selector(image_cache_root, buildah, target)? {
+        SelectorResolution::One(row) if row.status == ImageCacheEntryStatus::Uncached => bail!(
+            "image selector '{target}' matched local Buildah image but no loftd cache entry; use loftd images sync {target} first or choose a cached row"
+        ),
+        SelectorResolution::One(row) => {
+            let digest_key = row.digest_key.as_deref().ok_or_else(|| {
+                anyhow!("image selector '{target}' matched a row without a loftd cache key")
+            })?;
+            let digest = digest_from_digest_key_path_component(digest_key).ok_or_else(|| {
+                anyhow!("image selector '{target}' matched a row with an invalid loftd cache key")
+            })?;
+            BtrfsImageCacheEntry::new(image_cache_root, &digest)
+        }
+        SelectorResolution::Multiple(rows) => bail!(
+            "image selector '{target}' matched multiple rows; refusing to remove; candidates: {}",
+            format_selector_candidates(&rows)
+        ),
+        SelectorResolution::None => {
+            bail!("image selector '{target}' did not match a loftd image cache row")
+        }
+    }
+}
+
+fn resolve_sync_reference(
+    reference: &str,
+    image_cache_root: &Path,
+    buildah: &impl BuildahCommands,
+) -> Result<String> {
+    match resolve_local_selector(image_cache_root, buildah, reference)? {
+        SelectorResolution::One(row) => row.sync_reference().ok_or_else(|| {
+            anyhow!("image selector '{reference}' matched a row without a usable Buildah reference")
+        }),
+        SelectorResolution::Multiple(rows) => bail!(
+            "image selector '{reference}' matched multiple local rows; refusing to sync; candidates: {}",
+            format_selector_candidates(&rows)
+        ),
+        SelectorResolution::None => Ok(reference.to_owned()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BuildahImageRow {
+    repository: String,
+    tag: String,
+    image_id: Option<String>,
+    digest: Option<String>,
+}
+
+impl BuildahImageRow {
+    fn reference(&self) -> Option<String> {
+        named_reference(&self.repository, &self.tag)
+    }
+}
+
+impl ImageCacheListEntry {
+    fn cached(
+        digest_key: String,
+        digest: Option<String>,
+        selected_reference: Option<String>,
+        status: ImageCacheEntryStatus,
+        buildah_status: BuildahMatchStatus,
+        entry_dir: PathBuf,
+    ) -> Self {
+        let (repository, tag) = selected_reference
+            .as_deref()
+            .map(split_reference)
+            .unwrap_or_else(|| ("<unknown>".to_owned(), "<unknown>".to_owned()));
+        Self {
+            digest_key: Some(digest_key),
+            digest,
+            selected_reference,
+            repository,
+            tag,
+            image_id: None,
+            status,
+            buildah_status,
+            entry_dir: Some(entry_dir),
+        }
+    }
+
+    fn with_buildah_row(&self, buildah_row: &BuildahImageRow) -> Self {
+        let mut entry = self.clone();
+        entry.repository = buildah_row.repository.clone();
+        entry.tag = buildah_row.tag.clone();
+        entry.image_id = buildah_row.image_id.clone();
+        entry
+    }
+
+    fn uncached(buildah_row: BuildahImageRow) -> Self {
+        let selected_reference = buildah_row.reference();
+        Self {
+            digest_key: None,
+            digest: buildah_row.digest,
+            selected_reference,
+            repository: buildah_row.repository,
+            tag: buildah_row.tag,
+            image_id: buildah_row.image_id,
+            status: ImageCacheEntryStatus::Uncached,
+            buildah_status: BuildahMatchStatus::LocalOnly,
+            entry_dir: None,
+        }
+    }
+
+    fn cache_sort_key(&self) -> String {
+        self.digest_key
+            .clone()
+            .or_else(|| self.digest.clone())
+            .or_else(|| self.image_id.clone())
+            .unwrap_or_else(|| format!("{}:{}", self.repository, self.tag))
+    }
+
+    fn sync_reference(&self) -> Option<String> {
+        self.selected_reference
+            .clone()
+            .or_else(|| named_reference(&self.repository, &self.tag))
+            .or_else(|| self.image_id.clone())
+    }
+}
+
+enum SelectorResolution {
+    None,
+    One(ImageCacheListEntry),
+    Multiple(Vec<ImageCacheListEntry>),
+}
+
+fn read_buildah_inventory(buildah: &impl BuildahCommands) -> Vec<BuildahImageRow> {
+    const FORMAT: &str = "{{.Name}}\t{{.Tag}}\t{{.ID}}\t{{.Digest}}";
+    let Ok(output) = buildah.run(&[
+        "images",
+        "--all",
+        "--digests",
+        "--noheading",
+        "--format",
+        FORMAT,
+    ]) else {
+        return Vec::new();
+    };
+    output
+        .lines()
+        .filter_map(parse_buildah_inventory_line)
+        .collect()
+}
+
+fn parse_buildah_inventory_line(line: &str) -> Option<BuildahImageRow> {
+    let mut fields = line.split('\t');
+    let repository = normalize_visible_field(fields.next()?, "<none>");
+    let tag = normalize_visible_field(fields.next()?, "<none>");
+    let image_id = normalize_optional_field(fields.next()?);
+    let digest = normalize_digest_field(fields.next().unwrap_or_default());
+    Some(BuildahImageRow {
+        repository,
+        tag,
+        image_id,
+        digest,
+    })
+}
+
+fn normalize_visible_field(value: &str, default: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() || value == "<no value>" {
+        default.to_owned()
+    } else {
+        value.to_owned()
+    }
+}
+
+fn normalize_optional_field(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && value != "<none>" && value != "<no value>").then(|| value.to_owned())
+}
+
+fn normalize_digest_field(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value == "<none>" || value == "<no value>" {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
+fn enrich_list_entries(
+    mut cache_entries: Vec<ImageCacheListEntry>,
+    buildah_rows: Vec<BuildahImageRow>,
+) -> Vec<ImageCacheListEntry> {
+    cache_entries.sort_by_key(|entry| entry.cache_sort_key());
+    let mut used_buildah_rows = BTreeSet::new();
+    let mut entries = Vec::new();
+
+    for cache_entry in cache_entries {
+        let matching_indexes = buildah_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(index, buildah_row)| {
+                (cache_entry.digest.is_some() && cache_entry.digest == buildah_row.digest)
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+
+        if matching_indexes.is_empty() {
+            entries.push(cache_entry);
+        } else {
+            for index in matching_indexes {
+                used_buildah_rows.insert(index);
+                entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
+            }
+        }
+    }
+
+    let mut uncached = buildah_rows
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, row)| (!used_buildah_rows.contains(&index)).then_some(row))
+        .map(ImageCacheListEntry::uncached)
+        .collect::<Vec<_>>();
+    uncached.sort_by(|left, right| {
+        (
+            left.repository.as_str(),
+            left.tag.as_str(),
+            left.image_id.as_deref(),
+        )
+            .cmp(&(
+                right.repository.as_str(),
+                right.tag.as_str(),
+                right.image_id.as_deref(),
+            ))
+    });
+    entries.extend(uncached);
+    entries
+}
+
+fn resolve_local_selector(
+    image_cache_root: &Path,
+    buildah: &impl BuildahCommands,
+    selector: &str,
+) -> Result<SelectorResolution> {
+    let rows = list_image_cache(image_cache_root, buildah)?;
+    let mut matched_indexes = BTreeSet::new();
+    for (index, row) in rows.iter().enumerate() {
+        if row_matches_selector(row, selector) {
+            matched_indexes.insert(index);
+        }
+    }
+
+    let matched = matched_indexes
+        .into_iter()
+        .map(|index| rows[index].clone())
+        .collect::<Vec<_>>();
+    Ok(match matched.len() {
+        0 => SelectorResolution::None,
+        1 => SelectorResolution::One(matched.into_iter().next().expect("one row")),
+        _ => SelectorResolution::Multiple(matched),
+    })
+}
+
+fn row_matches_selector(row: &ImageCacheListEntry, selector: &str) -> bool {
+    row.digest.as_deref().is_some_and(|digest| {
+        digest_token_matches(digest, selector)
+            || digest_hex(digest).is_some_and(|hex| prefix_or_exact(selector, hex, 7))
+    }) || row
+        .digest_key
+        .as_deref()
+        .is_some_and(|key| digest_key_token_matches(key, selector))
+        || row
+            .selected_reference
+            .as_deref()
+            .is_some_and(|reference| prefix_or_exact(selector, reference, 2))
+        || prefix_or_exact_visible(selector, &row.repository, 2)
+        || prefix_or_exact_visible(selector, &row.tag, 2)
+        || named_reference(&row.repository, &row.tag)
+            .as_deref()
+            .is_some_and(|reference| prefix_or_exact(selector, reference, 2))
+        || row.image_id.as_deref().is_some_and(|image_id| {
+            prefix_or_exact(selector, image_id, 7)
+                || prefix_or_exact(selector, &short_token(image_id), 7)
+        })
+}
+
+fn digest_token_matches(digest: &str, selector: &str) -> bool {
+    selector == digest
+        || selector
+            .strip_prefix("sha256:")
+            .is_some_and(|hex_selector| {
+                digest_hex(digest).is_some_and(|hex| prefix_or_exact(hex_selector, hex, 7))
+            })
+}
+
+fn digest_key_token_matches(key: &str, selector: &str) -> bool {
+    selector == key
+        || selector
+            .strip_prefix("sha256-")
+            .is_some_and(|hex_selector| {
+                key.strip_prefix("sha256-")
+                    .is_some_and(|hex| prefix_or_exact(hex_selector, hex, 7))
+            })
+}
+
+fn prefix_or_exact_visible(selector: &str, token: &str, min_prefix: usize) -> bool {
+    if matches!(token, "<none>" | "<unknown>") {
+        selector == token
+    } else {
+        prefix_or_exact(selector, token, min_prefix)
+    }
+}
+
+fn prefix_or_exact(selector: &str, token: &str, min_prefix: usize) -> bool {
+    selector == token || (selector.len() >= min_prefix && token.starts_with(selector))
+}
+
+fn exact_digest_entry(
+    image_cache_root: &Path,
+    target: &str,
+) -> Result<Option<BtrfsImageCacheEntry>> {
+    if target.starts_with("sha256:") {
+        let entry = BtrfsImageCacheEntry::new(image_cache_root, target)?;
+        return Ok(entry.entry_dir.exists().then_some(entry));
+    }
+    if target.starts_with("sha256-")
+        && let Some(digest) = digest_from_digest_key_path_component(target)
+    {
+        validate_digest_key_target(target)?;
+        let entry = BtrfsImageCacheEntry::new(image_cache_root, &digest)?;
+        return Ok(entry.entry_dir.exists().then_some(entry));
+    }
+    Ok(None)
+}
+
+fn split_reference(reference: &str) -> (String, String) {
+    if matches!(reference, "<none>" | "<unknown>") {
+        return (reference.to_owned(), reference.to_owned());
+    }
+    if let Some((name, _digest)) = reference.split_once('@') {
+        return (name.to_owned(), "<none>".to_owned());
+    }
+    let last_slash = reference.rfind('/');
+    let last_colon = reference.rfind(':');
+    if let Some(colon) = last_colon
+        && last_slash.is_none_or(|slash| colon > slash)
+    {
+        return (
+            reference[..colon].to_owned(),
+            reference[colon + 1..].to_owned(),
+        );
+    }
+    (reference.to_owned(), "<none>".to_owned())
+}
+
+fn named_reference(repository: &str, tag: &str) -> Option<String> {
+    if matches!(repository, "" | "<none>" | "<unknown>")
+        || matches!(tag, "" | "<none>" | "<unknown>")
+    {
+        None
+    } else {
+        Some(format!("{repository}:{tag}"))
+    }
+}
+
+fn digest_hex(digest: &str) -> Option<&str> {
+    let (algorithm, hex) = digest.split_once(':')?;
+    (algorithm == "sha256" && !hex.is_empty()).then_some(hex)
+}
+
+fn short_digest(digest: Option<&str>) -> String {
+    digest
+        .and_then(digest_hex)
+        .map(short_token)
+        .unwrap_or_else(|| "<unknown>".to_owned())
+}
+
+fn short_image_id(image_id: Option<&str>) -> String {
+    image_id
+        .map(short_token)
+        .unwrap_or_else(|| "<none>".to_owned())
+}
+
+fn short_token(token: &str) -> String {
+    token.chars().take(12).collect()
+}
+
+fn path_display(path: Option<&PathBuf>) -> String {
+    path.map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_owned())
+}
+
+fn format_selector_candidates(rows: &[ImageCacheListEntry]) -> String {
+    rows.iter()
+        .map(|row| {
+            let reference = named_reference(&row.repository, &row.tag)
+                .or_else(|| row.selected_reference.clone())
+                .unwrap_or_else(|| format!("{}:{}", row.repository, row.tag));
+            format!(
+                "{} image-id {} digest {} cache {}",
+                reference,
+                short_image_id(row.image_id.as_deref()),
+                short_digest(row.digest.as_deref()),
+                row.status.as_str()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn read_cached_metadata_for_remove(
@@ -417,16 +825,17 @@ fn remove_guarded_local_image(
 }
 
 fn render_list_stdout(entries: &[ImageCacheListEntry]) -> String {
-    let mut output = String::from("DIGEST_KEY\tDIGEST\tIMAGE\tSTATUS\tBUILDAH\tPATH\n");
+    let mut output = String::from("REPOSITORY\tTAG\tIMAGE ID\tDIGEST\tCACHE\tBUILDAH\tPATH\n");
     for entry in entries {
         output.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\n",
-            entry.digest_key,
-            entry.digest.as_deref().unwrap_or("<unknown>"),
-            entry.selected_reference.as_deref().unwrap_or("<unknown>"),
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            entry.repository,
+            entry.tag,
+            short_image_id(entry.image_id.as_deref()),
+            short_digest(entry.digest.as_deref()),
             entry.status.as_str(),
             entry.buildah_status.as_str(),
-            entry.entry_dir.display()
+            path_display(entry.entry_dir.as_ref())
         ));
     }
     output

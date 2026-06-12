@@ -36,7 +36,9 @@ impl ContainerStoreBackend {
     after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
   loftd images list
   loftd images sync ghcr.io/example/loftd:dev
-  loftd images remove sha256-feedface
+  loftd images sync ba5a514
+  loftd images remove feedfacecafe
+  loftd images remove ghcr.io/example/loftd:d
   loftd container-store resize --size 128G
   loftd container-store reset --force
   loftd ps
@@ -236,22 +238,25 @@ pub(crate) enum ContainerStoreCommand {
 pub(crate) enum ImagesCommand {
     #[command(
         name = "sync",
-        about = "Sync one Buildah image reference into loftd's local image cache"
+        about = "Sync one Buildah image reference or unique local image selector into loftd's local image cache"
     )]
     Sync {
-        #[arg(value_name = "REFERENCE")]
+        #[arg(value_name = "REFERENCE_OR_SELECTOR")]
         reference: String,
     },
 
-    #[command(name = "list", about = "List loftd's local image cache entries")]
+    #[command(
+        name = "list",
+        about = "List loftd's local image cache and Buildah image rows"
+    )]
     List,
 
     #[command(
         name = "remove",
-        about = "Remove a loftd image cache entry by digest or digest key"
+        about = "Remove a loftd image cache entry by unique visible image selector"
     )]
     Remove {
-        #[arg(value_name = "DIGEST_OR_KEY")]
+        #[arg(value_name = "IMAGE_SELECTOR")]
         target: String,
     },
 }

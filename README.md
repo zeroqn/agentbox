@@ -966,24 +966,38 @@ Loftd also exposes a local image-cache management surface:
 ```bash
 loftd images list
 loftd images sync ghcr.io/example/loftd:dev
-loftd images remove sha256-feedface
-loftd images remove sha256:feedface
+loftd images sync ba5a514
+loftd images remove feedfacecafe
+loftd images remove ghcr.io/example/loftd:d
 ```
 
-`loftd images list` is read-only and reports digest-keyed btrfs image-source
-cache entries plus a non-mutating Buildah digest-match status when cache
-metadata includes a selected image reference. It does not repair, delete, or
-mutate Buildah images. The `loftd images sync <reference>` command asks Buildah
-to materialize that
-reference into loftd's image-cache staging area, then populates or repairs only
-the selected digest-key cache entry; it does not push to remotes or delete
-unrelated cache entries. `loftd images remove <digest-or-key>` removes the
-selected loftd cache entry by digest (`sha256:...`) or digest key
-(`sha256-...`). Removal is
-cache-first: loftd attempts `buildah rmi <selected-reference>` only when a fresh
-Buildah image inspect proves the selected reference still resolves to the same
-digest recorded in the cache metadata. Missing, digestless, ambiguous, or
-mismatched local Buildah images are left in place and reported as skipped.
+`loftd images list` is read-only and reports a Buildah-aligned table with
+`REPOSITORY`, `TAG`, short `IMAGE ID`, short `DIGEST`, `CACHE`, `BUILDAH`, and
+`PATH` columns. Cached rows remain digest-keyed internally, but the default view
+omits the redundant digest key and shows about twelve digest/image-id characters
+for copyable selectors. Buildah inventory rows that do not have a matching loftd
+cache entry are included as `CACHE=uncached` and `BUILDAH=local-only`; old or
+untagged local Buildah rows preserve Buildah's literal `<none>` repository/tag
+display.
+
+`loftd images sync <reference-or-selector>` preserves full image-reference sync
+behavior and can also resolve a unique visible local selector, such as a
+repository/tag prefix, digest prefix, or Buildah image-id prefix, before
+materializing through Buildah. If no local visible row matches, the argument is
+treated as the image reference to sync; ambiguous local selectors fail before
+staging.
+
+`loftd images remove <image-selector>` removes only a matching loftd cache entry.
+It accepts exact full digests (`sha256:...`), exact digest keys
+(`sha256-...`), and unique visible-row prefixes from `images list` such as
+digest, repository/tag, selected reference, or Buildah image-id prefixes.
+Ambiguous selectors are refused with candidate rows, and selectors that match
+only `CACHE=uncached` Buildah rows are refused because there is no loftd cache
+entry to delete. Removal remains cache-first: loftd attempts
+`buildah rmi <selected-reference>` only when a fresh Buildah image inspect
+proves the selected reference still resolves to the same digest recorded in the
+cache metadata. Missing, digestless, ambiguous, or mismatched local Buildah
+images are left in place and reported as skipped.
 
 Loftd uses **task rootfs backend** terminology for the host-side mechanism that
 materializes the clean task root filesystem. The default backend is
