@@ -219,7 +219,7 @@ pub(in crate::guest_init) fn run_prep(
 
 fn overlay_options(lower_dir: &Path, upper_dir: &Path, work_dir: &Path) -> String {
     format!(
-        "lowerdir={},upperdir={},workdir={},userxattr,redirect_dir=on",
+        "lowerdir={},upperdir={},workdir={},userxattr",
         lower_dir.display(),
         upper_dir.display(),
         work_dir.display()

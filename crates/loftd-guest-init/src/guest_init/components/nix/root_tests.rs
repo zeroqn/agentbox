@@ -73,7 +73,7 @@ fn host_overlay_accepts_nix_directory() {
 }
 
 #[test]
-fn overlay_options_enable_redirect_dir() {
+fn overlay_options_keep_userxattr_without_redirect_dir() {
     let options = overlay_options(
         PathBuf::from("/lower").as_path(),
         PathBuf::from("/upper").as_path(),
@@ -82,7 +82,7 @@ fn overlay_options_enable_redirect_dir() {
 
     assert_eq!(
         options,
-        "lowerdir=/lower,upperdir=/upper,workdir=/work,userxattr,redirect_dir=on"
+        "lowerdir=/lower,upperdir=/upper,workdir=/work,userxattr"
     );
 }
 
