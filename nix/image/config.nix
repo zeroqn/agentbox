@@ -1,13 +1,14 @@
 { pkgs, ohMyCodex, agentboxMuslPackage, configPayloads, layers, imageVariant }:
 
 let
+  nixConfig = import ./nix-config.nix;
   commonEnv = [
     "HOME=/home/dev"
     "USER=dev"
     "SHELL=${pkgs.fish}/bin/fish"
     "LIBCLANG_PATH=${pkgs.libclang.lib}/lib"
     "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${agentboxMuslPackage}/bin"
-    "NIX_CONFIG=experimental-features = nix-command flakes"
+    "NIX_CONFIG=${nixConfig}"
     "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
     "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
     "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${layers.clangMoldWrapper}/bin/clang_mold_wrapper"

@@ -41,6 +41,7 @@ pub(in crate::guest_init) enum LoftdEnterOperation {
     StartNixPrep,
     StartPodmanPrep,
     ExportNixRemote,
+    EnsureNofileFloor,
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
     DropAndExec,
@@ -62,6 +63,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
         LoftdEnterOperation::StartNixPrep,
         LoftdEnterOperation::StartPodmanPrep,
         LoftdEnterOperation::ExportNixRemote,
+        LoftdEnterOperation::EnsureNofileFloor,
         LoftdEnterOperation::ClearProfileEnvBeforeExec,
         LoftdEnterOperation::ReportProfileBeforeExec,
         LoftdEnterOperation::DropAndExec,
@@ -161,6 +163,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
             unsafe { std::env::set_var("NIX_REMOTE", NIX_REMOTE_URI) };
         }
     });
+    profiler.measure_result("ensure-nofile-floor", process::ensure_nofile_floor)?;
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
@@ -431,6 +434,12 @@ mod tests {
             pos(LoftdEnterOperation::ResolveIdentity) < pos(LoftdEnterOperation::StartPodmanPrep)
         );
         assert!(pos(LoftdEnterOperation::StartNixPrep) < pos(LoftdEnterOperation::StartPodmanPrep));
+        assert!(
+            pos(LoftdEnterOperation::ExportNixRemote) < pos(LoftdEnterOperation::EnsureNofileFloor)
+        );
+        assert!(
+            pos(LoftdEnterOperation::EnsureNofileFloor) < pos(LoftdEnterOperation::DropAndExec)
+        );
         assert!(pos(LoftdEnterOperation::StartPodmanPrep) < pos(LoftdEnterOperation::DropAndExec));
         assert!(pos(LoftdEnterOperation::ExportNixRemote) < pos(LoftdEnterOperation::DropAndExec));
     }

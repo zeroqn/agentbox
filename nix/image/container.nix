@@ -1,5 +1,6 @@
 { pkgs, pkgsMaster, ohMyCodex, piCodingAgent, ompPrebuilt, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, imageVariant }:
 let
+  nixConfig = import ./nix-config.nix;
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   layers = import ./layers.nix {
     inherit pkgs pkgsMaster ohMyCodex piCodingAgent ompPrebuilt rtkPrebuilt containerLibPolicySeccompJson libkrun podman crun agentboxMuslPackage;
@@ -37,6 +38,7 @@ let
       mkdir -p \
         ./etc \
         ./etc/containers \
+        ./etc/nix \
         ./home/dev/.cache \
         ./home/dev/.codex \
         ./root \
@@ -69,6 +71,10 @@ let
       bind-key k select-pane -U
       EOF_TMUX
       chmod 0644 ./etc/tmux.conf
+      cat > ./etc/nix/nix.conf <<'EOF_NIX_CONF'
+      ${nixConfig}
+      EOF_NIX_CONF
+      chmod 0644 ./etc/nix/nix.conf
       if ! grep -q '^nixbld:' ./etc/group; then
         printf 'nixbld:x:${toString layers.nixBuilderGroupId}:${layers.nixBuilderGroupMembers}\n' >> ./etc/group
       fi

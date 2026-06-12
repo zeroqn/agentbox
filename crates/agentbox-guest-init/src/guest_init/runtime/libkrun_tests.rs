@@ -35,6 +35,12 @@ fn libkrun_enter_operation_order_keeps_components_before_exec() {
     assert!(pos(LibkrunEnterOperation::StartNixPrep) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(pos(LibkrunEnterOperation::StartPodmanPrep) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(pos(LibkrunEnterOperation::StartNixPrep) < pos(LibkrunEnterOperation::StartPodmanPrep));
+    assert!(
+        pos(LibkrunEnterOperation::ExportNixRemote) < pos(LibkrunEnterOperation::EnsureNofileFloor)
+    );
+    assert!(
+        pos(LibkrunEnterOperation::EnsureNofileFloor) < pos(LibkrunEnterOperation::DropAndExec)
+    );
     assert!(pos(LibkrunEnterOperation::ExportNixRemote) < pos(LibkrunEnterOperation::DropAndExec));
     assert!(
         pos(LibkrunEnterOperation::ClearProfileEnvBeforeExec)

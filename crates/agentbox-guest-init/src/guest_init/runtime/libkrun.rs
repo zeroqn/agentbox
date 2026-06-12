@@ -21,6 +21,7 @@ pub(in crate::guest_init) enum LibkrunEnterOperation {
     StartNixPrep,
     StartPodmanPrep,
     ExportNixRemote,
+    EnsureNofileFloor,
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
     DropAndExec,
@@ -40,6 +41,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LibkrunEnterOpera
         LibkrunEnterOperation::StartNixPrep,
         LibkrunEnterOperation::StartPodmanPrep,
         LibkrunEnterOperation::ExportNixRemote,
+        LibkrunEnterOperation::EnsureNofileFloor,
         LibkrunEnterOperation::ClearProfileEnvBeforeExec,
         LibkrunEnterOperation::ReportProfileBeforeExec,
         LibkrunEnterOperation::DropAndExec,
@@ -126,6 +128,7 @@ fn enter(command: Vec<String>) -> Result<()> {
             unsafe { std::env::set_var("NIX_REMOTE", NIX_REMOTE_URI) };
         }
     });
+    profiler.measure_result("ensure-nofile-floor", process::ensure_nofile_floor)?;
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;

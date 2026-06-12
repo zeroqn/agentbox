@@ -32,6 +32,7 @@ pub(super) const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 pub(super) const MAX_GIB_FOR_KRUN_RAM_MIB: u32 = u32::MAX / MIB_PER_GIB;
 pub(super) const HOST_MEMINFO: &str = "/proc/meminfo";
 pub(super) const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
+    "NIX_CONFIG",
     "SSL_CERT_FILE",
     "NIX_SSL_CERT_FILE",
     "LOFTD_FISH_CONFIG_SOURCE",
