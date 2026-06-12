@@ -52,6 +52,22 @@
     npmDepsHash = "sha256-+X8UTKcqfZsFIVab2dB1M6GPkywPYDa4EknOlxj780w=";
   };
 
+  ompPrebuiltRelease = {
+    owner = "can1357";
+    repo = "oh-my-pi";
+    tag = "v15.11.6";
+    systems = {
+      x86_64-linux = {
+        asset = "omp-linux-x64";
+        hash = "sha256-DRbHtO1VvJE5nFquWm7Vav6DrocTbSIWGL4E/VXccqg=";
+      };
+      aarch64-linux = {
+        asset = "omp-linux-arm64";
+        hash = "sha256-JlkKRG/yxpLvi7qpKxwps7I0dIJmm5EMuH6JpRBKPjA=";
+      };
+    };
+  };
+
   containerLibPolicySeccompJson = {
     owner = "containers";
     repo = "container-libs";

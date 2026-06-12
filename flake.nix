@@ -28,6 +28,9 @@
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
+          ompPrebuilt = import ./nix/pkgs/omp-prebuilt.nix {
+            inherit pkgs pins;
+          };
           symposium = import ./nix/pkgs/symposium.nix {
             inherit pkgs;
           };
@@ -75,6 +78,7 @@
               pkgsMaster
               ohMyCodex
               piCodingAgent
+              ompPrebuilt
               rtkPrebuilt
               containerLibPolicySeccompJson
               libkrun
@@ -91,6 +95,7 @@
           default = rustPackages.rustPackage;
           oh-my-codex = ohMyCodex;
           pi-coding-agent = piCodingAgent;
+          omp-prebuilt = ompPrebuilt;
           symposium = symposium;
           agentbox = rustPackages.rustPackage;
           loftd = rustPackages.rustPackage;
@@ -118,6 +123,7 @@
             inherit pkgs pkgsMaster imageVariant;
             ohMyCodex = packages.oh-my-codex;
             piCodingAgent = packages.pi-coding-agent;
+            ompPrebuilt = packages.omp-prebuilt;
             rtkPrebuilt = packages.rtk-prebuilt or null;
             containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
             libkrun = packages.libkrun;
