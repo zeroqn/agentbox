@@ -672,6 +672,8 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
             "LOFTD_STARSHIP_CONFIG_SOURCE=/nix/store/starship.toml".to_owned(),
             "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=/nix/store/libhardened_malloc.so".to_owned(),
             "LOFTD_REAL_PODMAN=/nix/store/podman/bin/podman".to_owned(),
+            "SSL_CERT_FILE=/nix/store/cacert/etc/ssl/certs/ca-bundle.crt".to_owned(),
+            "NIX_SSL_CERT_FILE=/nix/store/cacert/etc/ssl/certs/ca-bundle.crt".to_owned(),
             "LOFTD_UNRELATED_IMAGE_ENV=ignored".to_owned(),
             "LOFTD_CONTAINERS_STORAGE=image".to_owned(),
         ],
@@ -718,6 +720,14 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         "/nix/store/libhardened_malloc.so"
     ));
     assert!(config.guest_config_env_contains("LOFTD_REAL_PODMAN", "/nix/store/podman/bin/podman"));
+    assert!(config.guest_config_env_contains(
+        "SSL_CERT_FILE",
+        "/nix/store/cacert/etc/ssl/certs/ca-bundle.crt"
+    ));
+    assert!(config.guest_config_env_contains(
+        "NIX_SSL_CERT_FILE",
+        "/nix/store/cacert/etc/ssl/certs/ca-bundle.crt"
+    ));
     assert!(
         !config
             .guest_config_env
