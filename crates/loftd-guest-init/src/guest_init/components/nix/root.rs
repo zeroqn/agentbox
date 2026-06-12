@@ -199,12 +199,7 @@ pub(in crate::guest_init) fn run_prep(
     profiler.measure_result(PROFILE_PRESEED_UPPER, || {
         preseed_upper(lower_dir, &upper_dir, &work_dir)
     })?;
-    let options = format!(
-        "lowerdir={},upperdir={},workdir={}",
-        lower_dir.display(),
-        upper_dir.display(),
-        work_dir.display()
-    );
+    let options = overlay_options(lower_dir, &upper_dir, &work_dir);
     profiler.measure_result(PROFILE_MOUNT_OVERLAY, || {
         command::run(
             "mount",
@@ -220,6 +215,15 @@ pub(in crate::guest_init) fn run_prep(
         command::spawn_background("nix-daemon", &["--daemon"]).context("failed to start nix-daemon")
     })?;
     Ok(())
+}
+
+fn overlay_options(lower_dir: &Path, upper_dir: &Path, work_dir: &Path) -> String {
+    format!(
+        "lowerdir={},upperdir={},workdir={},userxattr,redirect_dir=on",
+        lower_dir.display(),
+        upper_dir.display(),
+        work_dir.display()
+    )
 }
 
 fn run_host_overlay_prep(profiler: &mut impl ProfileRecorder) -> Result<()> {

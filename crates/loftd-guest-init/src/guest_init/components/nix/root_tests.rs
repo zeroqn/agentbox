@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use crate::guest_init::components::nix::root::{
     NixOperation, PreseedState, attempt_marker, classify_preseed_state, completion_sentinel,
-    ensure_host_overlay_nix_is_directory, planned_host_overlay_operations, planned_operations,
-    planned_profile_labels, preseed_upper_with,
+    ensure_host_overlay_nix_is_directory, overlay_options, planned_host_overlay_operations,
+    planned_operations, planned_profile_labels, preseed_upper_with,
 };
 
 #[test]
@@ -70,6 +70,20 @@ fn host_overlay_accepts_nix_directory() {
     fs::create_dir_all(&nix_dir).expect("nix dir");
 
     ensure_host_overlay_nix_is_directory(&nix_dir).expect("directory");
+}
+
+#[test]
+fn overlay_options_enable_redirect_dir() {
+    let options = overlay_options(
+        PathBuf::from("/lower").as_path(),
+        PathBuf::from("/upper").as_path(),
+        PathBuf::from("/work").as_path(),
+    );
+
+    assert_eq!(
+        options,
+        "lowerdir=/lower,upperdir=/upper,workdir=/work,userxattr,redirect_dir=on"
+    );
 }
 
 #[test]

@@ -335,10 +335,10 @@ fn validate_absolute_intent(intent: &HostNixOverlay) -> Result<()> {
 
 fn overlay_options(intent: &HostNixOverlay) -> String {
     format!(
-        "lowerdir={},upperdir={},workdir={}",
+        "lowerdir={},upperdir={},workdir={},userxattr,redirect_dir=on",
         intent.lowerdir.display(),
         intent.upperdir.display(),
-        intent.workdir.display()
+        intent.workdir.display(),
     )
 }
 
@@ -463,7 +463,7 @@ mod tests {
                 "mkdir:/state/nix-overlay/upper",
                 "mkdir:/state/nix-overlay/work",
                 "mkdir:/state/nix-overlay/merged",
-                "mount:lowerdir=/cache/rootfs/nix,upperdir=/state/nix-overlay/upper,workdir=/state/nix-overlay/work:/state/nix-overlay/merged",
+                "mount:lowerdir=/cache/rootfs/nix,upperdir=/state/nix-overlay/upper,workdir=/state/nix-overlay/work,userxattr,redirect_dir=on:/state/nix-overlay/merged",
             ]
         );
     }
