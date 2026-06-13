@@ -37,6 +37,7 @@ impl ContainerStoreBackend {
   loftd images list
   loftd images sync ghcr.io/example/loftd:dev
   loftd images sync ba5a514
+  loftd images remove --dry-run feedfacecafe
   loftd images remove feedfacecafe
   loftd images remove ghcr.io/example/loftd:d
   loftd container-store resize --size 128G
@@ -256,6 +257,14 @@ pub(crate) enum ImagesCommand {
         about = "Remove a loftd image cache entry by unique visible image selector"
     )]
     Remove {
+        #[arg(
+            long = "dry-run",
+            action = ArgAction::SetTrue,
+            help = "Preview the exact cache entry and local Buildah image removal without mutating state",
+            long_help = "Preview the exact loftd cache entry and final guarded local Buildah image target that would be removed, without mutating cache or local Buildah state. Dry-run is stricter than real remove: it fails when local Buildah removal would be skipped."
+        )]
+        dry_run: bool,
+
         #[arg(value_name = "IMAGE_SELECTOR")]
         target: String,
     },
@@ -771,6 +780,9 @@ mod tests {
             Cli::try_parse_from(["loftd", "images", "list"]).expect("images list should parse");
         let remove = Cli::try_parse_from(["loftd", "images", "remove", "sha256-feedface"])
             .expect("images remove should parse");
+        let dry_run =
+            Cli::try_parse_from(["loftd", "images", "remove", "--dry-run", "sha256-feedface"])
+                .expect("images remove dry-run should parse");
 
         match list.into_action() {
             crate::cli::CliAction::Images { command, .. } => {
@@ -782,11 +794,33 @@ mod tests {
             crate::cli::CliAction::Images { command, .. } => assert_eq!(
                 command,
                 crate::cli::ImagesCommand::Remove {
+                    dry_run: false,
                     target: "sha256-feedface".to_owned()
                 }
             ),
             other => panic!("expected images remove action, got {other:?}"),
         }
+        match dry_run.into_action() {
+            crate::cli::CliAction::Images { command, .. } => assert_eq!(
+                command,
+                crate::cli::ImagesCommand::Remove {
+                    dry_run: true,
+                    target: "sha256-feedface".to_owned()
+                }
+            ),
+            other => panic!("expected images remove dry-run action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn images_remove_help_mentions_dry_run() {
+        let err = Cli::try_parse_from(["loftd", "images", "remove", "--help"])
+            .expect_err("help should exit");
+        let rendered = err.to_string();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert!(rendered.contains("--dry-run"));
+        assert!(rendered.contains("fails when local Buildah removal would be skipped"));
     }
 
     #[test]

@@ -1080,6 +1080,7 @@ fn image_command_remove_resolves_unique_visible_prefixes() {
 
         run_image_cache_command(
             ImageCacheCommand::Remove {
+                dry_run: false,
                 target: target.to_owned(),
             },
             &cache_root,
@@ -1121,6 +1122,7 @@ fn image_command_remove_ambiguous_selector_refuses_before_mutation() {
 
     let error = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "ghcr.io/example/loftd".to_owned(),
         },
         &cache_root,
@@ -1151,6 +1153,7 @@ fn image_command_remove_refuses_uncached_buildah_row_before_mutation() {
 
     let error = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "ba5a514".to_owned(),
         },
         &cache_root,
@@ -1450,6 +1453,7 @@ fn image_command_remove_deletes_cache_and_matching_buildah_reference() {
 
     let output = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "sha256-feedface".to_owned(),
         },
         &cache_root,
@@ -1476,6 +1480,139 @@ fn image_command_remove_deletes_cache_and_matching_buildah_reference() {
 }
 
 #[test]
+fn image_command_remove_dry_run_reports_cache_and_matching_buildah_reference_without_mutation() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        image_local_digest: None,
+        image_id: None,
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    let commands =
+        FakeBuildahCommands::new(false, Path::new("/unused")).with_image_digest("sha256:feedface");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            dry_run: true,
+            target: "sha256-feedface".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("dry-run should succeed");
+
+    let ImageCacheCommandOutput::RemoveDryRun(report) = output else {
+        panic!("dry-run remove output expected");
+    };
+    assert_eq!(report.digest_key, "sha256-feedface");
+    assert_eq!(report.digest, "sha256:feedface");
+    assert_eq!(report.local_image_target, "ghcr.io/example/loftd:dev");
+    assert!(entry.entry_dir.exists());
+    assert_eq!(btrfs.calls(), Vec::new());
+    assert!(
+        !commands
+            .calls()
+            .iter()
+            .any(|call| call.first().map(String::as_str) == Some("rmi"))
+    );
+}
+
+#[test]
+fn image_command_remove_dry_run_fails_when_local_removal_would_be_skipped_without_mutation() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        image_local_digest: None,
+        image_id: None,
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    let commands =
+        FakeBuildahCommands::new(false, Path::new("/unused")).with_image_digest("sha256:other");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let error = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            dry_run: true,
+            target: "sha256:feedface".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect_err("dry-run should fail when local removal would be skipped");
+
+    assert!(error.to_string().contains("dry-run cannot preview"));
+    assert!(error.to_string().contains("does not match cache digest"));
+    assert!(entry.entry_dir.exists());
+    assert_eq!(btrfs.calls(), Vec::new());
+    assert!(
+        !commands
+            .calls()
+            .iter()
+            .any(|call| call.first().map(String::as_str) == Some("rmi"))
+    );
+}
+
+#[test]
+fn image_command_remove_dry_run_preserves_selector_errors_before_mutation() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let dev = write_image_command_cache_entry(
+        &cache_root,
+        "sha256:feedface",
+        "ghcr.io/example/loftd:dev",
+        None,
+    );
+    let latest = write_image_command_cache_entry(
+        &cache_root,
+        "sha256:cafebabe",
+        "ghcr.io/example/loftd:latest",
+        None,
+    );
+    let commands =
+        FakeBuildahCommands::new(false, Path::new("/unused")).with_image_digest("sha256:feedface");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let error = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            dry_run: true,
+            target: "ghcr.io/example/loftd".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect_err("ambiguous dry-run selector should fail");
+
+    assert!(error.to_string().contains("matched multiple rows"));
+    assert!(dev.entry_dir.exists());
+    assert!(latest.entry_dir.exists());
+    assert_eq!(btrfs.calls(), Vec::new());
+    assert!(
+        !commands
+            .calls()
+            .iter()
+            .any(|call| call.first().map(String::as_str) == Some("rmi"))
+    );
+}
+
+#[test]
 fn image_command_remove_is_cache_first_when_buildah_digest_mismatches() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let cache_root = temp.path().join("cache");
@@ -1497,6 +1634,7 @@ fn image_command_remove_is_cache_first_when_buildah_digest_mismatches() {
 
     let output = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "sha256:feedface".to_owned(),
         },
         &cache_root,
@@ -1544,6 +1682,7 @@ fn image_command_remove_falls_back_to_image_id_when_reference_drifted() {
 
     let output = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "sha256:feedface".to_owned(),
         },
         &cache_root,
@@ -1570,6 +1709,52 @@ fn image_command_remove_falls_back_to_image_id_when_reference_drifted() {
 }
 
 #[test]
+fn image_command_remove_dry_run_falls_back_to_image_id_without_mutation() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        image_local_digest: None,
+        image_id: Some("oldid".to_owned()),
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
+        .with_digest_for("ghcr.io/example/loftd:dev", "sha256:other")
+        .with_digest_for("oldid", "sha256:feedface");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            dry_run: true,
+            target: "sha256:feedface".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("dry-run should succeed with image-id fallback");
+
+    let ImageCacheCommandOutput::RemoveDryRun(report) = output else {
+        panic!("dry-run remove output expected");
+    };
+    assert_eq!(report.local_image_target, "oldid");
+    assert!(entry.entry_dir.exists());
+    assert_eq!(btrfs.calls(), Vec::new());
+    assert!(
+        !commands
+            .calls()
+            .iter()
+            .any(|call| call.first().map(String::as_str) == Some("rmi"))
+    );
+}
+
+#[test]
 fn image_command_remove_by_digest_key_deletes_invalid_drifted_cache_entry() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let cache_root = temp.path().join("cache");
@@ -1592,6 +1777,7 @@ fn image_command_remove_by_digest_key_deletes_invalid_drifted_cache_entry() {
 
     let output = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "sha256-feedface".to_owned(),
         },
         &cache_root,
@@ -1649,6 +1835,7 @@ fn image_command_remove_visible_selector_uses_cache_key_for_drifted_invalid_row(
 
     let output = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "ghcr.io/example/loftd:d".to_owned(),
         },
         &cache_root,
@@ -1846,6 +2033,7 @@ fn image_command_remove_falls_back_to_buildah_inventory_when_reference_inspect_f
 
     let output = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "sha256:feedface".to_owned(),
         },
         &cache_root,
@@ -1863,14 +2051,61 @@ fn image_command_remove_falls_back_to_buildah_inventory_when_reference_inspect_f
         panic!("local removal should succeed via inventory fallback");
     };
     assert_eq!(reference, "ghcr.io/example/loftd:sha-a9cc52d79353");
+    assert!(commands.calls().iter().any(|call| call
+        == &vec![
+            "rmi".to_owned(),
+            "ghcr.io/example/loftd:sha-a9cc52d79353".to_owned()
+        ]));
+}
+
+#[test]
+fn image_command_remove_dry_run_falls_back_to_buildah_inventory_without_mutation() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/example/loftd:latest".to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        image_local_digest: None,
+        image_id: None,
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
+        .with_digest_for("ghcr.io/example/loftd:sha-a9cc52d79353", "sha256:feedface")
+        .with_inventory(
+            "ghcr.io/example/loftd|sha-a9cc52d79353|ba5a514299b8ffff|sha256:feedface\n",
+        );
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            dry_run: true,
+            target: "sha256:feedface".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("dry-run should succeed via inventory fallback");
+
+    let ImageCacheCommandOutput::RemoveDryRun(report) = output else {
+        panic!("dry-run remove output expected");
+    };
+    assert_eq!(
+        report.local_image_target,
+        "ghcr.io/example/loftd:sha-a9cc52d79353"
+    );
+    assert!(entry.entry_dir.exists());
+    assert_eq!(btrfs.calls(), Vec::new());
     assert!(
-        commands
+        !commands
             .calls()
             .iter()
-            .any(|call| call == &vec![
-                "rmi".to_owned(),
-                "ghcr.io/example/loftd:sha-a9cc52d79353".to_owned()
-            ])
+            .any(|call| call.first().map(String::as_str) == Some("rmi"))
     );
 }
 
@@ -1892,13 +2127,12 @@ fn image_command_remove_skips_inventory_fallback_when_no_matching_row() {
     fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
     // Stale selected_reference inspect fails; no image_id; inventory has no matching row.
     let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
-        .with_inventory(
-            "ghcr.io/example/loftd|othertag|newid|sha256:other-digest\n",
-        );
+        .with_inventory("ghcr.io/example/loftd|othertag|newid|sha256:other-digest\n");
     let btrfs = FakeBtrfsRootfsCommands::new();
 
     let output = run_image_cache_command(
         ImageCacheCommand::Remove {
+            dry_run: false,
             target: "sha256:feedface".to_owned(),
         },
         &cache_root,

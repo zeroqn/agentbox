@@ -132,8 +132,8 @@ fn image_cache_command_from_cli(
             runtime::session::rootfs::image_source::ImageCacheCommand::Sync { reference }
         }
         cli::ImagesCommand::List => runtime::session::rootfs::image_source::ImageCacheCommand::List,
-        cli::ImagesCommand::Remove { target } => {
-            runtime::session::rootfs::image_source::ImageCacheCommand::Remove { target }
+        cli::ImagesCommand::Remove { target, dry_run } => {
+            runtime::session::rootfs::image_source::ImageCacheCommand::Remove { target, dry_run }
         }
     }
 }

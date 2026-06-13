@@ -981,6 +981,7 @@ Loftd also exposes a local image-cache management surface:
 loftd images list
 loftd images sync ghcr.io/example/loftd:dev
 loftd images sync ba5a514
+loftd images remove --dry-run feedfacecafe
 loftd images remove feedfacecafe
 loftd images remove ghcr.io/example/loftd:d
 ```
@@ -1012,6 +1013,13 @@ entry to delete. Removal remains cache-first: loftd attempts
 proves the selected reference still resolves to the same digest recorded in the
 cache metadata. Missing, digestless, ambiguous, or mismatched local Buildah
 images are left in place and reported as skipped.
+
+`loftd images remove --dry-run <image-selector>` resolves the same selector and
+guard chain without mutating cache or local Buildah state. The preview reports
+the exact loftd cache entry and the final local Buildah target that would be
+removed after the existing fallback chain (selected reference, cached image ID,
+then Buildah inventory reference). Unlike real remove, dry-run fails when that
+local Buildah removal would be skipped for any reason.
 
 Loftd uses **task rootfs backend** terminology for the host-side mechanism that
 materializes the clean task root filesystem. The default backend is

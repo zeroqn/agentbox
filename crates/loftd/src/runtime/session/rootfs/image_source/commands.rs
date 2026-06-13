@@ -21,7 +21,7 @@ const STAGING_DIR: &str = ".staging";
 pub(crate) enum ImageCacheCommand {
     Sync { reference: String },
     List,
-    Remove { target: String },
+    Remove { target: String, dry_run: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +29,7 @@ pub(crate) enum ImageCacheCommandOutput {
     Sync(ImageSyncReport),
     List(Vec<ImageCacheListEntry>),
     Remove(ImageRemoveReport),
+    RemoveDryRun(ImageRemoveDryRunReport),
 }
 
 impl ImageCacheCommandOutput {
@@ -37,6 +38,7 @@ impl ImageCacheCommandOutput {
             Self::Sync(report) => report.render_stdout(),
             Self::List(entries) => render_list_stdout(entries),
             Self::Remove(report) => report.render_stdout(),
+            Self::RemoveDryRun(report) => report.render_stdout(),
         }
     }
 }
@@ -145,6 +147,23 @@ impl ImageRemoveReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImageRemoveDryRunReport {
+    pub(crate) target: String,
+    pub(crate) digest_key: String,
+    pub(crate) digest: String,
+    pub(crate) local_image_target: String,
+}
+
+impl ImageRemoveDryRunReport {
+    fn render_stdout(&self) -> String {
+        format!(
+            "would-remove-cache\t{}\t{}\t{}\nwould-remove-local\t{}\n",
+            self.target, self.digest_key, self.digest, self.local_image_target
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LocalImageRemoval {
     Removed { reference: String },
     Skipped { reason: String },
@@ -157,6 +176,62 @@ impl LocalImageRemoval {
             Self::Skipped { reason } => format!("skipped-local\t{reason}"),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PlannedLocalImageRemoval {
+    CachedReference { reference: String },
+    CachedImageId { image_id: String },
+    InventoryReference { reference: String },
+    Skip { reason: String },
+}
+
+impl PlannedLocalImageRemoval {
+    fn preview_target(&self) -> Option<&str> {
+        match self {
+            Self::CachedReference { reference } | Self::InventoryReference { reference } => {
+                Some(reference.as_str())
+            }
+            Self::CachedImageId { image_id } => Some(image_id.as_str()),
+            Self::Skip { .. } => None,
+        }
+    }
+
+    fn skip_reason(&self) -> Option<&str> {
+        match self {
+            Self::Skip { reason } => Some(reason.as_str()),
+            _ => None,
+        }
+    }
+
+    fn is_skip(&self) -> bool {
+        matches!(self, Self::Skip { .. })
+    }
+
+    fn execute(
+        &self,
+        expected_digest: &str,
+        buildah: &impl BuildahCommands,
+    ) -> Result<LocalImageRemoval> {
+        match self {
+            Self::CachedReference { reference } | Self::InventoryReference { reference } => {
+                remove_guarded_local_image(reference, expected_digest, buildah)
+            }
+            Self::CachedImageId { image_id } => {
+                remove_guarded_local_image_by_id(image_id, expected_digest, buildah)
+            }
+            Self::Skip { reason } => Ok(LocalImageRemoval::Skipped {
+                reason: reason.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImageRemoveInspection {
+    target: String,
+    entry: BtrfsImageCacheEntry,
+    local_image_removal: PlannedLocalImageRemoval,
 }
 
 pub(crate) fn run_image_cache_command(
@@ -173,9 +248,14 @@ pub(crate) fn run_image_cache_command(
         ImageCacheCommand::List => {
             list_image_cache(image_cache_root, buildah).map(ImageCacheCommandOutput::List)
         }
-        ImageCacheCommand::Remove { target } => {
-            remove_image_cache_entry(&target, image_cache_root, buildah, btrfs)
-                .map(ImageCacheCommandOutput::Remove)
+        ImageCacheCommand::Remove { target, dry_run } => {
+            if dry_run {
+                preview_remove_image_cache_entry(&target, image_cache_root, buildah)
+                    .map(ImageCacheCommandOutput::RemoveDryRun)
+            } else {
+                remove_image_cache_entry(&target, image_cache_root, buildah, btrfs)
+                    .map(ImageCacheCommandOutput::Remove)
+            }
         }
     }
 }
@@ -357,6 +437,58 @@ fn remove_image_cache_entry(
     buildah: &impl BuildahCommands,
     btrfs: &impl BtrfsRootfsCommands,
 ) -> Result<ImageRemoveReport> {
+    let inspection = inspect_remove_image_cache_entry(target, image_cache_root, buildah)?;
+    let ImageRemoveInspection {
+        target,
+        entry,
+        local_image_removal,
+    } = inspection;
+    reset_cache_entry(&entry, btrfs)?;
+    let local_image_removal = local_image_removal.execute(entry.digest.as_str(), buildah)?;
+
+    Ok(ImageRemoveReport {
+        target,
+        digest_key: entry.digest_key,
+        digest: entry.digest,
+        local_image_removal,
+    })
+}
+
+fn preview_remove_image_cache_entry(
+    target: &str,
+    image_cache_root: &Path,
+    buildah: &impl BuildahCommands,
+) -> Result<ImageRemoveDryRunReport> {
+    let inspection = inspect_remove_image_cache_entry(target, image_cache_root, buildah)?;
+    let local_image_target = inspection
+        .local_image_removal
+        .preview_target()
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            anyhow!(
+                "dry-run cannot preview a local Buildah removal for cache entry '{}' (digest {}): {}",
+                inspection.entry.digest_key,
+                inspection.entry.digest,
+                inspection
+                    .local_image_removal
+                    .skip_reason()
+                    .unwrap_or("local removal would be skipped")
+            )
+        })?;
+
+    Ok(ImageRemoveDryRunReport {
+        target: inspection.target,
+        digest_key: inspection.entry.digest_key,
+        digest: inspection.entry.digest,
+        local_image_target,
+    })
+}
+
+fn inspect_remove_image_cache_entry(
+    target: &str,
+    image_cache_root: &Path,
+    buildah: &impl BuildahCommands,
+) -> Result<ImageRemoveInspection> {
     let target = target.trim();
     if target.is_empty() {
         bail!("image cache remove target must not be empty");
@@ -374,35 +506,50 @@ fn remove_image_cache_entry(
         (rootfs.image_digest.as_deref() == Some(entry.digest.as_str()))
             .then(|| rootfs.selected_reference.clone())
     });
-    let image_id_for_removal = cached.as_ref().ok().and_then(|r| r.image_id.clone());
-    reset_cache_entry(&entry, btrfs)?;
+    let image_id_for_removal = cached
+        .as_ref()
+        .ok()
+        .and_then(|rootfs| rootfs.image_id.clone());
+    let local_image_removal = inspect_local_image_removal(
+        selected_reference,
+        image_id_for_removal,
+        entry.digest.as_str(),
+        buildah,
+    )?;
 
-    let local_image_removal = match (selected_reference, entry.digest.as_str()) {
-        (Some(reference), digest) => {
-            let mut result = remove_guarded_local_image(&reference, digest, buildah)?;
-            if matches!(result, LocalImageRemoval::Skipped { .. })
-                && let Some(ref image_id) = image_id_for_removal
-            {
-                result = remove_guarded_local_image_by_id(image_id, digest, buildah)?;
-            }
-            if matches!(result, LocalImageRemoval::Skipped { .. })
-                && let Some(resolved_ref) = find_matching_buildah_reference(digest, buildah)
-            {
-                result = remove_guarded_local_image(&resolved_ref, digest, buildah)?;
-            }
-            result
-        }
-        (None, _) => LocalImageRemoval::Skipped {
-            reason: "cache metadata missing or invalid; no selected image reference to guard"
-                .to_owned(),
-        },
-    };
-    Ok(ImageRemoveReport {
+    Ok(ImageRemoveInspection {
         target: target.to_owned(),
-        digest_key: entry.digest_key,
-        digest: entry.digest,
+        entry,
         local_image_removal,
     })
+}
+
+fn inspect_local_image_removal(
+    selected_reference: Option<String>,
+    image_id_for_removal: Option<String>,
+    digest: &str,
+    buildah: &impl BuildahCommands,
+) -> Result<PlannedLocalImageRemoval> {
+    let Some(reference) = selected_reference else {
+        return Ok(PlannedLocalImageRemoval::Skip {
+            reason: "cache metadata missing or invalid; no selected image reference to guard"
+                .to_owned(),
+        });
+    };
+
+    let mut local_image_removal = inspect_guarded_local_image(&reference, digest, buildah)?;
+    if local_image_removal.is_skip()
+        && let Some(ref image_id) = image_id_for_removal
+    {
+        local_image_removal = inspect_guarded_local_image_by_id(image_id, digest, buildah)?;
+    }
+    if local_image_removal.is_skip()
+        && let Some(resolved_ref) = find_matching_buildah_reference(digest, buildah)
+    {
+        local_image_removal =
+            inspect_inventory_guarded_local_image(&resolved_ref, digest, buildah)?;
+    }
+    Ok(local_image_removal)
 }
 
 fn resolve_remove_target(
@@ -893,24 +1040,87 @@ fn buildah_match_status(
     }
 }
 
-fn remove_guarded_local_image(
+fn inspect_guarded_local_image(
     reference: &str,
     expected_digest: &str,
     buildah: &impl BuildahCommands,
-) -> Result<LocalImageRemoval> {
+) -> Result<PlannedLocalImageRemoval> {
     let Some(actual_digest) = inspect_image_digest(reference, buildah)? else {
-        return Ok(LocalImageRemoval::Skipped {
+        return Ok(PlannedLocalImageRemoval::Skip {
             reason: format!(
                 "Buildah image '{reference}' is missing, digestless, or ambiguous; expected digest {expected_digest}"
             ),
         });
     };
     if actual_digest != expected_digest {
-        return Ok(LocalImageRemoval::Skipped {
+        return Ok(PlannedLocalImageRemoval::Skip {
             reason: format!(
                 "Buildah image '{reference}' digest {actual_digest} does not match cache digest {expected_digest}"
             ),
         });
+    }
+    Ok(PlannedLocalImageRemoval::CachedReference {
+        reference: reference.to_owned(),
+    })
+}
+
+fn inspect_guarded_local_image_by_id(
+    image_id: &str,
+    expected_digest: &str,
+    buildah: &impl BuildahCommands,
+) -> Result<PlannedLocalImageRemoval> {
+    let Some(actual_digest) = inspect_image_digest(image_id, buildah)? else {
+        return Ok(PlannedLocalImageRemoval::Skip {
+            reason: format!(
+                "Buildah image ID '{image_id}' is missing, digestless, or ambiguous; expected digest {expected_digest}"
+            ),
+        });
+    };
+    if actual_digest != expected_digest {
+        return Ok(PlannedLocalImageRemoval::Skip {
+            reason: format!(
+                "Buildah image ID '{image_id}' digest {actual_digest} does not match cache digest {expected_digest}"
+            ),
+        });
+    }
+    Ok(PlannedLocalImageRemoval::CachedImageId {
+        image_id: image_id.to_owned(),
+    })
+}
+
+fn inspect_inventory_guarded_local_image(
+    reference: &str,
+    expected_digest: &str,
+    buildah: &impl BuildahCommands,
+) -> Result<PlannedLocalImageRemoval> {
+    let Some(actual_digest) = inspect_image_digest(reference, buildah)? else {
+        return Ok(PlannedLocalImageRemoval::Skip {
+            reason: format!(
+                "Buildah image '{reference}' is missing, digestless, or ambiguous; expected digest {expected_digest}"
+            ),
+        });
+    };
+    if actual_digest != expected_digest {
+        return Ok(PlannedLocalImageRemoval::Skip {
+            reason: format!(
+                "Buildah image '{reference}' digest {actual_digest} does not match cache digest {expected_digest}"
+            ),
+        });
+    }
+    Ok(PlannedLocalImageRemoval::InventoryReference {
+        reference: reference.to_owned(),
+    })
+}
+
+fn remove_guarded_local_image(
+    reference: &str,
+    expected_digest: &str,
+    buildah: &impl BuildahCommands,
+) -> Result<LocalImageRemoval> {
+    if let PlannedLocalImageRemoval::Skip { reason } =
+        inspect_guarded_local_image(reference, expected_digest, buildah)?
+    {
+        return Ok(LocalImageRemoval::Skipped { reason });
     }
     buildah
         .run(&["rmi", reference])
@@ -925,19 +1135,10 @@ fn remove_guarded_local_image_by_id(
     expected_digest: &str,
     buildah: &impl BuildahCommands,
 ) -> Result<LocalImageRemoval> {
-    let Some(actual_digest) = inspect_image_digest(image_id, buildah)? else {
-        return Ok(LocalImageRemoval::Skipped {
-            reason: format!(
-                "Buildah image ID '{image_id}' is missing, digestless, or ambiguous; expected digest {expected_digest}"
-            ),
-        });
-    };
-    if actual_digest != expected_digest {
-        return Ok(LocalImageRemoval::Skipped {
-            reason: format!(
-                "Buildah image ID '{image_id}' digest {actual_digest} does not match cache digest {expected_digest}"
-            ),
-        });
+    if let PlannedLocalImageRemoval::Skip { reason } =
+        inspect_guarded_local_image_by_id(image_id, expected_digest, buildah)?
+    {
+        return Ok(LocalImageRemoval::Skipped { reason });
     }
     buildah
         .run(&["rmi", image_id])
