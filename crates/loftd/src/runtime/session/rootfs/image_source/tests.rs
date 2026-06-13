@@ -1819,3 +1819,106 @@ fn image_command_list_stale_tag_single_unmatched_entry_with_image_id() {
     assert!(output.contains("oldid"));
     assert_eq!(btrfs.calls(), Vec::new());
 }
+
+#[test]
+fn image_command_remove_falls_back_to_buildah_inventory_when_reference_inspect_fails() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/example/loftd:latest".to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        image_local_digest: None,
+        image_id: None,
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    // Stale selected_reference inspect fails; no image_id; inventory has matching row.
+    let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
+        .with_digest_for("ghcr.io/example/loftd:sha-a9cc52d79353", "sha256:feedface")
+        .with_inventory(
+            "ghcr.io/example/loftd|sha-a9cc52d79353|ba5a514299b8ffff|sha256:feedface\n",
+        );
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            target: "sha256:feedface".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("remove should succeed via inventory fallback");
+
+    let ImageCacheCommandOutput::Remove(report) = output else {
+        panic!("remove output expected");
+    };
+    assert!(!entry.entry_dir.exists());
+    let super::commands::LocalImageRemoval::Removed { reference } = report.local_image_removal
+    else {
+        panic!("local removal should succeed via inventory fallback");
+    };
+    assert_eq!(reference, "ghcr.io/example/loftd:sha-a9cc52d79353");
+    assert!(
+        commands
+            .calls()
+            .iter()
+            .any(|call| call == &vec![
+                "rmi".to_owned(),
+                "ghcr.io/example/loftd:sha-a9cc52d79353".to_owned()
+            ])
+    );
+}
+
+#[test]
+fn image_command_remove_skips_inventory_fallback_when_no_matching_row() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/example/loftd:latest".to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        image_local_digest: None,
+        image_id: None,
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    // Stale selected_reference inspect fails; no image_id; inventory has no matching row.
+    let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
+        .with_inventory(
+            "ghcr.io/example/loftd|othertag|newid|sha256:other-digest\n",
+        );
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            target: "sha256:feedface".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("remove should succeed despite no local match");
+
+    let ImageCacheCommandOutput::Remove(report) = output else {
+        panic!("remove output expected");
+    };
+    assert!(!entry.entry_dir.exists());
+    let super::commands::LocalImageRemoval::Skipped { reason } = report.local_image_removal else {
+        panic!("local removal should be skipped");
+    };
+    assert!(reason.contains("is missing, digestless, or ambiguous"));
+    assert!(
+        !commands
+            .calls()
+            .iter()
+            .any(|call| call.first().map(String::as_str) == Some("rmi"))
+    );
+}

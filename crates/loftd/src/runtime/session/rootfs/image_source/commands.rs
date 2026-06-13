@@ -385,6 +385,11 @@ fn remove_image_cache_entry(
             {
                 result = remove_guarded_local_image_by_id(image_id, digest, buildah)?;
             }
+            if matches!(result, LocalImageRemoval::Skipped { .. })
+                && let Some(resolved_ref) = find_matching_buildah_reference(digest, buildah)
+            {
+                result = remove_guarded_local_image(&resolved_ref, digest, buildah)?;
+            }
             result
         }
         (None, _) => LocalImageRemoval::Skipped {
@@ -940,6 +945,16 @@ fn remove_guarded_local_image_by_id(
     Ok(LocalImageRemoval::Removed {
         reference: image_id.to_owned(),
     })
+}
+
+fn find_matching_buildah_reference(
+    expected_digest: &str,
+    buildah: &impl BuildahCommands,
+) -> Option<String> {
+    read_buildah_inventory(buildah)
+        .into_iter()
+        .find(|row| row.digest.as_deref() == Some(expected_digest))
+        .and_then(|row| row.reference())
 }
 
 fn render_list_stdout(entries: &[ImageCacheListEntry]) -> String {
