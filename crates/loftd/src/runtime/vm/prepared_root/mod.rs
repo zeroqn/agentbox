@@ -263,8 +263,8 @@ mod tests {
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::{
         BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, GuestInitOverrideMount,
-        LaunchSpec, NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
-        WORKSPACE_TARGET,
+        LaunchSpec, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG,
+        SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
     };
     use std::cell::RefCell;
     use std::path::Path;
@@ -329,6 +329,7 @@ mod tests {
         vec![
             BindMount::directory(root.join("workspace-src"), WORKSPACE_TAG, WORKSPACE_TARGET),
             BindMount::directory(root.join("home/.codex"), CODEX_TAG, CODEX_TARGET),
+            BindMount::directory(root.join("home/.omp"), OMP_TAG, OMP_TARGET),
             BindMount::directory(root.join("home/.pi"), PI_TAG, PI_TARGET),
             BindMount::directory(root.join("state/cargo"), CARGO_TAG, CARGO_TARGET),
             BindMount::directory(root.join("state/sccache"), SCCACHE_TAG, SCCACHE_TARGET),
@@ -378,6 +379,7 @@ mod tests {
             "task/rootfs",
             "workspace-src",
             "home/.codex",
+            "home/.omp",
             "home/.pi",
             "state/cargo",
             "state/sccache",
@@ -417,13 +419,13 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[11],
+            calls[13],
             Call::Bind(
                 dir.path().join("state/sccache").display().to_string(),
                 root.join("home/dev/.cache/sccache").display().to_string()
             )
         );
-        assert_eq!(calls[12], Call::RuntimeEtc(root.display().to_string()));
+        assert_eq!(calls[14], Call::RuntimeEtc(root.display().to_string()));
     }
 
     #[test]
@@ -433,6 +435,7 @@ mod tests {
             "task/rootfs/nix/store/hash-loftd/bin",
             "workspace-src",
             "home/.codex",
+            "home/.omp",
             "home/.pi",
             "state/cargo",
             "state/sccache",
@@ -459,10 +462,10 @@ mod tests {
 
         commands.apply(&plan).expect("apply should plan commands");
 
-        let root = state.join(PREPARED_ROOT_DIR);
         let calls = commands.calls.borrow();
+        let root = state.join(PREPARED_ROOT_DIR);
         assert_eq!(
-            calls[12],
+            calls[14],
             Call::CreateFile(
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
                     .display()
@@ -470,7 +473,7 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[13],
+            calls[15],
             Call::Bind(
                 override_path.display().to_string(),
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
@@ -479,14 +482,14 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[14],
+            calls[16],
             Call::ReadOnly(
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
                     .display()
                     .to_string()
             )
         );
-        assert_eq!(calls[15], Call::RuntimeEtc(root.display().to_string()));
+        assert_eq!(calls[17], Call::RuntimeEtc(root.display().to_string()));
     }
 
     #[test]
@@ -496,6 +499,7 @@ mod tests {
             "task/rootfs",
             "workspace-src",
             "home/.codex",
+            "home/.omp",
             "home/.pi",
             "state/cargo",
             "state/sccache",

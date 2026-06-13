@@ -20,6 +20,7 @@ const LEGACY_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST";
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
+    "/home/dev/.omp",
     "/home/dev/.pi",
     "/home/dev/.cargo",
     "/home/dev/.cache/sccache",

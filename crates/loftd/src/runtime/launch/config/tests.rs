@@ -9,6 +9,7 @@ fn test_mounts() -> Vec<BindMount> {
     vec![
         BindMount::directory("/workspace-src", WORKSPACE_TAG, WORKSPACE_TARGET),
         BindMount::directory("/home/host/.codex", CODEX_TAG, CODEX_TARGET),
+        BindMount::directory("/home/host/.omp", OMP_TAG, OMP_TARGET),
         BindMount::directory("/home/host/.pi", PI_TAG, PI_TARGET),
         BindMount::directory("/state/project/cargo", CARGO_TAG, CARGO_TARGET),
         BindMount::directory("/state/sccache", SCCACHE_TAG, SCCACHE_TARGET),
@@ -45,7 +46,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     assert_eq!(config.mounts[0].source, Path::new("/workspace-src"));
     assert_eq!(config.mounts[0].tag, "loftd-workspace");
     assert_eq!(config.mounts[0].target, "/workspace");
-    assert_eq!(config.mounts.len(), 5);
+    assert_eq!(config.mounts.len(), 6);
     assert_eq!(config.ram_mib, 4096);
     assert_eq!(config.vcpus, 2);
     assert_eq!(config.log_level, LogLevel::Debug);
@@ -227,14 +228,14 @@ fn launch_config_round_trips_volume_source_kind_and_access_mode() {
     .expect("launch config should build");
 
     let decoded = decode_text_for_debug(&config.serialize()).expect("debug decode");
-    assert!(decoded.contains("mount.5.source_kind=file\n"));
-    assert!(decoded.contains("mount.5.read_only=true\n"));
+    assert!(decoded.contains("mount.6.source_kind=file\n"));
+    assert!(decoded.contains("mount.6.read_only=true\n"));
 
     let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
 
     assert_eq!(parsed, config);
-    assert_eq!(parsed.mounts[5].source_kind, BindMountSourceKind::File);
-    assert!(parsed.mounts[5].read_only);
+    assert_eq!(parsed.mounts[6].source_kind, BindMountSourceKind::File);
+    assert!(parsed.mounts[6].read_only);
 }
 
 #[test]

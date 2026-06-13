@@ -11,6 +11,7 @@ use crate::state::StateLayout;
 
 mod cargo;
 mod codex;
+mod omp;
 mod pi;
 mod sccache;
 mod workspace;
@@ -23,6 +24,7 @@ pub(crate) fn prepare_dev_mounts(
     let mounts = vec![
         workspace::bind_mount(workspace_dir),
         codex::prepare(home_dir)?,
+        omp::prepare(home_dir)?,
         pi::prepare(home_dir)?,
         cargo::prepare(state_layout)?,
         sccache::prepare(state_layout)?,
@@ -42,8 +44,8 @@ mod tests {
 
     use super::*;
     use crate::runtime::launch::config::{
-        CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG,
-        SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+        CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
+        SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
     };
     use crate::state;
 
@@ -64,23 +66,25 @@ mod tests {
         let mounts =
             prepare_dev_mounts(&workspace, &home, &state_layout).expect("mounts should prepare");
 
-        assert_eq!(mounts.len(), 5);
+        assert_eq!(mounts.len(), 6);
         assert_mount(&mounts[0], &workspace, WORKSPACE_TAG, WORKSPACE_TARGET);
         assert_mount(&mounts[1], &home.join(".codex"), CODEX_TAG, CODEX_TARGET);
-        assert_mount(&mounts[2], &home.join(".pi"), PI_TAG, PI_TARGET);
+        assert_mount(&mounts[2], &home.join(".omp"), OMP_TAG, OMP_TARGET);
+        assert_mount(&mounts[3], &home.join(".pi"), PI_TAG, PI_TARGET);
         assert_mount(
-            &mounts[3],
+            &mounts[4],
             &state_layout.root_dir().join("cargo"),
             CARGO_TAG,
             CARGO_TARGET,
         );
         assert_mount(
-            &mounts[4],
+            &mounts[5],
             &state_layout.sccache_dir(),
             SCCACHE_TAG,
             SCCACHE_TARGET,
         );
         assert!(home.join(".codex").is_dir());
+        assert!(home.join(".omp").is_dir());
         assert!(home.join(".pi").is_dir());
         assert!(state_layout.root_dir().join("cargo").is_dir());
         assert_eq!(

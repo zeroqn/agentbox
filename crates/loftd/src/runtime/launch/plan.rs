@@ -78,7 +78,7 @@ impl LaunchPlan {
         let image_cache_dir = state_layout.image_cache_dir();
         let sccache_dir = state_layout.sccache_dir();
         let home_dir = home_dir.ok_or_else(|| {
-            anyhow::anyhow!("HOME is not set; loftd cannot prepare .codex and .pi bind mounts")
+            anyhow::anyhow!("HOME is not set; loftd cannot prepare .codex, .omp, and .pi bind mounts")
         })?;
         let container_store_backend = options
             .container_store_backend
@@ -310,9 +310,10 @@ mod tests {
                 .find(|mount| mount.target == target)
                 .expect("mount should exist")
         };
-        assert_eq!(plan.bind_mounts.len(), 5);
+        assert_eq!(plan.bind_mounts.len(), 6);
         assert_eq!(mount("/workspace").source, workspace);
         assert_eq!(mount("/home/dev/.codex").source, home.join(".codex"));
+        assert_eq!(mount("/home/dev/.omp").source, home.join(".omp"));
         assert_eq!(mount("/home/dev/.pi").source, home.join(".pi"));
         assert_eq!(
             mount("/home/dev/.cargo").source,
@@ -323,6 +324,7 @@ mod tests {
             plan.state_layout.sccache_dir()
         );
         assert!(home.join(".codex").is_dir());
+        assert!(home.join(".omp").is_dir());
         assert!(home.join(".pi").is_dir());
         assert!(plan.state_layout.root_dir().join("cargo").is_dir());
         assert!(!plan.state_layout.root_dir().join("containers").exists());

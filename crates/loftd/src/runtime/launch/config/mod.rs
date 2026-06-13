@@ -11,8 +11,8 @@ pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
     BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET,
     DiskAttachment, GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig,
-    LaunchSpec, NIX_TARGET, NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET,
-    WORKSPACE_TAG, WORKSPACE_TARGET, canonical_mount_target,
+    LaunchSpec, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG,
+    SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, canonical_mount_target,
 };
 
 #[cfg(test)]

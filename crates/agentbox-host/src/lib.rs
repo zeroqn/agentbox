@@ -21,6 +21,7 @@ const HOST_NIX_WORK_DIR: &str = "nix-work";
 const HOST_NIX_MERGED_DIR: &str = "nix-merged";
 const HOST_NIX_SIDECAR_STATE_FILE: &str = "nix-sidecar.state";
 const CONTAINER_CODEX_DIR: &str = "/home/dev/.codex";
+const CONTAINER_OMP_DIR: &str = "/home/dev/.omp";
 const CONTAINER_PI_DIR: &str = "/home/dev/.pi";
 const CONTAINER_CARGO_DIR: &str = "/home/dev/.cargo";
 const CONTAINER_SCCACHE_DIR: &str = "/home/dev/.cache/sccache";

@@ -2,8 +2,8 @@ use super::*;
 use crate::logging::LogLevel;
 use crate::runtime::launch::config::{
     BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment, LaunchConfig,
-    LaunchSpec, NetworkMode, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
-    WORKSPACE_TARGET,
+    LaunchSpec, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET,
+    WORKSPACE_TAG, WORKSPACE_TARGET,
 };
 use crate::runtime::vm::libkrun::launcher::PROFILE_KERNEL_CMDLINE_APPEND;
 use anyhow::Result;
@@ -280,6 +280,7 @@ fn test_mounts() -> Vec<BindMount> {
     vec![
         BindMount::directory("/workspace-src", WORKSPACE_TAG, WORKSPACE_TARGET),
         BindMount::directory("/home/host/.codex", CODEX_TAG, CODEX_TARGET),
+        BindMount::directory("/home/host/.omp", OMP_TAG, OMP_TARGET),
         BindMount::directory("/home/host/.pi", PI_TAG, PI_TARGET),
         BindMount::directory("/state/project/cargo", CARGO_TAG, CARGO_TARGET),
         BindMount::directory("/state/sccache", SCCACHE_TAG, SCCACHE_TARGET),

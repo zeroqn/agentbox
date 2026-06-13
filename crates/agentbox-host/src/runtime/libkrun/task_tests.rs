@@ -438,6 +438,8 @@ fn expected_args(options: ExpectedOptions) -> Vec<String> {
         "--volume",
         "/home/alice/.codex:/home/dev/.codex",
         "--volume",
+        "/home/alice/.omp:/home/dev/.omp",
+        "--volume",
         "/home/alice/.pi:/home/dev/.pi",
         "--volume",
         "/tmp/state/agentbox/project/cargo:/home/dev/.cargo",
@@ -539,6 +541,7 @@ fn default_task_volumes() -> TaskVolumeMounts {
     TaskVolumeMounts {
         workspace: "/tmp/project:/workspace".to_owned(),
         codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+        omp: "/home/alice/.omp:/home/dev/.omp".to_owned(),
         pi: "/home/alice/.pi:/home/dev/.pi".to_owned(),
         cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
         sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),

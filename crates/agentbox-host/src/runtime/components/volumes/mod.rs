@@ -1,8 +1,8 @@
 mod cargo;
 mod codex;
+mod omp;
 mod pi;
 mod sccache;
-
 use anyhow::Result;
 use std::path::Path;
 
@@ -13,6 +13,7 @@ use crate::{CONTAINER_SCCACHE_DIR, CONTAINER_WORKDIR};
 
 pub(crate) const WORKSPACE_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.workspace");
 pub(crate) const CODEX_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.codex");
+pub(crate) const OMP_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.omp");
 pub(crate) const PI_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.pi");
 pub(crate) const CARGO_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.cargo");
 pub(crate) const SCCACHE_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.volume.sccache");
@@ -21,6 +22,7 @@ pub(crate) const SCCACHE_VOLUME_OWNER: RunArgOwner = RunArgOwner::new("runtime.v
 pub struct TaskVolumeMounts {
     pub workspace: String,
     pub codex: String,
+    pub omp: String,
     pub pi: String,
     pub cargo: String,
     pub sccache: String,
@@ -30,6 +32,7 @@ pub fn prepare_task_volumes(cwd: &Path, state_layout: &StateLayout) -> Result<Ta
     Ok(TaskVolumeMounts {
         workspace: format_mount_arg(cwd, CONTAINER_WORKDIR)?,
         codex: codex::prepare()?,
+        omp: omp::prepare()?,
         pi: pi::prepare()?,
         cargo: cargo::prepare(state_layout.root_dir())?,
         sccache: sccache::prepare(&state_layout.sccache_dir())?,
@@ -39,6 +42,7 @@ pub fn prepare_task_volumes(cwd: &Path, state_layout: &StateLayout) -> Result<Ta
 pub fn append_task_volumes(run: &mut RunSpec, mounts: &TaskVolumeMounts) {
     append_workspace(run, &mounts.workspace);
     append_codex(run, &mounts.codex);
+    append_omp(run, &mounts.omp);
     append_pi(run, &mounts.pi);
     append_cargo(run, &mounts.cargo);
     append_sccache(run, &mounts.sccache);
@@ -50,6 +54,10 @@ fn append_workspace(run: &mut RunSpec, mount: &str) {
 
 fn append_codex(run: &mut RunSpec, mount: &str) {
     run.option(CODEX_VOLUME_OWNER, "--volume", mount);
+}
+
+fn append_omp(run: &mut RunSpec, mount: &str) {
+    run.option(OMP_VOLUME_OWNER, "--volume", mount);
 }
 
 fn append_pi(run: &mut RunSpec, mount: &str) {
@@ -111,6 +119,24 @@ mod tests {
     }
 
     #[test]
+    fn prepare_omp_volume_creates_dot_omp_under_home() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+
+        let mount = crate::runtime::components::volumes::omp::prepare_at(dir.path())
+            .expect("omp mount should be prepared");
+
+        assert_eq!(
+            mount,
+            format!(
+                "{}:{}",
+                dir.path().join(".omp").display(),
+                crate::CONTAINER_OMP_DIR
+            )
+        );
+        assert!(dir.path().join(".omp").is_dir());
+    }
+
+    #[test]
     fn prepare_cargo_volume_creates_cargo_under_state_root() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
         let state_root = dir.path().join("state").join("agentbox").join("project");
@@ -158,6 +184,7 @@ mod tests {
         let mounts = crate::runtime::components::volumes::TaskVolumeMounts {
             workspace: "/tmp/project:/workspace".to_owned(),
             codex: "/home/alice/.codex:/home/dev/.codex".to_owned(),
+            omp: "/home/alice/.omp:/home/dev/.omp".to_owned(),
             pi: "/home/alice/.pi:/home/dev/.pi".to_owned(),
             cargo: "/tmp/state/agentbox/project/cargo:/home/dev/.cargo".to_owned(),
             sccache: "/tmp/state/agentbox/sccache:/home/dev/.cache/sccache".to_owned(),
@@ -170,6 +197,8 @@ mod tests {
             "/tmp/project:/workspace".to_owned(),
             "--volume".to_owned(),
             "/home/alice/.codex:/home/dev/.codex".to_owned(),
+            "--volume".to_owned(),
+            "/home/alice/.omp:/home/dev/.omp".to_owned(),
             "--volume".to_owned(),
             "/home/alice/.pi:/home/dev/.pi".to_owned(),
             "--volume".to_owned(),
@@ -190,6 +219,11 @@ mod tests {
             crate::runtime::components::volumes::CODEX_VOLUME_OWNER,
             "--volume",
             "/home/alice/.codex:/home/dev/.codex"
+        ));
+        assert!(args.contains_option_from(
+            crate::runtime::components::volumes::OMP_VOLUME_OWNER,
+            "--volume",
+            "/home/alice/.omp:/home/dev/.omp"
         ));
         assert!(args.contains_option_from(
             crate::runtime::components::volumes::PI_VOLUME_OWNER,
@@ -222,6 +256,7 @@ mod tests {
             )
             .expect("workspace mount should format"),
             codex: String::new(),
+            omp: String::new(),
             pi: String::new(),
             cargo: String::new(),
             sccache: String::new(),
