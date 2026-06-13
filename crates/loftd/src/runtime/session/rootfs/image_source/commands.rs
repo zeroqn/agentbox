@@ -374,16 +374,24 @@ fn remove_image_cache_entry(
         (rootfs.image_digest.as_deref() == Some(entry.digest.as_str()))
             .then(|| rootfs.selected_reference.clone())
     });
+    let image_id_for_removal = cached.as_ref().ok().and_then(|r| r.image_id.clone());
     reset_cache_entry(&entry, btrfs)?;
 
     let local_image_removal = match (selected_reference, entry.digest.as_str()) {
-        (Some(reference), digest) => remove_guarded_local_image(&reference, digest, buildah)?,
+        (Some(reference), digest) => {
+            let mut result = remove_guarded_local_image(&reference, digest, buildah)?;
+            if matches!(result, LocalImageRemoval::Skipped { .. })
+                && let Some(ref image_id) = image_id_for_removal
+            {
+                result = remove_guarded_local_image_by_id(image_id, digest, buildah)?;
+            }
+            result
+        }
         (None, _) => LocalImageRemoval::Skipped {
             reason: "cache metadata missing or invalid; no selected image reference to guard"
                 .to_owned(),
         },
     };
-
     Ok(ImageRemoveReport {
         target: target.to_owned(),
         digest_key: entry.digest_key,
@@ -904,6 +912,33 @@ fn remove_guarded_local_image(
         .with_context(|| format!("failed to remove matching Buildah image '{reference}'"))?;
     Ok(LocalImageRemoval::Removed {
         reference: reference.to_owned(),
+    })
+}
+
+fn remove_guarded_local_image_by_id(
+    image_id: &str,
+    expected_digest: &str,
+    buildah: &impl BuildahCommands,
+) -> Result<LocalImageRemoval> {
+    let Some(actual_digest) = inspect_image_digest(image_id, buildah)? else {
+        return Ok(LocalImageRemoval::Skipped {
+            reason: format!(
+                "Buildah image ID '{image_id}' is missing, digestless, or ambiguous; expected digest {expected_digest}"
+            ),
+        });
+    };
+    if actual_digest != expected_digest {
+        return Ok(LocalImageRemoval::Skipped {
+            reason: format!(
+                "Buildah image ID '{image_id}' digest {actual_digest} does not match cache digest {expected_digest}"
+            ),
+        });
+    }
+    buildah
+        .run(&["rmi", image_id])
+        .with_context(|| format!("failed to remove matching Buildah image '{image_id}'"))?;
+    Ok(LocalImageRemoval::Removed {
+        reference: image_id.to_owned(),
     })
 }
 

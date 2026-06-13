@@ -1,11 +1,13 @@
 use super::*;
 use crate::runtime::session::profile::RootfsMaterializationRecorder;
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 struct FakeBuildahCommands {
     local_image_exists: bool,
     image_digest: Option<String>,
+    reference_digests: HashMap<String, String>,
     output: String,
     inventory_output: String,
     fail_unshare: bool,
@@ -17,6 +19,7 @@ impl FakeBuildahCommands {
         Self {
             local_image_exists,
             image_digest: None,
+            reference_digests: HashMap::new(),
             output: format!(
                 "selected_image={}\nimage_digest=sha256:feedface\nrootfs_path={}\n",
                 DEFAULT_FALLBACK_IMAGE,
@@ -33,6 +36,11 @@ impl FakeBuildahCommands {
         self
     }
 
+    fn with_digest_for(mut self, reference: &str, digest: &str) -> Self {
+        self.reference_digests
+            .insert(reference.to_owned(), digest.to_owned());
+        self
+    }
     fn with_output(mut self, output: String) -> Self {
         self.output = output;
         self
@@ -75,7 +83,7 @@ impl BuildahCommands for FakeBuildahCommands {
                 "image",
                 "--format",
                 "{{.Digest}}",
-                _reference,
+                reference,
             ]
             | [
                 "inspect",
@@ -83,12 +91,16 @@ impl BuildahCommands for FakeBuildahCommands {
                 "image",
                 "--format",
                 "{{.FromImageDigest}}",
-                _reference,
-            ] => self
-                .image_digest
-                .as_ref()
-                .map(|digest| format!("{digest}\n"))
-                .ok_or_else(|| anyhow!("image digest unavailable")),
+                reference,
+            ] => {
+                let digest = self
+                    .reference_digests
+                    .get(*reference)
+                    .or(self.image_digest.as_ref());
+                digest
+                    .map(|d| format!("{d}\n"))
+                    .ok_or_else(|| anyhow!("image digest unavailable"))
+            }
             ["rmi", _reference] => Ok("removed\n".to_owned()),
             other => bail!("unexpected buildah args: {other:?}"),
         }
@@ -1506,6 +1518,54 @@ fn image_command_remove_is_cache_first_when_buildah_digest_mismatches() {
             .calls()
             .iter()
             .any(|call| call.first().map(String::as_str) == Some("rmi"))
+    );
+}
+
+#[test]
+fn image_command_remove_falls_back_to_image_id_when_reference_drifted() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:feedface").unwrap();
+    fs::create_dir_all(&entry.rootfs_path).expect("cache rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
+        image_digest: Some("sha256:feedface".to_owned()),
+        image_local_digest: None,
+        image_id: Some("oldid".to_owned()),
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("metadata should exist");
+    let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
+        .with_digest_for("ghcr.io/example/loftd:dev", "sha256:other")
+        .with_digest_for("oldid", "sha256:feedface");
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(
+        ImageCacheCommand::Remove {
+            target: "sha256:feedface".to_owned(),
+        },
+        &cache_root,
+        &commands,
+        &btrfs,
+    )
+    .expect("remove should succeed with image_id fallback");
+
+    let ImageCacheCommandOutput::Remove(report) = output else {
+        panic!("remove output expected");
+    };
+    assert!(!entry.entry_dir.exists());
+    let super::commands::LocalImageRemoval::Removed { reference } = report.local_image_removal
+    else {
+        panic!("local removal should succeed via image_id fallback");
+    };
+    assert_eq!(reference, "oldid");
+    assert!(
+        commands
+            .calls()
+            .iter()
+            .any(|call| call == &vec!["rmi".to_owned(), "oldid".to_owned()])
     );
 }
 
