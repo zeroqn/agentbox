@@ -2,7 +2,7 @@
 
 Status: accepted
 
-Agentbox and loftd images publish as separate image identities while loftd is incomplete. `ghcr.io/<owner>/agentbox` is built from the agentbox-compatible image output, and `ghcr.io/<owner>/loftd` is built from the loftd-compatible image output; each receives the release/dev mutable tag plus `sha-<short_sha>`.
+Agentbox and loftd images publish as separate image identities while loftd is incomplete. `ghcr.io/<owner>/agentbox` is built from the agentbox-compatible image output, and `ghcr.io/<owner>/loftd` is built from the loftd-compatible image output; each receives the release/dev mutable tag (`latest` on main push, the tag name on tag push) plus `sha-<short_sha>`.
 
 ## Context
 

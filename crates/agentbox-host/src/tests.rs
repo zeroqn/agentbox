@@ -14,8 +14,7 @@ const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.ni
 const AGENTBOX_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/agentbox-prebuilt.nix");
 const LOFTD_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/loftd-prebuilt.nix");
 const UPDATE_LOFTD_PREBUILT_SH: &str = include_str!("../../../scripts/update-loftd-prebuilt.sh");
-const PUBLISH_ALPHA_RELEASE_YML: &str =
-    include_str!("../../../.github/workflows/publish_alpha_release.yml");
+const PUBLISH_RELEASE_YML: &str = include_str!("../../../.github/workflows/publish_release.yml");
 const PUBLISH_IMAGE_YML: &str = include_str!("../../../.github/workflows/publish_image.yml");
 const PUBLISH_DEV_IMAGE_YML: &str =
     include_str!("../../../.github/workflows/publish_dev_image.yml");
@@ -40,12 +39,16 @@ fn nix_top_level_attr_body<'a>(source: &'a str, attr_name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{attr_name} attrset should exist"))
 }
 
-fn heredoc_body<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+fn heredoc_bodies<'a>(source: &'a str, start: &str, end: &str) -> Vec<&'a str> {
     source
         .split(start)
-        .nth(1)
-        .and_then(|tail| tail.split(end).next())
-        .unwrap_or_else(|| panic!("{start} heredoc should exist"))
+        .skip(1)
+        .filter_map(|tail| tail.split(end).next())
+        .collect()
+}
+
+fn all_heredoc_bodies(source: &str) -> Vec<&str> {
+    heredoc_bodies(source, "cat > release-notes.md <<EOF_NOTES", "EOF_NOTES")
 }
 
 fn assert_no_unescaped_backticks(source: &str) {
@@ -159,7 +162,7 @@ fn publish_image_workflows_publish_separate_loftd_and_agentbox_names() {
 }
 
 #[test]
-fn publish_alpha_release_uploads_agentbox_and_neutral_loftd_assets() {
+fn publish_release_uploads_agentbox_and_neutral_loftd_assets() {
     for required in [
         "nix build .#agentbox-musl -o result-agentbox-musl",
         "nix build .#loftd -o result-loftd",
@@ -186,30 +189,29 @@ fn publish_alpha_release_uploads_agentbox_and_neutral_loftd_assets() {
         r"Prefer \`nix build .#loftd\`",
         r"\`nix build .#loftd-prebuilt\` once pinned",
     ] {
-        assert!(
-            PUBLISH_ALPHA_RELEASE_YML.contains(required),
-            "missing {required}"
-        );
+        assert!(PUBLISH_RELEASE_YML.contains(required), "missing {required}");
     }
 
-    assert!(!PUBLISH_ALPHA_RELEASE_YML.contains(".#loftd-musl"));
-    assert!(!PUBLISH_ALPHA_RELEASE_YML.contains(".loftd-wrapped"));
+    assert!(!PUBLISH_RELEASE_YML.contains(".#loftd-musl"));
+    assert!(!PUBLISH_RELEASE_YML.contains(".loftd-wrapped"));
     assert!(
-        !PUBLISH_ALPHA_RELEASE_YML
+        !PUBLISH_RELEASE_YML
             .contains("install -m 0755 result-loftd/bin/loftd \"dist/${loftd_asset_name}\"")
     );
-    assert!(!PUBLISH_ALPHA_RELEASE_YML.contains("\"dist/${loftd_asset_name}\" --help > /dev/null"));
+    assert!(!PUBLISH_RELEASE_YML.contains("\"dist/${loftd_asset_name}\" --help > /dev/null"));
 }
 
 #[test]
-fn publish_alpha_release_notes_escape_markdown_backticks_for_shell_heredoc() {
-    let release_notes = heredoc_body(
-        PUBLISH_ALPHA_RELEASE_YML,
-        "cat > release-notes.md <<EOF_NOTES",
-        "EOF_NOTES",
+fn publish_release_notes_escape_markdown_backticks_for_shell_heredoc() {
+    let bodies = all_heredoc_bodies(PUBLISH_RELEASE_YML);
+    assert_eq!(
+        bodies.len(),
+        2,
+        "expected tag and branch release notes heredocs"
     );
+    let combined: String = bodies.join("\n");
 
-    assert_no_unescaped_backticks(release_notes);
+    assert_no_unescaped_backticks(&combined);
     for required in [
         r"\`${{ steps.prep.outputs.agentbox_asset_name }}\`",
         r"\`${{ steps.prep.outputs.loftd_asset_name }}\`",
@@ -217,9 +219,9 @@ fn publish_alpha_release_notes_escape_markdown_backticks_for_shell_heredoc() {
         r"\`nix build .#loftd-prebuilt\`",
         r"\`ghcr.io/<repo-owner>/loftd\`",
         r"\`alpha\`",
-        r"\`${{ steps.prep.outputs.release_tag }}\`",
+        r"\`${{ steps.prep.outputs.sha_tag }}\`",
     ] {
-        assert!(release_notes.contains(required), "missing {required}");
+        assert!(combined.contains(required), "missing {required}");
     }
 }
 

@@ -152,8 +152,23 @@ nix build .#container
 nix build .#agentbox-container
 ```
 
-### Build outputs
+CI publishes release artifacts on every push to `main` and on every git tag
+(`v*`):
 
+- **Rolling** (branch push to `main`): `agentbox-<arch>-unknown-linux-musl`
+  and `loftd-<arch>-unknown-linux-gnu` are uploaded to the `alpha`
+  prerelease and to a `sha-<12chars>` immutable prerelease.
+- **Versioned** (tag push, e.g. `v0.1.0`):
+  `agentbox-<version>-<arch>-unknown-linux-musl` and
+  `loftd-<version>-<arch>-unknown-linux-gnu` are uploaded to a full
+  (non-prerelease) release named after the tag, and to the matching
+  `sha-<12chars>` immutable prerelease.
+- **Images** (`ghcr.io/<owner>/agentbox:<tag>`,
+  `ghcr.io/<owner>/loftd:<tag>`) are published by the image workflow on
+  every push to `main` (`latest`, `sha-<12chars>`) and on every tag push
+  (the tag name itself, plus `sha-<12chars>`).
+
+ ### Build outputs
 - `.#agentbox`: compile from source.
 - `.#loftd`: compile the workspace Rust host package with `$out/bin/loftd` as a
   raw dynamic ELF. Runtime helpers are installed under
