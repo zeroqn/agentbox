@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -89,7 +89,6 @@ pub(crate) enum ImageCacheEntryStatus {
     Complete,
     Incomplete,
     Invalid,
-    Uncached,
 }
 
 impl ImageCacheEntryStatus {
@@ -98,7 +97,6 @@ impl ImageCacheEntryStatus {
             Self::Complete => "complete",
             Self::Incomplete => "incomplete",
             Self::Invalid => "invalid",
-            Self::Uncached => "uncached",
         }
     }
 }
@@ -111,7 +109,6 @@ pub(crate) enum BuildahMatchStatus {
     NoReference,
     NoCacheDigest,
     InvalidCache,
-    LocalOnly,
 }
 
 impl BuildahMatchStatus {
@@ -123,7 +120,6 @@ impl BuildahMatchStatus {
             Self::NoReference => "no-reference",
             Self::NoCacheDigest => "no-cache-digest",
             Self::InvalidCache => "invalid-cache",
-            Self::LocalOnly => "local-only",
         }
     }
 }
@@ -251,7 +247,34 @@ fn list_image_cache(
         }
     }
 
+    let original_image_ids: Vec<Option<String>> =
+        entries.iter().map(|e| e.image_id.clone()).collect();
+    let reconcile_rows = buildah_rows.clone();
     let mut result = enrich_list_entries(entries, buildah_rows);
+
+    // Reconcile all entries against buildah by image_id prefix.
+    // This runs AFTER enrichment so image_id-based TAGs override
+    // any stale selected_reference matches from Pass 2.
+    if !reconcile_rows.is_empty() {
+        for (result_idx, entry) in result.iter_mut().enumerate() {
+            // Use original image_id from before enrichment, not the
+            // potentially-overwritten one from with_buildah_row.
+            let lookup_id = original_image_ids
+                .get(result_idx)
+                .and_then(|id| id.as_deref());
+            if let Some(image_id) = lookup_id
+                && let Some(row) = reconcile_rows.iter().find(|row| {
+                    row.image_id
+                        .as_deref()
+                        .is_some_and(|row_id| image_id.starts_with(row_id))
+                })
+            {
+                entry.repository = row.repository.clone();
+                entry.tag = row.tag.clone();
+            }
+        }
+    }
+
     for entry in &mut result {
         entry.short_path = entry.entry_dir.as_ref().and_then(|entry_dir| {
             let stripped = entry_dir.strip_prefix(image_cache_root).ok()?;
@@ -379,9 +402,6 @@ fn resolve_remove_target(
     }
 
     match resolve_local_selector(image_cache_root, buildah, target)? {
-        SelectorResolution::One(row) if row.status == ImageCacheEntryStatus::Uncached => bail!(
-            "image selector '{target}' matched local Buildah image but no loftd cache entry; use loftd images sync {target} first or choose a cached row"
-        ),
         SelectorResolution::One(row) => {
             let digest_key = row.digest_key.as_deref().ok_or_else(|| {
                 anyhow!("image selector '{target}' matched a row without a loftd cache key")
@@ -468,22 +488,6 @@ impl ImageCacheListEntry {
         entry
     }
 
-    fn uncached(buildah_row: BuildahImageRow) -> Self {
-        let selected_reference = buildah_row.reference();
-        Self {
-            digest_key: None,
-            digest: buildah_row.digest,
-            selected_reference,
-            repository: buildah_row.repository,
-            tag: buildah_row.tag,
-            image_id: buildah_row.image_id,
-            status: ImageCacheEntryStatus::Uncached,
-            buildah_status: BuildahMatchStatus::LocalOnly,
-            entry_dir: None,
-            short_path: None,
-        }
-    }
-
     fn cache_sort_key(&self) -> String {
         self.digest_key
             .clone()
@@ -507,16 +511,20 @@ enum SelectorResolution {
 }
 
 fn read_buildah_inventory(buildah: &impl BuildahCommands) -> Vec<BuildahImageRow> {
-    const FORMAT: &str = "{{.Name}}\t{{.Tag}}\t{{.ID}}\t{{.Digest}}";
-    let Ok(output) = buildah.run(&[
+    const FORMAT: &str = "{{.Name}}|{{.Tag}}|{{.ID}}|{{.Digest}}";
+    let output = match buildah.run(&[
         "images",
         "--all",
         "--digests",
         "--noheading",
         "--format",
         FORMAT,
-    ]) else {
-        return Vec::new();
+    ]) {
+        Ok(output) => output,
+        Err(err) => {
+            eprintln!("loftd: buildah inventory failed: {err}");
+            return Vec::new();
+        }
     };
     output
         .lines()
@@ -525,7 +533,7 @@ fn read_buildah_inventory(buildah: &impl BuildahCommands) -> Vec<BuildahImageRow
 }
 
 fn parse_buildah_inventory_line(line: &str) -> Option<BuildahImageRow> {
-    let mut fields = line.split('\t');
+    let mut fields = line.split('|');
     let repository = normalize_visible_field(fields.next()?, "<none>");
     let tag = normalize_visible_field(fields.next()?, "<none>");
     let image_id = normalize_optional_field(fields.next()?);
@@ -537,7 +545,6 @@ fn parse_buildah_inventory_line(line: &str) -> Option<BuildahImageRow> {
         digest,
     })
 }
-
 fn normalize_visible_field(value: &str, default: &str) -> String {
     let value = value.trim();
     if value.is_empty() || value == "<no value>" {
@@ -590,9 +597,13 @@ fn enrich_list_entries(
         }
     }
 
-    // Pass 2: reference match for unmatched cache entries
+    // Pass 2: reference match for unmatched entries without image_id.
+    // Entries with image_id are handled by post-reconciliation.
     for (entry_idx, cache_entry) in cache_entries.iter().enumerate() {
         if matched_cache_entries.contains(&entry_idx) {
+            continue;
+        }
+        if cache_entry.image_id.is_some() {
             continue;
         }
         let Some(ref reference) = cache_entry.selected_reference else {
@@ -612,9 +623,11 @@ fn enrich_list_entries(
         entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
     }
 
-    // Pass 3: image_id match for remaining unmatched cache entries
-    let mut matched_entry_positions: HashSet<usize> =
-        entries.iter().enumerate().map(|(i, _)| i).collect();
+    // Pass 3: reconcile cached entries against buildah by image_id.
+
+    // Each cached entry's TAG/REPOSITORY initially comes from stale
+    // split_reference(selected_image). Buildah knows the current
+    // state — look it up by image_id prefix instead.
     for (entry_idx, cache_entry) in cache_entries.iter().enumerate() {
         if matched_cache_entries.contains(&entry_idx) {
             continue;
@@ -623,78 +636,51 @@ fn enrich_list_entries(
             entries.push(cache_entry.clone());
             continue;
         };
-        let matching_indexes: Vec<usize> = buildah_rows
+        if let Some(index) = buildah_rows
             .iter()
             .enumerate()
             .filter_map(|(index, row)| {
                 if used_buildah_rows.contains(&index) {
                     return None;
                 }
-                (row.image_id.as_deref() == Some(image_id.as_str())).then_some(index)
+                row.image_id
+                    .as_deref()
+                    .is_some_and(|row_id| image_id.starts_with(row_id))
+                    .then_some(index)
             })
-            .collect();
-
-        if matching_indexes.is_empty() {
-            entries.push(cache_entry.clone());
-        } else {
+            .next()
+        {
             matched_cache_entries.insert(entry_idx);
-            for index in matching_indexes {
-                used_buildah_rows.insert(index);
-                matched_entry_positions.insert(entries.len());
-                entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
+            used_buildah_rows.insert(index);
+            entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
+        } else {
+            entries.push(cache_entry.clone());
+        }
+    }
+
+    // Pass 4: for any cached entry where image_id doesn't match a buildah
+    // row (consumed or not), the image no longer exists — mark <none>.
+    // For entries matched in Pass 3, this is a no-op (same row found).
+    if !buildah_rows.is_empty() {
+        let mut entry_pos: usize = 0;
+        while entry_pos < entries.len() {
+            let entry = &mut entries[entry_pos];
+            if let Some(ref image_id) = entry.image_id {
+                if let Some(row) = buildah_rows.iter().find(|row| {
+                    row.image_id
+                        .as_deref()
+                        .is_some_and(|row_id| image_id.starts_with(row_id))
+                }) {
+                    entry.repository = row.repository.clone();
+                    entry.tag = row.tag.clone();
+                } else {
+                    entry.repository = "<none>".to_owned();
+                    entry.tag = "<none>".to_owned();
+                }
             }
+            entry_pos += 1;
         }
     }
-
-    // Pass 4: stale reference cleanup for unmatched entries whose reference
-    // was claimed by a matched entry (same selected_reference).
-    let claimed_references: HashSet<&str> = matched_cache_entries
-        .iter()
-        .filter_map(|&idx| cache_entries[idx].selected_reference.as_deref())
-        .collect();
-    for (entry_pos, entry) in entries.iter_mut().enumerate() {
-        if matched_entry_positions.contains(&entry_pos) {
-            continue;
-        }
-        let Some(ref selected_reference) = entry.selected_reference else {
-            continue;
-        };
-        if !claimed_references.contains(selected_reference.as_str()) {
-            continue;
-        }
-        // This entry's reference was claimed by another matched entry.
-        // If it does not digest-match any buildah row, the reference no
-        // longer belongs to this entry.
-        let has_digest_match = entry.digest.as_deref().is_some_and(|entry_digest| {
-            buildah_rows
-                .iter()
-                .any(|row| row.digest.as_deref() == Some(entry_digest))
-        });
-        if !has_digest_match {
-            entry.repository = "<none>".to_owned();
-            entry.tag = "<none>".to_owned();
-        }
-    }
-
-    let mut uncached = buildah_rows
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, row)| (!used_buildah_rows.contains(&index)).then_some(row))
-        .map(ImageCacheListEntry::uncached)
-        .collect::<Vec<_>>();
-    uncached.sort_by(|left, right| {
-        (
-            left.repository.as_str(),
-            left.tag.as_str(),
-            left.image_id.as_deref(),
-        )
-            .cmp(&(
-                right.repository.as_str(),
-                right.tag.as_str(),
-                right.image_id.as_deref(),
-            ))
-    });
-    entries.extend(uncached);
     entries
 }
 

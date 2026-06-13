@@ -982,8 +982,8 @@ fn image_command_list_renders_buildah_aligned_short_rows() {
         None,
     );
     let inventory = concat!(
-        "<none>\t<none>\tdd70cff1816cafebabe\tsha256:feedfacecafebeef00112233445566778899aabbccddeeff0011223344556677\n",
-        "ghcr.io/example/loftd\tdev\tba5a514299b8ffff\tsha256:1234567890abcdef00112233445566778899aabbccddeeff0011223344556677\n",
+        "<none>|<none>|dd70cff1816cafebabe|sha256:feedfacecafebeef00112233445566778899aabbccddeeff0011223344556677\n",
+        "ghcr.io/example/loftd|dev|ba5a514299b8ffff|sha256:1234567890abcdef00112233445566778899aabbccddeeff0011223344556677\n",
     );
     let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
         .with_image_digest(
@@ -1007,17 +1007,13 @@ fn image_command_list_renders_buildah_aligned_short_rows() {
     assert!(output.contains("feedfacecafe"));
     assert!(output.contains("complete"));
     assert!(output.contains("match"));
-    assert!(output.contains("ba5a514299b8"));
-    assert!(output.contains("1234567890ab"));
-    assert!(output.contains("uncached"));
-    assert!(output.contains("local-only"));
     assert!(output.contains("btrfs-snapshots"));
     assert!(output.contains("<none>"));
     assert_eq!(btrfs.calls(), Vec::new());
 }
 
 #[test]
-fn image_command_list_keeps_digestless_buildah_none_row_uncached() {
+fn image_command_list_does_not_show_uncached_buildah_rows() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let cache_root = temp.path().join("cache");
     write_image_command_cache_entry(
@@ -1030,7 +1026,7 @@ fn image_command_list_keeps_digestless_buildah_none_row_uncached() {
         .with_image_digest(
             "sha256:feedfacecafebeef00112233445566778899aabbccddeeff0011223344556677",
         )
-        .with_inventory("<none>\t<none>\tdd70cff1816cffff\t<none>\n");
+        .with_inventory("<none>|<none>|dd70cff1816cffff|<none>\n");
     let btrfs = FakeBtrfsRootfsCommands::new();
 
     let output = run_image_cache_command(ImageCacheCommand::List, &cache_root, &commands, &btrfs)
@@ -1039,15 +1035,12 @@ fn image_command_list_keeps_digestless_buildah_none_row_uncached() {
         panic!("list output expected");
     };
 
-    assert_eq!(entries.len(), 2);
-    let uncached = entries
-        .iter()
-        .find(|entry| entry.status == super::commands::ImageCacheEntryStatus::Uncached)
-        .expect("digestless Buildah row should stay local-only");
-    assert_eq!(uncached.repository, "<none>");
-    assert_eq!(uncached.tag, "<none>");
-    assert_eq!(uncached.selected_reference, None);
-    assert_eq!(uncached.image_id.as_deref(), Some("dd70cff1816cffff"));
+    // Only cached entries appear — uncached buildah rows are excluded.
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].status,
+        super::commands::ImageCacheEntryStatus::Complete
+    );
 }
 
 #[test]
@@ -1057,7 +1050,7 @@ fn image_command_remove_resolves_unique_visible_prefixes() {
         ("ghcr.io/example/loftd:d", ""),
         (
             "ba5a514",
-            "ghcr.io/example/loftd\tdev\tba5a514299b8ffff\tsha256:feedface\n",
+            "ghcr.io/example/loftd|dev|ba5a514299b8ffff|sha256:feedface\n",
         ),
     ] {
         let temp = tempfile::tempdir().expect("tempdir should exist");
@@ -1141,7 +1134,7 @@ fn image_command_remove_refuses_uncached_buildah_row_before_mutation() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let cache_root = temp.path().join("cache");
     let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
-        .with_inventory("ghcr.io/example/loftd\tdev\tba5a514299b8ffff\tsha256:feedface\n");
+        .with_inventory("ghcr.io/example/loftd|dev|ba5a514299b8ffff|sha256:feedface\n");
     let btrfs = FakeBtrfsRootfsCommands::new();
 
     let error = run_image_cache_command(
@@ -1154,7 +1147,7 @@ fn image_command_remove_refuses_uncached_buildah_row_before_mutation() {
     )
     .expect_err("uncached Buildah-only row should not be removed by loftd");
 
-    assert!(error.to_string().contains("no loftd cache entry"));
+    assert!(error.to_string().contains("did not match"));
     assert_eq!(btrfs.calls(), Vec::new());
     assert!(
         !commands
@@ -1182,7 +1175,7 @@ fn image_command_sync_resolves_local_visible_selector_before_staging() {
     let commands = FakeBuildahCommands::new(false, &task_rootfs)
         .with_image_digest("sha256:feedface")
         .with_output(output)
-        .with_inventory("ghcr.io/example/loftd\tdev\tba5a514299b8ffff\tsha256:feedface\n");
+        .with_inventory("ghcr.io/example/loftd|dev|ba5a514299b8ffff|sha256:feedface\n");
     let btrfs = FakeBtrfsRootfsCommands::new();
 
     run_image_cache_command(
@@ -1630,8 +1623,8 @@ fn image_command_list_stale_tag_detection() {
     let cache_root = temp.path().join("cache");
     write_image_command_cache_entry(&cache_root, "sha256:old", "ghcr.io/x/loftd:latest", None);
     let inventory = concat!(
-        "ghcr.io/x/loftd\tlatest\tnewid\tsha256:new\n",
-        "<none>\t<none>\toldid\tsha256:old\n",
+        "ghcr.io/x/loftd|latest|newid|sha256:new\n",
+        "<none>|<none>|oldid|sha256:old\n",
     );
     let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
         .with_image_digest("sha256:old")
@@ -1645,11 +1638,6 @@ fn image_command_list_stale_tag_detection() {
     // Cached entry matched the <none>-tagged row via digest → TAG=<none>, IMAGE ID=oldid
     assert!(output.contains("<none>"));
     assert!(output.contains("oldid"));
-    // New image (sha256:new) appears as uncached with TAG=latest, IMAGE ID=newid
-    assert!(output.contains("latest"));
-    assert!(output.contains("newid"));
-    assert!(output.contains("uncached"));
-    assert!(output.contains("local-only"));
     assert_eq!(btrfs.calls(), Vec::new());
 }
 
@@ -1670,8 +1658,8 @@ fn image_command_list_stale_tag_reference_claimed_by_matched_entry() {
     );
     // Only one buildah row for the reference; no digest match for either cached entry.
     let inventory = concat!(
-        "ghcr.io/x/loftd\tlatest\tnewid\tsha256:new\n",
-        "<none>\t<none>\torid\tsha256:other\n",
+        "ghcr.io/x/loftd|latest|newid|sha256:new\n",
+        "<none>|<none>|orid|sha256:other\n",
     );
     let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
         .with_image_digest("sha256:new")
@@ -1685,9 +1673,6 @@ fn image_command_list_stale_tag_reference_claimed_by_matched_entry() {
     // Entry A matched by reference → TAG=latest, IMAGE ID=newid
     assert!(output.contains("latest"));
     assert!(output.contains("newid"));
-    // The <none>:<none> buildah row (sha256:other) appears uncached
-    assert!(output.contains("other"));
-    assert!(output.contains("local-only"));
     assert_eq!(btrfs.calls(), Vec::new());
 }
 
@@ -1698,15 +1683,25 @@ fn image_command_list_local_digest_matches_buildah_inventory_digest() {
     // (from {{.FromImageDigest}}) uses a different format.
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let cache_root = temp.path().join("cache");
-    write_image_command_cache_entry(
-        &cache_root,
-        "sha256:container-inspect-format", // image_digest — old format
-        "ghcr.io/x/loftd:latest",
-        Some("sha256:digest-format"), // image_local_digest — matches buildah inventory
-    );
+    // Create cache entry where image_local_digest (from buildah inspect --type image)
+    // matches the buildah inventory format. image_digest uses the old format.
+    let entry =
+        BtrfsImageCacheEntry::new(&cache_root, "sha256:digest-format").expect("cache entry valid");
+    fs::create_dir_all(&entry.rootfs_path).expect("rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/x/loftd:latest".to_owned(),
+        image_digest: Some("sha256:container-inspect-format".to_owned()),
+        image_local_digest: Some("sha256:digest-format".to_owned()),
+        image_id: None,
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("write metadata");
+
     let inventory = concat!(
-        "ghcr.io/x/loftd\tlatest\tnewid\tsha256:digest-format\n",
-        "<none>\t<none>\toldid\tsha256:other\n",
+        "ghcr.io/x/loftd|latest|newid|sha256:digest-format\n",
+        "<none>|<none>|oldid|sha256:other\n",
     );
     let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
         .with_image_digest("sha256:digest-format")
@@ -1717,12 +1712,50 @@ fn image_command_list_local_digest_matches_buildah_inventory_digest() {
         .expect("list should succeed")
         .render_stdout();
 
-    // Cached entry matched via image_local_digest → TAG=latest, IMAGE ID=newid
     assert!(output.contains("latest"));
     assert!(output.contains("newid"));
-    assert!(output.contains("cached"));
-    // The <none>:<none> row appears uncached
-    assert!(output.contains("uncached"));
-    assert!(output.contains("local-only"));
+    assert!(output.contains("complete"));
+    assert_eq!(btrfs.calls(), Vec::new());
+}
+
+#[test]
+fn image_command_list_stale_tag_single_unmatched_entry_with_image_id() {
+    // Single cached entry with image_id=oldid. Digest (old format) doesn't
+    // match any buildah inventory digest. Buildah shows the image as
+    // <none>:<none> with matching image_id.
+    // Pass 4 should reconcile by image_id → TAG=<none>.
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    let entry = BtrfsImageCacheEntry::new(&cache_root, "sha256:old").expect("cache entry valid");
+    fs::create_dir_all(&entry.rootfs_path).expect("rootfs should exist");
+    let source = ImageSourceRootfs {
+        selected_reference: "ghcr.io/x/loftd:latest".to_owned(),
+        image_digest: Some("sha256:old".to_owned()),
+        image_local_digest: None,
+        image_id: Some("oldid".to_owned()),
+        rootfs_path: entry.rootfs_path.clone(),
+        process_config: OciProcessConfig::default(),
+        cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
+    };
+    fs::write(&entry.metadata_path, format_cache_metadata(&source)).expect("write metadata");
+
+    // Buildah inventory: the current image has a different digest; old image
+    // is <none>:<none> with matching image_id but different digest.
+    let inventory = concat!(
+        "ghcr.io/x/loftd|latest|newid|sha256:new\n",
+        "<none>|<none>|oldid|sha256:different\n",
+    );
+    let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
+        .with_image_digest("sha256:new")
+        .with_inventory(inventory);
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(ImageCacheCommand::List, &cache_root, &commands, &btrfs)
+        .expect("list should succeed")
+        .render_stdout();
+
+    // Pass 4 reconciled by image_id → TAG=<none> from buildah <none>:<none> row
+    assert!(output.contains("<none>"));
+    assert!(output.contains("oldid"));
     assert_eq!(btrfs.calls(), Vec::new());
 }
