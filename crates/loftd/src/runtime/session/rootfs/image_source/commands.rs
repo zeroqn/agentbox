@@ -604,7 +604,9 @@ fn enrich_list_entries(
             }
             (row.reference().as_deref() == Some(reference.as_str())).then_some(index)
         });
-        let Some(index) = matching_index else { continue };
+        let Some(index) = matching_index else {
+            continue;
+        };
         used_buildah_rows.insert(index);
         matched_cache_entries.insert(entry_idx);
         let mut entry = cache_entry.clone();
@@ -814,7 +816,6 @@ fn short_token(token: &str) -> String {
     token.chars().take(12).collect()
 }
 
-
 fn format_selector_candidates(rows: &[ImageCacheListEntry]) -> String {
     rows.iter()
         .map(|row| {
@@ -891,7 +892,15 @@ fn remove_guarded_local_image(
 }
 
 fn render_list_stdout(entries: &[ImageCacheListEntry]) -> String {
-    let headers = ["REPOSITORY", "TAG", "IMAGE ID", "DIGEST", "CACHE", "BUILDAH", "PATH"];
+    let headers = [
+        "REPOSITORY",
+        "TAG",
+        "IMAGE ID",
+        "DIGEST",
+        "CACHE",
+        "BUILDAH",
+        "PATH",
+    ];
     let mut widths: [usize; 7] = [0; 7];
     for (i, hdr) in headers.iter().enumerate() {
         widths[i] = hdr.len();
@@ -913,9 +922,20 @@ fn render_list_stdout(entries: &[ImageCacheListEntry]) -> String {
     let mut output = String::new();
     output.push_str(&format!(
         "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {:<w5$}  {:<w6$}\n",
-        headers[0], headers[1], headers[2], headers[3], headers[4], headers[5], headers[6],
-        w0 = widths[0], w1 = widths[1], w2 = widths[2],
-        w3 = widths[3], w4 = widths[4], w5 = widths[5], w6 = widths[6],
+        headers[0],
+        headers[1],
+        headers[2],
+        headers[3],
+        headers[4],
+        headers[5],
+        headers[6],
+        w0 = widths[0],
+        w1 = widths[1],
+        w2 = widths[2],
+        w3 = widths[3],
+        w4 = widths[4],
+        w5 = widths[5],
+        w6 = widths[6],
     ));
     for entry in entries {
         let repo = &entry.repository;
@@ -927,9 +947,20 @@ fn render_list_stdout(entries: &[ImageCacheListEntry]) -> String {
         let path = entry.short_path.as_deref().unwrap_or("<none>");
         output.push_str(&format!(
             "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {:<w5$}  {:<w6$}\n",
-            repo, tag, img_id, digest, status, buildah, path,
-            w0 = widths[0], w1 = widths[1], w2 = widths[2],
-            w3 = widths[3], w4 = widths[4], w5 = widths[5], w6 = widths[6],
+            repo,
+            tag,
+            img_id,
+            digest,
+            status,
+            buildah,
+            path,
+            w0 = widths[0],
+            w1 = widths[1],
+            w2 = widths[2],
+            w3 = widths[3],
+            w4 = widths[4],
+            w5 = widths[5],
+            w6 = widths[6],
         ));
     }
     output

@@ -31,6 +31,7 @@ jobs:
           nix build .#loftd -o result-loftd
 
       - name: Prepare and smoke-test release artifacts
+        id: prep
         run: |
           set -euo pipefail
 

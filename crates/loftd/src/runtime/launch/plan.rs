@@ -78,7 +78,9 @@ impl LaunchPlan {
         let image_cache_dir = state_layout.image_cache_dir();
         let sccache_dir = state_layout.sccache_dir();
         let home_dir = home_dir.ok_or_else(|| {
-            anyhow::anyhow!("HOME is not set; loftd cannot prepare .codex, .omp, and .pi bind mounts")
+            anyhow::anyhow!(
+                "HOME is not set; loftd cannot prepare .codex, .omp, and .pi bind mounts"
+            )
         })?;
         let container_store_backend = options
             .container_store_backend

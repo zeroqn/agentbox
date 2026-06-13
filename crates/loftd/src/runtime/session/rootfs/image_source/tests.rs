@@ -869,12 +869,7 @@ fn internal_child_snapshots_buildah_mount_and_cleans_container_on_success() {
                 "{{.FromImageDigest}}",
                 "fake-container"
             ],
-            vec![
-                "inspect",
-                "--format",
-                "{{.FromImageID}}",
-                "fake-container"
-            ],
+            vec!["inspect", "--format", "{{.FromImageID}}", "fake-container"],
             vec![
                 "inspect",
                 "--format",
@@ -914,12 +909,7 @@ fn internal_child_cleans_container_on_compatibility_failure() {
                 "{{.FromImageDigest}}",
                 "fake-container"
             ],
-            vec![
-                "inspect",
-                "--format",
-                "{{.FromImageID}}",
-                "fake-container"
-            ],
+            vec!["inspect", "--format", "{{.FromImageID}}", "fake-container"],
             vec![
                 "inspect",
                 "--format",
@@ -1583,11 +1573,7 @@ fn image_command_list_stale_tag_detection() {
     // The cached entry (digest=sha256:old) should match the orphaned <none> row and show TAG=<none>.
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let cache_root = temp.path().join("cache");
-    write_image_command_cache_entry(
-        &cache_root,
-        "sha256:old",
-        "ghcr.io/x/loftd:latest",
-    );
+    write_image_command_cache_entry(&cache_root, "sha256:old", "ghcr.io/x/loftd:latest");
     let inventory = concat!(
         "ghcr.io/x/loftd\tlatest\tnewid\tsha256:new\n",
         "<none>\t<none>\toldid\tsha256:old\n",
