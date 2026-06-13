@@ -711,7 +711,7 @@ fn resolve_local_selector(
 fn row_matches_selector(row: &ImageCacheListEntry, selector: &str) -> bool {
     row.digest.as_deref().is_some_and(|digest| {
         digest_token_matches(digest, selector)
-            || digest_hex(digest).is_some_and(|hex| prefix_or_exact(selector, hex, 7))
+            || digest_hex(digest).is_some_and(|hex| prefix_or_exact(selector, hex, 3))
     }) || row
         .digest_key
         .as_deref()
@@ -726,8 +726,8 @@ fn row_matches_selector(row: &ImageCacheListEntry, selector: &str) -> bool {
             .as_deref()
             .is_some_and(|reference| prefix_or_exact(selector, reference, 2))
         || row.image_id.as_deref().is_some_and(|image_id| {
-            prefix_or_exact(selector, image_id, 7)
-                || prefix_or_exact(selector, &short_token(image_id), 7)
+            prefix_or_exact(selector, image_id, 3)
+                || prefix_or_exact(selector, &short_token(image_id), 3)
         })
 }
 
@@ -736,7 +736,7 @@ fn digest_token_matches(digest: &str, selector: &str) -> bool {
         || selector
             .strip_prefix("sha256:")
             .is_some_and(|hex_selector| {
-                digest_hex(digest).is_some_and(|hex| prefix_or_exact(hex_selector, hex, 7))
+                digest_hex(digest).is_some_and(|hex| prefix_or_exact(hex_selector, hex, 3))
             })
 }
 
@@ -746,7 +746,7 @@ fn digest_key_token_matches(key: &str, selector: &str) -> bool {
             .strip_prefix("sha256-")
             .is_some_and(|hex_selector| {
                 key.strip_prefix("sha256-")
-                    .is_some_and(|hex| prefix_or_exact(hex_selector, hex, 7))
+                    .is_some_and(|hex| prefix_or_exact(hex_selector, hex, 3))
             })
 }
 
