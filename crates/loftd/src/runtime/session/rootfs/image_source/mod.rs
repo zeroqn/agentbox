@@ -739,14 +739,24 @@ fn run_btrfs_rootfs_child_with_commands(
         "buildah from did not return a container id",
     )?;
     let mut container = BuildahContainerGuard::new(buildah, container_id);
-    let image_local_digest = optional_digest(buildah.run(&[
+    let image_local_digest = match buildah.run(&[
         "inspect",
         "--type",
         "image",
         "--format",
         "{{.Digest}}",
         image_ref,
-    ])?);
+    ]) {
+        Ok(output) => optional_digest(output),
+        Err(err) => {
+            tracing::debug!(
+                image = image_ref,
+                error = %format!("{err:#}"),
+                "Buildah image digest inspect did not resolve a local digest"
+            );
+            None
+        }
+    };
     let image_digest = optional_digest(buildah.run(&[
         "inspect",
         "--format",
