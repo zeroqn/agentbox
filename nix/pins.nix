@@ -55,15 +55,15 @@
   ompPrebuiltRelease = {
     owner = "can1357";
     repo = "oh-my-pi";
-    tag = "v15.11.6";
+    tag = "v15.12.3";
     systems = {
       x86_64-linux = {
         asset = "omp-linux-x64";
-        hash = "sha256-DRbHtO1VvJE5nFquWm7Vav6DrocTbSIWGL4E/VXccqg=";
+        hash = "sha256-UJS7H7fkBtiRNuSUSN6Yrp6cBf6xBmo5si00BgLTF90=";
       };
       aarch64-linux = {
         asset = "omp-linux-arm64";
-        hash = "sha256-JlkKRG/yxpLvi7qpKxwps7I0dIJmm5EMuH6JpRBKPjA=";
+        hash = "sha256-BjXWjM1P7L4rF1E80wD7gv90qJ+c26WgM8iR9VMFus8=";
       };
     };
   };
