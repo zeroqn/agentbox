@@ -55,6 +55,7 @@ pub(crate) struct ImageSourceAttempt {
 pub(crate) struct ImageSourceRootfs {
     pub(crate) selected_reference: String,
     pub(crate) image_digest: Option<String>,
+    pub(crate) image_id: Option<String>,
     pub(crate) rootfs_path: PathBuf,
     pub(crate) process_config: OciProcessConfig,
     pub(crate) cache_profile: ImageSourceCacheProfile,
@@ -269,6 +270,7 @@ pub(in crate::runtime::session) fn materialize_btrfs_source_rootfs_profiled(
                 return Ok(ImageSourceRootfs {
                     selected_reference: attempt.reference,
                     image_digest: Some(entry.digest.clone()),
+                    image_id: cached.image_id,
                     rootfs_path: destination.to_path_buf(),
                     process_config: cached.process_config,
                     cache_profile: ImageSourceCacheProfile::hit(&entry),
@@ -522,6 +524,9 @@ fn format_cache_metadata(rootfs: &ImageSourceRootfs) -> String {
     if let Some(digest) = &rootfs.image_digest {
         output.push_str(&format!("image_digest={digest}\n"));
     }
+    if let Some(ref id) = rootfs.image_id {
+        output.push_str(&format!("image_id={id}\n"));
+    }
     output.push_str(&format_oci_process_config(&rootfs.process_config));
     output
 }
@@ -586,6 +591,7 @@ fn select_attempt(
 fn parse_materializer_output(output: &str) -> Result<ImageSourceRootfs> {
     let mut selected_reference = None;
     let mut image_digest = None;
+    let mut image_id = None;
     let mut rootfs_path = None;
     let mut env = BTreeMap::new();
     let mut cmd = BTreeMap::new();
@@ -608,6 +614,7 @@ fn parse_materializer_output(output: &str) -> Result<ImageSourceRootfs> {
                     selected_reference = Some(value.to_owned());
                 }
                 "image_digest" if digest_is_known(value) => image_digest = Some(value.to_owned()),
+                "image_id" if !value.is_empty() => image_id = Some(value.to_owned()),
                 "rootfs_path" if !value.is_empty() => rootfs_path = Some(PathBuf::from(value)),
                 "oci_workdir" => {
                     if working_dir.is_some() {
@@ -624,6 +631,7 @@ fn parse_materializer_output(output: &str) -> Result<ImageSourceRootfs> {
         selected_reference: selected_reference
             .ok_or_else(|| anyhow!("Buildah materializer did not report selected image"))?,
         image_digest,
+        image_id,
         rootfs_path: rootfs_path
             .ok_or_else(|| anyhow!("Buildah materializer did not report task rootfs path"))?,
         process_config: OciProcessConfig {
@@ -727,6 +735,12 @@ fn run_btrfs_rootfs_child_with_commands(
         "{{.FromImageDigest}}",
         container.id(),
     ])?);
+    let image_id = optional_digest(buildah.run(&[
+        "inspect",
+        "--format",
+        "{{.ID}}",
+        container.id(),
+    ])?);
     let process_config = inspect_oci_process_config(buildah, container.id())?;
     let mounted_rootfs = PathBuf::from(trim_required(
         buildah.run(&["mount", container.id()])?,
@@ -763,6 +777,9 @@ fn run_btrfs_rootfs_child_with_commands(
     println!("selected_image={image_ref}");
     if let Some(digest) = image_digest {
         println!("image_digest={digest}");
+    }
+    if let Some(ref id) = image_id {
+        println!("image_id={id}");
     }
     println!("rootfs_path={}", destination.display());
     print_oci_process_config(&process_config);

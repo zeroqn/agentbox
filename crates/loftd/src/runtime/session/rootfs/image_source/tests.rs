@@ -167,6 +167,12 @@ impl ChildBuildahCommands for FakeChildBuildahCommands {
             [
                 "inspect",
                 "--format",
+                "{{.ID}}",
+                "fake-container",
+            ] => Ok("deadbeefcafe\n".to_owned()),
+            [
+                "inspect",
+                "--format",
                 OCI_PROCESS_CONFIG_TEMPLATE,
                 "fake-container",
             ] => Ok(
@@ -532,6 +538,7 @@ fn cache_metadata_round_trips_process_config() {
     let source = ImageSourceRootfs {
         selected_reference: DEFAULT_IMAGE.to_owned(),
         image_digest: Some("sha256:feedface".to_owned()),
+        image_id: None,
         rootfs_path: temp.path().join("task-rootfs"),
         process_config: OciProcessConfig {
             env: vec!["PATH=/nix/store/fish/bin".to_owned()],
@@ -562,6 +569,7 @@ fn cache_hit_reuses_source_without_unshare_materializer() {
     let source = ImageSourceRootfs {
         selected_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: Some("sha256:feedface".to_owned()),
+        image_id: None,
         rootfs_path: entry.rootfs_path.clone(),
         process_config: OciProcessConfig {
             env: vec!["PATH=/nix/store/fish/bin".to_owned()],
@@ -618,6 +626,7 @@ fn profile_records_cache_hit_snapshot_without_materializer_or_population() {
     let source = ImageSourceRootfs {
         selected_reference: DEFAULT_FALLBACK_IMAGE.to_owned(),
         image_digest: Some("sha256:feedface".to_owned()),
+        image_id: None,
         rootfs_path: entry.rootfs_path.clone(),
         process_config: OciProcessConfig {
             env: vec!["PATH=/nix/store/fish/bin".to_owned()],
@@ -863,6 +872,12 @@ fn internal_child_snapshots_buildah_mount_and_cleans_container_on_success() {
             vec![
                 "inspect",
                 "--format",
+                "{{.ID}}",
+                "fake-container"
+            ],
+            vec![
+                "inspect",
+                "--format",
                 OCI_PROCESS_CONFIG_TEMPLATE,
                 "fake-container"
             ],
@@ -902,6 +917,12 @@ fn internal_child_cleans_container_on_compatibility_failure() {
             vec![
                 "inspect",
                 "--format",
+                "{{.ID}}",
+                "fake-container"
+            ],
+            vec![
+                "inspect",
+                "--format",
                 OCI_PROCESS_CONFIG_TEMPLATE,
                 "fake-container"
             ],
@@ -922,6 +943,7 @@ fn write_image_command_cache_entry(
     let source = ImageSourceRootfs {
         selected_reference: reference.to_owned(),
         image_digest: Some(digest.to_owned()),
+        image_id: None,
         rootfs_path: entry.rootfs_path.clone(),
         process_config: OciProcessConfig::default(),
         cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
@@ -953,13 +975,24 @@ fn image_command_list_renders_buildah_aligned_short_rows() {
     let output = run_image_cache_command(ImageCacheCommand::List, &cache_root, &commands, &btrfs)
         .expect("list should succeed")
         .render_stdout();
-
-    assert!(output.starts_with("REPOSITORY\tTAG\tIMAGE ID\tDIGEST\tCACHE\tBUILDAH\tPATH\n"));
+    assert!(output.starts_with("REPOSITORY"));
+    assert!(output.contains("  TAG  "));
+    assert!(output.contains("  IMAGE ID  "));
+    assert!(output.contains("  DIGEST  "));
+    assert!(output.contains("  CACHE  "));
+    assert!(output.contains("  BUILDAH  "));
+    assert!(output.contains("  PATH  "));
     assert!(!output.contains("DIGEST_KEY"));
-    assert!(output.contains("<none>\t<none>\tdd70cff1816c\tfeedfacecafe\tcomplete\tmatch"));
-    assert!(output.contains(
-        "ghcr.io/example/loftd\tdev\tba5a514299b8\t1234567890ab\tuncached\tlocal-only\t<none>"
-    ));
+    assert!(output.contains("dd70cff1816c"));
+    assert!(output.contains("feedfacecafe"));
+    assert!(output.contains("complete"));
+    assert!(output.contains("match"));
+    assert!(output.contains("ba5a514299b8"));
+    assert!(output.contains("1234567890ab"));
+    assert!(output.contains("uncached"));
+    assert!(output.contains("local-only"));
+    assert!(output.contains("btrfs-snapshots"));
+    assert!(output.contains("<none>"));
     assert_eq!(btrfs.calls(), Vec::new());
 }
 
@@ -1232,6 +1265,7 @@ fn image_command_list_reports_complete_entries_deterministically() {
     let source = ImageSourceRootfs {
         selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
         image_digest: Some("sha256:feedface".to_owned()),
+        image_id: None,
         rootfs_path: entry.rootfs_path.clone(),
         process_config: OciProcessConfig::default(),
         cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
@@ -1291,6 +1325,7 @@ fn image_command_list_reports_invalid_entries_without_mutation() {
     let complete_source = ImageSourceRootfs {
         selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
         image_digest: Some("sha256:feedface".to_owned()),
+        image_id: None,
         rootfs_path: complete.rootfs_path.clone(),
         process_config: OciProcessConfig::default(),
         cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
@@ -1360,6 +1395,7 @@ fn image_command_remove_deletes_cache_and_matching_buildah_reference() {
     let source = ImageSourceRootfs {
         selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
         image_digest: Some("sha256:feedface".to_owned()),
+        image_id: None,
         rootfs_path: entry.rootfs_path.clone(),
         process_config: OciProcessConfig::default(),
         cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
@@ -1405,6 +1441,7 @@ fn image_command_remove_is_cache_first_when_buildah_digest_mismatches() {
     let source = ImageSourceRootfs {
         selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
         image_digest: Some("sha256:feedface".to_owned()),
+        image_id: None,
         rootfs_path: entry.rootfs_path.clone(),
         process_config: OciProcessConfig::default(),
         cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
@@ -1449,6 +1486,7 @@ fn image_command_remove_by_digest_key_deletes_invalid_drifted_cache_entry() {
     let drifted_source = ImageSourceRootfs {
         selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
         image_digest: Some("sha256:other".to_owned()),
+        image_id: None,
         rootfs_path: entry.rootfs_path.clone(),
         process_config: OciProcessConfig::default(),
         cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
@@ -1495,6 +1533,7 @@ fn image_command_remove_visible_selector_uses_cache_key_for_drifted_invalid_row(
     let drifted_source = ImageSourceRootfs {
         selected_reference: "ghcr.io/example/loftd:dev".to_owned(),
         image_digest: Some("sha256:other".to_owned()),
+        image_id: None,
         rootfs_path: drifted.rootfs_path.clone(),
         process_config: OciProcessConfig::default(),
         cache_profile: ImageSourceCacheProfile::direct_uncached("test"),
@@ -1534,4 +1573,41 @@ fn image_command_remove_visible_selector_uses_cache_key_for_drifted_invalid_row(
             .iter()
             .any(|call| call.first().map(String::as_str) == Some("rmi"))
     );
+}
+
+#[test]
+fn image_command_list_stale_tag_detection() {
+    // Old cached image had reference "ghcr.io/x/loftd:latest" with digest sha256:old.
+    // A newer image replaced "latest" with a different digest sha256:new.
+    // The old image still exists in buildah as <none>:<none> with the old digest.
+    // The cached entry (digest=sha256:old) should match the orphaned <none> row and show TAG=<none>.
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let cache_root = temp.path().join("cache");
+    write_image_command_cache_entry(
+        &cache_root,
+        "sha256:old",
+        "ghcr.io/x/loftd:latest",
+    );
+    let inventory = concat!(
+        "ghcr.io/x/loftd\tlatest\tnewid\tsha256:new\n",
+        "<none>\t<none>\toldid\tsha256:old\n",
+    );
+    let commands = FakeBuildahCommands::new(false, Path::new("/unused"))
+        .with_image_digest("sha256:old")
+        .with_inventory(inventory);
+    let btrfs = FakeBtrfsRootfsCommands::new();
+
+    let output = run_image_cache_command(ImageCacheCommand::List, &cache_root, &commands, &btrfs)
+        .expect("list should succeed")
+        .render_stdout();
+
+    // Cached entry matched the <none>-tagged row via digest → TAG=<none>, IMAGE ID=oldid
+    assert!(output.contains("<none>"));
+    assert!(output.contains("oldid"));
+    // New image (sha256:new) appears as uncached with TAG=latest, IMAGE ID=newid
+    assert!(output.contains("latest"));
+    assert!(output.contains("newid"));
+    assert!(output.contains("uncached"));
+    assert!(output.contains("local-only"));
+    assert_eq!(btrfs.calls(), Vec::new());
 }

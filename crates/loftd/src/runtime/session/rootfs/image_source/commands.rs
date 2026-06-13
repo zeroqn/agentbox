@@ -81,6 +81,7 @@ pub(crate) struct ImageCacheListEntry {
     pub(crate) status: ImageCacheEntryStatus,
     pub(crate) buildah_status: BuildahMatchStatus,
     pub(crate) entry_dir: Option<PathBuf>,
+    pub(crate) short_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +251,14 @@ fn list_image_cache(
         }
     }
 
-    Ok(enrich_list_entries(entries, buildah_rows))
+    let mut result = enrich_list_entries(entries, buildah_rows);
+    for entry in &mut result {
+        entry.short_path = entry.entry_dir.as_ref().and_then(|entry_dir| {
+            let stripped = entry_dir.strip_prefix(image_cache_root).ok()?;
+            Some(format!("{}", stripped.display()))
+        });
+    }
+    Ok(result)
 }
 
 fn read_list_entry(
@@ -268,6 +276,7 @@ fn read_list_entry(
             ImageCacheEntryStatus::Incomplete,
             BuildahMatchStatus::NoReference,
             entry_dir,
+            None,
         );
     }
 
@@ -304,6 +313,7 @@ fn read_list_entry(
                 status,
                 buildah_status,
                 entry_dir,
+                rootfs.image_id,
             )
         }
         Err(_) => ImageCacheListEntry::cached(
@@ -313,6 +323,7 @@ fn read_list_entry(
             ImageCacheEntryStatus::Invalid,
             BuildahMatchStatus::InvalidCache,
             entry_dir,
+            None,
         ),
     }
 }
@@ -429,6 +440,7 @@ impl ImageCacheListEntry {
         status: ImageCacheEntryStatus,
         buildah_status: BuildahMatchStatus,
         entry_dir: PathBuf,
+        image_id: Option<String>,
     ) -> Self {
         let (repository, tag) = selected_reference
             .as_deref()
@@ -440,10 +452,11 @@ impl ImageCacheListEntry {
             selected_reference,
             repository,
             tag,
-            image_id: None,
+            image_id,
             status,
             buildah_status,
             entry_dir: Some(entry_dir),
+            short_path: None,
         }
     }
 
@@ -467,6 +480,7 @@ impl ImageCacheListEntry {
             status: ImageCacheEntryStatus::Uncached,
             buildah_status: BuildahMatchStatus::LocalOnly,
             entry_dir: None,
+            short_path: None,
         }
     }
 
@@ -552,9 +566,11 @@ fn enrich_list_entries(
 ) -> Vec<ImageCacheListEntry> {
     cache_entries.sort_by_key(|entry| entry.cache_sort_key());
     let mut used_buildah_rows = BTreeSet::new();
+    let mut matched_cache_entries = BTreeSet::new();
     let mut entries = Vec::new();
 
-    for cache_entry in cache_entries {
+    // Pass 1: digest match (existing behavior)
+    for (entry_idx, cache_entry) in cache_entries.iter().enumerate() {
         let matching_indexes = buildah_rows
             .iter()
             .enumerate()
@@ -565,8 +581,62 @@ fn enrich_list_entries(
             .collect::<Vec<_>>();
 
         if matching_indexes.is_empty() {
-            entries.push(cache_entry);
+            continue;
+        }
+        matched_cache_entries.insert(entry_idx);
+        for index in matching_indexes {
+            used_buildah_rows.insert(index);
+            entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
+        }
+    }
+
+    // Pass 2: reference match for unmatched cache entries
+    for (entry_idx, cache_entry) in cache_entries.iter().enumerate() {
+        if matched_cache_entries.contains(&entry_idx) {
+            continue;
+        }
+        let Some(ref reference) = cache_entry.selected_reference else {
+            continue;
+        };
+        let matching_index = buildah_rows.iter().enumerate().find_map(|(index, row)| {
+            if used_buildah_rows.contains(&index) {
+                return None;
+            }
+            (row.reference().as_deref() == Some(reference.as_str())).then_some(index)
+        });
+        let Some(index) = matching_index else { continue };
+        used_buildah_rows.insert(index);
+        matched_cache_entries.insert(entry_idx);
+        let mut entry = cache_entry.clone();
+        entry.repository = buildah_rows[index].repository.clone();
+        entry.tag = buildah_rows[index].tag.clone();
+        entries.push(entry);
+    }
+
+    // Pass 3: image_id match for remaining unmatched cache entries
+    for (entry_idx, cache_entry) in cache_entries.iter().enumerate() {
+        if matched_cache_entries.contains(&entry_idx) {
+            continue;
+        }
+        let Some(ref image_id) = cache_entry.image_id else {
+            entries.push(cache_entry.clone());
+            continue;
+        };
+        let matching_indexes: Vec<usize> = buildah_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| {
+                if used_buildah_rows.contains(&index) {
+                    return None;
+                }
+                (row.image_id.as_deref() == Some(image_id.as_str())).then_some(index)
+            })
+            .collect();
+
+        if matching_indexes.is_empty() {
+            entries.push(cache_entry.clone());
         } else {
+            matched_cache_entries.insert(entry_idx);
             for index in matching_indexes {
                 used_buildah_rows.insert(index);
                 entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
@@ -744,10 +814,6 @@ fn short_token(token: &str) -> String {
     token.chars().take(12).collect()
 }
 
-fn path_display(path: Option<&PathBuf>) -> String {
-    path.map(|path| path.display().to_string())
-        .unwrap_or_else(|| "<none>".to_owned())
-}
 
 fn format_selector_candidates(rows: &[ImageCacheListEntry]) -> String {
     rows.iter()
@@ -825,17 +891,45 @@ fn remove_guarded_local_image(
 }
 
 fn render_list_stdout(entries: &[ImageCacheListEntry]) -> String {
-    let mut output = String::from("REPOSITORY\tTAG\tIMAGE ID\tDIGEST\tCACHE\tBUILDAH\tPATH\n");
+    let headers = ["REPOSITORY", "TAG", "IMAGE ID", "DIGEST", "CACHE", "BUILDAH", "PATH"];
+    let mut widths: [usize; 7] = [0; 7];
+    for (i, hdr) in headers.iter().enumerate() {
+        widths[i] = hdr.len();
+    }
     for entry in entries {
+        let img_id = short_image_id(entry.image_id.as_deref());
+        let digest = short_digest(entry.digest.as_deref());
+        let status = entry.status.as_str();
+        let buildah = entry.buildah_status.as_str();
+        let path = entry.short_path.as_deref().unwrap_or("<none>");
+        widths[0] = widths[0].max(entry.repository.len());
+        widths[1] = widths[1].max(entry.tag.len());
+        widths[2] = widths[2].max(img_id.len());
+        widths[3] = widths[3].max(digest.len());
+        widths[4] = widths[4].max(status.len());
+        widths[5] = widths[5].max(buildah.len());
+        widths[6] = widths[6].max(path.len());
+    }
+    let mut output = String::new();
+    output.push_str(&format!(
+        "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {:<w5$}  {:<w6$}\n",
+        headers[0], headers[1], headers[2], headers[3], headers[4], headers[5], headers[6],
+        w0 = widths[0], w1 = widths[1], w2 = widths[2],
+        w3 = widths[3], w4 = widths[4], w5 = widths[5], w6 = widths[6],
+    ));
+    for entry in entries {
+        let repo = &entry.repository;
+        let tag = &entry.tag;
+        let img_id = short_image_id(entry.image_id.as_deref());
+        let digest = short_digest(entry.digest.as_deref());
+        let status = entry.status.as_str();
+        let buildah = entry.buildah_status.as_str();
+        let path = entry.short_path.as_deref().unwrap_or("<none>");
         output.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            entry.repository,
-            entry.tag,
-            short_image_id(entry.image_id.as_deref()),
-            short_digest(entry.digest.as_deref()),
-            entry.status.as_str(),
-            entry.buildah_status.as_str(),
-            path_display(entry.entry_dir.as_ref())
+            "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {:<w5$}  {:<w6$}\n",
+            repo, tag, img_id, digest, status, buildah, path,
+            w0 = widths[0], w1 = widths[1], w2 = widths[2],
+            w3 = widths[3], w4 = widths[4], w5 = widths[5], w6 = widths[6],
         ));
     }
     output
