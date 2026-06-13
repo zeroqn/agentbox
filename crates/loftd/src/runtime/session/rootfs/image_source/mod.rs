@@ -738,7 +738,7 @@ fn run_btrfs_rootfs_child_with_commands(
     let image_id = optional_digest(buildah.run(&[
         "inspect",
         "--format",
-        "{{.ID}}",
+        "{{.FromImageID}}",
         container.id(),
     ])?);
     let process_config = inspect_oci_process_config(buildah, container.id())?;

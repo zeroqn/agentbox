@@ -167,7 +167,7 @@ impl ChildBuildahCommands for FakeChildBuildahCommands {
             [
                 "inspect",
                 "--format",
-                "{{.ID}}",
+                "{{.FromImageID}}",
                 "fake-container",
             ] => Ok("deadbeefcafe\n".to_owned()),
             [
@@ -872,7 +872,7 @@ fn internal_child_snapshots_buildah_mount_and_cleans_container_on_success() {
             vec![
                 "inspect",
                 "--format",
-                "{{.ID}}",
+                "{{.FromImageID}}",
                 "fake-container"
             ],
             vec![
@@ -917,7 +917,7 @@ fn internal_child_cleans_container_on_compatibility_failure() {
             vec![
                 "inspect",
                 "--format",
-                "{{.ID}}",
+                "{{.FromImageID}}",
                 "fake-container"
             ],
             vec![
