@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -285,7 +285,7 @@ fn read_list_entry(
         .and_then(|metadata| parse_cache_metadata(&metadata, &rootfs_path))
     {
         Ok(rootfs) => {
-            let digest = rootfs.image_digest;
+            let digest = rootfs.image_local_digest.or(rootfs.image_digest);
             let status = if digest
                 .as_deref()
                 .and_then(|digest| safe_digest_key(digest).ok())
@@ -609,13 +609,12 @@ fn enrich_list_entries(
         };
         used_buildah_rows.insert(index);
         matched_cache_entries.insert(entry_idx);
-        let mut entry = cache_entry.clone();
-        entry.repository = buildah_rows[index].repository.clone();
-        entry.tag = buildah_rows[index].tag.clone();
-        entries.push(entry);
+        entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
     }
 
     // Pass 3: image_id match for remaining unmatched cache entries
+    let mut matched_entry_positions: HashSet<usize> =
+        entries.iter().enumerate().map(|(i, _)| i).collect();
     for (entry_idx, cache_entry) in cache_entries.iter().enumerate() {
         if matched_cache_entries.contains(&entry_idx) {
             continue;
@@ -641,8 +640,39 @@ fn enrich_list_entries(
             matched_cache_entries.insert(entry_idx);
             for index in matching_indexes {
                 used_buildah_rows.insert(index);
+                matched_entry_positions.insert(entries.len());
                 entries.push(cache_entry.with_buildah_row(&buildah_rows[index]));
             }
+        }
+    }
+
+    // Pass 4: stale reference cleanup for unmatched entries whose reference
+    // was claimed by a matched entry (same selected_reference).
+    let claimed_references: HashSet<&str> = matched_cache_entries
+        .iter()
+        .filter_map(|&idx| cache_entries[idx].selected_reference.as_deref())
+        .collect();
+    for (entry_pos, entry) in entries.iter_mut().enumerate() {
+        if matched_entry_positions.contains(&entry_pos) {
+            continue;
+        }
+        let Some(ref selected_reference) = entry.selected_reference else {
+            continue;
+        };
+        if !claimed_references.contains(selected_reference.as_str()) {
+            continue;
+        }
+        // This entry's reference was claimed by another matched entry.
+        // If it does not digest-match any buildah row, the reference no
+        // longer belongs to this entry.
+        let has_digest_match = entry.digest.as_deref().is_some_and(|entry_digest| {
+            buildah_rows
+                .iter()
+                .any(|row| row.digest.as_deref() == Some(entry_digest))
+        });
+        if !has_digest_match {
+            entry.repository = "<none>".to_owned();
+            entry.tag = "<none>".to_owned();
         }
     }
 
