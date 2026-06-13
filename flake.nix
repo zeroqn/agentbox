@@ -3,24 +3,24 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nixpkgsMaster.url = "github:NixOS/nixpkgs/master";
+
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      nixpkgsMaster,
+
     }:
     let
       systems = import ./nix/lib/systems.nix {
-        inherit nixpkgs nixpkgsMaster;
+        inherit nixpkgs;
       };
       pins = import ./nix/pins.nix;
     in
     {
       packages = systems.forAllSystems (
-        { pkgs, pkgsMaster, ... }:
+        { pkgs, ... }:
         let
           ohMyCodex = import ./nix/pkgs/oh-my-codex.nix {
             inherit pkgs pins;
@@ -72,22 +72,24 @@
           podman = pkgs.podman.override {
             inherit crun;
           };
-          mkImage = imageVariant: import ./nix/image/container.nix {
-            inherit
-              pkgs
-              pkgsMaster
-              ohMyCodex
-              piCodingAgent
-              ompPrebuilt
-              rtkPrebuilt
-              containerLibPolicySeccompJson
-              libkrun
-              podman
-              crun
-              imageVariant
-              ;
-            agentboxMuslPackage = rustPackages.agentboxMuslPackage;
-          };
+          mkImage =
+            imageVariant:
+            import ./nix/image/container.nix {
+              inherit
+                pkgs
+
+                ohMyCodex
+                piCodingAgent
+                ompPrebuilt
+                rtkPrebuilt
+                containerLibPolicySeccompJson
+                libkrun
+                podman
+                crun
+                imageVariant
+                ;
+              agentboxMuslPackage = rustPackages.agentboxMuslPackage;
+            };
           loftdImage = mkImage "loftd";
           agentboxImage = mkImage "agentbox";
         in
@@ -116,21 +118,28 @@
       );
 
       checks = systems.forAllSystems (
-        { pkgs, pkgsMaster, system, ... }:
+        {
+          pkgs,
+
+          system,
+          ...
+        }:
         let
           packages = self.packages.${system};
-          mkImageChecks = imageVariant: import ./nix/image/checks.nix {
-            inherit pkgs pkgsMaster imageVariant;
-            ohMyCodex = packages.oh-my-codex;
-            piCodingAgent = packages.pi-coding-agent;
-            ompPrebuilt = packages.omp-prebuilt;
-            rtkPrebuilt = packages.rtk-prebuilt or null;
-            containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
-            libkrun = packages.libkrun;
-            podman = packages.podman;
-            crun = packages.crun;
-            agentboxMuslPackage = packages.agentbox-musl;
-          };
+          mkImageChecks =
+            imageVariant:
+            import ./nix/image/checks.nix {
+              inherit pkgs imageVariant;
+              ohMyCodex = packages.oh-my-codex;
+              piCodingAgent = packages.pi-coding-agent;
+              ompPrebuilt = packages.omp-prebuilt;
+              rtkPrebuilt = packages.rtk-prebuilt or null;
+              containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
+              libkrun = packages.libkrun;
+              podman = packages.podman;
+              crun = packages.crun;
+              agentboxMuslPackage = packages.agentbox-musl;
+            };
           loftdImageChecks = mkImageChecks "loftd";
           agentboxImageChecks = mkImageChecks "agentbox";
         in

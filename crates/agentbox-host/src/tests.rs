@@ -291,7 +291,7 @@ fn image_writes_global_seccomp_profile_config() {
 #[test]
 fn image_includes_seccomp_policy_data_without_adding_it_to_path() {
     let image_contents = LAYERS
-        .split("imageContents = imagePackages ++ [")
+        .split("imageContents =\n")
         .nth(1)
         .and_then(|tail| tail.split("];").next())
         .expect("imageContents should exist");
@@ -619,8 +619,8 @@ fn loftd_image_includes_root_only_as_dev_helper() {
         "loftd-guest-init as-dev",
         "asDev = loftdAsDevCommandCompat",
         "loftdOnlyCommandCompat = pkgs.lib.optional (commandCompat.asDev != null) commandCompat.asDev",
-        "] ++ loftdOnlyCommandCompat ++ imagePathPackages",
-        "] ++ loftdOnlyCommandCompat ++ [",
+        "++ imagePathPackages",
+        "++ loftdOnlyCommandCompat",
     ] {
         assert!(LAYERS.contains(required), "missing {required}");
     }
@@ -629,7 +629,7 @@ fn loftd_image_includes_root_only_as_dev_helper() {
 #[test]
 fn agentbox_image_does_not_select_loftd_as_dev_helper() {
     let agentbox_branch = LAYERS
-        .split(r#"} else {"#)
+        .split("asDev = loftdAsDevCommandCompat;")
         .nth(1)
         .expect("agentbox command compat branch should exist")
         .split("};")
@@ -786,7 +786,7 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
     }
 
     for required in [
-        "storeRefsIn = text:",
+        "storeRefsIn =",
         "pkgs.lib.splitString \"/nix/store/\" text",
         "imageConfigText = builtins.unsafeDiscardStringContext",
         "imageNixDbClosureInfo = pkgs.closureInfo",
@@ -812,7 +812,7 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
         "image.overrideAttrs",
         "checking ${imageVariant} image config Nix DB metadata coverage",
         "test -e ${imageChecks.imageConfigNixDbRefs}/passed",
-        "'' + (old.buildCommand or \"\");",
+        "(old.buildCommand or \"\");",
     ] {
         assert!(CONTAINER_NIX.contains(required), "missing {required}");
     }
@@ -905,7 +905,8 @@ fn image_roots_musl_bin_output_exposed_by_image_path() {
     assert!(c_toolchain_path.contains("pkgs.gcc"));
     assert!(c_toolchain_path.contains("muslBin"));
     assert!(LAYERS.contains("imagePathPackages"));
-    assert!(LAYERS.contains("] ++ loftdOnlyCommandCompat ++ imagePathPackages);"));
+    assert!(LAYERS.contains("loftdOnlyCommandCompat"));
+    assert!(LAYERS.contains("++ imagePathPackages"));
     assert!(LAYERS.contains("muslBin = pkgs.lib.getBin pkgs.musl;"));
     assert!(LAYERS.contains("cToolchainImagePackages = cToolchainPathPackages ++ ["));
     assert!(LAYERS.contains("pkgs.musl"));

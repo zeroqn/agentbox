@@ -1,20 +1,49 @@
-{ pkgs, pkgsMaster, ohMyCodex, piCodingAgent, ompPrebuilt, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, imageVariant }:
+{
+  pkgs,
+  ohMyCodex,
+  piCodingAgent,
+  ompPrebuilt,
+  rtkPrebuilt,
+  containerLibPolicySeccompJson,
+  libkrun,
+  podman ? pkgs.podman,
+  crun ? pkgs.crun,
+  agentboxMuslPackage,
+  imageVariant,
+}:
 let
   nixConfig = import ./nix-config.nix;
   configPayloads = import ./config-payloads.nix { inherit pkgs; };
   layers = import ./layers.nix {
-    inherit pkgs pkgsMaster ohMyCodex piCodingAgent ompPrebuilt rtkPrebuilt containerLibPolicySeccompJson libkrun podman crun agentboxMuslPackage;
+    inherit
+      pkgs
+      ohMyCodex
+      piCodingAgent
+      ompPrebuilt
+      rtkPrebuilt
+      containerLibPolicySeccompJson
+      libkrun
+      podman
+      crun
+      agentboxMuslPackage
+      ;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
     inherit imageVariant;
   };
   imageConfig = import ./config.nix {
-    inherit pkgs ohMyCodex agentboxMuslPackage configPayloads layers imageVariant;
+    inherit
+      pkgs
+      ohMyCodex
+      agentboxMuslPackage
+      configPayloads
+      layers
+      imageVariant
+      ;
   };
   imageChecks = import ./checks.nix {
     inherit
       pkgs
-      pkgsMaster
       ohMyCodex
       piCodingAgent
       ompPrebuilt
@@ -86,9 +115,7 @@ let
       chown -R 1000:1000 ./home/dev ./workspace
     '';
 
-    config = builtins.fromJSON (
-      builtins.unsafeDiscardStringContext (builtins.toJSON imageConfig)
-    );
+    config = builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON imageConfig));
   };
 in
 if imageChecks.missingImageConfigNixDbRefs != [ ] then
@@ -100,5 +127,6 @@ else
       test -e ${imageChecks.imageConfigNixDbRefs}/passed
       echo "checking ${imageVariant} image wrapper contracts"
       test -e ${imageChecks.wrapperContracts}/passed
-    '' + (old.buildCommand or "");
+    ''
+    + (old.buildCommand or "");
   })

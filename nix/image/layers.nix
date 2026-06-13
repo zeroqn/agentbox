@@ -1,4 +1,18 @@
-{ pkgs, pkgsMaster, ohMyCodex, piCodingAgent, ompPrebuilt, rtkPrebuilt, containerLibPolicySeccompJson, libkrun, podman ? pkgs.podman, crun ? pkgs.crun, agentboxMuslPackage, fishConfig, starshipConfig, imageVariant ? "agentbox" }:
+{
+  pkgs,
+  ohMyCodex,
+  piCodingAgent,
+  ompPrebuilt,
+  rtkPrebuilt,
+  containerLibPolicySeccompJson,
+  libkrun,
+  podman ? pkgs.podman,
+  crun ? pkgs.crun,
+  agentboxMuslPackage,
+  fishConfig,
+  starshipConfig,
+  imageVariant ? "agentbox",
+}:
 let
   nixBuilderGroupId = 30000;
   nixBuilderCount = 32;
@@ -13,9 +27,7 @@ let
       uid = nixBuilderGroupId + builderNumber;
     }
   ) nixBuilderCount;
-  nixBuilderGroupMembers = pkgs.lib.concatMapStringsSep "," (
-    builder: builder.name
-  ) nixBuilderUsers;
+  nixBuilderGroupMembers = pkgs.lib.concatMapStringsSep "," (builder: builder.name) nixBuilderUsers;
   nixBuilderPasswdEntries = pkgs.lib.concatMapStringsSep "\n" (
     builder:
     "${builder.name}:x:${toString builder.uid}:${toString nixBuilderGroupId}:Nix build user ${toString builder.builderNumber}:/var/empty:${pkgs.runtimeShell}"
@@ -164,19 +176,23 @@ let
     exec ${agentboxMuslPackage}/bin/loftd-guest-init as-dev "$@"
   '';
 
-  commandCompat = if imageVariant == "loftd" then {
-    nix = loftdNixCommandCompat;
-    podman = loftdPodmanCommandCompat;
-    docker = loftdDockerCommandCompat;
-    dockerCompose = loftdDockerComposeCommandCompat;
-    asDev = loftdAsDevCommandCompat;
-  } else {
-    nix = agentboxNixCommandCompat;
-    podman = agentboxPodmanCommandCompat;
-    docker = agentboxDockerCommandCompat;
-    dockerCompose = agentboxDockerComposeCommandCompat;
-    asDev = null;
-  };
+  commandCompat =
+    if imageVariant == "loftd" then
+      {
+        nix = loftdNixCommandCompat;
+        podman = loftdPodmanCommandCompat;
+        docker = loftdDockerCommandCompat;
+        dockerCompose = loftdDockerComposeCommandCompat;
+        asDev = loftdAsDevCommandCompat;
+      }
+    else
+      {
+        nix = agentboxNixCommandCompat;
+        podman = agentboxPodmanCommandCompat;
+        docker = agentboxDockerCommandCompat;
+        dockerCompose = agentboxDockerComposeCommandCompat;
+        asDev = null;
+      };
   loftdOnlyCommandCompat = pkgs.lib.optional (commandCompat.asDev != null) commandCompat.asDev;
   nixCommandCompat = commandCompat.nix;
   podmanCommandCompat = commandCompat.podman;
@@ -343,7 +359,7 @@ let
   };
 
   agentImagePackages = [
-    pkgsMaster.codex
+    pkgs.codex
     pkgs.bubblewrap
     piCodingAgent
     ompPrebuilt
@@ -366,7 +382,6 @@ let
     pkgs.shadow
     pkgs.docker-compose
   ];
-
 
   baseImagePackages = [
     grapheneHardenedMalloc
@@ -436,36 +451,44 @@ let
       toolingImageLayer
       agentImageLayer
     ];
-  imagePath = pkgs.lib.makeBinPath ([
-    rustcCommandCompat
-    rustAnalyzerCommandCompat
-    nixCommandCompat
-    podmanCommandCompat
-    dockerCommandCompat
-    dockerComposeCommandCompat
-  ] ++ loftdOnlyCommandCompat ++ imagePathPackages);
+  imagePath = pkgs.lib.makeBinPath (
+    [
+      rustcCommandCompat
+      rustAnalyzerCommandCompat
+      nixCommandCompat
+      podmanCommandCompat
+      dockerCommandCompat
+      dockerComposeCommandCompat
+    ]
+    ++ loftdOnlyCommandCompat
+    ++ imagePathPackages
+  );
   realPodmanBin = "${podman}/bin/podman";
   agentboxImageMaxLayers = 10;
   agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
-  imageContents = imagePackages ++ [
-    # The generated Codex hook and MCP config reference the raw
-    # oh-my-codex store path directly, so keep that payload in the
-    # image in addition to the /bin symlink tree from agentImageLayer.
-    ohMyCodex
-    usrBinEnvCompat
-    binInterpreterCompat
-    fishConfig
-    starshipConfig
-    containerLibPolicySeccompJson
-    agentboxMuslPackage
-    nixCommandCompat
-    podmanCommandCompat
-    dockerCommandCompat
-    dockerComposeCommandCompat
-  ] ++ loftdOnlyCommandCompat ++ [
-    rustcCommandCompat
-    rustAnalyzerCommandCompat
-  ];
+  imageContents =
+    imagePackages
+    ++ [
+      # The generated Codex hook and MCP config reference the raw
+      # oh-my-codex store path directly, so keep that payload in the
+      # image in addition to the /bin symlink tree from agentImageLayer.
+      ohMyCodex
+      usrBinEnvCompat
+      binInterpreterCompat
+      fishConfig
+      starshipConfig
+      containerLibPolicySeccompJson
+      agentboxMuslPackage
+      nixCommandCompat
+      podmanCommandCompat
+      dockerCommandCompat
+      dockerComposeCommandCompat
+    ]
+    ++ loftdOnlyCommandCompat
+    ++ [
+      rustcCommandCompat
+      rustAnalyzerCommandCompat
+    ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
   toolingLayerPaths = [ (toString toolingImageLayer) ];

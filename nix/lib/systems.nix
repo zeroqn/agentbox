@@ -1,4 +1,4 @@
-{ nixpkgs, nixpkgsMaster }:
+{ nixpkgs }:
 let
   systems = [
     "x86_64-linux"
@@ -12,9 +12,6 @@ let
       f {
         inherit system;
         pkgs = import nixpkgs {
-          inherit system;
-        };
-        pkgsMaster = import nixpkgsMaster {
           inherit system;
         };
       }
