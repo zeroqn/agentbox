@@ -3,9 +3,11 @@
 //! This file owns only the existing `.pi` mount contribution; it does not define
 //! new mount policy or validation behavior.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::fs;
 use std::path::Path;
+
+use crate::runtime::launch::components::mounts::resolve_dir;
 
 use crate::runtime::launch::config::{BindMount, PI_TAG, PI_TARGET};
 
@@ -13,7 +15,6 @@ pub(crate) fn prepare(home_dir: &Path) -> Result<BindMount> {
     let pi_dir = home_dir.join(".pi");
     fs::create_dir_all(&pi_dir)
         .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", pi_dir.display()))?;
-    let pi_dir = fs::canonicalize(&pi_dir)
-        .with_context(|| format!("failed to inspect mount source '{}'", pi_dir.display()))?;
+    let pi_dir = resolve_dir(&pi_dir)?;
     Ok(super::bind_mount(&pi_dir, PI_TAG, PI_TARGET))
 }

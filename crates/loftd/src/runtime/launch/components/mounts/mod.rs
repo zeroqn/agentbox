@@ -3,8 +3,9 @@
 //! Each owner file contributes one existing bind mount. The aggregate preserves
 //! order and validation; owner files do not introduce new policy.
 
-use anyhow::Result;
-use std::path::Path;
+use anyhow::{Context, Result};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::runtime::launch::config::{BindMount, validate_mounts};
 use crate::state::StateLayout;
@@ -35,6 +36,11 @@ pub(crate) fn prepare_dev_mounts(
 
 fn bind_mount(source: &Path, tag: &str, target: &str) -> BindMount {
     BindMount::directory(source, tag, target)
+}
+
+pub(crate) fn resolve_dir(path: &Path) -> Result<PathBuf> {
+    fs::canonicalize(path)
+        .with_context(|| format!("failed to inspect mount source '{}'", path.display()))
 }
 
 #[cfg(test)]
