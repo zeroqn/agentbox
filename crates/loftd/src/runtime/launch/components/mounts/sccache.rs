@@ -3,7 +3,7 @@
 //! This file owns only the existing sccache cache mount contribution; it does
 //! not define new mount policy or validation behavior.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
@@ -16,5 +16,7 @@ pub(crate) fn prepare(state_layout: &StateLayout) -> Result<BindMount> {
         .map_err(|err| anyhow::anyhow!("failed to create '{}': {err}", sccache_dir.display()))?;
     fs::set_permissions(&sccache_dir, fs::Permissions::from_mode(0o700))
         .map_err(|err| anyhow::anyhow!("failed to chmod 700 '{}': {err}", sccache_dir.display()))?;
+    let sccache_dir = fs::canonicalize(&sccache_dir)
+        .with_context(|| format!("failed to inspect mount source '{}'", sccache_dir.display()))?;
     Ok(super::bind_mount(&sccache_dir, SCCACHE_TAG, SCCACHE_TARGET))
 }
