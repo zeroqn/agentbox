@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::os::fd::AsRawFd;
@@ -126,7 +127,15 @@ pub(in crate::guest_init) fn command_plan(
     identity: &DevIdentity,
     paths: &PodmanServicePaths,
 ) -> Result<PodmanServiceCommandPlan> {
-    let program = resolve_real_podman()?;
+    command_plan_with_env(identity, paths, &PodmanServiceEnv::from_process())
+}
+
+fn command_plan_with_env(
+    identity: &DevIdentity,
+    paths: &PodmanServicePaths,
+    env: &PodmanServiceEnv,
+) -> Result<PodmanServiceCommandPlan> {
+    let program = resolve_real_podman_with_env(env)?;
     Ok(PodmanServiceCommandPlan {
         program,
         args: vec![
@@ -135,8 +144,29 @@ pub(in crate::guest_init) fn command_plan(
             "--time=0".to_owned(),
             paths.socket_uri.clone(),
         ],
-        env: service_environment(identity, paths),
+        env: service_environment_with_env(identity, paths, env),
     })
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PodmanServiceEnv {
+    real_podman: Option<String>,
+    search_path: Option<OsString>,
+    service_path: String,
+    ssl_cert_file: Option<String>,
+    nix_ssl_cert_file: Option<String>,
+}
+
+impl PodmanServiceEnv {
+    fn from_process() -> Self {
+        Self {
+            real_podman: std::env::var(REAL_PODMAN_ENV).ok(),
+            search_path: std::env::var_os("PATH"),
+            service_path: std::env::var("PATH").unwrap_or_default(),
+            ssl_cert_file: std::env::var("SSL_CERT_FILE").ok(),
+            nix_ssl_cert_file: std::env::var("NIX_SSL_CERT_FILE").ok(),
+        }
+    }
 }
 
 fn prepare_socket_dir(identity: &DevIdentity, paths: &PodmanServicePaths) -> Result<()> {
@@ -152,15 +182,18 @@ fn prepare_socket_dir(identity: &DevIdentity, paths: &PodmanServicePaths) -> Res
     guest_fs::chmod(&paths.socket_dir, 0o700)
 }
 
-fn resolve_real_podman() -> Result<PathBuf> {
-    if let Ok(path) = std::env::var(REAL_PODMAN_ENV) {
+fn resolve_real_podman_with_env(env: &PodmanServiceEnv) -> Result<PathBuf> {
+    if let Some(path) = &env.real_podman {
         let path = PathBuf::from(path);
         validate_real_podman_candidate(&path)?;
         return Ok(path);
     }
 
-    let path = std::env::var_os("PATH").ok_or_else(|| anyhow!("PATH is not set"))?;
-    for dir in std::env::split_paths(&path) {
+    let path = env
+        .search_path
+        .as_ref()
+        .ok_or_else(|| anyhow!("PATH is not set"))?;
+    for dir in std::env::split_paths(path) {
         let candidate = dir.join("podman");
         if !command::is_executable(&candidate) {
             continue;
@@ -195,12 +228,12 @@ fn looks_like_agentbox_wrapper(path: &Path) -> Result<bool> {
     Ok(text.contains("agentbox-guest-init libkrun podman "))
 }
 
-fn service_environment(
+fn service_environment_with_env(
     identity: &DevIdentity,
     paths: &PodmanServicePaths,
+    process_env: &PodmanServiceEnv,
 ) -> Vec<(String, String)> {
     let home = identity.home.display().to_string();
-    let path = std::env::var("PATH").unwrap_or_default();
     let mut env = vec![
         ("USER".to_owned(), DEV_USER.to_owned()),
         ("LOGNAME".to_owned(), DEV_USER.to_owned()),
@@ -215,16 +248,23 @@ fn service_environment(
         ("XDG_STATE_HOME".to_owned(), format!("{home}/.local/state")),
         ("XDG_CACHE_HOME".to_owned(), format!("{home}/.cache")),
         ("TMPDIR".to_owned(), format!("{home}/.cache/tmp")),
-        ("PATH".to_owned(), format!("{WRAPPER_BIN_DIR}:{path}")),
+        (
+            "PATH".to_owned(),
+            format!("{WRAPPER_BIN_DIR}:{}", process_env.service_path),
+        ),
     ];
-    preserve_if_present(&mut env, "SSL_CERT_FILE");
-    preserve_if_present(&mut env, "NIX_SSL_CERT_FILE");
+    preserve_if_present(&mut env, "SSL_CERT_FILE", &process_env.ssl_cert_file);
+    preserve_if_present(
+        &mut env,
+        "NIX_SSL_CERT_FILE",
+        &process_env.nix_ssl_cert_file,
+    );
     env
 }
 
-fn preserve_if_present(env: &mut Vec<(String, String)>, key: &str) {
-    if let Ok(value) = std::env::var(key) {
-        env.push((key.to_owned(), value));
+fn preserve_if_present(env: &mut Vec<(String, String)>, key: &str, value: &Option<String>) {
+    if let Some(value) = value {
+        env.push((key.to_owned(), value.clone()));
     }
 }
 

@@ -1,9 +1,9 @@
-use super::PodmanServiceLock;
+use super::{PodmanServiceEnv, PodmanServiceLock, command_plan_with_env};
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::podman::service::{
-    PodmanServicePaths, REAL_PODMAN_ENV, command_plan, docker_host_uri, socket_is_live,
-    wait_for_socket,
+    PodmanServicePaths, docker_host_uri, socket_is_live, wait_for_socket,
 };
+use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
@@ -29,16 +29,19 @@ fn podman_service_paths_are_uid_derived() {
 fn podman_service_command_uses_real_binary_and_rootless_env() {
     let temp = tempdir().unwrap();
     let podman = executable_fixture(temp.path().join("real-podman"), "#!/bin/sh\nexit 0\n");
-    let old_path = std::env::var_os("PATH");
-    let old_real = std::env::var_os(REAL_PODMAN_ENV);
-    unsafe {
-        std::env::set_var(REAL_PODMAN_ENV, &podman);
-        std::env::set_var("PATH", "/nix/store/wrappers/bin:/nix/store/podman/bin");
-    }
+    let injected_env = PodmanServiceEnv {
+        real_podman: Some(podman.display().to_string()),
+        search_path: Some(OsString::from(
+            "/nix/store/wrappers/bin:/nix/store/podman/bin",
+        )),
+        service_path: "/nix/store/wrappers/bin:/nix/store/podman/bin".to_owned(),
+        ssl_cert_file: None,
+        nix_ssl_cert_file: None,
+    };
 
     let identity = DevIdentity::new(1234, 1235, PathBuf::from("/bin/fish"));
     let paths = PodmanServicePaths::for_identity(&identity);
-    let plan = command_plan(&identity, &paths).unwrap();
+    let plan = command_plan_with_env(&identity, &paths, &injected_env).unwrap();
 
     assert_eq!(plan.program, podman);
     assert_eq!(
@@ -64,9 +67,28 @@ fn podman_service_command_uses_real_binary_and_rootless_env() {
             .iter()
             .any(|(key, value)| key == "PATH" && value.starts_with("/run/loftd/wrappers/bin:"))
     );
+}
 
-    restore_env(REAL_PODMAN_ENV, old_real);
-    restore_env("PATH", old_path);
+#[test]
+fn podman_service_command_discovers_real_binary_from_injected_path() {
+    let temp = tempdir().unwrap();
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let podman = executable_fixture(bin_dir.join("podman"), "#!/bin/sh\nexit 0\n");
+    let injected_env = PodmanServiceEnv {
+        real_podman: None,
+        search_path: Some(OsString::from(bin_dir.as_os_str())),
+        service_path: "/usr/bin".to_owned(),
+        ssl_cert_file: None,
+        nix_ssl_cert_file: None,
+    };
+
+    let identity = DevIdentity::new(1234, 1235, PathBuf::from("/bin/fish"));
+    let paths = PodmanServicePaths::for_identity(&identity);
+    let plan = command_plan_with_env(&identity, &paths, &injected_env).unwrap();
+
+    assert_eq!(plan.program, podman);
+    assert_env(&plan.env, "PATH", "/run/loftd/wrappers/bin:/usr/bin");
 }
 
 #[test]
@@ -83,20 +105,22 @@ fn podman_service_refuses_loftd_compat_wrapper() {
     ] {
         let temp = tempdir().unwrap();
         let wrapper = executable_fixture(temp.path().join("podman"), body);
-        let old_real = std::env::var_os(REAL_PODMAN_ENV);
-        unsafe {
-            std::env::set_var(REAL_PODMAN_ENV, &wrapper);
-        }
+        let injected_env = PodmanServiceEnv {
+            real_podman: Some(wrapper.display().to_string()),
+            search_path: None,
+            service_path: String::new(),
+            ssl_cert_file: None,
+            nix_ssl_cert_file: None,
+        };
 
         let identity = DevIdentity::new(1234, 1235, PathBuf::from("/bin/fish"));
         let paths = PodmanServicePaths::for_identity(&identity);
-        let err = command_plan(&identity, &paths).unwrap_err();
+        let err = command_plan_with_env(&identity, &paths, &injected_env).unwrap_err();
 
         assert!(
             err.to_string().contains("compatibility wrapper"),
             "{name} wrapper should be rejected"
         );
-        restore_env(REAL_PODMAN_ENV, old_real);
     }
 }
 
@@ -164,13 +188,4 @@ fn assert_env(env: &[(String, String)], key: &str, value: &str) {
         ),
         "missing {key}={value} in {env:?}"
     );
-}
-
-fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
-    unsafe {
-        match value {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
-    }
 }
