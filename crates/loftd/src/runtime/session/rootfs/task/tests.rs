@@ -419,6 +419,29 @@ fn cleanup_delete_failure_preserves_state_for_manual_recovery() {
 }
 
 #[test]
+fn cleanup_task_rootfs_dir_removes_task_snapshot_without_touching_image_cache() {
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let task_dir = temp.path().join("state/tasks/task-clean");
+    let rootfs_path = task_dir.join(BTRFS_ROOTFS_DIR);
+    let image_cache_rootfs = temp
+        .path()
+        .join("image-cache/btrfs-snapshots/sha256-feedface/rootfs");
+    fs::create_dir_all(&rootfs_path).expect("task rootfs should exist");
+    fs::create_dir_all(&image_cache_rootfs).expect("image cache rootfs should exist");
+    fs::write(image_cache_rootfs.join("etc-release"), "cached").expect("cache marker");
+    let commands = FakeBtrfsRootfsCommands::new();
+
+    cleanup_task_rootfs_dir(&task_dir, &commands).expect("task cleanup should succeed");
+
+    assert!(!task_dir.exists());
+    assert!(
+        image_cache_rootfs.join("etc-release").exists(),
+        "task cleanup must not delete image-source cache roots"
+    );
+    assert_eq!(commands.calls(), vec![BtrfsCall::Delete(rootfs_path)]);
+}
+
+#[test]
 fn lease_explicit_cleanup_reports_delete_failure() {
     let temp = tempfile::tempdir().expect("tempdir should exist");
     let task_dir = temp.path().join("task-clean");

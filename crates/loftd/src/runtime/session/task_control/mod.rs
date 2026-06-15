@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::runtime::session::rootfs::task::{HostBtrfsRootfsCommands, cleanup_task_rootfs_dir};
+
 const ACTIVE_RECORD_FILE: &str = "active-task";
 const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 const PROC_ROOT: &str = "/proc";
@@ -135,6 +137,19 @@ impl TaskSignaler for HostTaskSignaler {
     }
 }
 
+trait TaskRootfsCleaner {
+    fn cleanup_task_rootfs(&self, task_dir: &Path) -> Result<()>;
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HostTaskRootfsCleaner;
+
+impl TaskRootfsCleaner for HostTaskRootfsCleaner {
+    fn cleanup_task_rootfs(&self, task_dir: &Path) -> Result<()> {
+        cleanup_task_rootfs_dir(task_dir, &HostBtrfsRootfsCommands)
+    }
+}
+
 pub(crate) fn write_active_task(spec: ActiveTaskSpec, process: ProcessIdentity) -> Result<()> {
     let record = ActiveTaskRecord::from_spec(spec, process, SystemTime::now())?;
     write_active_task_record(&record)
@@ -217,10 +232,28 @@ fn kill_task(
     signaler: &mut impl TaskSignaler,
     sleep: impl FnOnce(Duration),
 ) -> Result<String> {
+    kill_task_with_cleaner(
+        app_dir,
+        task_selector,
+        inspector,
+        signaler,
+        &HostTaskRootfsCleaner,
+        sleep,
+    )
+}
+
+fn kill_task_with_cleaner(
+    app_dir: &Path,
+    task_selector: &str,
+    inspector: &impl ProcessInspector,
+    signaler: &mut impl TaskSignaler,
+    cleaner: &impl TaskRootfsCleaner,
+    sleep: impl FnOnce(Duration),
+) -> Result<String> {
     let records = list_records(app_dir)?;
     let record = resolve_task_selector(&records, task_selector)?;
 
-    kill_record(record, inspector, signaler, sleep)
+    kill_record(record, inspector, signaler, cleaner, sleep)
 }
 
 fn resolve_task_selector<'a>(
@@ -369,9 +402,30 @@ fn kill_record(
     record: &ActiveTaskRecord,
     inspector: &impl ProcessInspector,
     signaler: &mut impl TaskSignaler,
+    cleaner: &impl TaskRootfsCleaner,
     sleep: impl FnOnce(Duration),
 ) -> Result<String> {
-    ensure_running(record, inspector)?;
+    match inspector.status(&record.process) {
+        ActiveTaskStatus::Running => {}
+        ActiveTaskStatus::Stale => {
+            return finish_kill_success(
+                record,
+                format!(
+                    "loftd task '{}' already exited before kill (session {}, process group {})\n",
+                    record.task_id, record.process.sid, record.process.pgid
+                ),
+                cleaner,
+            );
+        }
+        ActiveTaskStatus::PidReused => bail!(
+            "task '{}' process id was reused; refusing to signal or clean up",
+            record.task_id
+        ),
+        ActiveTaskStatus::Unreadable => bail!(
+            "task '{}' process identity is unreadable; refusing to signal or clean up",
+            record.task_id
+        ),
+    }
     if ignore_missing_process_group(
         signaler.signal_process_group(record.process.pgid, libc::SIGTERM),
     )?
@@ -383,6 +437,7 @@ fn kill_record(
                 "loftd task '{}' already exited before SIGTERM (session {}, process group {})\n",
                 record.task_id, record.process.sid, record.process.pgid
             ),
+            cleaner,
         );
     }
     sleep(TERM_GRACE);
@@ -394,6 +449,7 @@ fn kill_record(
                     "sent SIGTERM to loftd task '{}' (session {}, process group {})\n",
                     record.task_id, record.process.sid, record.process.pgid
                 ),
+                cleaner,
             );
         }
         ignore_missing_process_group(
@@ -405,6 +461,7 @@ fn kill_record(
                 "sent SIGTERM then SIGKILL to loftd task '{}' (session {}, process group {})\n",
                 record.task_id, record.process.sid, record.process.pgid
             ),
+            cleaner,
         );
     }
     finish_kill_success(
@@ -413,10 +470,29 @@ fn kill_record(
             "sent SIGTERM to loftd task '{}' (session {}, process group {})\n",
             record.task_id, record.process.sid, record.process.pgid
         ),
+        cleaner,
     )
 }
 
-fn finish_kill_success(record: &ActiveTaskRecord, message: String) -> Result<String> {
+fn finish_kill_success(
+    record: &ActiveTaskRecord,
+    message: String,
+    cleaner: &impl TaskRootfsCleaner,
+) -> Result<String> {
+    if let Err(cleanup_err) = cleaner.cleanup_task_rootfs(&record.task_dir) {
+        let cleanup_message = format!("{cleanup_err:#}");
+        if let Err(restore_err) = write_active_task_record(record) {
+            bail!(
+                "failed to clean loftd task '{}' rootfs state after process termination; rerun `loftd kill {}` to retry cleanup; cleanup error: {cleanup_message}; also failed to restore active task record: {restore_err:#}",
+                record.task_id,
+                record.task_id
+            );
+        }
+        return Err(cleanup_err).context(format!(
+            "failed to clean loftd task '{}' rootfs state after process termination; active task record remains for retry; rerun `loftd kill {}` to retry cleanup",
+            record.task_id, record.task_id
+        ));
+    }
     remove_active_task(&record.task_dir)?;
     Ok(message)
 }
@@ -445,21 +521,6 @@ fn is_esrch(err: &anyhow::Error) -> bool {
     err.chain()
         .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
         .any(|io| io.raw_os_error() == Some(libc::ESRCH))
-}
-
-fn ensure_running(record: &ActiveTaskRecord, inspector: &impl ProcessInspector) -> Result<()> {
-    match inspector.status(&record.process) {
-        ActiveTaskStatus::Running => Ok(()),
-        ActiveTaskStatus::Stale => bail!("task '{}' is stale; refusing to signal", record.task_id),
-        ActiveTaskStatus::PidReused => bail!(
-            "task '{}' process id was reused; refusing to signal",
-            record.task_id
-        ),
-        ActiveTaskStatus::Unreadable => bail!(
-            "task '{}' process identity is unreadable; refusing to signal",
-            record.task_id
-        ),
-    }
 }
 
 fn list_workspace_records(workspace_state_root: &Path) -> Result<Vec<ActiveTaskRecord>> {
@@ -774,6 +835,7 @@ fn read_boot_id(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use std::collections::VecDeque;
 
     #[derive(Debug)]
     struct StaticInspector {
@@ -808,6 +870,58 @@ mod tests {
                     .with_context(|| format!("failed to send signal {signal}"));
             }
             Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum CleanerOutcome {
+        RemoveTaskDir,
+        Fail(&'static str),
+        RemoveActiveRecordThenFail(&'static str),
+    }
+
+    #[derive(Debug)]
+    struct RecordingCleaner {
+        calls: std::cell::RefCell<Vec<PathBuf>>,
+        outcomes: std::cell::RefCell<VecDeque<CleanerOutcome>>,
+    }
+
+    impl RecordingCleaner {
+        fn new(outcomes: Vec<CleanerOutcome>) -> Self {
+            Self {
+                calls: std::cell::RefCell::new(Vec::new()),
+                outcomes: std::cell::RefCell::new(outcomes.into()),
+            }
+        }
+
+        fn calls(&self) -> Vec<PathBuf> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl TaskRootfsCleaner for RecordingCleaner {
+        fn cleanup_task_rootfs(&self, task_dir: &Path) -> Result<()> {
+            self.calls.borrow_mut().push(task_dir.to_path_buf());
+            match self
+                .outcomes
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or(CleanerOutcome::RemoveTaskDir)
+            {
+                CleanerOutcome::RemoveTaskDir => {
+                    if task_dir.exists() {
+                        fs::remove_dir_all(task_dir).with_context(|| {
+                            format!("failed to remove fake task dir '{}'", task_dir.display())
+                        })?;
+                    }
+                    Ok(())
+                }
+                CleanerOutcome::Fail(message) => bail!(message),
+                CleanerOutcome::RemoveActiveRecordThenFail(message) => {
+                    let _ = fs::remove_file(active_record_path(task_dir));
+                    bail!(message);
+                }
+            }
         }
     }
 
@@ -1421,19 +1535,170 @@ mod tests {
     }
 
     #[test]
-    fn kill_refuses_stale_or_reused_task_without_signaling() {
+    fn kill_retries_cleanup_for_stale_task_without_signaling() {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_dir = dir.path().join("loftd");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
-        write_active_task_record(&record("task-a", task_dir)).expect("write task record");
-        let inspector = StaticInspector::new(vec![ActiveTaskStatus::PidReused]);
+        write_active_task_record(&record("task-a", task_dir.clone())).expect("write task record");
+        fs::write(task_dir.join("rootfs-marker"), "rootfs").expect("task state");
+        let inspector = StaticInspector::new(vec![ActiveTaskStatus::Stale]);
         let mut signaler = RecordingSignaler::default();
+        let cleaner = RecordingCleaner::new(vec![CleanerOutcome::RemoveTaskDir]);
 
-        let err = kill_task(&app_dir, "task-a", &inspector, &mut signaler, |_| {})
-            .expect_err("pid reuse should refuse kill");
+        let output = kill_task_with_cleaner(
+            &app_dir,
+            "task-a",
+            &inspector,
+            &mut signaler,
+            &cleaner,
+            |_| {},
+        )
+        .expect("stale task should retry cleanup");
 
-        assert!(format!("{err:#}").contains("reused"));
+        assert!(output.contains("already exited"));
         assert!(signaler.signals.is_empty());
+        assert_eq!(cleaner.calls(), vec![task_dir.clone()]);
+        assert!(!task_dir.exists());
+    }
+
+    #[test]
+    fn kill_failure_after_process_termination_leaves_record_for_retry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("task-a", task_dir.clone())).expect("write task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+        let cleaner = RecordingCleaner::new(vec![CleanerOutcome::Fail("cleanup denied")]);
+
+        let err = kill_task_with_cleaner(
+            &app_dir,
+            "task-a",
+            &inspector,
+            &mut signaler,
+            &cleaner,
+            |_| {},
+        )
+        .expect_err("cleanup failure should make kill fail closed");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("cleanup denied"));
+        assert!(message.contains("active task record remains for retry"));
+        assert!(message.contains("rerun `loftd kill task-a`"));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert_eq!(cleaner.calls(), vec![task_dir]);
+        assert!(record_path.exists());
+    }
+
+    #[test]
+    fn kill_restores_record_when_partial_cleanup_removed_visibility() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let original = record("task-a", task_dir.clone());
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&original).expect("write task record");
+        let inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut signaler = RecordingSignaler::default();
+        let cleaner = RecordingCleaner::new(vec![CleanerOutcome::RemoveActiveRecordThenFail(
+            "tree cleanup failed",
+        )]);
+
+        let err = kill_task_with_cleaner(
+            &app_dir,
+            "task-a",
+            &inspector,
+            &mut signaler,
+            &cleaner,
+            |_| {},
+        )
+        .expect_err("partial cleanup failure should fail closed");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("tree cleanup failed"));
+        assert!(message.contains("active task record remains for retry"));
+        assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
+        assert_eq!(
+            read_active_task_record(&record_path).expect("restored record"),
+            original
+        );
+    }
+
+    #[test]
+    fn stale_retry_succeeds_after_previous_cleanup_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_dir = dir.path().join("loftd");
+        let task_dir = app_dir.join("workspace-a/tasks/task-a");
+        let record_path = active_record_path(&task_dir);
+        write_active_task_record(&record("task-a", task_dir.clone())).expect("write task record");
+        fs::write(task_dir.join("rootfs-marker"), "rootfs").expect("task state");
+
+        let first_inspector =
+            StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
+        let mut first_signaler = RecordingSignaler::default();
+        let first_cleaner = RecordingCleaner::new(vec![CleanerOutcome::Fail("busy")]);
+        kill_task_with_cleaner(
+            &app_dir,
+            "task-a",
+            &first_inspector,
+            &mut first_signaler,
+            &first_cleaner,
+            |_| {},
+        )
+        .expect_err("first cleanup should fail");
+        assert!(record_path.exists());
+
+        let retry_inspector = StaticInspector::new(vec![ActiveTaskStatus::Stale]);
+        let mut retry_signaler = RecordingSignaler::default();
+        let retry_cleaner = RecordingCleaner::new(vec![CleanerOutcome::RemoveTaskDir]);
+
+        let output = kill_task_with_cleaner(
+            &app_dir,
+            "task-a",
+            &retry_inspector,
+            &mut retry_signaler,
+            &retry_cleaner,
+            |_| {},
+        )
+        .expect("stale retry should clean");
+
+        assert!(output.contains("already exited"));
+        assert!(retry_signaler.signals.is_empty());
+        assert_eq!(retry_cleaner.calls(), vec![task_dir.clone()]);
+        assert!(!task_dir.exists());
+    }
+
+    #[test]
+    fn kill_refuses_reused_or_unreadable_task_without_signaling_or_cleanup() {
+        for status in [ActiveTaskStatus::PidReused, ActiveTaskStatus::Unreadable] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let app_dir = dir.path().join("loftd");
+            let task_dir = app_dir.join("workspace-a/tasks/task-a");
+            let record_path = active_record_path(&task_dir);
+            write_active_task_record(&record("task-a", task_dir.clone()))
+                .expect("write task record");
+            let inspector = StaticInspector::new(vec![status]);
+            let mut signaler = RecordingSignaler::default();
+            let cleaner = RecordingCleaner::new(vec![CleanerOutcome::RemoveTaskDir]);
+
+            let err = kill_task_with_cleaner(
+                &app_dir,
+                "task-a",
+                &inspector,
+                &mut signaler,
+                &cleaner,
+                |_| {},
+            )
+            .expect_err("unsafe identity should refuse kill");
+
+            assert!(format!("{err:#}").contains("refusing to signal or clean up"));
+            assert!(signaler.signals.is_empty());
+            assert!(cleaner.calls().is_empty());
+            assert!(record_path.exists());
+        }
     }
 
     #[test]

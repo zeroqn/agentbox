@@ -296,6 +296,13 @@ pub(crate) fn snapshot_mounted_rootfs(
         })
 }
 
+pub(in crate::runtime::session) fn cleanup_task_rootfs_dir(
+    task_dir: &Path,
+    commands: &impl BtrfsRootfsCommands,
+) -> Result<()> {
+    cleanup_task_dir(task_dir, commands)
+}
+
 fn cleanup_after_materialization_failure(
     task_dir: &Path,
     commands: &impl BtrfsRootfsCommands,

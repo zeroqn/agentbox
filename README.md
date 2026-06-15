@@ -952,9 +952,13 @@ management are intentionally out of scope.
 session identity before signaling the task process group, sends `SIGTERM`, waits
 briefly, and escalates to `SIGKILL` only if the task is still running. Ambiguous
 handles or handle selectors, too-short prefixes, malformed abbreviated
-selectors, stale records, or reused process ids are reported instead of
-signaled, and successful kill requests remove the active record from subsequent
-`ps` output.
+selectors, reused process ids, or unreadable process identities are reported
+instead of signaled. Stale records for already-exited tasks are eligible for a
+cleanup retry without signaling. A successful kill request only returns after
+the task rootfs/state cleanup succeeds, then removes the active record from
+subsequent `ps` output. If cleanup fails after the VM process is gone, `loftd
+kill` returns a visible error and leaves or restores the active record so rerun
+`loftd kill <task-id-or-handle-selector>` can retry the same cleanup.
 
 To inspect a preserved task `launch.conf`, decode its internal hex line format:
 
