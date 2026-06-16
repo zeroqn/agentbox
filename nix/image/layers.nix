@@ -391,6 +391,7 @@ let
     pkgs.cacert
     pkgs.coreutils
     pkgs.curl
+    pkgs.openssl
     pkgs.fd
     pkgs.file
     pkgs.fish

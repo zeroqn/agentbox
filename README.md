@@ -1357,7 +1357,7 @@ The container provides:
 - narrow hardcoded-interpreter compatibility for `/bin/sh`, `/bin/bash`,
   `/bin/python`, and `/bin/python3`; `/bin/python` resolves to Python 3
   (not broad FHS compatibility)
-- common tools (`curl`, `jq`, `tmux`, etc.); tmux disables mouse support and
+- common tools (`curl`, `jq`, `openssl`, `tmux`, etc.); tmux disables mouse support and
   includes system-wide pane split bindings for `Ctrl-b |` and `Ctrl-b -` plus
   Vim-style pane focus movement on `Ctrl-b h/j/k/l`
 
