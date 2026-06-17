@@ -43,6 +43,7 @@ impl ContainerStoreBackend {
   loftd container-store resize --size 128G
   loftd container-store reset --force
   loftd ps
+  loftd attach <task-id-or-handle-selector>
   loftd kill <task-id-or-handle-selector>"
 )]
 pub(crate) struct Cli {
@@ -203,6 +204,12 @@ pub(crate) enum CliCommand {
     #[command(name = "ps", about = "List active loftd task VMs across workspaces")]
     Ps,
 
+    #[command(name = "attach", about = "Attach to an active loftd task VM session")]
+    Attach {
+        #[arg(value_name = "TASK_ID_OR_HANDLE_SELECTOR")]
+        task_id: String,
+    },
+
     #[command(name = "kill", about = "Terminate an active loftd task VM")]
     Kill {
         #[arg(value_name = "TASK_ID_OR_HANDLE_SELECTOR")]
@@ -291,6 +298,10 @@ pub(crate) enum CliAction {
         task_id: String,
         log_settings: LogSettings,
     },
+    Attach {
+        task_id: String,
+        log_settings: LogSettings,
+    },
 }
 
 impl Cli {
@@ -310,6 +321,10 @@ impl Cli {
                     log_settings: LogSettings::from_process_env(self.log_level, self.debug),
                 },
                 CliCommand::Kill { task_id } => CliAction::Kill {
+                    task_id,
+                    log_settings: LogSettings::from_process_env(self.log_level, self.debug),
+                },
+                CliCommand::Attach { task_id } => CliAction::Attach {
                     task_id,
                     log_settings: LogSettings::from_process_env(self.log_level, self.debug),
                 },
@@ -493,6 +508,17 @@ mod tests {
         assert!(options.volumes.is_empty());
         assert_eq!(options.log_settings.level, LogLevel::Debug);
         assert!(options.guest_command.is_empty());
+    }
+
+    #[test]
+    fn parses_attach_subcommand() {
+        let cli =
+            Cli::try_parse_from(["loftd", "attach", "workspace-123"]).expect("attach should parse");
+
+        assert!(matches!(
+            cli.into_action(),
+            crate::cli::CliAction::Attach { task_id, .. } if task_id == "workspace-123"
+        ));
     }
 
     #[test]

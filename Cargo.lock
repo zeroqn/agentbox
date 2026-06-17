@@ -268,9 +268,17 @@ dependencies = [
  "anyhow",
  "clap",
  "libc",
+ "loftd-attach-protocol",
  "tempfile",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "loftd-attach-protocol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
@@ -280,6 +288,7 @@ dependencies = [
  "anyhow",
  "clap",
  "libc",
+ "loftd-attach-protocol",
  "tempfile",
 ]
 

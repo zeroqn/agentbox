@@ -1,16 +1,18 @@
 //! Internal helper entrypoint and launch-config dispatch.
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::logging::{self, LogSettings};
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::session::profile::LoftdHostProfiler;
+use crate::runtime::session::rootfs::task::{UnsharedBtrfsRootfsCommands, cleanup_task_rootfs_dir};
 use crate::runtime::session::supervisor::LIBKRUN_ENTER_HELPER_ARG;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::session::supervisor::rlimits;
 use crate::runtime::session::supervisor::vm_child::{self, VmWorkerGuard};
+use crate::runtime::session::task_control;
 use crate::runtime::vm::network::{NetworkManagerSession, PasstWorkerSession, status_exit_code};
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
@@ -87,13 +89,35 @@ fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> 
     let (status, wait_duration) =
         profiler.measure_result_with_duration("helper_wait_vm_worker", || worker.wait())?;
     profiler.record_vm_worker_wait_details(task_state_dir, wait_duration);
+    let cleanup_error = cleanup_managed_task_after_vm_exit(&config, task_state_dir).err();
     if let Some(code) = status_exit_code(status) {
         if code == 0 {
+            if let Some(err) = cleanup_error {
+                return Err(err);
+            }
             return Ok(());
+        }
+        if let Some(err) = cleanup_error {
+            return Err(err).context(format!("loftd VM worker exited with status {code}"));
         }
         bail!("loftd VM worker exited with status {code}");
     }
+    if let Some(err) = cleanup_error {
+        return Err(err).context("loftd VM worker exited due to signal");
+    }
     bail!("loftd VM worker exited due to signal")
+}
+
+fn cleanup_managed_task_after_vm_exit(config: &LaunchConfig, task_state_dir: &Path) -> Result<()> {
+    let Some(managed) = &config.managed_session else {
+        return Ok(());
+    };
+    task_control::remove_active_task(task_state_dir)?;
+    let _ = std::fs::remove_file(&managed.attach_socket);
+    if managed.cleanup_task_rootfs_on_exit {
+        cleanup_task_rootfs_dir(task_state_dir, &UnsharedBtrfsRootfsCommands)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn task_state_dir_from_config_path(config_path: &Path) -> Result<&Path> {

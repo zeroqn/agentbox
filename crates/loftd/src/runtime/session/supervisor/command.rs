@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::logging::INTERNAL_LOG_LEVEL_ENV;
 use crate::runtime::launch::config::LaunchConfig;
+use crate::runtime::session::attach::{self, AttachOutcome};
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
 use crate::runtime::session::supervisor::sigwinch::SigwinchForwarder;
@@ -32,10 +33,17 @@ pub(crate) fn run_helper_process(
     })?;
     tracing::debug!(program = ?spec.program, args = ?spec.args, log_level = config.log_level.as_str(), "loftd libkrun helper command constructed");
     let mut command = spec.into_command();
-    command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    if config.managed_session.is_some() {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit());
+    } else {
+        command
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+    }
     // SAFETY: this pre-exec hook only calls async-signal-safe libc setsid in
     // the child process before exec. A dedicated session and process group give
     // loftd a bounded task-level control identity for `loftd kill`.
@@ -65,13 +73,17 @@ pub(crate) fn run_helper_process(
             return Err(err).context("failed to identify active loftd task after helper spawn");
         }
     };
-    let _sigwinch_forwarder = match start_sigwinch_forwarder(process.pgid) {
-        Ok(forwarder) => forwarder,
-        Err(err) => {
-            terminate_spawned_child_group(&mut child);
-            let _ = remove_active_task(&active_task.task_dir);
-            return Err(err)
-                .context("failed to start loftd helper SIGWINCH forwarder after helper spawn");
+    let _sigwinch_forwarder = if config.managed_session.is_some() {
+        None
+    } else {
+        match start_sigwinch_forwarder(process.pgid) {
+            Ok(forwarder) => forwarder,
+            Err(err) => {
+                terminate_spawned_child_group(&mut child);
+                let _ = remove_active_task(&active_task.task_dir);
+                return Err(err)
+                    .context("failed to start loftd helper SIGWINCH forwarder after helper spawn");
+            }
         }
     };
     if let Err(err) = write_active_task(active_task.clone(), process) {
@@ -79,6 +91,24 @@ pub(crate) fn run_helper_process(
         let _ = remove_active_task(&active_task.task_dir);
         return Err(err).context("failed to record active loftd task after helper spawn");
     }
+    if let Some(managed) = &config.managed_session {
+        let attach_result = profiler.measure_result("helper_initial_attach", || {
+            attach::attach_to_socket(&managed.attach_socket)
+        });
+        return match attach_result {
+            Ok(AttachOutcome::Detached) => Ok(ChildStatus::detached()),
+            Ok(AttachOutcome::Exited(code)) => {
+                let _ = child.wait();
+                Ok(ChildStatus::exited(code))
+            }
+            Err(err) => {
+                terminate_spawned_child_group(&mut child);
+                let _ = remove_active_task(&active_task.task_dir);
+                Err(err).context("failed to attach to managed loftd guest session")
+            }
+        };
+    }
+
     let status = profiler.measure_result("helper_wait_process", || {
         child
             .wait()

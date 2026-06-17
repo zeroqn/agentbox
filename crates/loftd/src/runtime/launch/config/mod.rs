@@ -11,8 +11,9 @@ pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
     BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET,
     DiskAttachment, GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig,
-    LaunchSpec, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG,
-    SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, canonical_mount_target,
+    LaunchSpec, ManagedSessionConfig, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG,
+    PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+    canonical_mount_target,
 };
 
 #[cfg(test)]
@@ -49,6 +50,19 @@ impl LaunchConfig {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_DEBUG_ENV, "1");
         }
         components::network::contribute_guest_env(&mut guest_config_env, spec.network_mode);
+        if let Some(managed) = &spec.managed_session {
+            guest_env::insert_env(&mut guest_config_env, model::GUEST_SESSION_MANAGED_ENV, "1");
+            guest_env::insert_env(
+                &mut guest_config_env,
+                model::GUEST_ATTACH_PORT_ENV,
+                &managed.guest_port.to_string(),
+            );
+            guest_env::insert_env(
+                &mut guest_config_env,
+                model::GUEST_ATTACH_PROTOCOL_VERSION_ENV,
+                &managed.protocol_version.to_string(),
+            );
+        }
         for (key, value) in spec.extra_env {
             guest_config_env.insert(key, value);
         }
@@ -79,6 +93,7 @@ impl LaunchConfig {
             )],
             guest_config_env: guest_config_env.into_iter().collect(),
             passt_fd: None,
+            managed_session: spec.managed_session,
         })
     }
 
@@ -92,6 +107,10 @@ impl LaunchConfig {
         let mut config = self.clone();
         config.passt_fd = Some(passt_fd);
         config
+    }
+
+    pub(crate) fn is_managed_session(&self) -> bool {
+        self.managed_session.is_some()
     }
 
     #[cfg(test)]

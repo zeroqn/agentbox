@@ -2,8 +2,8 @@ use super::*;
 use crate::logging::LogLevel;
 use crate::runtime::launch::config::{
     BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment, LaunchConfig,
-    LaunchSpec, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET,
-    WORKSPACE_TAG, WORKSPACE_TARGET,
+    LaunchSpec, ManagedSessionConfig, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
+    SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
 };
 use crate::runtime::vm::libkrun::launcher::PROFILE_KERNEL_CMDLINE_APPEND;
 use anyhow::Result;
@@ -22,6 +22,7 @@ enum Call {
     SetRoot(u32, String),
     AddDisk(u32, String, String, bool),
     AddNetUnixstream(u32, i32, u32),
+    AddVsockPort(u32, u32, String, bool),
     SetPortMap(u32, Vec<String>),
     DisableImplicitConsole(u32),
     AddVirtioConsoleDefault(u32, i32, i32, i32),
@@ -166,6 +167,22 @@ impl LibkrunApi for FakeLibkrunApi {
         Ok(self.rc("krun_add_net_unixstream"))
     }
 
+    fn add_vsock_port(
+        &mut self,
+        ctx_id: u32,
+        guest_port: u32,
+        socket_path: &Path,
+        listen: bool,
+    ) -> Result<i32> {
+        self.calls.borrow_mut().push(Call::AddVsockPort(
+            ctx_id,
+            guest_port,
+            socket_path.display().to_string(),
+            listen,
+        ));
+        Ok(self.rc("krun_add_vsock_port2"))
+    }
+
     fn set_port_map(&mut self, ctx_id: u32, port_map: &[String]) -> Result<i32> {
         self.calls
             .borrow_mut()
@@ -250,8 +267,21 @@ fn config() -> LaunchConfig {
         ],
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        managed_session: None,
     })
     .expect("config should build")
+}
+
+fn managed_config() -> LaunchConfig {
+    LaunchConfig {
+        managed_session: Some(ManagedSessionConfig {
+            attach_socket: "/state/task/attach.sock".into(),
+            guest_port: 50_426,
+            protocol_version: 1,
+            cleanup_task_rootfs_on_exit: true,
+        }),
+        ..config()
+    }
 }
 
 fn passt_config() -> LaunchConfig {
@@ -445,6 +475,35 @@ fn nested_virt_check_unsupported_failure_or_absent_still_sets_nested_virt() {
         assert!(check_index < set_index);
         assert!(set_index < start_index);
     }
+}
+
+#[test]
+fn managed_session_adds_vsock_listener_before_console_and_start() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&managed_config())
+        .expect("managed launch should succeed");
+
+    let calls = calls.borrow();
+    let vsock_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::AddVsockPort(..)))
+        .expect("managed launch should add vsock port");
+    let console_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::AddVirtioConsoleDefault(..)))
+        .expect("console should be configured");
+    let start_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::StartEnter(..)))
+        .expect("launch should start");
+
+    assert_eq!(
+        calls[vsock_index],
+        Call::AddVsockPort(7, 50_426, "/state/task/attach.sock".to_owned(), true)
+    );
+    assert!(vsock_index < console_index);
+    assert!(console_index < start_index);
 }
 
 #[test]

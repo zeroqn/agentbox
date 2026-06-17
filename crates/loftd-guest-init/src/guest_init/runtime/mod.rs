@@ -6,6 +6,7 @@ use crate::guest_init::cli::{
 
 pub(in crate::guest_init) mod as_dev;
 pub(in crate::guest_init) mod loftd;
+mod session;
 
 pub(in crate::guest_init) fn run(command: GuestInitCommand) -> Result<()> {
     match command {

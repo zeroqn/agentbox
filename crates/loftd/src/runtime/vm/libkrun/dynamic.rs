@@ -40,6 +40,7 @@ type KrunAddDisk = unsafe extern "C" fn(u32, *const c_char, *const c_char, bool)
 type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
 type KrunAddVirtioConsoleDefault = unsafe extern "C" fn(u32, i32, i32, i32) -> i32;
 type KrunAddNetUnixstream = unsafe extern "C" fn(u32, *const c_char, i32, *mut u8, u32, u32) -> i32;
+type KrunAddVsockPort2 = unsafe extern "C" fn(u32, u32, *const c_char, bool) -> i32;
 type KrunSetPortMap = unsafe extern "C" fn(u32, *const *const c_char) -> i32;
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
@@ -62,6 +63,7 @@ pub(crate) struct DynamicLibkrunApi {
     disable_implicit_console: KrunDisableImplicitConsole,
     add_virtio_console_default: KrunAddVirtioConsoleDefault,
     add_net_unixstream: Option<KrunAddNetUnixstream>,
+    add_vsock_port2: Option<KrunAddVsockPort2>,
     set_port_map: Option<KrunSetPortMap>,
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
@@ -157,6 +159,8 @@ impl DynamicLibkrunApi {
                 )?),
                 add_net_unixstream: load_optional_symbol(handle, "krun_add_net_unixstream")
                     .map(|symbol| std::mem::transmute::<*mut c_void, KrunAddNetUnixstream>(symbol)),
+                add_vsock_port2: load_optional_symbol(handle, "krun_add_vsock_port2")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunAddVsockPort2>(symbol)),
                 set_port_map: load_optional_symbol(handle, "krun_set_port_map")
                     .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetPortMap>(symbol)),
                 set_workdir: std::mem::transmute::<*mut c_void, KrunSetWorkdir>(load_symbol(
@@ -381,6 +385,23 @@ impl LibkrunApi for DynamicLibkrunApi {
                 flags,
             )
         })
+    }
+
+    fn add_vsock_port(
+        &mut self,
+        ctx_id: u32,
+        guest_port: u32,
+        socket_path: &Path,
+        listen: bool,
+    ) -> Result<i32> {
+        let add_vsock_port2 = self.add_vsock_port2.ok_or_else(|| {
+            anyhow!(
+                "libkrun managed attach setup failed: krun_add_vsock_port2 symbol is unavailable"
+            )
+        })?;
+        let socket_path = path_cstring(socket_path)?;
+        // SAFETY: C string lives for the duration of the call.
+        Ok(unsafe { add_vsock_port2(ctx_id, guest_port, socket_path.as_ptr(), listen) })
     }
 
     fn set_port_map(&mut self, ctx_id: u32, port_map: &[String]) -> Result<i32> {

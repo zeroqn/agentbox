@@ -17,25 +17,31 @@ use crate::runtime::session::task_control::ActiveTaskSpec;
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ChildStatus {
-    code: Option<i32>,
+pub(crate) enum ChildStatus {
+    Exited(i32),
+    Signaled,
+    Detached,
 }
 
 impl ChildStatus {
     pub(crate) fn exited(code: i32) -> Self {
-        Self { code: Some(code) }
+        Self::Exited(code)
     }
 
     pub(crate) fn signaled() -> Self {
-        Self { code: None }
+        Self::Signaled
+    }
+
+    pub(crate) fn detached() -> Self {
+        Self::Detached
     }
 
     pub(crate) fn exit_code(self) -> ExitCode {
-        ExitCode::from(
-            self.code
-                .and_then(|code| u8::try_from(code).ok())
-                .unwrap_or(1),
-        )
+        match self {
+            Self::Exited(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+            Self::Signaled => ExitCode::from(1),
+            Self::Detached => ExitCode::SUCCESS,
+        }
     }
 }
 
@@ -155,6 +161,7 @@ mod tests {
             env: Vec::new(),
             guest_config_env: Vec::new(),
             passt_fd: None,
+            managed_session: None,
         }
     }
 

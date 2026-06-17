@@ -100,6 +100,27 @@ pub fn entrypoint() -> ExitCode {
                 }
             }
         }
+        CliAction::Attach {
+            task_id,
+            log_settings,
+        } => {
+            if let Err(err) = logging::init_tracing(&log_settings) {
+                eprintln!("loftd: {err:#}");
+                return ExitCode::from(1);
+            }
+            match runtime::run_task_control_command(
+                runtime::session::task_control::TaskControlCommand::Attach { task_id },
+            ) {
+                Ok(output) => {
+                    print!("{output}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("loftd: {err:#}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         CliAction::Kill {
             task_id,
             log_settings,

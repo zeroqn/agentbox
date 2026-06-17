@@ -7,6 +7,7 @@ use crate::guest_init::components::env::{
     NIX_REMOTE_URI,
 };
 use crate::guest_init::components::home::identity::{DevIdentity, validate_host_identity};
+use crate::guest_init::runtime::session::{self, ManagedSessionConfig};
 use crate::guest_init::{command, process, profile};
 
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
@@ -17,6 +18,9 @@ const LEGACY_ENTER_AS_ROOT_ENV: &str = "AGENTBOX_ENTER_AS_ROOT";
 const LEGACY_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY";
 const LEGACY_CONTAINERS_STORAGE_ENV: &str = "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE";
 const LEGACY_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST";
+const SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
+const ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
+const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -46,6 +50,7 @@ pub(in crate::guest_init) enum LoftdEnterOperation {
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
     DropAndExec,
+    RunManagedSession,
 }
 
 #[cfg(test)]
@@ -68,6 +73,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
         LoftdEnterOperation::ClearProfileEnvBeforeExec,
         LoftdEnterOperation::ReportProfileBeforeExec,
         LoftdEnterOperation::DropAndExec,
+        LoftdEnterOperation::RunManagedSession,
     ]
 }
 
@@ -77,6 +83,7 @@ struct EnterEnv {
     host_uid: Option<u32>,
     host_gid: Option<u32>,
     loftd: LoftdEnv,
+    managed_session: Option<ManagedSessionConfig>,
 }
 
 trait EnvSource {
@@ -168,8 +175,13 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
+    let drop_to_identity = should_drop_to_identity(process::is_root(), env_contract.enter_as_root);
+    if let Some(managed_session) = env_contract.managed_session {
+        debug_breadcrumb("managed session starting");
+        return session::run(&command, &identity, drop_to_identity, managed_session);
+    }
     debug_breadcrumb("final exec handoff starting");
-    if should_drop_to_identity(process::is_root(), env_contract.enter_as_root) {
+    if drop_to_identity {
         process::drop_to_identity_and_exec(&identity, &command)
     } else {
         process::exec_command(&command)
@@ -183,8 +195,33 @@ impl EnterEnv {
             host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
             host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
+            managed_session: managed_session_from_env(env)?,
         })
     }
+}
+
+fn managed_session_from_env(env: &impl EnvSource) -> Result<Option<ManagedSessionConfig>> {
+    if !env_flag(env, SESSION_MANAGED_ENV) {
+        return Ok(None);
+    }
+    Ok(Some(ManagedSessionConfig {
+        port: parse_required_u32(env, ATTACH_PORT_ENV)?,
+        protocol_version: parse_required_u16(env, ATTACH_PROTOCOL_VERSION_ENV)?,
+    }))
+}
+
+fn parse_required_u32(env: &impl EnvSource, name: &str) -> Result<u32> {
+    env.var(name)
+        .ok_or_else(|| anyhow!("{name} is required when {SESSION_MANAGED_ENV}=1"))?
+        .parse::<u32>()
+        .with_context(|| format!("invalid numeric value in {name}"))
+}
+
+fn parse_required_u16(env: &impl EnvSource, name: &str) -> Result<u16> {
+    env.var(name)
+        .ok_or_else(|| anyhow!("{name} is required when {SESSION_MANAGED_ENV}=1"))?
+        .parse::<u16>()
+        .with_context(|| format!("invalid numeric value in {name}"))
 }
 
 fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {

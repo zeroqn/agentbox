@@ -775,10 +775,13 @@ btrfs snapshot rootfs, prepares loftd-owned persistent raw btrfs disks for
 `/nix` and rootless container storage, starts a same-binary helper through a
 strict keep-id `unshare` wrapper around `<loftd-exe> internal
 libkrun-network-enter <launch.conf>` to set up the per-session pasta namespace
-and call libkrun, and enters the guest through `loftd-guest-init enter`. The
-parent process owns task-rootfs cleanup,
-with best-effort cleanup on unwind and `--preserve-debug` for manual
-inspection. The explicit `fuse-overlay` backend is still a future slice.
+and call libkrun, and enters the guest through `loftd-guest-init enter`.
+Interactive loftd runs are managed by a guest-side PTY session manager, so the
+host terminal is an attach client rather than the lifetime owner of the guest
+shell or terminal command. The helper owns final cleanup for managed sessions;
+`loftd kill` remains the recovery path for detached tasks, and
+`--preserve-debug` keeps task state for manual inspection. The explicit
+`fuse-overlay` backend is still a future slice.
 
 Run/help:
 
@@ -793,10 +796,38 @@ Run/help:
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
 ./result/bin/loftd ps
+./result/bin/loftd attach <task-id-or-handle-selector>
 ./result/bin/loftd kill <task-id-or-handle-selector>
 ./result/bin/loftd container-store resize --size 128G
 ./result/bin/loftd container-store reset --force
 ```
+
+
+Detach/attach behavior:
+
+- A normal foreground `loftd` run starts a managed guest PTY session and then
+  attaches the host terminal to it. The foreground experience is still an
+  interactive shell or command, but the guest process is not tied to the host
+  terminal lifetime.
+- Press `Ctrl-]` to detach from the current terminal session. Closing the host
+  terminal, killing the attach client, or losing SSH also behaves as detach: the
+  guest shell or terminal-interactive command keeps running while the VM helper
+  remains active.
+- Reconnect with `loftd attach <task-id-or-handle-selector>`. Selectors follow
+  the same task-id/handle matching rules as `loftd kill`; use `loftd ps` to list
+  running task IDs and handles.
+- Only one attach client is supported at a time. A second attach attempt receives
+  a busy error instead of sharing the PTY.
+- Terminal and TUI programs inside the PTY are in scope, including
+  `loftd -- <interactive-command>`. Graphical X11/Wayland application
+  preservation is not implemented; display sockets and GUI reconnect semantics
+  need a separate design.
+- The attach transport is libkrun's vsock-to-host-Unix-socket mapping. If the
+  required `krun_add_vsock_port2` symbol or setup path is unavailable, managed
+  attach fails clearly instead of falling back to another transport.
+- Exiting the guest shell or command terminates the VM and removes the active
+  task/rootfs unless `--preserve-debug` was used. Detached tasks can be
+  terminated with `loftd kill <task-id-or-handle-selector>`.
 
 Container-store disk maintenance:
 

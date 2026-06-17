@@ -93,6 +93,22 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             check_setup("krun_add_disk", rc)?;
             tracing::debug!(ctx_id, disk_id = %disk.id, "krun_add_disk: complete");
         }
+        if let Some(managed) = &config.managed_session {
+            tracing::debug!(
+                ctx_id,
+                guest_port = managed.guest_port,
+                socket = %managed.attach_socket.display(),
+                "krun_add_vsock_port2: begin"
+            );
+            let rc = self.api.add_vsock_port(
+                ctx_id,
+                managed.guest_port,
+                &managed.attach_socket,
+                true,
+            )?;
+            check_setup("krun_add_vsock_port2", rc)?;
+            tracing::debug!(ctx_id, "krun_add_vsock_port2: complete");
+        }
         if config.network_mode == NetworkMode::Passt {
             let passt_fd = config.passt_fd.ok_or_else(|| {
                 anyhow!("libkrun passt setup requires a prepared passt socket fd")

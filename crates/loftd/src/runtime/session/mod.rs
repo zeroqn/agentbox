@@ -9,6 +9,7 @@ use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
 use crate::runtime::session::task_control::TaskControlCommand;
 use crate::task_rootfs::TaskRootfsBackend;
 
+pub(crate) mod attach;
 pub(crate) mod nix_overlay;
 mod profile;
 pub(crate) mod rootfs;
@@ -16,8 +17,9 @@ pub(crate) mod supervisor;
 pub(crate) mod task_control;
 
 use crate::runtime::RuntimeProfileScope;
-use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec};
+use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec, ManagedSessionConfig};
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
+use loftd_attach_protocol::{DEFAULT_ATTACH_PORT, PROTOCOL_VERSION};
 use profile::LoftdHostProfiler;
 use rootfs::task::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
 use supervisor::{HostSupervisor, Supervisor};
@@ -173,71 +175,97 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                         lease.handle().process_config().entrypoint.as_slice(),
                     )
                 }) {
-                    Ok(guest_init) => match profiler.measure_result("launch_config_build", || {
-                        LaunchConfig::build_for_task(LaunchSpec {
-                            task_rootfs: lease.handle().rootfs_path(),
-                            hostname: &plan.hostname,
-                            mounts: &plan.bind_mounts,
-                            guest_init_override: guest_init.override_mount.clone(),
-                            guest_init_exec: &guest_init.guest_exec_path,
-                            guest_command: &plan.guest_command,
-                            image_process_config: lease.handle().process_config(),
-                            mem_gib: plan.mem_gib,
-                            log_level: plan.log_level,
-                            network_mode: plan.network_mode,
-                            publish: &plan.publish,
-                            profile: plan.profile,
-                            root: plan.root,
-                            host_uid: current_uid(),
-                            host_gid: current_gid(),
-                            vcpus: config::resolve_cpu_count()?,
-                            disks: disks.attachments(),
-                            extra_env: disks.env_pairs(),
-                            host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
-                        })
-                    }) {
-                        Ok(config) => {
-                            tracing::debug!(
-                                guest_init = %guest_init.guest_exec_path,
-                                disks = config.disks.len(),
-                                ram_mib = config.ram_mib,
-                                vcpus = config.vcpus,
-                                network_mode = config.network_mode.as_config_value(),
-                                workspace = %plan.workspace_dir.display(),
-                                mounts = config.mounts.len(),
-                                "loftd libkrun launch"
-                            );
+                    Ok(guest_init) => {
+                        let managed_session = ManagedSessionConfig {
+                            attach_socket: lease.handle().task_dir().join("attach.sock"),
+                            guest_port: DEFAULT_ATTACH_PORT,
+                            protocol_version: PROTOCOL_VERSION,
+                            cleanup_task_rootfs_on_exit: !plan.preserve_debug,
+                        };
+                        match profiler.measure_result("launch_config_build", || {
+                            LaunchConfig::build_for_task(LaunchSpec {
+                                task_rootfs: lease.handle().rootfs_path(),
+                                hostname: &plan.hostname,
+                                mounts: &plan.bind_mounts,
+                                guest_init_override: guest_init.override_mount.clone(),
+                                guest_init_exec: &guest_init.guest_exec_path,
+                                guest_command: &plan.guest_command,
+                                image_process_config: lease.handle().process_config(),
+                                mem_gib: plan.mem_gib,
+                                log_level: plan.log_level,
+                                network_mode: plan.network_mode,
+                                publish: &plan.publish,
+                                profile: plan.profile,
+                                root: plan.root,
+                                host_uid: current_uid(),
+                                host_gid: current_gid(),
+                                vcpus: config::resolve_cpu_count()?,
+                                disks: disks.attachments(),
+                                extra_env: disks.env_pairs(),
+                                host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
+                                managed_session: Some(managed_session.clone()),
+                            })
+                        }) {
+                            Ok(config) => {
+                                tracing::debug!(
+                                    guest_init = %guest_init.guest_exec_path,
+                                    disks = config.disks.len(),
+                                    ram_mib = config.ram_mib,
+                                    vcpus = config.vcpus,
+                                    network_mode = config.network_mode.as_config_value(),
+                                    workspace = %plan.workspace_dir.display(),
+                                    mounts = config.mounts.len(),
+                                    "loftd libkrun launch"
+                                );
 
-                            let active_task = task_control::ActiveTaskSpec {
-                                task_id: lease.handle().task_id().to_owned(),
-                                workspace_slug: plan.workspace_slug.clone(),
-                                workspace_dir: plan.workspace_dir.clone(),
-                                task_dir: lease.handle().task_dir().to_path_buf(),
-                                image_reference: lease
-                                    .handle()
-                                    .selected_image_reference()
-                                    .to_owned(),
-                                image_digest: lease.handle().image_digest().map(str::to_owned),
-                            };
-                            BtrfsHostRunResult::Helper(profiler.measure_result_with(
-                                "helper_session",
-                                |profiler| {
-                                    HostSupervisor.run(
-                                        &config,
-                                        lease.handle().task_dir(),
-                                        profiler,
-                                        &active_task,
-                                    )
-                                },
-                            ))
+                                let active_task = task_control::ActiveTaskSpec {
+                                    task_id: lease.handle().task_id().to_owned(),
+                                    workspace_slug: plan.workspace_slug.clone(),
+                                    workspace_dir: plan.workspace_dir.clone(),
+                                    task_dir: lease.handle().task_dir().to_path_buf(),
+                                    image_reference: lease
+                                        .handle()
+                                        .selected_image_reference()
+                                        .to_owned(),
+                                    image_digest: lease.handle().image_digest().map(str::to_owned),
+                                    managed: Some(task_control::ManagedTaskSpec {
+                                        attach_socket: managed_session.attach_socket.clone(),
+                                        guest_port: managed_session.guest_port,
+                                        protocol_version: managed_session.protocol_version,
+                                    }),
+                                };
+                                BtrfsHostRunResult::Helper {
+                                    managed: config.is_managed_session(),
+                                    result: profiler.measure_result_with(
+                                        "helper_session",
+                                        |profiler| {
+                                            HostSupervisor.run(
+                                                &config,
+                                                lease.handle().task_dir(),
+                                                profiler,
+                                                &active_task,
+                                            )
+                                        },
+                                    ),
+                                }
+                            }
+                            Err(err) => BtrfsHostRunResult::SetupFailed(err),
                         }
-                        Err(err) => BtrfsHostRunResult::SetupFailed(err),
-                    },
+                    }
                     Err(err) => BtrfsHostRunResult::SetupFailed(err),
                 },
                 Err(err) => BtrfsHostRunResult::SetupFailed(err),
             };
-            let cleanup_result = if plan.preserve_debug {
+            let managed_helper_succeeded = matches!(
+                &host_run_result,
+                BtrfsHostRunResult::Helper {
+                    managed: true,
+                    result: Ok(_),
+                }
+            );
+            let cleanup_result = if managed_helper_succeeded {
+                profiler.measure_result("task_state_cleanup", || Ok(lease.preserve()))
+            } else if plan.preserve_debug {
                 let hint = lease.handle().preserve_debug_hint();
                 profiler.measure_result("task_state_cleanup", || {
                     task_control::remove_active_task(lease.handle().task_dir())?;
@@ -267,7 +295,10 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
 }
 
 enum BtrfsHostRunResult {
-    Helper(Result<supervisor::ChildStatus>),
+    Helper {
+        managed: bool,
+        result: Result<supervisor::ChildStatus>,
+    },
     SetupFailed(anyhow::Error),
 }
 
@@ -278,8 +309,8 @@ fn finalize_profiled_btrfs_run(
 ) -> Result<ExitCode> {
     emit_profile();
     match host_run_result {
-        BtrfsHostRunResult::Helper(run_result) => {
-            finalize_btrfs_run_result(run_result, cleanup_result)
+        BtrfsHostRunResult::Helper { result, .. } => {
+            finalize_btrfs_run_result(result, cleanup_result)
         }
         BtrfsHostRunResult::SetupFailed(setup_error) => {
             finalize_post_lease_setup_failure(setup_error, cleanup_result)
@@ -371,7 +402,10 @@ mod tests {
     fn profiled_btrfs_finalization_emits_report_before_returning_helper_result() {
         let emitted = Cell::new(false);
         let code = finalize_profiled_btrfs_run(
-            BtrfsHostRunResult::Helper(Ok(supervisor::ChildStatus::exited(3))),
+            BtrfsHostRunResult::Helper {
+                managed: false,
+                result: Ok(supervisor::ChildStatus::exited(3)),
+            },
             Ok(rootfs::task::CleanupResult::Removed),
             || emitted.set(true),
         )

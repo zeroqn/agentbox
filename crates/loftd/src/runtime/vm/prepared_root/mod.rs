@@ -358,6 +358,7 @@ mod tests {
             disks: Vec::new(),
             extra_env: Vec::new(),
             host_nix_overlay: None,
+            managed_session: None,
         })
         .expect("config should build")
     }

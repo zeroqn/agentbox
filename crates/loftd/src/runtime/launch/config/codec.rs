@@ -11,7 +11,7 @@ use super::components::{guest_init, mounts};
 use super::guest_env::guest_config_json;
 use super::model::{
     BindMount, BindMountSourceKind, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
-    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, NetworkMode,
+    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, ManagedSessionConfig, NetworkMode,
 };
 
 impl LaunchConfig {
@@ -153,6 +153,32 @@ impl LaunchConfig {
         }
         push_field(&mut out, "workdir", &self.workdir);
         push_field(&mut out, "exec_path", &self.exec_path);
+        if let Some(managed) = &self.managed_session {
+            push_field(
+                &mut out,
+                "managed_session.attach_socket",
+                &managed.attach_socket.display().to_string(),
+            );
+            push_field(
+                &mut out,
+                "managed_session.guest_port",
+                &managed.guest_port.to_string(),
+            );
+            push_field(
+                &mut out,
+                "managed_session.protocol_version",
+                &managed.protocol_version.to_string(),
+            );
+            push_field(
+                &mut out,
+                "managed_session.cleanup_task_rootfs_on_exit",
+                if managed.cleanup_task_rootfs_on_exit {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        }
         for (index, disk) in self.disks.iter().enumerate() {
             push_field(&mut out, &format!("disk.{index}.id"), &disk.id);
             push_field(
@@ -277,6 +303,10 @@ impl LaunchConfig {
                     | "network_mode"
                     | "workdir"
                     | "exec_path"
+                    | "managed_session.attach_socket"
+                    | "managed_session.guest_port"
+                    | "managed_session.protocol_version"
+                    | "managed_session.cleanup_task_rootfs_on_exit"
             ) {
                 if fields.insert(key.to_owned(), value).is_some() {
                     anyhow::bail!("loftd launch config repeats key {key}");
@@ -306,6 +336,7 @@ impl LaunchConfig {
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
         let host_nix_overlay = parse_host_nix_overlay(&fields)?;
+        let managed_session = parse_managed_session(&fields)?;
         Ok(Self {
             task_rootfs: PathBuf::from(required("task_rootfs")?),
             hostname: required("hostname")?,
@@ -327,8 +358,38 @@ impl LaunchConfig {
             env: env.into_values().collect(),
             guest_config_env: guest_config_env.into_values().collect(),
             passt_fd: None,
+            managed_session,
         })
     }
+}
+
+fn parse_managed_session(
+    fields: &BTreeMap<String, String>,
+) -> Result<Option<ManagedSessionConfig>> {
+    let keys_present = [
+        "managed_session.attach_socket",
+        "managed_session.guest_port",
+        "managed_session.protocol_version",
+        "managed_session.cleanup_task_rootfs_on_exit",
+    ]
+    .iter()
+    .any(|key| fields.contains_key(*key));
+    if !keys_present {
+        return Ok(None);
+    }
+    Ok(Some(ManagedSessionConfig {
+        attach_socket: PathBuf::from(required_field(fields, "managed_session.attach_socket")?),
+        guest_port: required_field(fields, "managed_session.guest_port")?
+            .parse::<u32>()
+            .context("loftd launch config managed_session.guest_port is invalid")?,
+        protocol_version: required_field(fields, "managed_session.protocol_version")?
+            .parse::<u16>()
+            .context("loftd launch config managed_session.protocol_version is invalid")?,
+        cleanup_task_rootfs_on_exit: parse_bool_field(
+            "managed_session.cleanup_task_rootfs_on_exit",
+            &required_field(fields, "managed_session.cleanup_task_rootfs_on_exit")?,
+        )?,
+    }))
 }
 
 fn parse_host_nix_overlay(fields: &BTreeMap<String, String>) -> Result<Option<HostNixOverlay>> {

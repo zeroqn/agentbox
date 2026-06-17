@@ -17,6 +17,14 @@ const TERM_GRACE: Duration = Duration::from_millis(500);
 pub(crate) enum TaskControlCommand {
     Ps,
     Kill { task_id: String },
+    Attach { task_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedTaskSpec {
+    pub(crate) attach_socket: PathBuf,
+    pub(crate) guest_port: u32,
+    pub(crate) protocol_version: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +35,7 @@ pub(crate) struct ActiveTaskSpec {
     pub(crate) task_dir: PathBuf,
     pub(crate) image_reference: String,
     pub(crate) image_digest: Option<String>,
+    pub(crate) managed: Option<ManagedTaskSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +60,13 @@ impl ProcessIdentity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedTaskRecord {
+    pub(crate) attach_socket: PathBuf,
+    pub(crate) guest_port: u32,
+    pub(crate) protocol_version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActiveTaskRecord {
     pub(crate) task_id: String,
     pub(crate) workspace_slug: String,
@@ -60,6 +76,7 @@ pub(crate) struct ActiveTaskRecord {
     pub(crate) image_digest: Option<String>,
     pub(crate) started_at_unix_secs: u64,
     pub(crate) process: ProcessIdentity,
+    pub(crate) managed: Option<ManagedTaskRecord>,
 }
 
 impl ActiveTaskRecord {
@@ -77,6 +94,11 @@ impl ActiveTaskRecord {
             image_digest: spec.image_digest,
             started_at_unix_secs,
             process,
+            managed: spec.managed.map(|managed| ManagedTaskRecord {
+                attach_socket: managed.attach_socket,
+                guest_port: managed.guest_port,
+                protocol_version: managed.protocol_version,
+            }),
         })
     }
 }
@@ -90,7 +112,7 @@ pub(crate) enum ActiveTaskStatus {
 }
 
 impl ActiveTaskStatus {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Stale => "stale",
@@ -177,6 +199,9 @@ pub(crate) fn run_task_control_command(
             &mut HostTaskSignaler,
             thread::sleep,
         ),
+        TaskControlCommand::Attach { task_id } => {
+            crate::runtime::session::attach::attach_to_task(app_dir, &task_id, &ProcfsInspector)
+        }
     }
 }
 
@@ -256,7 +281,7 @@ fn kill_task_with_cleaner(
     kill_record(record, inspector, signaler, cleaner, sleep)
 }
 
-fn resolve_task_selector<'a>(
+pub(crate) fn resolve_task_selector<'a>(
     records: &'a [ActiveTaskRecord],
     task_selector: &str,
 ) -> Result<&'a ActiveTaskRecord> {
@@ -553,7 +578,7 @@ fn list_workspace_records(workspace_state_root: &Path) -> Result<Vec<ActiveTaskR
     Ok(records)
 }
 
-fn list_records(app_dir: &Path) -> Result<Vec<ActiveTaskRecord>> {
+pub(crate) fn list_records(app_dir: &Path) -> Result<Vec<ActiveTaskRecord>> {
     let mut records = Vec::new();
     if !app_dir.exists() {
         return Ok(records);
@@ -697,6 +722,23 @@ fn encode_record(record: &ActiveTaskRecord) -> String {
         &record.process.proc_start_time_ticks.to_string(),
     );
     push_kv(&mut output, "boot_id", &record.process.boot_id);
+    if let Some(managed) = &record.managed {
+        push_kv(
+            &mut output,
+            "managed_attach_socket",
+            &managed.attach_socket.display().to_string(),
+        );
+        push_kv(
+            &mut output,
+            "managed_guest_port",
+            &managed.guest_port.to_string(),
+        );
+        push_kv(
+            &mut output,
+            "managed_protocol_version",
+            &managed.protocol_version.to_string(),
+        );
+    }
     output
 }
 
@@ -736,7 +778,24 @@ fn decode_record(contents: &str) -> Result<ActiveTaskRecord> {
             proc_start_time_ticks: parse_required(&map, "proc_start_time_ticks")?,
             boot_id: required(&map, "boot_id")?.to_owned(),
         },
+        managed: parse_managed_record(&map)?,
     })
+}
+
+fn parse_managed_record(
+    map: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<ManagedTaskRecord>> {
+    let has_any = map.contains_key("managed_attach_socket")
+        || map.contains_key("managed_guest_port")
+        || map.contains_key("managed_protocol_version");
+    if !has_any {
+        return Ok(None);
+    }
+    Ok(Some(ManagedTaskRecord {
+        attach_socket: PathBuf::from(required(map, "managed_attach_socket")?),
+        guest_port: parse_required(map, "managed_guest_port")?,
+        protocol_version: parse_required(map, "managed_protocol_version")?,
+    }))
 }
 
 fn required<'a>(map: &'a std::collections::BTreeMap<String, String>, key: &str) -> Result<&'a str> {
@@ -941,6 +1000,7 @@ mod tests {
                 proc_start_time_ticks: 456,
                 boot_id: "boot".to_owned(),
             },
+            managed: None,
         }
     }
 

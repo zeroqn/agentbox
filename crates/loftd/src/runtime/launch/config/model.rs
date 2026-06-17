@@ -25,6 +25,9 @@ pub(super) const ENTER_AS_ROOT_ENV: &str = "LOFTD_ENTER_AS_ROOT";
 pub(super) const GUEST_PROFILE_ENV: &str = "LOFTD_GUEST_PROFILE";
 pub(super) const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
+pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
+pub(super) const GUEST_ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
+pub(super) const GUEST_ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
 pub(super) const IMAGE_PATH_ENV: &str = "PATH";
 pub(super) const KRUN_CONFIG_ENV: &str = "KRUN_CONFIG";
 pub(crate) const LOFTD_KRUN_CONFIG_PATH: &str = "/.loftd_config.json";
@@ -205,12 +208,21 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) extra_env: Vec<(String, String)>,
     pub(crate) host_nix_overlay: Option<HostNixOverlay>,
+    pub(crate) managed_session: Option<ManagedSessionConfig>,
 }
 
 /// Serialized helper/libkrun execution contract.
 ///
 /// `LaunchConfig` is derived from a resolved launch plan plus materialized task
 /// rootfs data and is written into the task rootfs for the helper process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedSessionConfig {
+    pub(crate) attach_socket: PathBuf,
+    pub(crate) guest_port: u32,
+    pub(crate) protocol_version: u16,
+    pub(crate) cleanup_task_rootfs_on_exit: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LaunchConfig {
     pub(crate) task_rootfs: PathBuf,
@@ -230,4 +242,5 @@ pub(crate) struct LaunchConfig {
     pub(crate) env: Vec<(String, String)>,
     pub(crate) guest_config_env: Vec<(String, String)>,
     pub(crate) passt_fd: Option<i32>,
+    pub(crate) managed_session: Option<ManagedSessionConfig>,
 }
