@@ -9,6 +9,7 @@ use crate::runtime::session::nix_overlay;
 use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_path};
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
 use crate::runtime::session::supervisor::identity;
+use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
 use crate::runtime::vm::libkrun::{DirectLibkrunLauncher, DynamicLibkrunApi};
 use crate::runtime::vm::network;
 use crate::runtime::vm::prepared_root;
@@ -26,6 +27,27 @@ impl VmWorkerGuard {
         let status = network::wait_pid(self.pid)?;
         self.pid = -1;
         Ok(status)
+    }
+
+    pub(crate) fn try_wait(&mut self) -> Result<Option<i32>> {
+        if self.pid <= 0 {
+            return Ok(None);
+        }
+        let mut status = 0;
+        // SAFETY: pid is a child process id returned by fork.
+        let rc = unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) };
+        if rc == 0 {
+            return Ok(None);
+        }
+        if rc == self.pid {
+            self.pid = -1;
+            return Ok(Some(status));
+        }
+        bail!(
+            "failed to poll loftd VM worker {}: {}",
+            self.pid,
+            std::io::Error::last_os_error()
+        );
     }
 }
 
@@ -51,6 +73,7 @@ pub(crate) fn fork_vm_worker(
         );
     }
     if pid == 0 {
+        HelperReadyWriter::close_in_vm_worker_child_from_env();
         std::process::exit(run_vm_worker_child(config_path, holder_pid, passt_fd));
     }
     Ok(pid)

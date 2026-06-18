@@ -224,6 +224,8 @@ fn launch_config_round_trips_managed_session_contract() {
             attach_socket: Path::new("/state/task/attach.sock").to_path_buf(),
             guest_port: 50_426,
             protocol_version: 1,
+            attach_socket_uid: 1000,
+            attach_socket_gid: 1001,
             cleanup_task_rootfs_on_exit: true,
         }),
     })

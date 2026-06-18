@@ -6,6 +6,8 @@ use std::process::ExitCode;
 pub(crate) mod command;
 pub(crate) mod entry;
 pub(crate) mod identity;
+pub(crate) mod managed_ready;
+pub(crate) mod readiness_pipe;
 pub(crate) mod rlimits;
 pub(crate) mod sigwinch;
 pub(crate) mod vm_child;
@@ -182,6 +184,7 @@ mod tests {
             Path::new("/tmp/loftd-task/launch.conf"),
             crate::logging::LogLevel::Debug,
             false,
+            None,
             &launcher,
         );
 
@@ -240,6 +243,7 @@ mod tests {
             Path::new("/tmp/loftd-task/launch.conf"),
             crate::logging::LogLevel::Debug,
             false,
+            None,
             &launcher,
         );
         assert!(
@@ -260,6 +264,7 @@ mod tests {
             Path::new("/tmp/loftd-task/launch.conf"),
             crate::logging::LogLevel::Debug,
             true,
+            None,
             &launcher,
         );
         assert!(enabled.env.contains(&(
@@ -277,5 +282,33 @@ mod tests {
                 .iter()
                 .any(|(key, _)| key == &OsString::from("LOFTD_GUEST_PROFILE"))
         );
+    }
+
+    #[test]
+    fn managed_libkrun_helper_includes_readiness_fd_env_when_requested() {
+        let launcher = KeepIdLauncher::from_parts(
+            1000,
+            993,
+            "dev",
+            crate::runtime::session::supervisor::identity::SubIdRange::new(100_000, 65_536)
+                .unwrap(),
+            crate::runtime::session::supervisor::identity::SubIdRange::new(100_000, 65_536)
+                .unwrap(),
+        )
+        .unwrap();
+
+        let spec = command::build_helper_command_with_launcher(
+            Path::new("/nix/store/hash-loftd/bin/loftd"),
+            Path::new("/tmp/loftd-task/launch.conf"),
+            crate::logging::LogLevel::Info,
+            false,
+            Some(42),
+            &launcher,
+        );
+
+        assert!(spec.env.contains(&(
+            OsString::from(crate::runtime::session::supervisor::readiness_pipe::READY_FD_ENV),
+            OsString::from("42")
+        )));
     }
 }

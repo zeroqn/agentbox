@@ -220,6 +220,8 @@ pub(crate) struct ManagedSessionConfig {
     pub(crate) attach_socket: PathBuf,
     pub(crate) guest_port: u32,
     pub(crate) protocol_version: u16,
+    pub(crate) attach_socket_uid: u32,
+    pub(crate) attach_socket_gid: u32,
     pub(crate) cleanup_task_rootfs_on_exit: bool,
 }
 

@@ -10,6 +10,8 @@ use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::rootfs::task::{UnsharedBtrfsRootfsCommands, cleanup_task_rootfs_dir};
 use crate::runtime::session::supervisor::LIBKRUN_ENTER_HELPER_ARG;
 use crate::runtime::session::supervisor::identity;
+use crate::runtime::session::supervisor::managed_ready;
+use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
 use crate::runtime::session::supervisor::rlimits;
 use crate::runtime::session::supervisor::vm_child::{self, VmWorkerGuard};
 use crate::runtime::session::task_control;
@@ -44,6 +46,21 @@ fn run_helper(config_path: &Path) -> Result<()> {
 }
 
 fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> Result<()> {
+    let mut ready_writer = HelperReadyWriter::from_env()?;
+    let result = run_helper_profiled_inner(config_path, profiler, &mut ready_writer);
+    if let Err(err) = &result
+        && let Some(writer) = ready_writer.take()
+    {
+        let _ = writer.send_error(&format!("{err:#}"));
+    }
+    result
+}
+
+fn run_helper_profiled_inner(
+    config_path: &Path,
+    profiler: &mut LoftdHostProfiler,
+    ready_writer: &mut Option<HelperReadyWriter>,
+) -> Result<()> {
     if logging::helper_pre_config_debug_enabled() {
         eprintln!(
             "loftd internal: libkrun-network-enter starting config={}",
@@ -86,6 +103,19 @@ fn run_helper_profiled(config_path: &Path, profiler: &mut LoftdHostProfiler) -> 
         VmWorkerGuard::new(profiler.measure_result("helper_vm_worker_fork", || {
             vm_child::fork_vm_worker(config_path, network_session.holder_pid(), passt_fd)
         })?);
+    if let Some(managed) = &config.managed_session
+        && let Some(writer) = ready_writer.take()
+    {
+        match profiler.measure_result("helper_managed_attach_ready", || {
+            managed_ready::wait_for_managed_attach_socket(managed, &mut worker)
+        }) {
+            Ok(()) => writer.send_ready()?,
+            Err(err) => {
+                let _ = writer.send_error(&format!("{err:#}"));
+                return Err(err);
+            }
+        }
+    }
     let (status, wait_duration) =
         profiler.measure_result_with_duration("helper_wait_vm_worker", || worker.wait())?;
     profiler.record_vm_worker_wait_details(task_state_dir, wait_duration);

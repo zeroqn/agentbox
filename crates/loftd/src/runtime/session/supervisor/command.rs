@@ -13,6 +13,7 @@ use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::session::attach::{self, AttachOutcome};
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
+use crate::runtime::session::supervisor::readiness_pipe::{ParentReadyPipe, READY_FD_ENV};
 use crate::runtime::session::supervisor::sigwinch::SigwinchForwarder;
 use crate::runtime::session::supervisor::{ChildStatus, LIBKRUN_ENTER_HELPER_ARG};
 use crate::runtime::session::task_control::{
@@ -26,10 +27,22 @@ pub(crate) fn run_helper_process(
     active_task: &ActiveTaskSpec,
 ) -> Result<ChildStatus> {
     let host_profile_enabled = profiler.is_enabled();
+    let mut ready_pipe = if config.managed_session.is_some() {
+        Some(ParentReadyPipe::create()?)
+    } else {
+        None
+    };
+    let ready_fd = ready_pipe.as_ref().and_then(ParentReadyPipe::writer_fd);
     let spec = profiler.measure_result("helper_command_build", || {
         let executable = std::env::current_exe()
             .context("failed to resolve loftd executable for libkrun helper")?;
-        build_helper_command(&executable, config_path, config, host_profile_enabled)
+        build_helper_command(
+            &executable,
+            config_path,
+            config,
+            host_profile_enabled,
+            ready_fd,
+        )
     })?;
     tracing::debug!(program = ?spec.program, args = ?spec.args, log_level = config.log_level.as_str(), "loftd libkrun helper command constructed");
     let mut command = spec.into_command();
@@ -64,6 +77,9 @@ pub(crate) fn run_helper_process(
         )
         })
     })?;
+    if let Some(pipe) = &mut ready_pipe {
+        pipe.close_parent_writer();
+    }
     tracing::debug!(pid = child.id(), "loftd libkrun helper spawned");
     let process = match ProcessIdentity::from_spawned_process(child.id(), child.id(), child.id()) {
         Ok(process) => process,
@@ -92,8 +108,18 @@ pub(crate) fn run_helper_process(
         return Err(err).context("failed to record active loftd task after helper spawn");
     }
     if let Some(managed) = &config.managed_session {
+        let ready_pipe = ready_pipe.as_mut().ok_or_else(|| {
+            anyhow::anyhow!("managed loftd helper readiness pipe was not initialized")
+        })?;
+        if let Err(err) = profiler.measure_result("helper_managed_attach_ready", || {
+            ready_pipe.wait_for_ready(&mut child, Duration::from_secs(35))
+        }) {
+            terminate_spawned_child_group(&mut child);
+            let _ = remove_active_task(&active_task.task_dir);
+            return Err(err).context("failed while waiting for managed loftd attach readiness");
+        }
         let attach_result = profiler.measure_result("helper_initial_attach", || {
-            attach::attach_to_socket(&managed.attach_socket)
+            attach::attach_to_ready_socket(&managed.attach_socket)
         });
         return match attach_result {
             Ok(AttachOutcome::Detached) => Ok(ChildStatus::detached()),
@@ -182,6 +208,7 @@ fn build_helper_command(
     config_path: &Path,
     config: &LaunchConfig,
     host_profile_enabled: bool,
+    managed_ready_fd: Option<i32>,
 ) -> Result<HelperCommandSpec> {
     let launcher = KeepIdLauncher::from_current_system()?;
     tracing::debug!(summary = %launcher.diagnostic_summary(), "loftd libkrun helper keep-id namespace resolved");
@@ -190,6 +217,7 @@ fn build_helper_command(
         config_path,
         config.log_level,
         host_profile_enabled,
+        managed_ready_fd,
         &launcher,
     ))
 }
@@ -199,11 +227,12 @@ pub(crate) fn build_helper_command_with_launcher(
     config_path: &Path,
     log_level: crate::logging::LogLevel,
     host_profile_enabled: bool,
+    managed_ready_fd: Option<i32>,
     launcher: &KeepIdLauncher,
 ) -> HelperCommandSpec {
     HelperCommandSpec {
         program: launcher.program(),
-        env: helper_env(log_level, host_profile_enabled),
+        env: helper_env(log_level, host_profile_enabled, managed_ready_fd),
         args: launcher.args(executable, LIBKRUN_ENTER_HELPER_ARG, config_path),
     }
 }
@@ -211,6 +240,7 @@ pub(crate) fn build_helper_command_with_launcher(
 fn helper_env(
     log_level: crate::logging::LogLevel,
     host_profile_enabled: bool,
+    managed_ready_fd: Option<i32>,
 ) -> Vec<(OsString, OsString)> {
     let mut env = vec![(
         OsString::from(INTERNAL_LOG_LEVEL_ENV),
@@ -218,6 +248,9 @@ fn helper_env(
     )];
     if host_profile_enabled {
         env.push((OsString::from(LOFTD_HOST_PROFILE_ENV), OsString::from("1")));
+    }
+    if let Some(fd) = managed_ready_fd {
+        env.push((OsString::from(READY_FD_ENV), OsString::from(fd.to_string())));
     }
     env
 }

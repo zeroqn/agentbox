@@ -6,29 +6,29 @@ use std::path::Path;
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::publish::tsi_port_map;
 
-use super::api::LibkrunApi;
+use crate::runtime::vm::libkrun::api::LibkrunApi;
 
-pub(super) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
+pub(in crate::runtime::vm::libkrun) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
-pub(super) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+pub(in crate::runtime::vm::libkrun) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
 
 #[derive(Debug)]
-pub(crate) struct DirectLibkrunLauncher<A> {
+pub(in crate::runtime) struct DirectLibkrunLauncher<A> {
     api: A,
 }
 
 impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
-    pub(crate) fn new(api: A) -> Self {
+    pub(in crate::runtime) fn new(api: A) -> Self {
         Self { api }
     }
 
     #[cfg(test)]
-    pub(crate) fn start_enter(self, config: &LaunchConfig) -> Result<()> {
+    pub(in crate::runtime) fn start_enter(self, config: &LaunchConfig) -> Result<()> {
         self.start_enter_with_pre_enter_hook(config, || {})
     }
 
     #[cfg(test)]
-    pub(crate) fn start_enter_with_pre_enter_hook(
+    pub(in crate::runtime) fn start_enter_with_pre_enter_hook(
         self,
         config: &LaunchConfig,
         before_start_enter: impl FnOnce(),
@@ -36,7 +36,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         self.start_enter_profiled_with_pre_enter_hook(config, None, before_start_enter)
     }
 
-    pub(crate) fn start_enter_profiled_with_pre_enter_hook(
+    pub(in crate::runtime) fn start_enter_profiled_with_pre_enter_hook(
         mut self,
         config: &LaunchConfig,
         profile_path: Option<&Path>,
@@ -107,7 +107,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
                 true,
             )?;
             check_setup("krun_add_vsock_port2", rc)?;
-            tracing::debug!(ctx_id, "krun_add_vsock_port2: complete");
+            tracing::debug!(ctx_id, "krun_add_vsock_port2: mapping registered");
         }
         if config.network_mode == NetworkMode::Passt {
             let passt_fd = config.passt_fd.ok_or_else(|| {

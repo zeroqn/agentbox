@@ -180,6 +180,8 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                             attach_socket: lease.handle().task_dir().join("attach.sock"),
                             guest_port: DEFAULT_ATTACH_PORT,
                             protocol_version: PROTOCOL_VERSION,
+                            attach_socket_uid: current_uid(),
+                            attach_socket_gid: current_gid(),
                             cleanup_task_rootfs_on_exit: !plan.preserve_debug,
                         };
                         match profiler.measure_result("launch_config_build", || {

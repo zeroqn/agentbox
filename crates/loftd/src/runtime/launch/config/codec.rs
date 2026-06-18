@@ -171,6 +171,16 @@ impl LaunchConfig {
             );
             push_field(
                 &mut out,
+                "managed_session.attach_socket_uid",
+                &managed.attach_socket_uid.to_string(),
+            );
+            push_field(
+                &mut out,
+                "managed_session.attach_socket_gid",
+                &managed.attach_socket_gid.to_string(),
+            );
+            push_field(
+                &mut out,
                 "managed_session.cleanup_task_rootfs_on_exit",
                 if managed.cleanup_task_rootfs_on_exit {
                     "true"
@@ -306,6 +316,8 @@ impl LaunchConfig {
                     | "managed_session.attach_socket"
                     | "managed_session.guest_port"
                     | "managed_session.protocol_version"
+                    | "managed_session.attach_socket_uid"
+                    | "managed_session.attach_socket_gid"
                     | "managed_session.cleanup_task_rootfs_on_exit"
             ) {
                 if fields.insert(key.to_owned(), value).is_some() {
@@ -370,6 +382,8 @@ fn parse_managed_session(
         "managed_session.attach_socket",
         "managed_session.guest_port",
         "managed_session.protocol_version",
+        "managed_session.attach_socket_uid",
+        "managed_session.attach_socket_gid",
         "managed_session.cleanup_task_rootfs_on_exit",
     ]
     .iter()
@@ -385,6 +399,12 @@ fn parse_managed_session(
         protocol_version: required_field(fields, "managed_session.protocol_version")?
             .parse::<u16>()
             .context("loftd launch config managed_session.protocol_version is invalid")?,
+        attach_socket_uid: required_field(fields, "managed_session.attach_socket_uid")?
+            .parse::<u32>()
+            .context("loftd launch config managed_session.attach_socket_uid is invalid")?,
+        attach_socket_gid: required_field(fields, "managed_session.attach_socket_gid")?
+            .parse::<u32>()
+            .context("loftd launch config managed_session.attach_socket_gid is invalid")?,
         cleanup_task_rootfs_on_exit: parse_bool_field(
             "managed_session.cleanup_task_rootfs_on_exit",
             &required_field(fields, "managed_session.cleanup_task_rootfs_on_exit")?,

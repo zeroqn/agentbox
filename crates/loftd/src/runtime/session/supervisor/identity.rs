@@ -339,6 +339,119 @@ pub(crate) fn configure_vm_worker_filesystem_identity() -> Result<()> {
     Ok(())
 }
 
+pub(crate) trait FilesystemIdentityScope {
+    fn with_namespace_root<T>(&self, operation: impl FnOnce() -> Result<T>) -> Result<T>;
+}
+
+pub(crate) struct RealFilesystemIdentityScope;
+
+impl FilesystemIdentityScope for RealFilesystemIdentityScope {
+    fn with_namespace_root<T>(&self, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+        with_filesystem_identity(
+            FilesystemIdentity { uid: 0, gid: 0 },
+            &RealFilesystemIdentityOps,
+            operation,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FilesystemIdentity {
+    uid: u32,
+    gid: u32,
+}
+
+trait FilesystemIdentityOps {
+    fn current_uid(&self) -> Result<u32>;
+    fn current_gid(&self) -> Result<u32>;
+    fn set_uid(&self, uid: u32) -> Result<()>;
+    fn set_gid(&self, gid: u32) -> Result<()>;
+}
+
+struct RealFilesystemIdentityOps;
+
+impl FilesystemIdentityOps for RealFilesystemIdentityOps {
+    fn current_uid(&self) -> Result<u32> {
+        current_filesystem_uid()
+    }
+
+    fn current_gid(&self) -> Result<u32> {
+        current_filesystem_gid()
+    }
+
+    fn set_uid(&self, uid: u32) -> Result<()> {
+        set_filesystem_uid(uid)
+    }
+
+    fn set_gid(&self, gid: u32) -> Result<()> {
+        set_filesystem_gid(gid)
+    }
+}
+
+fn with_filesystem_identity<T>(
+    target: FilesystemIdentity,
+    ops: &impl FilesystemIdentityOps,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let previous = current_filesystem_identity(ops)?;
+    if let Err(err) = set_filesystem_identity(ops, target) {
+        let operation_result = Err(err.context(format!(
+            "failed to enter filesystem identity {}:{}",
+            target.uid, target.gid
+        )));
+        return combine_identity_results(
+            operation_result,
+            restore_filesystem_identity(ops, previous),
+        );
+    }
+
+    let operation_result = operation();
+    let restore_result = restore_filesystem_identity(ops, previous);
+    combine_identity_results(operation_result, restore_result)
+}
+
+fn current_filesystem_identity(ops: &impl FilesystemIdentityOps) -> Result<FilesystemIdentity> {
+    Ok(FilesystemIdentity {
+        uid: ops.current_uid()?,
+        gid: ops.current_gid()?,
+    })
+}
+
+fn set_filesystem_identity(
+    ops: &impl FilesystemIdentityOps,
+    identity: FilesystemIdentity,
+) -> Result<()> {
+    ops.set_gid(identity.gid)?;
+    ops.set_uid(identity.uid)?;
+    Ok(())
+}
+
+fn restore_filesystem_identity(
+    ops: &impl FilesystemIdentityOps,
+    previous: FilesystemIdentity,
+) -> Result<()> {
+    set_filesystem_identity(ops, previous).with_context(|| {
+        format!(
+            "failed to restore loftd helper filesystem identity to {}:{}",
+            previous.uid, previous.gid
+        )
+    })
+}
+
+fn combine_identity_results<T>(
+    operation_result: Result<T>,
+    restore_result: Result<()>,
+) -> Result<T> {
+    match (operation_result, restore_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(err), Ok(())) => Err(err),
+        (Ok(_), Err(restore_err)) => Err(restore_err),
+        (Err(operation_err), Err(restore_err)) => {
+            Err(anyhow!("{operation_err:#}; additionally, {restore_err:#}"))
+        }
+    }
+}
+
 pub(crate) fn required_guest_config_u32(config: &LaunchConfig, key: &str) -> Result<u32> {
     let value = config
         .guest_config_env
@@ -355,9 +468,8 @@ fn set_filesystem_uid(uid: u32) -> Result<()> {
     let uid = uid as libc::uid_t;
     // SAFETY: setfsuid changes only the current process filesystem credential.
     unsafe { libc::setfsuid(uid) };
-    // SAFETY: uid_t::MAX is treated by Linux as an invalid fsuid probe and returns the current fsuid.
-    let current = unsafe { libc::setfsuid(libc::uid_t::MAX) };
-    if current < 0 || current as libc::uid_t != uid {
+    let current = current_filesystem_uid()?;
+    if current != uid as u32 {
         bail!("failed to set loftd helper filesystem UID to {uid}; current fsuid is {current}");
     }
     Ok(())
@@ -367,17 +479,35 @@ fn set_filesystem_gid(gid: u32) -> Result<()> {
     let gid = gid as libc::gid_t;
     // SAFETY: setfsgid changes only the current process filesystem credential.
     unsafe { libc::setfsgid(gid) };
-    // SAFETY: gid_t::MAX is treated by Linux as an invalid fsgid probe and returns the current fsgid.
-    let current = unsafe { libc::setfsgid(libc::gid_t::MAX) };
-    if current < 0 || current as libc::gid_t != gid {
+    let current = current_filesystem_gid()?;
+    if current != gid as u32 {
         bail!("failed to set loftd helper filesystem GID to {gid}; current fsgid is {current}");
     }
     Ok(())
 }
 
+fn current_filesystem_uid() -> Result<u32> {
+    // SAFETY: uid_t::MAX is treated by Linux as an invalid fsuid probe and returns the current fsuid.
+    let current = unsafe { libc::setfsuid(libc::uid_t::MAX) };
+    if current < 0 {
+        bail!("failed to read loftd helper filesystem UID; current fsuid is {current}");
+    }
+    Ok(current as u32)
+}
+
+fn current_filesystem_gid() -> Result<u32> {
+    // SAFETY: gid_t::MAX is treated by Linux as an invalid fsgid probe and returns the current fsgid.
+    let current = unsafe { libc::setfsgid(libc::gid_t::MAX) };
+    if current < 0 {
+        bail!("failed to read loftd helper filesystem GID; current fsgid is {current}");
+    }
+    Ok(current as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
 
     fn subid() -> SubIdRange {
         SubIdRange::new(100_000, 65_536).unwrap()
@@ -471,6 +601,89 @@ mod tests {
             parse_subid_range("dev:100000:65536\n", "dev", 1000).unwrap(),
             subid()
         );
+    }
+
+    #[test]
+    fn filesystem_identity_scope_restores_after_success() {
+        let ops = RecordingFilesystemIdentityOps::new(1000, 993);
+
+        let result = with_filesystem_identity(FilesystemIdentity { uid: 0, gid: 0 }, &ops, || {
+            assert_eq!(ops.current_uid().unwrap(), 0);
+            assert_eq!(ops.current_gid().unwrap(), 0);
+            Ok("repaired")
+        })
+        .unwrap();
+
+        assert_eq!(result, "repaired");
+        assert_eq!(ops.current_uid().unwrap(), 1000);
+        assert_eq!(ops.current_gid().unwrap(), 993);
+        assert_eq!(
+            ops.calls(),
+            vec!["set_gid:0", "set_uid:0", "set_gid:993", "set_uid:1000"]
+        );
+    }
+
+    #[test]
+    fn filesystem_identity_scope_restores_after_operation_error() {
+        let ops = RecordingFilesystemIdentityOps::new(1000, 993);
+
+        let err = with_filesystem_identity(FilesystemIdentity { uid: 0, gid: 0 }, &ops, || {
+            assert_eq!(ops.current_uid().unwrap(), 0);
+            assert_eq!(ops.current_gid().unwrap(), 0);
+            Err::<(), _>(anyhow!("repair failed"))
+        })
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("repair failed"));
+        assert_eq!(ops.current_uid().unwrap(), 1000);
+        assert_eq!(ops.current_gid().unwrap(), 993);
+        assert_eq!(
+            ops.calls(),
+            vec!["set_gid:0", "set_uid:0", "set_gid:993", "set_uid:1000"]
+        );
+    }
+
+    #[derive(Debug)]
+    struct RecordingFilesystemIdentityOps {
+        uid: Cell<u32>,
+        gid: Cell<u32>,
+        calls: RefCell<Vec<String>>,
+    }
+
+    impl RecordingFilesystemIdentityOps {
+        fn new(uid: u32, gid: u32) -> Self {
+            Self {
+                uid: Cell::new(uid),
+                gid: Cell::new(gid),
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl FilesystemIdentityOps for RecordingFilesystemIdentityOps {
+        fn current_uid(&self) -> Result<u32> {
+            Ok(self.uid.get())
+        }
+
+        fn current_gid(&self) -> Result<u32> {
+            Ok(self.gid.get())
+        }
+
+        fn set_uid(&self, uid: u32) -> Result<()> {
+            self.calls.borrow_mut().push(format!("set_uid:{uid}"));
+            self.uid.set(uid);
+            Ok(())
+        }
+
+        fn set_gid(&self, gid: u32) -> Result<()> {
+            self.calls.borrow_mut().push(format!("set_gid:{gid}"));
+            self.gid.set(gid);
+            Ok(())
+        }
     }
 
     #[test]

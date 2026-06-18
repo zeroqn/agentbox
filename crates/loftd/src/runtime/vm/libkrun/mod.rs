@@ -5,9 +5,9 @@ mod dynamic;
 mod launcher;
 
 #[cfg(test)]
-pub(crate) use api::LibkrunApi;
-pub(crate) use dynamic::DynamicLibkrunApi;
-pub(crate) use launcher::DirectLibkrunLauncher;
+pub(in crate::runtime::vm::libkrun) use api::LibkrunApi;
+pub(in crate::runtime) use dynamic::DynamicLibkrunApi;
+pub(in crate::runtime) use launcher::DirectLibkrunLauncher;
 
 #[cfg(test)]
 use dynamic::{

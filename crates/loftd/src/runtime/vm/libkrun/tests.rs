@@ -1,11 +1,15 @@
-use super::*;
 use crate::logging::LogLevel;
 use crate::runtime::launch::config::{
     BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DiskAttachment, LaunchConfig,
     LaunchSpec, ManagedSessionConfig, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
     SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
 };
-use crate::runtime::vm::libkrun::launcher::PROFILE_KERNEL_CMDLINE_APPEND;
+use crate::runtime::vm::libkrun::launcher::{NET_FLAG_DHCP_CLIENT, PROFILE_KERNEL_CMDLINE_APPEND};
+use crate::runtime::vm::libkrun::{
+    DirectLibkrunLauncher, LOFTD_LIBKRUN_COMPAT_NET_FEATURES, LibkrunApi,
+    nested_virt_symbol_presence_for_test, planned_libkrun_load_order,
+    planned_libkrun_load_order_for_exe,
+};
 use anyhow::Result;
 use std::cell::RefCell;
 use std::path::Path;
@@ -272,16 +276,28 @@ fn config() -> LaunchConfig {
     .expect("config should build")
 }
 
-fn managed_config() -> LaunchConfig {
+fn managed_config(attach_socket: &Path) -> LaunchConfig {
     LaunchConfig {
         managed_session: Some(ManagedSessionConfig {
-            attach_socket: "/state/task/attach.sock".into(),
+            attach_socket: attach_socket.into(),
             guest_port: 50_426,
             protocol_version: 1,
+            attach_socket_uid: unsafe { libc::geteuid() },
+            attach_socket_gid: unsafe { libc::getegid() },
             cleanup_task_rootfs_on_exit: true,
         }),
         ..config()
     }
+}
+
+fn managed_attach_socket_path() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let socket = dir.path().join("attach.sock");
+    assert!(
+        !socket.exists(),
+        "libkrun creates the managed attach socket during/after VM start"
+    );
+    (dir, socket)
 }
 
 fn passt_config() -> LaunchConfig {
@@ -363,7 +379,7 @@ fn compat_net_features_match_libkrun_header_contract() {
 fn passt_net_flags_match_libkrun_header_width() {
     fn assert_u32(_: u32) {}
 
-    assert_u32(super::launcher::NET_FLAG_DHCP_CLIENT);
+    assert_u32(NET_FLAG_DHCP_CLIENT);
 }
 
 #[test]
@@ -478,12 +494,17 @@ fn nested_virt_check_unsupported_failure_or_absent_still_sets_nested_virt() {
 }
 
 #[test]
-fn managed_session_adds_vsock_listener_before_console_and_start() {
+fn managed_session_adds_vsock_listener_and_starts_before_host_socket_exists() {
+    let (_dir, socket) = managed_attach_socket_path();
     let calls = Rc::new(RefCell::new(Vec::new()));
     DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
-        .start_enter(&managed_config())
+        .start_enter(&managed_config(&socket))
         .expect("managed launch should succeed");
 
+    assert!(
+        !socket.exists(),
+        "launcher must not require libkrun-managed host socket before start"
+    );
     let calls = calls.borrow();
     let vsock_index = calls
         .iter()
@@ -500,10 +521,51 @@ fn managed_session_adds_vsock_listener_before_console_and_start() {
 
     assert_eq!(
         calls[vsock_index],
-        Call::AddVsockPort(7, 50_426, "/state/task/attach.sock".to_owned(), true)
+        Call::AddVsockPort(7, 50_426, socket.display().to_string(), true)
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| matches!(call, Call::AddVsockPort(..)))
+            .count(),
+        1
     );
     assert!(vsock_index < console_index);
     assert!(console_index < start_index);
+    assert!(vsock_index < start_index);
+}
+
+#[test]
+fn managed_session_vsock_registration_failure_is_setup_failure_and_frees_context() {
+    let (_dir, socket) = managed_attach_socket_path();
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let err = DirectLibkrunLauncher::new(FakeLibkrunApi::failing(
+        calls.clone(),
+        "krun_add_vsock_port2",
+    ))
+    .start_enter(&managed_config(&socket))
+    .expect_err("managed launch should fail when libkrun rejects vsock registration");
+
+    assert!(
+        format!("{err:#}").contains("libkrun setup failed: krun_add_vsock_port2"),
+        "unexpected error: {err:#}"
+    );
+    let calls = calls.borrow();
+    assert!(
+        calls
+            .iter()
+            .any(|call| matches!(call, Call::AddVsockPort(..)))
+    );
+    assert!(
+        calls.contains(&Call::FreeCtx(7)),
+        "managed vsock registration setup failure should free the libkrun context"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|call| matches!(call, Call::StartEnter(..))),
+        "VM must not start if libkrun rejects managed vsock registration"
+    );
 }
 
 #[test]
