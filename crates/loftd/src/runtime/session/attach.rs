@@ -171,18 +171,9 @@ fn read_initial_hello(stream: &mut UnixStream) -> Result<InitialHello> {
 }
 
 fn attach_stream_after_hello(mut stream: UnixStream) -> Result<AttachOutcome> {
-    write_frame(&mut stream, &Frame::Attach)?;
-    if let Some(size) = terminal_size(libc::STDIN_FILENO) {
-        write_frame(
-            &mut stream,
-            &Frame::Resize {
-                rows: size.rows,
-                cols: size.cols,
-            },
-        )?;
-    }
-
+    let initial_size = terminal_size(libc::STDIN_FILENO);
     let _raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
+    write_initial_attach_frames(&mut stream, initial_size)?;
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let active = Arc::new(AtomicBool::new(true));
     let stdin_writer = writer.clone();
@@ -193,6 +184,22 @@ fn attach_stream_after_hello(mut stream: UnixStream) -> Result<AttachOutcome> {
     active.store(false, Ordering::Release);
     let _ = stdin_thread.join();
     outcome
+}
+
+fn write_initial_attach_frames<W>(writer: &mut W, initial_size: Option<TerminalSize>) -> Result<()>
+where
+    W: Write,
+{
+    if let Some(size) = initial_size {
+        write_frame(
+            writer,
+            &Frame::Resize {
+                rows: size.rows,
+                cols: size.cols,
+            },
+        )?;
+    }
+    write_frame(writer, &Frame::Attach)
 }
 
 fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Result<()> {
@@ -443,6 +450,38 @@ mod tests {
 
         assert_eq!(outcome, AttachOutcome::Exited(7));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn initial_attach_frames_send_resize_before_command_start_signal() {
+        let mut bytes = Vec::new();
+        write_initial_attach_frames(
+            &mut bytes,
+            Some(TerminalSize {
+                rows: 30,
+                cols: 100,
+            }),
+        )
+        .unwrap();
+        let mut cursor = std::io::Cursor::new(bytes);
+
+        assert_eq!(
+            read_frame(&mut cursor).unwrap(),
+            Some(Frame::Resize {
+                rows: 30,
+                cols: 100
+            })
+        );
+        assert_eq!(read_frame(&mut cursor).unwrap(), Some(Frame::Attach));
+    }
+
+    #[test]
+    fn initial_attach_frames_send_attach_when_resize_unknown() {
+        let mut bytes = Vec::new();
+        write_initial_attach_frames(&mut bytes, None).unwrap();
+        let mut cursor = std::io::Cursor::new(bytes);
+
+        assert_eq!(read_frame(&mut cursor).unwrap(), Some(Frame::Attach));
     }
 
     #[test]

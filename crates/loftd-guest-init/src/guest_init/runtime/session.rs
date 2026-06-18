@@ -34,10 +34,99 @@ pub(in crate::guest_init) fn run(
             config.protocol_version
         );
     }
-    let pty = Pty::open()?;
-    let child = spawn_pty_child(&pty, command, identity, drop_to_identity)?;
     let listener = VsockListener::bind(config.port)?;
-    run_event_loop(pty.master, child, listener)
+    run_pre_start_event_loop(command, identity, drop_to_identity, listener)
+}
+
+fn run_pre_start_event_loop(
+    command: &[String],
+    identity: &DevIdentity,
+    drop_to_identity: bool,
+    listener: VsockListener,
+) -> Result<()> {
+    loop {
+        let client = listener.accept()?;
+        match handle_pre_start_client(client)? {
+            PreStartClientResult::Wait => continue,
+            PreStartClientResult::Start {
+                mut client,
+                initial_size,
+            } => {
+                let pty = match Pty::open() {
+                    Ok(pty) => pty,
+                    Err(err) => {
+                        let _ = write_frame(&mut client, &Frame::Error(format!("{err:#}")));
+                        return Err(err);
+                    }
+                };
+                if let Some(size) = initial_size
+                    && let Err(err) = set_winsize(pty.master.as_raw_fd(), size.rows, size.cols)
+                {
+                    let _ = write_frame(&mut client, &Frame::Error(format!("{err:#}")));
+                    return Err(err);
+                }
+                let child = match spawn_pty_child(&pty, command, identity, drop_to_identity) {
+                    Ok(child) => child,
+                    Err(err) => {
+                        let _ = write_frame(&mut client, &Frame::Error(format!("{err:#}")));
+                        return Err(err);
+                    }
+                };
+                match serve_attached_client(&pty.master, child, client, &listener)? {
+                    ClientResult::Detached => return run_event_loop(pty.master, child, listener),
+                    ClientResult::ChildExited(code) => std::process::exit(code),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PtySize {
+    rows: u16,
+    cols: u16,
+}
+
+enum PreStartClientResult<T> {
+    Wait,
+    Start {
+        client: T,
+        initial_size: Option<PtySize>,
+    },
+}
+
+fn handle_pre_start_client<T>(mut client: T) -> Result<PreStartClientResult<T>>
+where
+    T: Read + Write,
+{
+    write_frame(
+        &mut client,
+        &Frame::Hello {
+            version: PROTOCOL_VERSION,
+        },
+    )?;
+    let mut initial_size = None;
+    loop {
+        match read_frame(&mut client)? {
+            Some(Frame::Attach) => {
+                return Ok(PreStartClientResult::Start {
+                    client,
+                    initial_size,
+                });
+            }
+            Some(Frame::Resize { rows, cols }) => {
+                initial_size = Some(PtySize { rows, cols });
+            }
+            Some(Frame::Detach) | None => return Ok(PreStartClientResult::Wait),
+            Some(frame) => {
+                write_frame(
+                    &mut client,
+                    &Frame::Error(format!("expected attach frame, got {frame:?}")),
+                )?;
+                return Ok(PreStartClientResult::Wait);
+            }
+        }
+    }
 }
 
 fn run_event_loop(master: File, child: libc::pid_t, listener: VsockListener) -> Result<()> {
@@ -97,18 +186,38 @@ fn serve_client(
             version: PROTOCOL_VERSION,
         },
     )?;
-    match read_frame(&mut client)? {
-        Some(Frame::Attach) => {}
-        Some(Frame::Detach) | None => return Ok(ClientResult::Detached),
-        Some(frame) => {
-            write_frame(
-                &mut client,
-                &Frame::Error(format!("expected attach frame, got {frame:?}")),
-            )?;
-            return Ok(ClientResult::Detached);
+    if !read_post_start_attach_request(master, &mut client)? {
+        return Ok(ClientResult::Detached);
+    }
+    serve_attached_client(master, child, client, listener)
+}
+
+fn read_post_start_attach_request<T>(master: &File, client: &mut T) -> Result<bool>
+where
+    T: Read + Write,
+{
+    loop {
+        match read_frame(client)? {
+            Some(Frame::Attach) => return Ok(true),
+            Some(Frame::Resize { rows, cols }) => set_winsize(master.as_raw_fd(), rows, cols)?,
+            Some(Frame::Detach) | None => return Ok(false),
+            Some(frame) => {
+                write_frame(
+                    client,
+                    &Frame::Error(format!("expected attach frame, got {frame:?}")),
+                )?;
+                return Ok(false);
+            }
         }
     }
+}
 
+fn serve_attached_client(
+    master: &File,
+    child: libc::pid_t,
+    mut client: File,
+    listener: &VsockListener,
+) -> Result<ClientResult> {
     let active = Arc::new(AtomicBool::new(true));
     let reader_active = active.clone();
     let mut client_reader = client.try_clone()?;
@@ -418,6 +527,8 @@ fn set_nonblocking(fd: RawFd, enabled: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::IntoRawFd;
+    use std::os::unix::net::{UnixListener, UnixStream};
 
     #[test]
     fn managed_session_rejects_protocol_mismatch() {
@@ -431,5 +542,155 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
             }
         );
+    }
+
+    #[test]
+    fn pre_start_detach_is_readiness_only() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || handle_pre_start_client(server));
+
+        assert_eq!(
+            read_frame(&mut client).unwrap(),
+            Some(Frame::Hello {
+                version: PROTOCOL_VERSION
+            })
+        );
+        write_frame(&mut client, &Frame::Detach).unwrap();
+
+        match server.join().unwrap().unwrap() {
+            PreStartClientResult::Wait => {}
+            PreStartClientResult::Start { .. } => panic!("readiness detach started command"),
+        }
+    }
+
+    #[test]
+    fn pre_start_resize_does_not_start_command() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || handle_pre_start_client(server));
+
+        assert_eq!(
+            read_frame(&mut client).unwrap(),
+            Some(Frame::Hello {
+                version: PROTOCOL_VERSION
+            })
+        );
+        write_frame(
+            &mut client,
+            &Frame::Resize {
+                rows: 40,
+                cols: 120,
+            },
+        )
+        .unwrap();
+        write_frame(&mut client, &Frame::Detach).unwrap();
+
+        match server.join().unwrap().unwrap() {
+            PreStartClientResult::Wait => {}
+            PreStartClientResult::Start { .. } => panic!("pre-attach resize started command"),
+        }
+    }
+
+    #[test]
+    fn pre_start_attach_returns_start_with_latest_resize() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || handle_pre_start_client(server));
+
+        assert_eq!(
+            read_frame(&mut client).unwrap(),
+            Some(Frame::Hello {
+                version: PROTOCOL_VERSION
+            })
+        );
+        write_frame(&mut client, &Frame::Resize { rows: 24, cols: 80 }).unwrap();
+        write_frame(
+            &mut client,
+            &Frame::Resize {
+                rows: 50,
+                cols: 160,
+            },
+        )
+        .unwrap();
+        write_frame(&mut client, &Frame::Attach).unwrap();
+
+        match server.join().unwrap().unwrap() {
+            PreStartClientResult::Start { initial_size, .. } => {
+                assert_eq!(
+                    initial_size,
+                    Some(PtySize {
+                        rows: 50,
+                        cols: 160
+                    })
+                );
+            }
+            PreStartClientResult::Wait => panic!("real attach did not start command"),
+        }
+    }
+
+    #[test]
+    fn pre_start_invalid_frame_errors_without_starting() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || handle_pre_start_client(server));
+
+        assert_eq!(
+            read_frame(&mut client).unwrap(),
+            Some(Frame::Hello {
+                version: PROTOCOL_VERSION
+            })
+        );
+        write_frame(&mut client, &Frame::Data(b"lost input".to_vec())).unwrap();
+        match read_frame(&mut client).unwrap() {
+            Some(Frame::Error(message)) => assert!(message.contains("expected attach frame")),
+            frame => panic!("expected error frame, got {frame:?}"),
+        }
+
+        match server.join().unwrap().unwrap() {
+            PreStartClientResult::Wait => {}
+            PreStartClientResult::Start { .. } => panic!("invalid pre-start data started command"),
+        }
+    }
+
+    #[test]
+    fn attached_client_receives_initial_pty_output() {
+        let pty = Pty::open().unwrap();
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0);
+        if child == 0 {
+            let result = write_then_sleep_on_pty_slave(&pty.slave_path, b"primary-da-visible\n");
+            std::process::exit(if result.is_ok() { 0 } else { 1 });
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let unix_listener = UnixListener::bind(temp.path().join("listener.sock")).unwrap();
+        let listener = VsockListener {
+            fd: unix_listener.into_raw_fd(),
+        };
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let server_file = unsafe { File::from_raw_fd(server.into_raw_fd()) };
+
+        let server = thread::spawn(move || {
+            serve_attached_client(&pty.master, child, server_file, &listener)
+        });
+
+        match read_frame(&mut client).unwrap() {
+            Some(Frame::Data(data)) => assert_eq!(data, b"primary-da-visible\r\n"),
+            frame => panic!("expected initial PTY data, got {frame:?}"),
+        }
+        write_frame(&mut client, &Frame::Detach).unwrap();
+        assert_eq!(server.join().unwrap().unwrap(), ClientResult::Detached);
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+    }
+
+    fn write_then_sleep_on_pty_slave(slave_path: &str, data: &[u8]) -> Result<()> {
+        let mut slave = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(slave_path)?;
+        slave.write_all(data)?;
+        slave.flush()?;
+        thread::sleep(Duration::from_millis(200));
+        Ok(())
     }
 }
