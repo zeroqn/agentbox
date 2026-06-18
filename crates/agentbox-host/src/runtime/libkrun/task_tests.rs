@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::runtime::components::allocator::{HARDENED_ALLOCATOR_ENV, NIX_ALLOCATOR_OWNER};
 use crate::runtime::components::diagnostics::{
     GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
 };
@@ -92,6 +93,20 @@ fn libkrun_task_args_match_ordered_guest_init_override_baseline() {
             ..Default::default()
         })
     );
+}
+
+#[test]
+fn libkrun_task_hardened_mode_emits_only_allocator_selector() {
+    let args = build_run_args(TaskOptions {
+        hardened_allocator: true,
+        ..Default::default()
+    });
+    let joined = args.clone().into_vec().join("\n");
+
+    assert!(args.contains_option_from(NIX_ALLOCATOR_OWNER, "--env", HARDENED_ALLOCATOR_ENV));
+    assert!(!joined.contains("AGENTBOX_MIMALLOC_LIB"));
+    assert!(!joined.contains("AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB"));
+    assert!(!joined.contains("LD_PRELOAD"));
 }
 
 #[test]
@@ -188,6 +203,7 @@ fn libkrun_task_args_enter_as_root_only_when_requested() {
     let default_args = build_args(TaskOptions::default());
     let root_args = build_args(TaskOptions {
         enter_as_root: true,
+        hardened_allocator: false,
         ..Default::default()
     });
 
@@ -199,6 +215,7 @@ fn libkrun_task_args_enter_as_root_only_when_requested() {
 fn libkrun_task_enter_as_root_env_is_owned_by_enter_as_root_owner() {
     let args = build_run_args(TaskOptions {
         enter_as_root: true,
+        hardened_allocator: false,
         ..Default::default()
     });
 
@@ -362,6 +379,7 @@ struct TaskOptions {
     guest_profile: bool,
     guest_debug: bool,
     enter_as_root: bool,
+    hardened_allocator: bool,
     guest_init: Option<GuestInitOverrideMount>,
     publish_specs: Vec<String>,
 }
@@ -374,6 +392,7 @@ impl Default for TaskOptions {
             guest_profile: false,
             guest_debug: false,
             enter_as_root: false,
+            hardened_allocator: false,
             guest_init: None,
             publish_specs: Vec::new(),
         }
@@ -533,6 +552,7 @@ fn task_spec(
         guest_profile: options.guest_profile,
         guest_debug: options.guest_debug,
         enter_as_root: options.enter_as_root,
+        hardened_allocator: options.hardened_allocator,
         guest_init_override,
     }
 }

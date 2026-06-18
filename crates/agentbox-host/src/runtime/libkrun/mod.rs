@@ -26,7 +26,7 @@ use components::memory::resolve_libkrun_ram_mib;
 use task::{LibkrunTaskPodmanSpec, build_libkrun_task_podman_args};
 
 pub(crate) fn run(common: CommonOptions, command: LibkrunCommand) -> Result<ExitCode> {
-    validate_command_options(&command)?;
+    validate_command_options(&common, &command)?;
 
     match command.command {
         Some(LibkrunSubcommand::Resize(resize_options)) => {
@@ -37,7 +37,10 @@ pub(crate) fn run(common: CommonOptions, command: LibkrunCommand) -> Result<Exit
     }
 }
 
-fn validate_command_options(command: &LibkrunCommand) -> Result<()> {
+fn validate_command_options(common: &CommonOptions, command: &LibkrunCommand) -> Result<()> {
+    if common.hardened && command.command.is_some() {
+        bail!("agentbox --hardened is only supported for task runs");
+    }
     if command.command.is_some() && !command.run_options.publish.is_empty() {
         bail!("agentbox libkrun --publish is only supported for interactive libkrun tasks");
     }
@@ -85,6 +88,7 @@ fn run_task(common: CommonOptions, options: LibkrunOptions) -> Result<ExitCode> 
             guest_profile: common.profile,
             guest_debug: common.debug,
             enter_as_root: common.root,
+            hardened_allocator: common.hardened,
             guest_init_override: guest_init_override.as_ref(),
         })?,
         Stdio::inherit(),
@@ -113,6 +117,32 @@ mod tests {
     use crate::cli::{LibkrunCommand, LibkrunOptions, LibkrunResetNixOptions, LibkrunSubcommand};
 
     #[test]
+    fn hardened_rejects_libkrun_maintenance_subcommands_before_runtime_setup() {
+        let err = crate::runtime::libkrun::validate_command_options(
+            &crate::cli::CommonOptions {
+                image: None,
+                pull_latest: false,
+                debug: false,
+                profile: false,
+                root: false,
+                hardened: true,
+            },
+            &LibkrunCommand {
+                run_options: LibkrunOptions::default(),
+                command: Some(LibkrunSubcommand::ResetNix(LibkrunResetNixOptions {
+                    force: true,
+                })),
+            },
+        )
+        .expect_err("hardened should reject maintenance subcommands");
+
+        assert_eq!(
+            err.to_string(),
+            "agentbox --hardened is only supported for task runs"
+        );
+    }
+
+    #[test]
     fn current_host_ids_are_available_for_kvm_drop_contract() {
         let (_uid, _gid) = crate::runtime::libkrun::current_host_ids();
     }
@@ -134,15 +164,25 @@ mod tests {
 
     #[test]
     fn publish_rejects_maintenance_subcommands_before_runtime_setup() {
-        let err = crate::runtime::libkrun::validate_command_options(&LibkrunCommand {
-            run_options: LibkrunOptions {
-                publish: vec!["8080:80".to_owned()],
-                ..Default::default()
+        let err = crate::runtime::libkrun::validate_command_options(
+            &crate::cli::CommonOptions {
+                image: None,
+                pull_latest: false,
+                debug: false,
+                profile: false,
+                root: false,
+                hardened: false,
             },
-            command: Some(LibkrunSubcommand::ResetNix(LibkrunResetNixOptions {
-                force: true,
-            })),
-        })
+            &LibkrunCommand {
+                run_options: LibkrunOptions {
+                    publish: vec!["8080:80".to_owned()],
+                    ..Default::default()
+                },
+                command: Some(LibkrunSubcommand::ResetNix(LibkrunResetNixOptions {
+                    force: true,
+                })),
+            },
+        )
         .expect_err("publish should be rejected for maintenance subcommands");
 
         assert_eq!(

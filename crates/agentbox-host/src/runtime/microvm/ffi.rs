@@ -613,6 +613,7 @@ mod tests {
                 debug: false,
                 profile: false,
                 root: false,
+                hardened: false,
             },
             options: MicrovmOptions {
                 storage: MicrovmStoragePolicy::Auto,

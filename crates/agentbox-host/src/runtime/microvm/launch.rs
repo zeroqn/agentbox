@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::CONTAINER_WORKDIR;
 use crate::cli::{CommonOptions, MicrovmOptions};
+use crate::runtime::components::allocator;
 
 pub(crate) const WORKSPACE_TAG_ENV: &str = "AGENTBOX_MICROVM_WORKSPACE_TAG";
 pub(crate) const WORKSPACE_TARGET_ENV: &str = "AGENTBOX_MICROVM_WORKSPACE_TARGET";
@@ -78,6 +79,9 @@ impl MicrovmLaunchConfig {
         }
         if spec.common.debug {
             env.push((GUEST_DEBUG_ENV.to_owned(), "1".to_owned()));
+        }
+        if let Some(pair) = allocator::hardened_allocator_env_pair(spec.common.hardened) {
+            env.push(pair);
         }
         env.extend(spec.extra_env);
 
@@ -375,6 +379,7 @@ mod tests {
                 debug: true,
                 profile: true,
                 root: false,
+                hardened: false,
             },
             options: MicrovmOptions {
                 storage: MicrovmStoragePolicy::Auto,
@@ -413,6 +418,41 @@ mod tests {
     }
 
     #[test]
+    fn launch_config_hardened_mode_emits_only_allocator_selector() {
+        let config = MicrovmLaunchConfig::build_for_task(MicrovmLaunchSpec {
+            task_rootfs: Path::new("/state/task/rootfs"),
+            workspace_source: Path::new("/workspace-src"),
+            guest_init_exec: "/nix/store/hash-agentbox/bin/agentbox-guest-init",
+            common: CommonOptions {
+                image: None,
+                pull_latest: false,
+                debug: false,
+                profile: false,
+                root: false,
+                hardened: true,
+            },
+            options: MicrovmOptions {
+                storage: MicrovmStoragePolicy::Auto,
+                guest_init: None,
+                preserve_debug: false,
+                mem_gib: Some(2),
+            },
+            host_uid: 1000,
+            host_gid: 1001,
+            vcpus: 2,
+            disks: Vec::new(),
+            extra_env: Vec::new(),
+        })
+        .expect("launch config should build");
+        let serialized = config.serialize();
+
+        assert!(config.env_contains("AGENTBOX_NIX_ALLOCATOR", "hardened"));
+        assert!(!serialized.contains("AGENTBOX_MIMALLOC_LIB"));
+        assert!(!serialized.contains("AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB"));
+        assert!(!serialized.contains("LD_PRELOAD"));
+    }
+
+    #[test]
     fn launch_config_round_trips_through_hex_line_format() {
         let config = MicrovmLaunchConfig::build_for_task(MicrovmLaunchSpec {
             task_rootfs: Path::new("/state/task/rootfs"),
@@ -424,6 +464,7 @@ mod tests {
                 debug: false,
                 profile: false,
                 root: true,
+                hardened: false,
             },
             options: MicrovmOptions {
                 storage: MicrovmStoragePolicy::Auto,

@@ -116,6 +116,26 @@ let
   missingRefsMessageFile = pkgs.writeText "${imageVariant}-image-config-missing-refs-message.txt" (
     builtins.unsafeDiscardStringContext missingRefsMessage
   );
+  containerSourceFile = pkgs.writeText "${imageVariant}-container-nix-source.txt" (
+    builtins.readFile ./container.nix
+  );
+  configSourceFile = pkgs.writeText "${imageVariant}-config-nix-source.txt" (
+    builtins.readFile ./config.nix
+  );
+  layersSourceFile = pkgs.writeText "${imageVariant}-layers-nix-source.txt" (
+    builtins.readFile ./layers.nix
+  );
+  allocatorContracts = ''
+    grep -F 'mimallocLib = ' ${layersSourceFile}
+    grep -F 'pkgs.mimalloc' ${layersSourceFile}
+    grep -F './etc/ld-nix.so.preload' ${containerSourceFile}
+    grep -F 'cat > ./etc/nix-allocator-libs <<EOF_NIX_ALLOCATOR_LIBS' ${containerSourceFile}
+    grep -F 'mimalloc=' ${containerSourceFile}
+    grep -F 'hardened=' ${containerSourceFile}
+    grep -F 'AGENTBOX_MIMALLOC_LIB=' ${configSourceFile}
+    grep -F 'LOFTD_MIMALLOC_LIB=' ${configSourceFile}
+    ! grep -F 'LD_PRELOAD=' ${containerSourceFile}
+  '';
 
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
@@ -124,6 +144,8 @@ let
       }
       ''
         set -euo pipefail
+
+        ${allocatorContracts}
 
         ${
           if imageVariant == "loftd" then
@@ -175,6 +197,8 @@ in
       }
       ''
         set -euo pipefail
+
+        ${allocatorContracts}
 
         cp ${imageConfigRefsFile} image-config-refs
         cp ${imageNixDbStorePathsFile} image-nix-db-valid-paths

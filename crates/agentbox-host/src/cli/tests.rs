@@ -19,6 +19,7 @@ fn cli_accepts_no_arguments_as_default_libkrun() {
     assert!(!cli.debug());
     assert!(!cli.common_options().profile);
     assert!(!cli.common_options().root);
+    assert!(!cli.common_options().hardened);
     assert_eq!(
         cli.runtime_command_or_default(),
         RuntimeCommand::Libkrun(LibkrunCommand::default())
@@ -54,6 +55,7 @@ fn cli_accepts_common_flags_at_top_level() {
         "--profile",
         "--debug",
         "--root",
+        "--hardened",
     ])
     .expect("common top-level flags should parse");
     let common = cli.common_options();
@@ -66,6 +68,7 @@ fn cli_accepts_common_flags_at_top_level() {
     assert!(common.profile);
     assert!(common.debug);
     assert!(common.root);
+    assert!(common.hardened);
 }
 
 #[test]

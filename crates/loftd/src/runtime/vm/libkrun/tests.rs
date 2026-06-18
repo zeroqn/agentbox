@@ -254,6 +254,7 @@ fn config() -> LaunchConfig {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,

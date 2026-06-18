@@ -25,6 +25,7 @@ let
     "AGENTBOX_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
     "AGENTBOX_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"
     "AGENTBOX_NSS_WRAPPER_LIB=${pkgs.nss_wrapper}/lib/libnss_wrapper.so"
+    "AGENTBOX_MIMALLOC_LIB=${layers.mimallocLib}"
     "AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
     "AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"
   ];
@@ -32,6 +33,7 @@ let
   loftdEnv = [
     "LOFTD_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
     "LOFTD_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"
+    "LOFTD_MIMALLOC_LIB=${layers.mimallocLib}"
     "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
     "LOFTD_REAL_PODMAN=${layers.realPodmanBin}"
   ];

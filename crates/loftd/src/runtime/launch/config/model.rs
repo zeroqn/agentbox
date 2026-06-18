@@ -24,6 +24,8 @@ pub(super) const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
 pub(super) const ENTER_AS_ROOT_ENV: &str = "LOFTD_ENTER_AS_ROOT";
 pub(super) const GUEST_PROFILE_ENV: &str = "LOFTD_GUEST_PROFILE";
 pub(super) const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
+pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
+pub(super) const HARDENED_ALLOCATOR_VALUE: &str = "hardened";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
 pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
 pub(super) const GUEST_ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
@@ -42,6 +44,7 @@ pub(super) const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
     "NIX_SSL_CERT_FILE",
     "LOFTD_FISH_CONFIG_SOURCE",
     "LOFTD_STARSHIP_CONFIG_SOURCE",
+    "LOFTD_MIMALLOC_LIB",
     "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB",
     "LOFTD_REAL_PODMAN",
 ];
@@ -202,6 +205,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) publish: &'a [String],
     pub(crate) profile: bool,
     pub(crate) root: bool,
+    pub(crate) hardened: bool,
     pub(crate) host_uid: u32,
     pub(crate) host_gid: u32,
     pub(crate) vcpus: u8,

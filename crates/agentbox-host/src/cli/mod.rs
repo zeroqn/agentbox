@@ -36,6 +36,7 @@ use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
   agentbox container --debug sidecar
   agentbox --profile --debug
   agentbox --root
+  agentbox --hardened
   agentbox --root container
   agentbox --image ghcr.io/example/agentbox:dev container
   AGENTBOX_IMAGE=ghcr.io/example/agentbox:dev agentbox"
@@ -82,6 +83,14 @@ pub struct Cli {
     )]
     root: bool,
 
+    #[arg(
+        long,
+        global = true,
+        help = "Use GrapheneOS hardened_malloc for Nix-linked dynamic binaries",
+        long_help = "Use GrapheneOS hardened_malloc for Nix-linked dynamic binaries by asking guest-init to write hardened_malloc to /etc/ld-nix.so.preload. By default, agentbox uses mimalloc for Nix-linked dynamic binaries. Foreign/FHS binaries are unchanged."
+    )]
+    hardened: bool,
+
     #[command(subcommand)]
     command: Option<CliCommand>,
 }
@@ -99,6 +108,7 @@ impl Cli {
             debug: self.debug,
             profile: self.profile,
             root: self.root,
+            hardened: self.hardened,
         }
     }
 
@@ -117,6 +127,7 @@ impl Cli {
             debug: self.debug,
             profile: self.profile,
             root: self.root,
+            hardened: self.hardened,
         };
         let command = self
             .command
@@ -134,6 +145,7 @@ pub struct CommonOptions {
     pub debug: bool,
     pub profile: bool,
     pub root: bool,
+    pub hardened: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

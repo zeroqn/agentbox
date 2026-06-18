@@ -641,16 +641,20 @@ fn agentbox_image_does_not_select_loftd_as_dev_helper() {
 }
 
 #[test]
-fn image_materializes_graphene_hardened_malloc_as_nix_loader_preload() {
+fn image_materializes_mimalloc_default_and_hardened_allocator_metadata() {
     for required in [
-        "grapheneHardenedMalloc = pkgs.graphene-hardened-malloc.overrideAttrs",
-        r#"version = "14";"#,
-        r#"tag = "14";"#,
-        r#"hash = "sha256-QUGDJyTnD5MuBUMlc4PZOZSAfevVUB6QbncVyXIAgb8=";"#,
+        r#"mimallocLib = "${pkgs.mimalloc}/lib/libmimalloc.so""#,
         r#"hardenedMallocLib = "${grapheneHardenedMalloc}/lib/libhardened_malloc.so""#,
-        r#"printf '%s\n' '${layers.hardenedMallocLib}' > ./etc/ld-nix.so.preload"#,
+        r#"printf '%s\n' '${layers.mimallocLib}' > ./etc/ld-nix.so.preload"#,
+        "cat > ./etc/nix-allocator-libs <<EOF_NIX_ALLOCATOR_LIBS",
+        "mimalloc=${layers.mimallocLib}",
+        "hardened=${layers.hardenedMallocLib}",
         "chmod 0644 ./etc/ld-nix.so.preload",
+        "chmod 0644 ./etc/nix-allocator-libs",
+        r#"AGENTBOX_MIMALLOC_LIB=${layers.mimallocLib}"#,
         r#"AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"#,
+        r#"LOFTD_MIMALLOC_LIB=${layers.mimallocLib}"#,
+        r#"LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"#,
     ] {
         assert!(
             LAYERS.contains(required)
@@ -660,6 +664,20 @@ fn image_materializes_graphene_hardened_malloc_as_nix_loader_preload() {
         );
     }
     assert!(!CONTAINER_NIX.contains("LD_PRELOAD=${layers.hardenedMallocLib}"));
+    assert!(!CONTAINER_NIX.contains("LD_PRELOAD=${layers.mimallocLib}"));
+}
+
+#[test]
+fn image_retains_graphene_hardened_malloc_for_hardened_mode() {
+    for required in [
+        "grapheneHardenedMalloc = pkgs.graphene-hardened-malloc.overrideAttrs",
+        r#"version = "14";"#,
+        r#"tag = "14";"#,
+        r#"hash = "sha256-QUGDJyTnD5MuBUMlc4PZOZSAfevVUB6QbncVyXIAgb8=";"#,
+        r#"hardenedMallocLib = "${grapheneHardenedMalloc}/lib/libhardened_malloc.so""#,
+    ] {
+        assert!(LAYERS.contains(required), "missing {required}");
+    }
 }
 
 #[test]

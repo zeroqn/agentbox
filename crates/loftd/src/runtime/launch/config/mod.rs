@@ -49,6 +49,13 @@ impl LaunchConfig {
         if spec.log_level.enables_debug() {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_DEBUG_ENV, "1");
         }
+        if spec.hardened {
+            guest_env::insert_env(
+                &mut guest_config_env,
+                model::NIX_ALLOCATOR_ENV,
+                model::HARDENED_ALLOCATOR_VALUE,
+            );
+        }
         components::network::contribute_guest_env(&mut guest_config_env, spec.network_mode);
         if let Some(managed) = &spec.managed_session {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_SESSION_MANAGED_ENV, "1");

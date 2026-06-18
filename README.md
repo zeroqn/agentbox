@@ -112,21 +112,29 @@ an older image without that wrapper, use this temporary workaround:
 env -u LD_PRELOAD -u NSS_WRAPPER_PASSWD -u NSS_WRAPPER_GROUP nix develop
 ```
 
-The container also enables GrapheneOS `hardened_malloc` for Nix-linked dynamic
-binaries through `/etc/ld-nix.so.preload`, matching NixOS' allocator preload
-mechanism rather than setting a global allocator `LD_PRELOAD`. `rustc` and
-`rust-analyzer` are started through wrappers that mask `/etc/ld-nix.so.preload`
-for those processes so they keep the default allocator. Foreign/FHS glibc
-binaries usually read `/etc/ld.so.preload` instead of `/etc/ld-nix.so.preload`,
-while static or musl binaries generally ignore both files. For a specific
-foreign/FHS command, opt in with:
+The container defaults Nix-linked dynamic binaries to `mimalloc` through
+`/etc/ld-nix.so.preload`, matching NixOS' allocator preload mechanism rather
+than setting a global allocator `LD_PRELOAD`. Pass `--hardened` to `agentbox` or
+`loftd` task runs to have guest-init rewrite `/etc/ld-nix.so.preload` to
+GrapheneOS `hardened_malloc` instead. The image records both allocator paths in
+`/etc/nix-allocator-libs`; the host passes only the allocator mode selector.
+`rustc` and `rust-analyzer` are started through wrappers that mask
+`/etc/ld-nix.so.preload` for those processes so they keep the default allocator.
+Foreign/FHS glibc binaries usually read `/etc/ld.so.preload` instead of
+`/etc/ld-nix.so.preload`, while static or musl binaries generally ignore both
+files. For a specific foreign/FHS command, opt in to GrapheneOS
+`hardened_malloc` with:
 
 ```bash
 hardening-run some-foreign-binary --flag
 ```
 
-`hardening-run` sets `LD_PRELOAD` only for the wrapped command, so the usual
-opt-out remains:
+`hardening-run` sets `LD_PRELOAD` only for the wrapped command. The in-image
+`agentbox-guest-init` and `loftd-guest-init` binaries are the static musl
+bootstrap path that materializes the selected preload file; dynamic
+`--guest-init` overrides are not guaranteed to run under GrapheneOS
+`hardened_malloc` until after they have started and rewritten
+`/etc/ld-nix.so.preload`. The usual opt-out remains:
 
 ```bash
 env -u LD_PRELOAD some-foreign-binary --flag
@@ -1368,7 +1376,7 @@ The container provides:
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
 - `gcc`, `musl`, `clang`
-- GrapheneOS `hardened_malloc` enabled for Nix-linked dynamic binaries through `/etc/ld-nix.so.preload`, plus `hardening-run` for per-command foreign/FHS `LD_PRELOAD` opt-in
+- `mimalloc` enabled by default for Nix-linked dynamic binaries through `/etc/ld-nix.so.preload`; `agentbox --hardened` and `loftd --hardened` switch task runs to GrapheneOS `hardened_malloc`, while `hardening-run` remains the per-command foreign/FHS `LD_PRELOAD` opt-in
 - RTK (`rtk`)
 - libkrun 1.18.0 (`libkrun.so`) plus pinned `libkrunfw.so` for nested KVM support inside the container
 - `nix` wrapper that clears the container NSS wrapper preload before invoking

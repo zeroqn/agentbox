@@ -96,6 +96,13 @@ pub(crate) struct Cli {
     root: bool,
 
     #[arg(
+        long,
+        help = "Use GrapheneOS hardened_malloc for Nix-linked dynamic binaries",
+        long_help = "Use GrapheneOS hardened_malloc for Nix-linked dynamic binaries by asking guest-init to write hardened_malloc to /etc/ld-nix.so.preload. By default, loftd uses mimalloc for Nix-linked dynamic binaries. Foreign/FHS binaries are unchanged."
+    )]
+    hardened: bool,
+
+    #[arg(
         long = "rootfs-backend",
         value_name = "BACKEND",
         value_parser = parse_rootfs_backend_arg,
@@ -353,6 +360,7 @@ impl Cli {
             log_settings,
             profile: self.profile,
             root: self.root,
+            hardened: self.hardened,
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
             guest_init: self.guest_init,
@@ -387,6 +395,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) log_settings: LogSettings,
     pub(crate) profile: bool,
     pub(crate) root: bool,
+    pub(crate) hardened: bool,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
     pub(crate) guest_init: Option<PathBuf>,
@@ -602,6 +611,27 @@ mod tests {
             whitespace_err.kind(),
             clap::error::ErrorKind::ValueValidation
         );
+    }
+
+    #[test]
+    fn parses_hardened_run_option() {
+        let cli = Cli::try_parse_from(["loftd", "--hardened"]).expect("hardened should parse");
+        let options = cli.into_runtime_options();
+
+        assert!(options.hardened);
+    }
+
+    #[test]
+    fn hardened_is_inert_for_management_subcommands() {
+        let cli = Cli::try_parse_from(["loftd", "--hardened", "images", "list"])
+            .expect("hardened stays parse-compatible for management commands");
+
+        match cli.into_action() {
+            crate::cli::CliAction::Images { command, .. } => {
+                assert_eq!(command, crate::cli::ImagesCommand::List)
+            }
+            other => panic!("expected images action, got {other:?}"),
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::podman::run::{CORE, RunArgs, RunSpec};
 use crate::runtime::components::volumes::TaskVolumeMounts;
-use crate::runtime::components::{diagnostics, identity, volumes};
+use crate::runtime::components::{allocator, diagnostics, identity, volumes};
 use crate::runtime::container::nix_sidecar::{SidecarNixRuntime, append_task_sidecar_nix_args};
 use crate::{CONTAINER_TMP_TMPFS, CONTAINER_WORKDIR, INTERACTIVE_SHELL};
 
@@ -15,6 +15,7 @@ pub(crate) struct ContainerTaskPodmanSpec<'a> {
     pub(crate) guest_profile: bool,
     pub(crate) guest_debug: bool,
     pub(crate) enter_as_root: bool,
+    pub(crate) hardened_allocator: bool,
 }
 
 pub(crate) fn build_container_task_podman_args(
@@ -39,6 +40,7 @@ fn build_container_task_run_args(spec: ContainerTaskPodmanSpec<'_>) -> Result<Ru
     run.option(CORE, "--tmpfs", CONTAINER_TMP_TMPFS);
     append_task_sidecar_nix_args(&mut run, spec.nix_runtime)?;
     diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
+    allocator::append_hardened_allocator_env(&mut run, spec.hardened_allocator);
     run.arg(CORE, spec.image);
     run.args(CORE, [INTERACTIVE_SHELL, "-l"]);
 
@@ -47,6 +49,7 @@ fn build_container_task_run_args(spec: ContainerTaskPodmanSpec<'_>) -> Result<Ru
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::components::allocator::{HARDENED_ALLOCATOR_ENV, NIX_ALLOCATOR_OWNER};
     use crate::runtime::components::diagnostics::{
         GUEST_DEBUG_ENV, GUEST_DIAGNOSTICS_OWNER, GUEST_PROFILE_ENV,
     };
@@ -196,6 +199,7 @@ mod tests {
             guest_profile: false,
             guest_debug: false,
             enter_as_root: true,
+            hardened_allocator: false,
         })
         .expect("container task args should build");
 
@@ -226,6 +230,7 @@ mod tests {
             guest_profile: false,
             guest_debug: false,
             enter_as_root: true,
+            hardened_allocator: false,
         })
         .expect("container task args should build");
 
@@ -246,6 +251,7 @@ mod tests {
             guest_profile: true,
             guest_debug: true,
             enter_as_root: false,
+            hardened_allocator: false,
         })
         .expect("container task args should build");
 
@@ -268,11 +274,36 @@ mod tests {
             guest_profile: true,
             guest_debug: true,
             enter_as_root: false,
+            hardened_allocator: false,
         })
         .expect("container task args should build");
 
         assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_PROFILE_ENV));
         assert!(args.contains_option_from(GUEST_DIAGNOSTICS_OWNER, "--env", GUEST_DEBUG_ENV));
+    }
+
+    #[test]
+    fn container_task_hardened_mode_emits_only_allocator_selector() {
+        let runtime = sidecar_runtime();
+        let task_volumes = default_task_volumes();
+        let args = build_container_task_run_args(ContainerTaskPodmanSpec {
+            image: crate::DEFAULT_IMAGE,
+            container_name: "project-random",
+            hostname: "project-agentbox",
+            task_volumes: &task_volumes,
+            nix_runtime: &runtime,
+            guest_profile: false,
+            guest_debug: false,
+            enter_as_root: false,
+            hardened_allocator: true,
+        })
+        .expect("container task args should build");
+        let joined = args.clone().into_vec().join("\n");
+
+        assert!(args.contains_option_from(NIX_ALLOCATOR_OWNER, "--env", HARDENED_ALLOCATOR_ENV));
+        assert!(!joined.contains("AGENTBOX_MIMALLOC_LIB"));
+        assert!(!joined.contains("AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB"));
+        assert!(!joined.contains("LD_PRELOAD"));
     }
 
     fn sidecar_runtime() -> SidecarNixRuntime {
@@ -309,6 +340,7 @@ mod tests {
             guest_profile: false,
             guest_debug: false,
             enter_as_root: false,
+            hardened_allocator: false,
         }
     }
 

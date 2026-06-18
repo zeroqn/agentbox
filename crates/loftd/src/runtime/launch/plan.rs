@@ -40,6 +40,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) log_level: LogLevel,
     pub(crate) profile: bool,
     pub(crate) root: bool,
+    pub(crate) hardened: bool,
     pub(crate) preserve_debug: bool,
     pub(crate) config_diagnostics: ConfigDiagnostics,
 }
@@ -120,6 +121,7 @@ impl LaunchPlan {
             log_level: options.log_settings.level,
             profile: options.profile,
             root: options.root,
+            hardened: options.hardened,
             preserve_debug: options.preserve_debug,
             config_diagnostics: ConfigDiagnostics {
                 config_path: config.path().to_path_buf(),
@@ -250,6 +252,7 @@ mod tests {
             log_settings: LogSettings::resolve(None, false, None),
             profile: false,
             root: false,
+            hardened: false,
             rootfs_backend: None,
             container_store_backend: None,
             guest_init: None,

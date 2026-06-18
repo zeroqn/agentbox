@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::podman::run::{CORE, RunArgs, RunSpec};
 use crate::runtime::components::volumes::TaskVolumeMounts;
-use crate::runtime::components::{diagnostics, identity, volumes};
+use crate::runtime::components::{allocator, diagnostics, identity, volumes};
 use crate::runtime::libkrun::components::disk::containers::podman as containers_podman;
 use crate::runtime::libkrun::components::disk::containers::raw_image::RawContainerDisk;
 use crate::runtime::libkrun::components::disk::nix::podman as nix_podman;
@@ -29,6 +29,7 @@ pub(crate) struct LibkrunTaskPodmanSpec<'a> {
     pub(crate) guest_profile: bool,
     pub(crate) guest_debug: bool,
     pub(crate) enter_as_root: bool,
+    pub(crate) hardened_allocator: bool,
     pub(crate) guest_init_override: Option<&'a GuestInitOverrideMount>,
 }
 
@@ -65,6 +66,7 @@ pub(crate) fn build_libkrun_task_run_args(spec: LibkrunTaskPodmanSpec<'_>) -> Re
     network::append_mode_args(&mut run, spec.tsi);
     network::append_publish_args(&mut run, spec.publish_specs);
     diagnostics::append_guest_diagnostics(&mut run, spec.guest_profile, spec.guest_debug);
+    allocator::append_hardened_allocator_env(&mut run, spec.hardened_allocator);
     guest_init::append_guest_init_override_args(&mut run, spec.guest_init_override);
     run.arg(CORE, spec.image);
     run.args(CORE, [INTERACTIVE_SHELL, "-l"]);

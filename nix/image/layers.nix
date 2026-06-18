@@ -45,6 +45,7 @@ let
     };
   });
   emptyLdNixSoPreload = pkgs.writeText "agentbox-empty-ld-nix-so-preload" "";
+  mimallocLib = "${pkgs.mimalloc}/lib/libmimalloc.so";
   hardenedMallocLib = "${grapheneHardenedMalloc}/lib/libhardened_malloc.so";
   hardeningRun = pkgs.writeShellScriptBin "hardening-run" ''
     if [ "$#" -eq 0 ]; then
@@ -384,6 +385,7 @@ let
   ];
 
   baseImagePackages = [
+    pkgs.mimalloc
     grapheneHardenedMalloc
     hardeningRun
     pkgs.bashInteractive
@@ -608,6 +610,7 @@ in
     rustAnalyzerCommandCompat
     grapheneHardenedMalloc
     hardeningRun
+    mimallocLib
     hardenedMallocLib
     nixBuilderGroupId
     nixBuilderGroupMembers

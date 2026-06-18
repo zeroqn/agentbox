@@ -464,6 +464,7 @@ mod tests {
             debug,
             profile,
             root: false,
+            hardened: false,
         };
 
         assert!(!host_profile_enabled(&common(false, false)));
@@ -492,6 +493,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -535,6 +537,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -578,6 +581,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -627,6 +631,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -672,6 +677,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -728,6 +734,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -776,6 +783,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -820,6 +828,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -867,6 +876,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -897,6 +907,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::Auto,
@@ -926,6 +937,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -956,6 +968,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,
@@ -987,6 +1000,7 @@ mod tests {
                     debug: false,
                     profile: false,
                     root: false,
+                    hardened: false,
                 },
                 options: MicrovmOptions {
                     storage: MicrovmStoragePolicy::FuseOverlay,

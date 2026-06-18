@@ -33,6 +33,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         publish: &[],
         profile: true,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -108,6 +109,7 @@ fn launch_config_uses_explicit_guest_command() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -148,6 +150,7 @@ fn launch_config_round_trips_through_hex_line_format() {
         publish: &[],
         profile: false,
         root: true,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -214,6 +217,7 @@ fn launch_config_round_trips_managed_session_contract() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -263,6 +267,7 @@ fn launch_config_round_trips_volume_source_kind_and_access_mode() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -310,6 +315,7 @@ fn launch_config_carries_host_nix_overlay_and_adds_reserved_nix_mount() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -354,6 +360,7 @@ fn launch_config_rejects_user_mount_that_collides_with_host_nix_overlay() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -396,6 +403,7 @@ fn launch_config_rejects_noncanonical_reserved_target_aliases() {
             publish: &[],
             profile: false,
             root: false,
+            hardened: false,
             host_uid: 1000,
             host_gid: 1001,
             vcpus: 2,
@@ -439,6 +447,7 @@ fn launch_config_carries_publish_specs_from_launch_spec() {
         publish: &publish,
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -571,6 +580,7 @@ fn launch_config_rejects_config_codex_mounts() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -606,6 +616,7 @@ fn launch_config_requires_guest_init_override_to_be_read_only() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -723,6 +734,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
             "LOFTD_HOST_UID=image".to_owned(),
             "LOFTD_FISH_CONFIG_SOURCE=/nix/store/fish-config".to_owned(),
             "LOFTD_STARSHIP_CONFIG_SOURCE=/nix/store/starship.toml".to_owned(),
+            "LOFTD_MIMALLOC_LIB=/nix/store/libmimalloc.so".to_owned(),
             "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=/nix/store/libhardened_malloc.so".to_owned(),
             "LOFTD_REAL_PODMAN=/nix/store/podman/bin/podman".to_owned(),
             "NIX_CONFIG=experimental-features = nix-command flakes".to_owned(),
@@ -748,6 +760,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -770,6 +783,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         config
             .guest_config_env_contains("LOFTD_STARSHIP_CONFIG_SOURCE", "/nix/store/starship.toml")
     );
+    assert!(config.guest_config_env_contains("LOFTD_MIMALLOC_LIB", "/nix/store/libmimalloc.so"));
     assert!(config.guest_config_env_contains(
         "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB",
         "/nix/store/libhardened_malloc.so"
@@ -806,6 +820,54 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
 }
 
 #[test]
+fn hardened_launch_config_emits_only_allocator_selector() {
+    let image_process_config = OciProcessConfig {
+        env: vec![
+            "LOFTD_MIMALLOC_LIB=/nix/store/libmimalloc.so".to_owned(),
+            "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=/nix/store/libhardened_malloc.so".to_owned(),
+        ],
+        ..OciProcessConfig::default()
+    };
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: true,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build");
+
+    assert!(config.guest_config_env_contains("LOFTD_NIX_ALLOCATOR", "hardened"));
+    assert!(config.guest_config_env_contains("LOFTD_MIMALLOC_LIB", "/nix/store/libmimalloc.so"));
+    assert!(config.guest_config_env_contains(
+        "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB",
+        "/nix/store/libhardened_malloc.so"
+    ));
+    assert!(
+        config
+            .env
+            .iter()
+            .all(|(key, value)| key != "LOFTD_NIX_ALLOCATOR" && !value.contains("LD_PRELOAD"))
+    );
+}
+
+#[test]
 fn guest_debug_env_follows_effective_log_level() {
     let image_process_config = OciProcessConfig::default();
     let config = LaunchConfig::build_for_task(LaunchSpec {
@@ -822,6 +884,7 @@ fn guest_debug_env_follows_effective_log_level() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -847,6 +910,7 @@ fn guest_debug_env_follows_effective_log_level() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -876,6 +940,7 @@ fn profile_env_does_not_raise_guest_debug_level() {
         publish: &[],
         profile: true,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -907,6 +972,7 @@ fn passt_mode_sets_guest_passt_dns_gate() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -945,6 +1011,7 @@ fn writes_loftd_config_json_under_task_rootfs() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
@@ -997,6 +1064,7 @@ fn malformed_image_env_is_rejected() {
             publish: &[],
             profile: false,
             root: false,
+            hardened: false,
             host_uid: 1000,
             host_gid: 1001,
             vcpus: 2,
@@ -1030,6 +1098,7 @@ fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
         publish: &[],
         profile: false,
         root: false,
+        hardened: false,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,

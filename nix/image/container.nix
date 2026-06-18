@@ -83,8 +83,13 @@ let
       if [ ! -e ./etc/group ]; then
         printf 'root:x:0:\n' > ./etc/group
       fi
-      printf '%s\n' '${layers.hardenedMallocLib}' > ./etc/ld-nix.so.preload
+      printf '%s\n' '${layers.mimallocLib}' > ./etc/ld-nix.so.preload
       chmod 0644 ./etc/ld-nix.so.preload
+      cat > ./etc/nix-allocator-libs <<EOF_NIX_ALLOCATOR_LIBS
+      mimalloc=${layers.mimallocLib}
+      hardened=${layers.hardenedMallocLib}
+      EOF_NIX_ALLOCATOR_LIBS
+      chmod 0644 ./etc/nix-allocator-libs
       cat > ./etc/containers/containers.conf <<'EOF_CONTAINERS_CONF'
       [containers]
       seccomp_profile = "${containerLibPolicySeccompJson}/share/containers/seccomp.json"

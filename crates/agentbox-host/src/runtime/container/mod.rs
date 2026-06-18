@@ -1,7 +1,7 @@
 mod nix_sidecar;
 mod task;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::env;
 use std::process::{ExitCode, Stdio};
 
@@ -25,6 +25,8 @@ pub(crate) fn run(common: CommonOptions, options: ContainerOptions) -> Result<Ex
         .context("failed to canonicalize current directory")?;
     let image = resolve_image(common.image.as_deref(), common.pull_latest)?;
     let state_layout = resolve_state_layout(&cwd)?;
+
+    validate_mode_options(&common, mode)?;
 
     if !should_launch_task_container(mode) {
         let sidecar = prepare_sidecar_nix_runtime(
@@ -66,6 +68,7 @@ pub(crate) fn run(common: CommonOptions, options: ContainerOptions) -> Result<Ex
             guest_profile: common.profile,
             guest_debug: common.debug,
             enter_as_root: common.root,
+            hardened_allocator: common.hardened,
         })?,
         Stdio::inherit(),
         Stdio::inherit(),
@@ -86,6 +89,13 @@ pub(crate) fn run(common: CommonOptions, options: ContainerOptions) -> Result<Ex
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }
 
+fn validate_mode_options(common: &CommonOptions, mode: ContainerMode) -> Result<()> {
+    if common.hardened && !should_launch_task_container(mode) {
+        bail!("agentbox --hardened is only supported for task runs");
+    }
+    Ok(())
+}
+
 fn should_launch_task_container(mode: ContainerMode) -> bool {
     mode == ContainerMode::Task
 }
@@ -103,12 +113,33 @@ fn sidecar_socket_health_probe(mode: ContainerMode) -> SidecarSocketHealthProbe 
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::ContainerMode;
+    use crate::cli::{CommonOptions, ContainerMode};
     use crate::runtime::container::nix_sidecar::SidecarSocketHealthProbe;
     use crate::runtime::container::{
         should_cleanup_idle_sidecar_after_run, should_launch_task_container,
-        sidecar_socket_health_probe,
+        sidecar_socket_health_probe, validate_mode_options,
     };
+
+    #[test]
+    fn hardened_rejects_container_sidecar_mode() {
+        let err = validate_mode_options(
+            &CommonOptions {
+                image: None,
+                pull_latest: false,
+                debug: false,
+                profile: false,
+                root: false,
+                hardened: true,
+            },
+            ContainerMode::Sidecar,
+        )
+        .expect_err("hardened should be task-only");
+
+        assert_eq!(
+            err.to_string(),
+            "agentbox --hardened is only supported for task runs"
+        );
+    }
 
     #[test]
     fn sidecar_branch_skips_task_launch_and_idle_cleanup() {
