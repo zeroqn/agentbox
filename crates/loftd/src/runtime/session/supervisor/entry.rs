@@ -16,6 +16,7 @@ use crate::runtime::session::supervisor::rlimits;
 use crate::runtime::session::supervisor::vm_child::{self, VmWorkerGuard};
 use crate::runtime::session::task_control;
 use crate::runtime::vm::network::{NetworkManagerSession, PasstWorkerSession, status_exit_code};
+use crate::runtime::vm::prepared_root;
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
     let [subcommand, config_path]: [OsString; 2] = args.try_into().map_err(|args: Vec<_>| {
@@ -139,13 +140,33 @@ fn run_helper_profiled_inner(
 }
 
 fn cleanup_managed_task_after_vm_exit(config: &LaunchConfig, task_state_dir: &Path) -> Result<()> {
+    cleanup_managed_task_after_vm_exit_with(
+        config,
+        task_state_dir,
+        || prepared_root::cleanup_existing(config, task_state_dir),
+        || cleanup_task_rootfs_dir(task_state_dir, &UnsharedBtrfsRootfsCommands),
+    )
+}
+
+fn cleanup_managed_task_after_vm_exit_with<PreparedRootCleanup, TaskRootfsCleanup>(
+    config: &LaunchConfig,
+    task_state_dir: &Path,
+    cleanup_prepared_root: PreparedRootCleanup,
+    cleanup_task_rootfs: TaskRootfsCleanup,
+) -> Result<()>
+where
+    PreparedRootCleanup: FnOnce() -> Result<()>,
+    TaskRootfsCleanup: FnOnce() -> Result<()>,
+{
     let Some(managed) = &config.managed_session else {
         return Ok(());
     };
     task_control::remove_active_task(task_state_dir)?;
     let _ = std::fs::remove_file(&managed.attach_socket);
     if managed.cleanup_task_rootfs_on_exit {
-        cleanup_task_rootfs_dir(task_state_dir, &UnsharedBtrfsRootfsCommands)?;
+        cleanup_prepared_root()
+            .context("failed to clean up loftd prepared-root before managed task rootfs removal")?;
+        cleanup_task_rootfs()?;
     }
     Ok(())
 }
@@ -157,4 +178,92 @@ pub(crate) fn task_state_dir_from_config_path(config_path: &Path) -> Result<&Pat
             config_path.display()
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logging::LogLevel;
+    use crate::runtime::launch::config::ManagedSessionConfig;
+    use std::cell::RefCell;
+
+    #[test]
+    fn managed_cleanup_runs_prepared_root_fallback_before_task_dir_removal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let task_dir = temp.path().join("task");
+        std::fs::create_dir_all(&task_dir).expect("task dir");
+        let config = managed_config(&task_dir, true);
+        let calls = RefCell::new(Vec::new());
+
+        cleanup_managed_task_after_vm_exit_with(
+            &config,
+            &task_dir,
+            || {
+                calls.borrow_mut().push("prepared-root");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("task-rootfs");
+                Ok(())
+            },
+        )
+        .expect("managed cleanup should succeed");
+
+        assert_eq!(calls.into_inner(), vec!["prepared-root", "task-rootfs"]);
+    }
+
+    #[test]
+    fn managed_cleanup_skips_rootfs_cleanup_when_preserving_task_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let task_dir = temp.path().join("task");
+        std::fs::create_dir_all(&task_dir).expect("task dir");
+        let config = managed_config(&task_dir, false);
+        let calls = RefCell::new(Vec::new());
+
+        cleanup_managed_task_after_vm_exit_with(
+            &config,
+            &task_dir,
+            || {
+                calls.borrow_mut().push("prepared-root");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("task-rootfs");
+                Ok(())
+            },
+        )
+        .expect("managed cleanup should succeed");
+
+        assert!(calls.into_inner().is_empty());
+    }
+
+    fn managed_config(task_dir: &Path, cleanup_task_rootfs_on_exit: bool) -> LaunchConfig {
+        LaunchConfig {
+            task_rootfs: task_dir.join("rootfs"),
+            hostname: "loftd-test".to_owned(),
+            mounts: Vec::new(),
+            host_nix_overlay: None,
+            guest_init_override: None,
+            disks: Vec::new(),
+            ram_mib: 1024,
+            vcpus: 1,
+            log_level: LogLevel::Info,
+            network_mode: NetworkMode::Tsi,
+            publish: Vec::new(),
+            workdir: "/workspace".to_owned(),
+            exec_path: "/bin/sh".to_owned(),
+            argv: Vec::new(),
+            env: Vec::new(),
+            guest_config_env: Vec::new(),
+            passt_fd: None,
+            managed_session: Some(ManagedSessionConfig {
+                attach_socket: task_dir.join("attach.sock"),
+                guest_port: 1025,
+                protocol_version: 1,
+                attach_socket_uid: 1000,
+                attach_socket_gid: 1000,
+                cleanup_task_rootfs_on_exit,
+            }),
+        }
+    }
 }

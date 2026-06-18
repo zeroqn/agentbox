@@ -143,6 +143,18 @@ fn run_libkrun_in_current_namespace(
     let prepared_root = profiler.measure_result("vm_worker_prepare_root", || {
         prepared_root::prepare(config, task_state_dir)
     })?;
+    let run_result =
+        run_libkrun_with_prepared_root(config, task_state_dir, profiler, &prepared_root);
+    let nix_overlay_cleanup = nix_overlay_mount.map(|mount| move || mount.unmount());
+    finalize_vm_worker_run(run_result, || prepared_root.unmount(), nix_overlay_cleanup)
+}
+
+fn run_libkrun_with_prepared_root(
+    config: &LaunchConfig,
+    task_state_dir: &Path,
+    profiler: &mut LoftdHostProfiler,
+    prepared_root: &prepared_root::PreparedRoot,
+) -> Result<()> {
     let launch_config = config.with_root_export(prepared_root.root().to_path_buf());
     let guest_config_path = profiler.measure_result("vm_worker_guest_config_write", || {
         launch_config.write_guest_config_to_rootfs()
@@ -192,12 +204,110 @@ fn run_libkrun_in_current_namespace(
         profiler
             .record_vm_worker_libkrun_enter(session_duration.saturating_sub(configure_duration));
     }
-    match (result, nix_overlay_mount.map(|mount| mount.unmount())) {
+    result
+}
+
+fn finalize_vm_worker_run<PreparedCleanup, NixCleanup>(
+    run_result: Result<()>,
+    cleanup_prepared_root: PreparedCleanup,
+    cleanup_nix_overlay: Option<NixCleanup>,
+) -> Result<()>
+where
+    PreparedCleanup: FnOnce() -> Result<()>,
+    NixCleanup: FnOnce() -> Result<()>,
+{
+    let prepared_root_cleanup = cleanup_prepared_root();
+    let nix_overlay_cleanup = cleanup_nix_overlay.map(|cleanup| cleanup());
+    let cleanup_result = combine_cleanup_results(prepared_root_cleanup, nix_overlay_cleanup);
+    combine_run_and_cleanup_results(run_result, cleanup_result)
+}
+
+fn combine_cleanup_results(
+    prepared_root_cleanup: Result<()>,
+    nix_overlay_cleanup: Option<Result<()>>,
+) -> Result<()> {
+    match (prepared_root_cleanup, nix_overlay_cleanup) {
         (Ok(()), Some(Ok(()))) | (Ok(()), None) => Ok(()),
         (Ok(()), Some(Err(cleanup_error))) => Err(cleanup_error),
-        (Err(run_error), Some(Ok(()))) | (Err(run_error), None) => Err(run_error),
-        (Err(run_error), Some(Err(cleanup_error))) => Err(cleanup_error.context(format!(
-            "failed to unmount loftd host /nix overlay after libkrun error: {run_error:#}"
+        (Err(cleanup_error), Some(Ok(()))) | (Err(cleanup_error), None) => Err(cleanup_error),
+        (Err(prepared_error), Some(Err(nix_error))) => Err(prepared_error.context(format!(
+            "also failed to unmount loftd host /nix overlay: {nix_error:#}"
         ))),
+    }
+}
+
+fn combine_run_and_cleanup_results(
+    run_result: Result<()>,
+    cleanup_result: Result<()>,
+) -> Result<()> {
+    match (run_result, cleanup_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(cleanup_error)) => Err(cleanup_error),
+        (Err(run_error), Ok(())) => Err(run_error),
+        (Err(run_error), Err(cleanup_error)) => Err(cleanup_error.context(format!(
+            "failed to clean up loftd VM worker mounts after libkrun error: {run_error:#}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+    use std::cell::RefCell;
+
+    #[test]
+    fn finalization_unmounts_prepared_root_before_nix_overlay() {
+        let calls = RefCell::new(Vec::new());
+
+        finalize_vm_worker_run(
+            Ok(()),
+            || {
+                calls.borrow_mut().push("prepared-root");
+                Ok(())
+            },
+            Some(|| {
+                calls.borrow_mut().push("nix-overlay");
+                Ok(())
+            }),
+        )
+        .expect("finalization should succeed");
+
+        assert_eq!(calls.into_inner(), vec!["prepared-root", "nix-overlay"]);
+    }
+
+    #[test]
+    fn finalization_attempts_nix_overlay_after_prepared_root_cleanup_failure() {
+        let calls = RefCell::new(Vec::new());
+
+        let err = finalize_vm_worker_run(
+            Ok(()),
+            || {
+                calls.borrow_mut().push("prepared-root");
+                Err(anyhow!("prepared-root busy"))
+            },
+            Some(|| {
+                calls.borrow_mut().push("nix-overlay");
+                Ok(())
+            }),
+        )
+        .expect_err("prepared-root failure should surface");
+
+        assert_eq!(calls.into_inner(), vec!["prepared-root", "nix-overlay"]);
+        assert!(format!("{err:#}").contains("prepared-root busy"));
+    }
+
+    #[test]
+    fn finalization_contextualizes_cleanup_failure_after_run_failure() {
+        let err = finalize_vm_worker_run(
+            Err(anyhow!("libkrun failed")),
+            || Err(anyhow!("prepared-root busy")),
+            None::<fn() -> Result<()>>,
+        )
+        .expect_err("cleanup failure should surface with run context");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("prepared-root busy"));
+        assert!(message.contains("libkrun failed"));
     }
 }

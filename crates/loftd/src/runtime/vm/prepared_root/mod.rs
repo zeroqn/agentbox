@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
@@ -10,14 +11,38 @@ use etc::RuntimeEtcFiles;
 
 const PREPARED_ROOT_DIR: &str = "prepared-root";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct PreparedRoot {
     root: PathBuf,
+    plan: PreparedRootPlan,
+    mounted: bool,
 }
 
 impl PreparedRoot {
     pub(crate) fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub(crate) fn unmount(mut self) -> Result<()> {
+        if !self.mounted {
+            return Ok(());
+        }
+        self.mounted = false;
+        HostPreparedRootCommands.cleanup(&self.plan)
+    }
+}
+
+impl Drop for PreparedRoot {
+    fn drop(&mut self) {
+        if !self.mounted {
+            return;
+        }
+        if let Err(err) = HostPreparedRootCommands.cleanup(&self.plan) {
+            eprintln!(
+                "loftd: best-effort prepared-root cleanup failed for '{}': {err:#}",
+                self.root.display()
+            );
+        }
     }
 }
 
@@ -25,8 +50,15 @@ pub(crate) fn prepare(config: &LaunchConfig, task_state_dir: &Path) -> Result<Pr
     let plan = PreparedRootPlan::new(config, task_state_dir)?;
     HostPreparedRootCommands.apply(&plan)?;
     Ok(PreparedRoot {
-        root: plan.root_export,
+        root: plan.root_export.clone(),
+        plan,
+        mounted: true,
     })
+}
+
+pub(crate) fn cleanup_existing(config: &LaunchConfig, task_state_dir: &Path) -> Result<()> {
+    let plan = PreparedRootPlan::new_for_cleanup(config, task_state_dir)?;
+    HostPreparedRootCommands.cleanup(&plan)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +71,33 @@ struct PreparedRootPlan {
 impl PreparedRootPlan {
     fn new(config: &LaunchConfig, task_state_dir: &Path) -> Result<Self> {
         Self::new_with_runtime_etc(config, task_state_dir, etc::build(&config.hostname)?)
+    }
+
+    fn new_for_cleanup(config: &LaunchConfig, task_state_dir: &Path) -> Result<Self> {
+        Self::new_with_runtime_etc(
+            config,
+            task_state_dir,
+            RuntimeEtcFiles {
+                hostname: String::new(),
+                hosts: String::new(),
+                resolv_conf: String::new(),
+            },
+        )
+    }
+
+    fn unmount_targets(&self) -> Vec<PathBuf> {
+        let mut targets = self
+            .bind_grafts
+            .iter()
+            .map(|bind| bind.target.clone())
+            .collect::<Vec<_>>();
+        targets.sort_by(|left, right| {
+            path_depth(right)
+                .cmp(&path_depth(left))
+                .then_with(|| right.cmp(left))
+        });
+        targets.dedup();
+        targets
     }
 
     fn new_with_runtime_etc(
@@ -93,6 +152,8 @@ trait PreparedRootCommands {
     fn create_file_target(&self, path: &Path) -> Result<()>;
     fn bind_mount(&self, source: &Path, target: &Path) -> Result<()>;
     fn remount_read_only(&self, target: &Path) -> Result<()>;
+    fn is_mount(&self, target: &Path) -> Result<bool>;
+    fn unmount(&self, target: &Path) -> Result<()>;
     fn materialize_runtime_etc(&self, root_export: &Path, files: &RuntimeEtcFiles) -> Result<()>;
 
     fn apply(&self, plan: &PreparedRootPlan) -> Result<()> {
@@ -113,6 +174,20 @@ trait PreparedRootCommands {
             }
         }
         self.materialize_runtime_etc(&plan.root_export, &plan.runtime_etc)?;
+        Ok(())
+    }
+
+    fn cleanup(&self, plan: &PreparedRootPlan) -> Result<()> {
+        for target in plan.unmount_targets() {
+            if self.is_mount(&target)? {
+                self.unmount(&target).with_context(|| {
+                    format!(
+                        "failed to unmount loftd prepared-root bind target '{}'",
+                        target.display()
+                    )
+                })?;
+            }
+        }
         Ok(())
     }
 }
@@ -186,9 +261,83 @@ impl PreparedRootCommands for HostPreparedRootCommands {
         Ok(())
     }
 
+    fn is_mount(&self, target: &Path) -> Result<bool> {
+        is_mountpoint(target)
+    }
+
+    fn unmount(&self, target: &Path) -> Result<()> {
+        let status = Command::new("umount")
+            .arg(target)
+            .status()
+            .with_context(|| {
+                format!(
+                    "failed to run rootless prepared-root unmount '{}'",
+                    target.display()
+                )
+            })?;
+        if !status.success() {
+            bail!(
+                "rootless prepared-root unmount '{}' failed with {status}",
+                target.display()
+            );
+        }
+        Ok(())
+    }
+
     fn materialize_runtime_etc(&self, root_export: &Path, files: &RuntimeEtcFiles) -> Result<()> {
         etc::materialize(root_export, files)
     }
+}
+
+fn path_depth(path: &Path) -> usize {
+    path.components().count()
+}
+
+fn is_mountpoint(target: &Path) -> Result<bool> {
+    match fs::symlink_metadata(target) {
+        Ok(_) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "failed to inspect prepared-root unmount target '{}'",
+                    target.display()
+                )
+            });
+        }
+    }
+
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
+        .context("failed to read /proc/self/mountinfo for prepared-root cleanup")?;
+    let target_text = target.as_os_str().to_string_lossy();
+    for line in mountinfo.lines() {
+        let Some(mount_point) = line.split_whitespace().nth(4) else {
+            continue;
+        };
+        if decode_mountinfo_path(mount_point) == target_text {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn decode_mountinfo_path(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && index + 3 < bytes.len() {
+            let octal = &value[index + 1..index + 4];
+            if let Ok(byte) = u8::from_str_radix(octal, 8) {
+                out.push(byte as char);
+                index += 4;
+                continue;
+            }
+        }
+        out.push(bytes[index] as char);
+        index += 1;
+    }
+    out
 }
 
 fn validate_source_file(source: &Path) -> Result<()> {
@@ -272,6 +421,37 @@ mod tests {
     #[derive(Default)]
     struct RecordingCommands {
         calls: RefCell<Vec<Call>>,
+        mounted: RefCell<Vec<String>>,
+        fail_unmount: RefCell<Option<String>>,
+    }
+
+    impl RecordingCommands {
+        fn with_mounted(paths: impl IntoIterator<Item = PathBuf>) -> Self {
+            Self {
+                mounted: RefCell::new(
+                    paths
+                        .into_iter()
+                        .map(|path| path.display().to_string())
+                        .collect(),
+                ),
+                ..Self::default()
+            }
+        }
+
+        fn fail_unmount(&self, path: &Path) {
+            *self.fail_unmount.borrow_mut() = Some(path.display().to_string());
+        }
+
+        fn unmount_calls(&self) -> Vec<String> {
+            self.calls
+                .borrow()
+                .iter()
+                .filter_map(|call| match call {
+                    Call::Unmount(target) => Some(target.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,6 +461,7 @@ mod tests {
         Bind(String, String),
         RuntimeEtc(String),
         ReadOnly(String),
+        Unmount(String),
     }
 
     impl PreparedRootCommands for RecordingCommands {
@@ -310,6 +491,24 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push(Call::ReadOnly(target.display().to_string()));
+            Ok(())
+        }
+
+        fn is_mount(&self, target: &Path) -> Result<bool> {
+            Ok(self
+                .mounted
+                .borrow()
+                .iter()
+                .any(|path| path == &target.display().to_string()))
+        }
+
+        fn unmount(&self, target: &Path) -> Result<()> {
+            let target = target.display().to_string();
+            self.calls.borrow_mut().push(Call::Unmount(target.clone()));
+            if self.fail_unmount.borrow().as_deref() == Some(target.as_str()) {
+                bail!("synthetic unmount failure for {target}");
+            }
+            self.mounted.borrow_mut().retain(|path| path != &target);
             Ok(())
         }
 
@@ -550,6 +749,99 @@ mod tests {
         assert!(calls.contains(&Call::ReadOnly(
             root.join("workspace/readonly").display().to_string()
         )));
+    }
+
+    #[test]
+    fn prepared_root_cleanup_unmounts_deepest_grafts_before_root_export() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("task");
+        let root = state.join(PREPARED_ROOT_DIR);
+        let mut config = config(dir.path());
+        let host_file = dir.path().join("host-config.json");
+        config.mounts.push(BindMount::file(
+            host_file,
+            "loftd-user-volume-5",
+            "/workspace/config.json",
+            true,
+        ));
+        config.guest_init_override = Some(GuestInitOverrideMount {
+            source: dir.path().join("override-loftd-guest-init"),
+            target: "/nix/store/hash-loftd/bin/loftd-guest-init".to_owned(),
+            read_only: true,
+        });
+        let plan =
+            PreparedRootPlan::new_with_runtime_etc(&config, &state, runtime_etc()).expect("plan");
+        let commands = RecordingCommands::with_mounted(plan.unmount_targets());
+
+        commands.cleanup(&plan).expect("cleanup should unmount");
+
+        let unmounts = commands.unmount_calls();
+        assert_eq!(unmounts.last(), Some(&root.display().to_string()));
+        let root_position = unmounts
+            .iter()
+            .position(|target| target == &root.display().to_string())
+            .expect("root export unmounted");
+        for target in [
+            root.join("workspace/config.json"),
+            root.join("nix/store/hash-loftd/bin/loftd-guest-init"),
+            root.join("home/dev/.cache/sccache"),
+        ] {
+            let position = unmounts
+                .iter()
+                .position(|actual| actual == &target.display().to_string())
+                .unwrap_or_else(|| panic!("missing unmount for {}", target.display()));
+            assert!(
+                position < root_position,
+                "{} should unmount before root export",
+                target.display()
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_root_cleanup_skips_targets_that_are_not_mounted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("task");
+        let config = config(dir.path());
+        let plan =
+            PreparedRootPlan::new_with_runtime_etc(&config, &state, runtime_etc()).expect("plan");
+        let workspace_target = state.join(PREPARED_ROOT_DIR).join("workspace");
+        let commands = RecordingCommands::with_mounted([workspace_target.clone()]);
+
+        commands
+            .cleanup(&plan)
+            .expect("cleanup should be idempotent");
+
+        assert_eq!(
+            commands.unmount_calls(),
+            vec![workspace_target.display().to_string()]
+        );
+    }
+
+    #[test]
+    fn prepared_root_cleanup_reports_unmount_failures() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("task");
+        let config = config(dir.path());
+        let plan =
+            PreparedRootPlan::new_with_runtime_etc(&config, &state, runtime_etc()).expect("plan");
+        let root = state.join(PREPARED_ROOT_DIR);
+        let commands = RecordingCommands::with_mounted([root.clone()]);
+        commands.fail_unmount(&root);
+
+        let err = commands
+            .cleanup(&plan)
+            .expect_err("unmount failure should surface");
+
+        assert!(format!("{err:#}").contains("failed to unmount loftd prepared-root bind target"));
+    }
+
+    #[test]
+    fn mountinfo_path_decoder_handles_octal_escapes() {
+        assert_eq!(
+            decode_mountinfo_path(r"/tmp/loftd\040task/prepared-root"),
+            "/tmp/loftd task/prepared-root"
+        );
     }
 
     #[test]
