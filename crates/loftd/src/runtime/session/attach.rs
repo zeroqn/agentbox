@@ -218,11 +218,23 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
             )?;
         }
         match wait_for_stdin(ATTACH_IO_POLL_MS)? {
-            StdinReadiness::TimedOut => continue,
+            StdinReadiness::TimedOut => {
+                let mut output = Vec::new();
+                filter.flush_incomplete_escape_sequence(&mut output);
+                if !output.is_empty() {
+                    write_to_guest(&writer, &Frame::Data(output))?;
+                }
+                continue;
+            }
             StdinReadiness::Readable => {}
         }
         let n = match input.read(&mut buf) {
             Ok(0) => {
+                let mut output = Vec::new();
+                filter.flush_pending(&mut output);
+                if !output.is_empty() {
+                    let _ = write_to_guest(&writer, &Frame::Data(output));
+                }
                 let _ = write_to_guest(&writer, &Frame::Detach);
                 return Ok(());
             }
@@ -376,7 +388,7 @@ impl Drop for RawTerminalMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use loftd_attach_protocol::DETACH_BYTE;
+    use loftd_attach_protocol::{DETACH_PREFIX_BYTE, DETACH_SUFFIX_BYTE};
     use std::os::unix::net::UnixListener;
 
     #[test]
@@ -394,7 +406,10 @@ mod tests {
         let mut output = Vec::new();
         assert!(!filter.push(b"abc", &mut output));
         assert_eq!(output, b"abc");
-        assert!(filter.push(&[b'd', DETACH_BYTE, b'e'], &mut output));
+        assert!(filter.push(
+            &[b'd', DETACH_PREFIX_BYTE, DETACH_SUFFIX_BYTE, b'e'],
+            &mut output
+        ));
         assert_eq!(output, b"abcd");
     }
 

@@ -817,9 +817,11 @@ Detach/attach behavior:
   attaches the host terminal to it. The foreground experience is still an
   interactive shell or command, but the guest process is not tied to the host
   terminal lifetime.
-- Press `Ctrl-]` to detach from the current terminal session. Closing the host
-  terminal, killing the attach client, or losing SSH also behaves as detach: the
-  guest shell or terminal-interactive command keeps running while the VM helper
+- Press `Ctrl-G` twice to detach from the current terminal
+  session. loftd recognizes both legacy Ctrl-G bytes and CSI-u/Kitty-encoded
+  Ctrl-G events from terminals or multiplexers. Closing the host terminal,
+  killing the attach client, or losing SSH also behaves as detach: the guest
+  shell or terminal-interactive command keeps running while the VM helper
   remains active.
 - Reconnect with `loftd attach <task-id-or-handle-selector>`. Selectors follow
   the same task-id/handle matching rules as `loftd kill`; use `loftd ps` to list

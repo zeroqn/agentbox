@@ -3,8 +3,13 @@ use std::io::{Read, Write};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const DEFAULT_ATTACH_PORT: u32 = 50_426;
-pub const DETACH_BYTE: u8 = 0x1d; // Ctrl-]
+pub const DETACH_PREFIX_BYTE: u8 = 0x07; // Ctrl-G
+pub const DETACH_SUFFIX_BYTE: u8 = 0x07; // Ctrl-G
 
+const CSI_U_DETACH_KEY_CODE: u32 = b'g' as u32;
+const CSI_U_CTRL_MODIFIER_BIT: u32 = 0b100;
+const CSI_U_PRESS_EVENT: u32 = 1;
+const MAX_CSI_U_SEQUENCE_LEN: usize = 64;
 const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 const TAG_HELLO: u8 = 1;
 const TAG_ATTACH: u8 = 2;
@@ -151,23 +156,158 @@ fn empty_payload(payload: Vec<u8>, frame: Frame) -> Result<Frame> {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DetachFilter {
     detached: bool,
+    pending_detach_key: Option<Vec<u8>>,
+    pending_csi_sequence: Vec<u8>,
 }
 
 impl DetachFilter {
     pub fn push(&mut self, input: &[u8], output: &mut Vec<u8>) -> bool {
-        for byte in input {
-            if *byte == DETACH_BYTE {
-                self.detached = true;
-                return true;
+        for &byte in input {
+            match self.parse_input_byte(byte) {
+                ParsedInput::DetachKey(bytes) => {
+                    if self.pending_detach_key.take().is_some() {
+                        self.detached = true;
+                        return true;
+                    }
+                    self.pending_detach_key = Some(bytes);
+                }
+                ParsedInput::Bytes(bytes) => {
+                    self.flush_pending_detach_key(output);
+                    output.extend(bytes);
+                }
+                ParsedInput::Byte(byte) => {
+                    self.flush_pending_detach_key(output);
+                    output.push(byte);
+                }
+                ParsedInput::Pending => {}
             }
-            output.push(*byte);
         }
         false
+    }
+
+    pub fn flush_pending(&mut self, output: &mut Vec<u8>) {
+        self.flush_pending_detach_key(output);
+        self.flush_incomplete_escape_sequence(output);
+    }
+
+    pub fn flush_incomplete_escape_sequence(&mut self, output: &mut Vec<u8>) {
+        output.extend(std::mem::take(&mut self.pending_csi_sequence));
     }
 
     pub fn detached(&self) -> bool {
         self.detached
     }
+
+    fn parse_input_byte(&mut self, byte: u8) -> ParsedInput {
+        if !self.pending_csi_sequence.is_empty() {
+            return self.parse_pending_csi_byte(byte);
+        }
+
+        match byte {
+            DETACH_PREFIX_BYTE => ParsedInput::DetachKey(vec![byte]),
+            b'\x1b' => {
+                self.pending_csi_sequence.push(byte);
+                ParsedInput::Pending
+            }
+            _ => ParsedInput::Byte(byte),
+        }
+    }
+
+    fn parse_pending_csi_byte(&mut self, byte: u8) -> ParsedInput {
+        self.pending_csi_sequence.push(byte);
+
+        if !is_potential_csi_u_sequence(&self.pending_csi_sequence)
+            || self.pending_csi_sequence.len() > MAX_CSI_U_SEQUENCE_LEN
+        {
+            return ParsedInput::Bytes(std::mem::take(&mut self.pending_csi_sequence));
+        }
+
+        if byte != b'u' {
+            return ParsedInput::Pending;
+        }
+
+        let bytes = std::mem::take(&mut self.pending_csi_sequence);
+        if is_csi_u_detach_key(&bytes) {
+            ParsedInput::DetachKey(bytes)
+        } else {
+            ParsedInput::Bytes(bytes)
+        }
+    }
+
+    fn flush_pending_detach_key(&mut self, output: &mut Vec<u8>) {
+        if let Some(bytes) = self.pending_detach_key.take() {
+            output.extend(bytes);
+        }
+    }
+}
+
+enum ParsedInput {
+    DetachKey(Vec<u8>),
+    Bytes(Vec<u8>),
+    Byte(u8),
+    Pending,
+}
+
+fn is_potential_csi_u_sequence(bytes: &[u8]) -> bool {
+    match bytes {
+        [b'\x1b'] => true,
+        [b'\x1b', b'['] => true,
+        [b'\x1b', b'[', rest @ ..] => rest
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b';' | b':' | b'u')),
+        _ => false,
+    }
+}
+
+fn is_csi_u_detach_key(bytes: &[u8]) -> bool {
+    let body = match bytes {
+        [b'\x1b', b'[', body @ .., b'u'] => body,
+        _ => return false,
+    };
+    let Ok(body) = std::str::from_utf8(body) else {
+        return false;
+    };
+    let Some(event) = parse_csi_u_event(body) else {
+        return false;
+    };
+    event.key_code == CSI_U_DETACH_KEY_CODE
+        && event.modifiers & CSI_U_CTRL_MODIFIER_BIT != 0
+        && event.event_type == CSI_U_PRESS_EVENT
+}
+
+fn parse_csi_u_event(body: &str) -> Option<CsiUEvent> {
+    let mut fields = body.split(';');
+    let key_field = fields.next()?;
+    let key_code = key_field.split(':').next()?.parse().ok()?;
+    let (encoded_modifiers, event_type) = parse_csi_u_modifier_event_field(fields.next())?;
+
+    Some(CsiUEvent {
+        key_code,
+        modifiers: encoded_modifiers.checked_sub(1)?,
+        event_type,
+    })
+}
+
+fn parse_csi_u_modifier_event_field(field: Option<&str>) -> Option<(u32, u32)> {
+    let Some(field) = field else {
+        return Some((1, CSI_U_PRESS_EVENT));
+    };
+    let mut parts = field.split(':');
+    let modifiers = match parts.next()? {
+        "" => 1,
+        value => value.parse().ok()?,
+    };
+    let event_type = match parts.next() {
+        Some("") | None => CSI_U_PRESS_EVENT,
+        Some(value) => value.parse().ok()?,
+    };
+    Some((modifiers, event_type))
+}
+
+struct CsiUEvent {
+    key_code: u32,
+    modifiers: u32,
+    event_type: u32,
 }
 
 #[cfg(test)]
@@ -213,11 +353,180 @@ mod tests {
     }
 
     #[test]
-    fn detach_filter_consumes_ctrl_right_bracket() {
+    fn detach_filter_consumes_ctrl_g_twice() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(filter.push(b"ab\x1dcd", &mut output));
+        assert!(filter.push(b"ab\x07\x07cd", &mut output));
         assert_eq!(output, b"ab");
         assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_matches_sequence_across_reads() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x07", &mut output));
+        assert_eq!(output, b"ab");
+
+        assert!(filter.push(b"\x07cd", &mut output));
+
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_consumes_csi_u_ctrl_g_twice() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(filter.push(b"ab\x1b[103;133u\x1b[103;133ucd", &mut output));
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_consumes_csi_u_ctrl_g_ctrl_only_modifier() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(filter.push(b"ab\x1b[103;5u\x1b[103;5ucd", &mut output));
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_matches_mixed_raw_and_csi_u_ctrl_g() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(filter.push(b"ab\x07\x1b[103;133ucd", &mut output));
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(filter.push(b"ab\x1b[103;133u\x07cd", &mut output));
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_matches_csi_u_sequence_across_reads() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x1b[103;", &mut output));
+        assert_eq!(output, b"ab");
+        assert!(!filter.push(b"133u", &mut output));
+        assert_eq!(output, b"ab");
+
+        assert!(filter.push(b"\x1b[103;133ucd", &mut output));
+
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_forwards_csi_u_without_ctrl() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x1b[103;1u\x1b[103;1ucd", &mut output));
+        assert_eq!(output, b"ab\x1b[103;1u\x1b[103;1ucd");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_forwards_non_g_csi_u_with_ctrl() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x1b[104;5u\x1b[104;5ucd", &mut output));
+        assert_eq!(output, b"ab\x1b[104;5u\x1b[104;5ucd");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_does_not_detach_on_csi_u_release_event() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x1b[103;5:3u\x1b[103;5:3ucd", &mut output));
+        assert_eq!(output, b"ab\x1b[103;5:3u\x1b[103;5:3ucd");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_flushes_partial_csi_u_sequence() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x1b[103;", &mut output));
+        assert_eq!(output, b"ab");
+
+        filter.flush_pending(&mut output);
+
+        assert_eq!(output, b"ab\x1b[103;");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_timeout_flush_preserves_pending_ctrl_g() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x07", &mut output));
+        assert_eq!(output, b"ab");
+
+        filter.flush_incomplete_escape_sequence(&mut output);
+
+        assert_eq!(output, b"ab");
+        assert!(filter.push(b"\x07cd", &mut output));
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_timeout_flushes_standalone_escape() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x1b", &mut output));
+        assert_eq!(output, b"ab");
+
+        filter.flush_incomplete_escape_sequence(&mut output);
+
+        assert_eq!(output, b"ab\x1b");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_forwards_ctrl_g_when_sequence_does_not_match() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x07x", &mut output));
+        assert_eq!(output, b"ab\x07x");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_flushes_standalone_ctrl_g() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x07", &mut output));
+        assert_eq!(output, b"ab");
+
+        filter.flush_pending(&mut output);
+
+        assert_eq!(output, b"ab\x07");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn ctrl_d_is_regular_input() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x04cd", &mut output));
+        assert_eq!(output, b"ab\x04cd");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn ctrl_p_ctrl_q_is_regular_input() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x10\x11cd", &mut output));
+        assert_eq!(output, b"ab\x10\x11cd");
+        assert!(!filter.detached());
     }
 }
