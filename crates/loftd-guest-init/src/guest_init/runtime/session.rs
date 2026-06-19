@@ -6,6 +6,7 @@ use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+    mpsc,
 };
 use std::thread;
 use std::time::Duration;
@@ -15,6 +16,14 @@ use crate::guest_init::process;
 
 const IO_BUF_SIZE: usize = 16 * 1024;
 const POLL_TIMEOUT_MS: i32 = 100;
+const DEFAULT_TERMINAL_ROWS: u16 = 24;
+const DEFAULT_TERMINAL_COLS: u16 = 80;
+const TERMINAL_SCROLLBACK_ROWS: usize = 2_000;
+const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
+const EXIT_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
+// Reset attributes, home the cursor, and clear the visible viewport before
+// replaying the tracked terminal state so stale host-terminal cells disappear.
+const CLEAR_VISIBLE_SCREEN: &[u8] = b"\x1b[m\x1b[H\x1b[J";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::guest_init) struct ManagedSessionConfig {
@@ -72,8 +81,17 @@ fn run_pre_start_event_loop(
                         return Err(err);
                     }
                 };
-                match serve_attached_client(&pty.master, child, client, &listener)? {
-                    ClientResult::Detached => return run_event_loop(pty.master, child, listener),
+                let mut terminal_state = TerminalState::new(initial_size.unwrap_or_default());
+                match serve_attached_client(
+                    &pty.master,
+                    child,
+                    client,
+                    &listener,
+                    &mut terminal_state,
+                )? {
+                    ClientResult::Detached => {
+                        return run_event_loop(pty.master, child, listener, terminal_state);
+                    }
                     ClientResult::ChildExited(code) => std::process::exit(code),
                 }
             }
@@ -85,6 +103,56 @@ fn run_pre_start_event_loop(
 struct PtySize {
     rows: u16,
     cols: u16,
+}
+
+impl Default for PtySize {
+    fn default() -> Self {
+        Self {
+            rows: DEFAULT_TERMINAL_ROWS,
+            cols: DEFAULT_TERMINAL_COLS,
+        }
+    }
+}
+
+struct TerminalState {
+    parser: vt100::Parser,
+}
+
+impl TerminalState {
+    fn new(size: PtySize) -> Self {
+        Self {
+            parser: vt100::Parser::new(size.rows, size.cols, TERMINAL_SCROLLBACK_ROWS),
+        }
+    }
+
+    fn record_output(&mut self, bytes: &[u8]) {
+        self.parser.process(bytes);
+    }
+
+    fn resize(&mut self, size: PtySize) {
+        self.parser.screen_mut().set_size(size.rows, size.cols);
+    }
+
+    #[cfg(test)]
+    fn size(&self) -> PtySize {
+        let (rows, cols) = self.parser.screen().size();
+        PtySize { rows, cols }
+    }
+
+    fn render_restore(&self) -> Vec<u8> {
+        let screen = self.parser.screen();
+        let mut restore = Vec::new();
+        if screen.alternate_screen() {
+            restore.extend_from_slice(ENTER_ALTERNATE_SCREEN);
+        } else {
+            restore.extend_from_slice(EXIT_ALTERNATE_SCREEN);
+        }
+        restore.extend_from_slice(CLEAR_VISIBLE_SCREEN);
+        restore.extend(screen.state_formatted());
+        restore.extend(screen.cursor_state_formatted());
+        restore.extend(screen.attributes_formatted());
+        restore
+    }
 }
 
 enum PreStartClientResult<T> {
@@ -129,7 +197,12 @@ where
     }
 }
 
-fn run_event_loop(master: File, child: libc::pid_t, listener: VsockListener) -> Result<()> {
+fn run_event_loop(
+    master: File,
+    child: libc::pid_t,
+    listener: VsockListener,
+    mut terminal_state: TerminalState,
+) -> Result<()> {
     loop {
         if let Some(code) = reap_child(child)? {
             std::process::exit(code);
@@ -156,11 +229,11 @@ fn run_event_loop(master: File, child: libc::pid_t, listener: VsockListener) -> 
             return Err(err).context("managed session poll failed");
         }
         if fds[1].revents & libc::POLLIN != 0 {
-            drain_detached_pty_output(master.as_raw_fd())?;
+            drain_detached_pty_output(master.as_raw_fd(), &mut terminal_state)?;
         }
         if fds[0].revents & libc::POLLIN != 0 {
             let client = listener.accept()?;
-            match serve_client(&master, child, client, &listener)? {
+            match serve_client(&master, child, client, &listener, &mut terminal_state)? {
                 ClientResult::Detached => continue,
                 ClientResult::ChildExited(code) => std::process::exit(code),
             }
@@ -179,6 +252,7 @@ fn serve_client(
     child: libc::pid_t,
     mut client: File,
     listener: &VsockListener,
+    terminal_state: &mut TerminalState,
 ) -> Result<ClientResult> {
     write_frame(
         &mut client,
@@ -186,20 +260,33 @@ fn serve_client(
             version: PROTOCOL_VERSION,
         },
     )?;
-    if !read_post_start_attach_request(master, &mut client)? {
+    if !read_post_start_attach_request(master, &mut client, terminal_state)? {
         return Ok(ClientResult::Detached);
     }
-    serve_attached_client(master, child, client, listener)
+    drain_detached_pty_output(master.as_raw_fd(), terminal_state)?;
+    let restore = terminal_state.render_restore();
+    if !restore.is_empty() {
+        write_frame(&mut client, &Frame::Data(restore))?;
+    }
+    serve_attached_client(master, child, client, listener, terminal_state)
 }
 
-fn read_post_start_attach_request<T>(master: &File, client: &mut T) -> Result<bool>
+fn read_post_start_attach_request<T>(
+    master: &File,
+    client: &mut T,
+    terminal_state: &mut TerminalState,
+) -> Result<bool>
 where
     T: Read + Write,
 {
     loop {
         match read_frame(client)? {
             Some(Frame::Attach) => return Ok(true),
-            Some(Frame::Resize { rows, cols }) => set_winsize(master.as_raw_fd(), rows, cols)?,
+            Some(Frame::Resize { rows, cols }) => {
+                let size = PtySize { rows, cols };
+                set_winsize(master.as_raw_fd(), rows, cols)?;
+                terminal_state.resize(size);
+            }
             Some(Frame::Detach) | None => return Ok(false),
             Some(frame) => {
                 write_frame(
@@ -217,9 +304,11 @@ fn serve_attached_client(
     child: libc::pid_t,
     mut client: File,
     listener: &VsockListener,
+    terminal_state: &mut TerminalState,
 ) -> Result<ClientResult> {
     let active = Arc::new(AtomicBool::new(true));
     let reader_active = active.clone();
+    let (resize_tx, resize_rx) = mpsc::channel();
     let mut client_reader = client.try_clone()?;
     let mut pty_writer = duplicate_file(master)?;
     let input_thread = thread::spawn(move || -> Result<()> {
@@ -227,7 +316,8 @@ fn serve_attached_client(
             match read_frame(&mut client_reader)? {
                 Some(Frame::Data(data)) => pty_writer.write_all(&data)?,
                 Some(Frame::Resize { rows, cols }) => {
-                    set_winsize(pty_writer.as_raw_fd(), rows, cols)?
+                    set_winsize(pty_writer.as_raw_fd(), rows, cols)?;
+                    let _ = resize_tx.send(PtySize { rows, cols });
                 }
                 Some(Frame::Detach) | None => break,
                 Some(Frame::Attach) => {}
@@ -241,6 +331,7 @@ fn serve_attached_client(
     let mut pty_reader = duplicate_file(master)?;
     let mut buf = [0u8; IO_BUF_SIZE];
     while active.load(Ordering::SeqCst) {
+        apply_pending_resizes(&resize_rx, terminal_state);
         if let Some(code) = reap_child(child)? {
             let _ = write_frame(&mut client, &Frame::Exit { code });
             stop_client_input(&active, client.as_raw_fd(), input_thread);
@@ -280,12 +371,20 @@ fn serve_attached_client(
             thread::sleep(Duration::from_millis(10));
             continue;
         }
+        terminal_state.record_output(&buf[..n]);
         if write_frame(&mut client, &Frame::Data(buf[..n].to_vec())).is_err() {
             break;
         }
     }
+    apply_pending_resizes(&resize_rx, terminal_state);
     stop_client_input(&active, client.as_raw_fd(), input_thread);
     Ok(ClientResult::Detached)
+}
+
+fn apply_pending_resizes(resize_rx: &mpsc::Receiver<PtySize>, terminal_state: &mut TerminalState) {
+    while let Ok(size) = resize_rx.try_recv() {
+        terminal_state.resize(size);
+    }
 }
 
 fn stop_client_input(
@@ -298,20 +397,22 @@ fn stop_client_input(
     let _ = input_thread.join();
 }
 
-fn drain_detached_pty_output(master_fd: RawFd) -> Result<()> {
+fn drain_detached_pty_output(master_fd: RawFd, terminal_state: &mut TerminalState) -> Result<()> {
     let mut file = duplicate_fd(master_fd)?;
     set_nonblocking(file.as_raw_fd(), true)?;
-    let result = drain_nonblocking(&mut file);
+    let result = drain_nonblocking(&mut file, terminal_state);
     let restore_result = set_nonblocking(file.as_raw_fd(), false);
     result.and(restore_result)
 }
 
-fn drain_nonblocking(file: &mut File) -> Result<()> {
+fn drain_nonblocking(file: &mut File, terminal_state: &mut TerminalState) -> Result<()> {
     let mut buf = [0u8; IO_BUF_SIZE];
     loop {
         match file.read(&mut buf) {
             Ok(0) => return Ok(()),
-            Ok(_) => continue,
+            Ok(n) => {
+                terminal_state.record_output(&buf[..n]);
+            }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
             Err(err) => return Err(err).context("failed to drain detached PTY output"),
         }
@@ -668,7 +769,14 @@ mod tests {
         let server_file = unsafe { File::from_raw_fd(server.into_raw_fd()) };
 
         let server = thread::spawn(move || {
-            serve_attached_client(&pty.master, child, server_file, &listener)
+            let mut terminal_state = TerminalState::new(PtySize::default());
+            serve_attached_client(
+                &pty.master,
+                child,
+                server_file,
+                &listener,
+                &mut terminal_state,
+            )
         });
 
         match read_frame(&mut client).unwrap() {
@@ -681,6 +789,148 @@ mod tests {
         assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
         assert!(libc::WIFEXITED(status));
         assert_eq!(libc::WEXITSTATUS(status), 0);
+    }
+
+    #[test]
+    fn terminal_restore_repaints_visible_screen_and_cursor_state() {
+        let mut terminal_state = TerminalState::new(PtySize { rows: 10, cols: 40 });
+        terminal_state.record_output(b"prompt> abc");
+        terminal_state.record_output(b"\x1b[3DXYZ");
+
+        let restored = restored_screen(&terminal_state);
+
+        assert!(restored.screen().contents().contains("prompt> XYZ"));
+        assert_eq!(
+            restored.screen().cursor_position(),
+            terminal_state.parser.screen().cursor_position()
+        );
+    }
+
+    #[test]
+    fn terminal_restore_clears_stale_cells() {
+        let mut terminal_state = TerminalState::new(PtySize { rows: 5, cols: 40 });
+        terminal_state.record_output(b"short");
+
+        let mut restored = vt100::Parser::new(5, 40, 0);
+        restored.process(b"this line used to be much longer\r\nstale lower row");
+        restored.process(&terminal_state.render_restore());
+
+        let first_row = restored.screen().rows(0, 40).next().unwrap();
+        assert_eq!(first_row.trim_end(), "short");
+        assert!(!first_row.contains("longer"));
+        assert!(!restored.screen().contents().contains("stale lower row"));
+    }
+
+    #[test]
+    fn terminal_restore_preserves_alternate_screen_and_input_modes() {
+        let mut terminal_state = TerminalState::new(PtySize { rows: 10, cols: 40 });
+        terminal_state.record_output(b"\x1b[?1049h\x1b[?25l\x1b[?1h\x1b[?2004hinside-tui");
+
+        let restored = restored_screen(&terminal_state);
+        let screen = restored.screen();
+
+        assert!(screen.alternate_screen());
+        assert!(screen.hide_cursor());
+        assert!(screen.application_cursor());
+        assert!(screen.bracketed_paste());
+        assert!(screen.contents().contains("inside-tui"));
+    }
+
+    #[test]
+    fn post_start_attach_resize_updates_restore_dimensions() {
+        let pty = Pty::open().unwrap();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let mut server_file = unsafe { File::from_raw_fd(server.into_raw_fd()) };
+
+        let server = thread::spawn(move || {
+            let mut terminal_state = TerminalState::new(PtySize::default());
+            let attached =
+                read_post_start_attach_request(&pty.master, &mut server_file, &mut terminal_state)
+                    .unwrap();
+            (attached, terminal_state.size())
+        });
+
+        write_frame(
+            &mut client,
+            &Frame::Resize {
+                rows: 42,
+                cols: 132,
+            },
+        )
+        .unwrap();
+        write_frame(&mut client, &Frame::Attach).unwrap();
+
+        let (attached, size) = server.join().unwrap();
+        assert!(attached);
+        assert_eq!(
+            size,
+            PtySize {
+                rows: 42,
+                cols: 132
+            }
+        );
+    }
+
+    #[test]
+    fn post_start_attach_sends_detached_restore_before_live_proxy() {
+        let pty = Pty::open().unwrap();
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0);
+        if child == 0 {
+            let result = write_then_sleep_on_pty_slave(&pty.slave_path, b"detached-visible\n");
+            std::process::exit(if result.is_ok() { 0 } else { 1 });
+        }
+        thread::sleep(Duration::from_millis(50));
+
+        let mut terminal_state = TerminalState::new(PtySize::default());
+        drain_detached_pty_output(pty.master.as_raw_fd(), &mut terminal_state).unwrap();
+
+        let temp = tempfile::tempdir().unwrap();
+        let unix_listener = UnixListener::bind(temp.path().join("listener.sock")).unwrap();
+        let listener = VsockListener {
+            fd: unix_listener.into_raw_fd(),
+        };
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let server_file = unsafe { File::from_raw_fd(server.into_raw_fd()) };
+
+        let server = thread::spawn(move || {
+            serve_client(
+                &pty.master,
+                child,
+                server_file,
+                &listener,
+                &mut terminal_state,
+            )
+        });
+
+        assert_eq!(
+            read_frame(&mut client).unwrap(),
+            Some(Frame::Hello {
+                version: PROTOCOL_VERSION
+            })
+        );
+        write_frame(&mut client, &Frame::Attach).unwrap();
+
+        match read_frame(&mut client).unwrap() {
+            Some(Frame::Data(data)) => {
+                let mut restored = vt100::Parser::new(24, 80, 0);
+                restored.process(&data);
+                assert!(restored.screen().contents().contains("detached-visible"));
+            }
+            frame => panic!("expected restore frame, got {frame:?}"),
+        }
+
+        write_frame(&mut client, &Frame::Detach).unwrap();
+        assert_eq!(server.join().unwrap().unwrap(), ClientResult::Detached);
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+    }
+
+    fn restored_screen(terminal_state: &TerminalState) -> vt100::Parser {
+        let size = terminal_state.size();
+        let mut restored = vt100::Parser::new(size.rows, size.cols, 0);
+        restored.process(&terminal_state.render_restore());
+        restored
     }
 
     fn write_then_sleep_on_pty_slave(slave_path: &str, data: &[u8]) -> Result<()> {

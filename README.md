@@ -827,7 +827,10 @@ Detach/attach behavior:
   remains active.
 - Reconnect with `loftd attach <task-id-or-handle-selector>`. Selectors follow
   the same task-id/handle matching rules as `loftd kill`; use `loftd ps` to list
-  running task IDs and handles.
+  running task IDs and handles. Reattach repaints the current visible terminal
+  screen from bounded in-memory guest PTY state before forwarding new output, so
+  a detached shell or TUI should be usable without pressing `Enter` just to
+  redraw. This restore state is not persisted across helper or VM restart.
 - Only one attach client is supported at a time. A second attach attempt receives
   a busy error instead of sharing the PTY.
 - Terminal and TUI programs inside the PTY are in scope, including

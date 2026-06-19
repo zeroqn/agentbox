@@ -27,6 +27,7 @@ loftd-attach-protocol = { path = "crates/loftd-attach-protocol" }
 tempfile = "3.23"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter", "ansi"] }
+vt100 = "0.16.2"
 
 [profile.release]
 lto = "thin"
