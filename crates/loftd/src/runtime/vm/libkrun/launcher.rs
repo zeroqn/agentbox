@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::publish::tsi_port_map;
+use crate::runtime::session::supervisor::rlimits::host_nofile_hard_limit;
 
 use crate::runtime::vm::libkrun::api::LibkrunApi;
 
@@ -37,10 +38,40 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
     }
 
     pub(in crate::runtime) fn start_enter_profiled_with_pre_enter_hook(
+        self,
+        config: &LaunchConfig,
+        profile_path: Option<&Path>,
+        before_start_enter: impl FnOnce(),
+    ) -> Result<()> {
+        let host_nofile_hard_limit = host_nofile_hard_limit()?;
+        self.start_enter_profiled_with_nofile_hard_limit(
+            config,
+            profile_path,
+            before_start_enter,
+            host_nofile_hard_limit,
+        )
+    }
+
+    #[cfg(test)]
+    pub(in crate::runtime) fn start_enter_with_host_nofile_hard_limit(
+        self,
+        config: &LaunchConfig,
+        host_nofile_hard_limit: libc::rlim_t,
+    ) -> Result<()> {
+        self.start_enter_profiled_with_nofile_hard_limit(
+            config,
+            None,
+            || {},
+            host_nofile_hard_limit,
+        )
+    }
+
+    fn start_enter_profiled_with_nofile_hard_limit(
         mut self,
         config: &LaunchConfig,
         profile_path: Option<&Path>,
         before_start_enter: impl FnOnce(),
+        host_nofile_hard_limit: libc::rlim_t,
     ) -> Result<()> {
         tracing::debug!(level = ?config.log_level, libkrun_level = config.log_level.libkrun_level(), "libkrun log init: begin");
         check_setup(
@@ -54,8 +85,13 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             .create_ctx()
             .context("libkrun setup failed: create ctx")?;
         tracing::debug!(ctx_id, "krun_create_ctx: complete");
-        if let Err(err) = self.configure_and_start(ctx_id, config, profile_path, before_start_enter)
-        {
+        if let Err(err) = self.configure_and_start(
+            ctx_id,
+            config,
+            profile_path,
+            before_start_enter,
+            host_nofile_hard_limit,
+        ) {
             let _ = self.api.free_ctx(ctx_id);
             return Err(err);
         }
@@ -68,6 +104,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         config: &LaunchConfig,
         profile_path: Option<&Path>,
         before_start_enter: impl FnOnce(),
+        host_nofile_hard_limit: libc::rlim_t,
     ) -> Result<()> {
         tracing::debug!(
             ctx_id,
@@ -179,6 +216,16 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             check_setup("krun_set_kernel_cmdline_append", rc)?;
             tracing::debug!(ctx_id, "krun_set_kernel_cmdline_append: complete");
         }
+        let guest_nofile_rlimit = guest_nofile_rlimit_entry(host_nofile_hard_limit);
+        tracing::debug!(
+            ctx_id,
+            host_nofile_hard_limit,
+            rlimit = %guest_nofile_rlimit,
+            "krun_set_rlimits: begin"
+        );
+        let rc = self.api.set_rlimits(ctx_id, &[guest_nofile_rlimit])?;
+        check_setup("krun_set_rlimits", rc)?;
+        tracing::debug!(ctx_id, "krun_set_rlimits: complete");
         before_start_enter();
         tracing::debug!(ctx_id, "krun_start_enter: begin");
         let rc = self.api.start_enter(ctx_id)?;
@@ -221,6 +268,18 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         tracing::debug!(ctx_id, "krun_set_nested_virt: complete");
         Ok(())
     }
+}
+
+pub(in crate::runtime::vm::libkrun) fn guest_nofile_rlimit_entry(
+    host_nofile_hard_limit: libc::rlim_t,
+) -> String {
+    // libkrun expects Linux resource numeric IDs in RESOURCE=RLIM_CUR:RLIM_MAX form.
+    format!(
+        "{}={}:{}",
+        libc::RLIMIT_NOFILE,
+        host_nofile_hard_limit,
+        host_nofile_hard_limit
+    )
 }
 
 fn check_setup(name: &str, rc: i32) -> Result<()> {

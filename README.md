@@ -958,10 +958,14 @@ Loftd troubleshooting FAQ:
   ```
 
   Loftd raises the helper's soft `nofile` limit to the inherited hard limit
-  before starting libkrun, but it cannot raise above that hard limit. If
-  `ulimit -Hn` is low, raise the hard limit in the actual parent launcher
-  context first, such as the shell, tmux session, systemd unit, or service that
-  starts `loftd`, then start loftd again from that context.
+  before starting libkrun, then asks libkrun to set the guest VM's
+  `RLIMIT_NOFILE` soft and hard limits to that same inherited hard limit. It
+  cannot raise above the parent launcher's hard limit. If `ulimit -Hn` is low,
+  raise the hard limit in the actual parent launcher context first, such as the
+  shell, tmux session, systemd unit, or service that starts `loftd`, then start
+  loftd again from that context. Loftd treats guest nofile setup as required:
+  startup fails if the loaded libkrun does not provide `krun_set_rlimits` or
+  rejects the nofile limit request.
 
 Active task control is loftd-native and does not use host Podman as a runtime
 backend:

@@ -92,6 +92,19 @@ pub(crate) fn raise_host_nofile_soft_limit() -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn host_nofile_hard_limit() -> Result<libc::rlim_t> {
+    let mut backend = LibcNofileRlimitBackend;
+    host_nofile_hard_limit_with(&mut backend)
+}
+
+fn host_nofile_hard_limit_with(backend: &mut impl NofileRlimitBackend) -> Result<libc::rlim_t> {
+    let limits = backend
+        .get_nofile_limits()
+        .context("failed to read host RLIMIT_NOFILE before configuring libkrun guest limits")?;
+    validate_nofile_limits(limits)?;
+    Ok(limits.hard)
+}
+
 fn raise_host_nofile_soft_limit_with(
     backend: &mut impl NofileRlimitBackend,
 ) -> Result<NofileLimitAdjustment> {
@@ -119,13 +132,7 @@ fn raise_host_nofile_soft_limit_with(
 }
 
 fn plan_nofile_soft_limit_raise(limits: NofileLimits) -> Result<NofileLimitPlan> {
-    if limits.soft > limits.hard {
-        bail!(
-            "host RLIMIT_NOFILE is invalid: soft limit {} is greater than hard limit {}",
-            limits.soft,
-            limits.hard
-        );
-    }
+    validate_nofile_limits(limits)?;
     if limits.soft == limits.hard {
         Ok(NofileLimitPlan::AlreadyAtHard(limits))
     } else {
@@ -134,6 +141,17 @@ fn plan_nofile_soft_limit_raise(limits: NofileLimits) -> Result<NofileLimitPlan>
             hard: limits.hard,
         }))
     }
+}
+
+fn validate_nofile_limits(limits: NofileLimits) -> Result<()> {
+    if limits.soft > limits.hard {
+        bail!(
+            "host RLIMIT_NOFILE is invalid: soft limit {} is greater than hard limit {}",
+            limits.soft,
+            limits.hard
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -220,6 +238,43 @@ mod tests {
         })
         .expect_err("soft above hard must not produce a setrlimit request");
         assert!(format!("{err:#}").contains("soft limit 2048 is greater than hard limit 1024"));
+    }
+
+    #[test]
+    fn nofile_hard_limit_returns_current_hard_limit() {
+        let mut backend = FakeNofileBackend::with_limits(1024, 1_048_576);
+
+        assert_eq!(
+            host_nofile_hard_limit_with(&mut backend).unwrap(),
+            1_048_576
+        );
+        assert!(backend.set_calls.is_empty());
+    }
+
+    #[test]
+    fn nofile_hard_limit_rejects_invalid_soft_limit_above_hard_limit() {
+        let mut backend = FakeNofileBackend::with_limits(2048, 1024);
+
+        let err = host_nofile_hard_limit_with(&mut backend)
+            .expect_err("invalid nofile limits must not produce a hard limit");
+
+        assert!(format!("{err:#}").contains("soft limit 2048 is greater than hard limit 1024"));
+        assert!(backend.set_calls.is_empty());
+    }
+
+    #[test]
+    fn nofile_hard_limit_reports_getrlimit_failure() {
+        let mut backend = FakeNofileBackend::with_get_error();
+
+        let err = host_nofile_hard_limit_with(&mut backend)
+            .expect_err("getrlimit failure must be reported");
+
+        assert!(
+            format!("{err:#}").contains(
+                "failed to read host RLIMIT_NOFILE before configuring libkrun guest limits"
+            )
+        );
+        assert!(backend.set_calls.is_empty());
     }
 
     #[test]

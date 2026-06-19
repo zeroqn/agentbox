@@ -4,11 +4,13 @@ use crate::runtime::launch::config::{
     LaunchSpec, ManagedSessionConfig, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
     SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
 };
-use crate::runtime::vm::libkrun::launcher::{NET_FLAG_DHCP_CLIENT, PROFILE_KERNEL_CMDLINE_APPEND};
+use crate::runtime::vm::libkrun::launcher::{
+    NET_FLAG_DHCP_CLIENT, PROFILE_KERNEL_CMDLINE_APPEND, guest_nofile_rlimit_entry,
+};
 use crate::runtime::vm::libkrun::{
     DirectLibkrunLauncher, LOFTD_LIBKRUN_COMPAT_NET_FEATURES, LibkrunApi,
     nested_virt_symbol_presence_for_test, planned_libkrun_load_order,
-    planned_libkrun_load_order_for_exe,
+    planned_libkrun_load_order_for_exe, required_rlimits_symbol_presence_for_test,
 };
 use anyhow::Result;
 use std::cell::RefCell;
@@ -32,6 +34,7 @@ enum Call {
     AddVirtioConsoleDefault(u32, i32, i32, i32),
     SetWorkdir(u32, String),
     SetExec(u32, String, Vec<String>, Vec<(String, String)>),
+    SetRlimits(u32, Vec<String>),
     SetProfilePath(u32, String),
     SetKernelCmdlineAppend(u32, String),
     StartEnter(u32),
@@ -217,6 +220,13 @@ impl LibkrunApi for FakeLibkrunApi {
         Ok(self.rc("krun_set_exec"))
     }
 
+    fn set_rlimits(&mut self, ctx_id: u32, rlimits: &[String]) -> Result<i32> {
+        self.calls
+            .borrow_mut()
+            .push(Call::SetRlimits(ctx_id, rlimits.to_vec()));
+        Ok(self.rc("krun_set_rlimits"))
+    }
+
     fn set_profile_path(&mut self, ctx_id: u32, profile_path: &Path) -> Result<i32> {
         self.calls.borrow_mut().push(Call::SetProfilePath(
             ctx_id,
@@ -398,10 +408,24 @@ fn nested_virt_symbol_resolution_allows_missing_check_but_requires_set() {
 }
 
 #[test]
+fn rlimits_symbol_resolution_requires_krun_set_rlimits() {
+    let set_rlimits_symbol = std::ptr::dangling_mut::<std::os::raw::c_void>();
+
+    assert!(
+        required_rlimits_symbol_presence_for_test(Some(set_rlimits_symbol))
+            .expect("present rlimits symbol should be accepted")
+    );
+
+    let err = required_rlimits_symbol_presence_for_test(None)
+        .expect_err("missing rlimits symbol should fail");
+    assert!(format!("{err:#}").contains("krun_set_rlimits"));
+}
+
+#[test]
 fn fake_api_records_direct_libkrun_v1_call_order() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
-        .start_enter(&config())
+        .start_enter_with_host_nofile_hard_limit(&config(), 1_048_576)
         .expect("launch should succeed");
 
     let calls = calls.borrow();
@@ -441,11 +465,23 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
             vec![("KRUN_CONFIG".to_owned(), "/.loftd_config.json".to_owned())]
         )
     );
-    assert_eq!(calls[12], Call::StartEnter(7));
+    assert_eq!(
+        calls[12],
+        Call::SetRlimits(7, vec![format!("{}=1048576:1048576", libc::RLIMIT_NOFILE)])
+    );
+    assert_eq!(calls[13], Call::StartEnter(7));
     assert_eq!(
         calls.len(),
-        13,
+        14,
         "TSI default must not call krun_set_env, passt APIs, profile cmdline, or per-bind virtiofs devices"
+    );
+}
+
+#[test]
+fn nofile_rlimit_entry_uses_linux_resource_id_and_host_hard_as_soft_and_hard() {
+    assert_eq!(
+        guest_nofile_rlimit_entry(1_048_576),
+        format!("{}=1048576:1048576", libc::RLIMIT_NOFILE)
     );
 }
 
@@ -790,6 +826,27 @@ fn set_port_map_failure_is_setup_failure_and_frees_context() {
 
     assert!(format!("{err:#}").contains("libkrun setup failed: krun_set_port_map"));
     let calls = calls.borrow();
+    assert!(calls.contains(&Call::FreeCtx(7)));
+    assert!(!calls.contains(&Call::StartEnter(7)));
+}
+
+#[test]
+fn rlimit_setup_failure_is_setup_failure_and_frees_context_before_start() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let err =
+        DirectLibkrunLauncher::new(FakeLibkrunApi::failing(calls.clone(), "krun_set_rlimits"))
+            .start_enter_with_host_nofile_hard_limit(&config(), 1_048_576)
+            .expect_err("rlimit setup failure should fail");
+
+    assert!(
+        format!("{err:#}").contains("libkrun setup failed: krun_set_rlimits"),
+        "unexpected error: {err:#}"
+    );
+    let calls = calls.borrow();
+    assert!(calls.contains(&Call::SetRlimits(
+        7,
+        vec![format!("{}=1048576:1048576", libc::RLIMIT_NOFILE)]
+    )));
     assert!(calls.contains(&Call::FreeCtx(7)));
     assert!(!calls.contains(&Call::StartEnter(7)));
 }

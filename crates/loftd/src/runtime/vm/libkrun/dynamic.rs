@@ -45,6 +45,7 @@ type KrunSetPortMap = unsafe extern "C" fn(u32, *const *const c_char) -> i32;
 type KrunSetWorkdir = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetExec =
     unsafe extern "C" fn(u32, *const c_char, *const *const c_char, *const *const c_char) -> i32;
+type KrunSetRlimits = unsafe extern "C" fn(u32, *const *const c_char) -> i32;
 type KrunSetProfilePath = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunSetKernelCmdlineAppend = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunStartEnter = unsafe extern "C" fn(u32) -> i32;
@@ -67,6 +68,7 @@ pub(crate) struct DynamicLibkrunApi {
     set_port_map: Option<KrunSetPortMap>,
     set_workdir: KrunSetWorkdir,
     set_exec: KrunSetExec,
+    set_rlimits: KrunSetRlimits,
     set_profile_path: Option<KrunSetProfilePath>,
     set_kernel_cmdline_append: Option<KrunSetKernelCmdlineAppend>,
     start_enter: KrunStartEnter,
@@ -171,6 +173,10 @@ impl DynamicLibkrunApi {
                     handle,
                     "krun_set_exec",
                 )?),
+                set_rlimits: std::mem::transmute::<*mut c_void, KrunSetRlimits>(load_symbol(
+                    handle,
+                    "krun_set_rlimits",
+                )?),
                 set_profile_path: load_optional_symbol(handle, "krun_set_profile_path")
                     .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetProfilePath>(symbol)),
                 set_kernel_cmdline_append: load_optional_symbol(
@@ -216,6 +222,16 @@ pub(crate) fn nested_virt_symbol_presence_for_test(
         _ => Ok(None),
     })?;
     Ok((symbols.check.is_some(), !symbols.set.is_null()))
+}
+
+#[cfg(test)]
+pub(crate) fn required_rlimits_symbol_presence_for_test(
+    set_rlimits: Option<*mut c_void>,
+) -> Result<bool> {
+    let symbol = set_rlimits.ok_or_else(|| {
+        anyhow!("failed to resolve libkrun symbol krun_set_rlimits: symbol is unavailable")
+    })?;
+    Ok(!symbol.is_null())
 }
 
 fn explicit_libkrun_library_override() -> Result<Option<String>> {
@@ -443,6 +459,16 @@ impl LibkrunApi for DynamicLibkrunApi {
         let envp = null_terminated_ptrs(&env_strings);
         // SAFETY: C strings and pointer arrays live for the duration of the call.
         Ok(unsafe { (self.set_exec)(ctx_id, exec_path.as_ptr(), argv.as_ptr(), envp.as_ptr()) })
+    }
+
+    fn set_rlimits(&mut self, ctx_id: u32, rlimits: &[String]) -> Result<i32> {
+        let rlimit_strings = rlimits
+            .iter()
+            .map(|limit| CString::new(limit.as_str()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let rlimits = null_terminated_ptrs(&rlimit_strings);
+        // SAFETY: C strings and pointer array live for the duration of the call.
+        Ok(unsafe { (self.set_rlimits)(ctx_id, rlimits.as_ptr()) })
     }
 
     fn set_profile_path(&mut self, ctx_id: u32, profile_path: &Path) -> Result<i32> {
