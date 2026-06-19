@@ -3,10 +3,10 @@ use std::io::{Read, Write};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const DEFAULT_ATTACH_PORT: u32 = 50_426;
-pub const DETACH_PREFIX_BYTE: u8 = 0x07; // Ctrl-G
-pub const DETACH_SUFFIX_BYTE: u8 = 0x07; // Ctrl-G
+pub const DETACH_PREFIX_BYTE: u8 = 0x1c; // Ctrl-\\
+pub const DETACH_SUFFIX_BYTE: u8 = 0x1c; // Ctrl-\\
 
-const CSI_U_DETACH_KEY_CODE: u32 = b'g' as u32;
+const CSI_U_DETACH_KEY_CODE: u32 = b'\\' as u32;
 const CSI_U_CTRL_MODIFIER_BIT: u32 = 0b100;
 const CSI_U_PRESS_EVENT: u32 = 1;
 const MAX_CSI_U_SEQUENCE_LEN: usize = 64;
@@ -353,10 +353,10 @@ mod tests {
     }
 
     #[test]
-    fn detach_filter_consumes_ctrl_g_twice() {
+    fn detach_filter_consumes_ctrl_backslash_twice() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(filter.push(b"ab\x07\x07cd", &mut output));
+        assert!(filter.push(b"ab\x1c\x1ccd", &mut output));
         assert_eq!(output, b"ab");
         assert!(filter.detached());
     }
@@ -365,44 +365,44 @@ mod tests {
     fn detach_filter_matches_sequence_across_reads() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x07", &mut output));
+        assert!(!filter.push(b"ab\x1c", &mut output));
         assert_eq!(output, b"ab");
 
-        assert!(filter.push(b"\x07cd", &mut output));
+        assert!(filter.push(b"\x1ccd", &mut output));
 
-        assert_eq!(output, b"ab");
-        assert!(filter.detached());
-    }
-
-    #[test]
-    fn detach_filter_consumes_csi_u_ctrl_g_twice() {
-        let mut filter = DetachFilter::default();
-        let mut output = Vec::new();
-        assert!(filter.push(b"ab\x1b[103;133u\x1b[103;133ucd", &mut output));
         assert_eq!(output, b"ab");
         assert!(filter.detached());
     }
 
     #[test]
-    fn detach_filter_consumes_csi_u_ctrl_g_ctrl_only_modifier() {
+    fn detach_filter_consumes_csi_u_ctrl_backslash_twice() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(filter.push(b"ab\x1b[103;5u\x1b[103;5ucd", &mut output));
+        assert!(filter.push(b"ab\x1b[92;133u\x1b[92;133ucd", &mut output));
         assert_eq!(output, b"ab");
         assert!(filter.detached());
     }
 
     #[test]
-    fn detach_filter_matches_mixed_raw_and_csi_u_ctrl_g() {
+    fn detach_filter_consumes_csi_u_ctrl_backslash_ctrl_only_modifier() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(filter.push(b"ab\x07\x1b[103;133ucd", &mut output));
+        assert!(filter.push(b"ab\x1b[92;5u\x1b[92;5ucd", &mut output));
+        assert_eq!(output, b"ab");
+        assert!(filter.detached());
+    }
+
+    #[test]
+    fn detach_filter_matches_mixed_raw_and_csi_u_ctrl_backslash() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(filter.push(b"ab\x1c\x1b[92;133ucd", &mut output));
         assert_eq!(output, b"ab");
         assert!(filter.detached());
 
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(filter.push(b"ab\x1b[103;133u\x07cd", &mut output));
+        assert!(filter.push(b"ab\x1b[92;133u\x1ccd", &mut output));
         assert_eq!(output, b"ab");
         assert!(filter.detached());
     }
@@ -411,12 +411,12 @@ mod tests {
     fn detach_filter_matches_csi_u_sequence_across_reads() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x1b[103;", &mut output));
+        assert!(!filter.push(b"ab\x1b[92;", &mut output));
         assert_eq!(output, b"ab");
         assert!(!filter.push(b"133u", &mut output));
         assert_eq!(output, b"ab");
 
-        assert!(filter.push(b"\x1b[103;133ucd", &mut output));
+        assert!(filter.push(b"\x1b[92;133ucd", &mut output));
 
         assert_eq!(output, b"ab");
         assert!(filter.detached());
@@ -426,17 +426,17 @@ mod tests {
     fn detach_filter_forwards_csi_u_without_ctrl() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x1b[103;1u\x1b[103;1ucd", &mut output));
-        assert_eq!(output, b"ab\x1b[103;1u\x1b[103;1ucd");
+        assert!(!filter.push(b"ab\x1b[92;1u\x1b[92;1ucd", &mut output));
+        assert_eq!(output, b"ab\x1b[92;1u\x1b[92;1ucd");
         assert!(!filter.detached());
     }
 
     #[test]
-    fn detach_filter_forwards_non_g_csi_u_with_ctrl() {
+    fn detach_filter_forwards_non_backslash_csi_u_with_ctrl() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x1b[104;5u\x1b[104;5ucd", &mut output));
-        assert_eq!(output, b"ab\x1b[104;5u\x1b[104;5ucd");
+        assert!(!filter.push(b"ab\x1b[103;5u\x1b[103;5ucd", &mut output));
+        assert_eq!(output, b"ab\x1b[103;5u\x1b[103;5ucd");
         assert!(!filter.detached());
     }
 
@@ -444,8 +444,8 @@ mod tests {
     fn detach_filter_does_not_detach_on_csi_u_release_event() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x1b[103;5:3u\x1b[103;5:3ucd", &mut output));
-        assert_eq!(output, b"ab\x1b[103;5:3u\x1b[103;5:3ucd");
+        assert!(!filter.push(b"ab\x1b[92;5:3u\x1b[92;5:3ucd", &mut output));
+        assert_eq!(output, b"ab\x1b[92;5:3u\x1b[92;5:3ucd");
         assert!(!filter.detached());
     }
 
@@ -453,26 +453,26 @@ mod tests {
     fn detach_filter_flushes_partial_csi_u_sequence() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x1b[103;", &mut output));
+        assert!(!filter.push(b"ab\x1b[92;", &mut output));
         assert_eq!(output, b"ab");
 
         filter.flush_pending(&mut output);
 
-        assert_eq!(output, b"ab\x1b[103;");
+        assert_eq!(output, b"ab\x1b[92;");
         assert!(!filter.detached());
     }
 
     #[test]
-    fn detach_filter_timeout_flush_preserves_pending_ctrl_g() {
+    fn detach_filter_timeout_flush_preserves_pending_ctrl_backslash() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x07", &mut output));
+        assert!(!filter.push(b"ab\x1c", &mut output));
         assert_eq!(output, b"ab");
 
         filter.flush_incomplete_escape_sequence(&mut output);
 
         assert_eq!(output, b"ab");
-        assert!(filter.push(b"\x07cd", &mut output));
+        assert!(filter.push(b"\x1ccd", &mut output));
         assert_eq!(output, b"ab");
         assert!(filter.detached());
     }
@@ -491,24 +491,24 @@ mod tests {
     }
 
     #[test]
-    fn detach_filter_forwards_ctrl_g_when_sequence_does_not_match() {
+    fn detach_filter_forwards_ctrl_backslash_when_sequence_does_not_match() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x07x", &mut output));
-        assert_eq!(output, b"ab\x07x");
+        assert!(!filter.push(b"ab\x1cx", &mut output));
+        assert_eq!(output, b"ab\x1cx");
         assert!(!filter.detached());
     }
 
     #[test]
-    fn detach_filter_flushes_standalone_ctrl_g() {
+    fn detach_filter_flushes_standalone_ctrl_backslash() {
         let mut filter = DetachFilter::default();
         let mut output = Vec::new();
-        assert!(!filter.push(b"ab\x07", &mut output));
+        assert!(!filter.push(b"ab\x1c", &mut output));
         assert_eq!(output, b"ab");
 
         filter.flush_pending(&mut output);
 
-        assert_eq!(output, b"ab\x07");
+        assert_eq!(output, b"ab\x1c");
         assert!(!filter.detached());
     }
 
@@ -518,6 +518,24 @@ mod tests {
         let mut output = Vec::new();
         assert!(!filter.push(b"ab\x04cd", &mut output));
         assert_eq!(output, b"ab\x04cd");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn ctrl_g_is_regular_input() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x07\x07cd", &mut output));
+        assert_eq!(output, b"ab\x07\x07cd");
+        assert!(!filter.detached());
+    }
+
+    #[test]
+    fn csi_u_ctrl_g_is_regular_input() {
+        let mut filter = DetachFilter::default();
+        let mut output = Vec::new();
+        assert!(!filter.push(b"ab\x1b[103;133u\x1b[103;133ucd", &mut output));
+        assert_eq!(output, b"ab\x1b[103;133u\x1b[103;133ucd");
         assert!(!filter.detached());
     }
 
