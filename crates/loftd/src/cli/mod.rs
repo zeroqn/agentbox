@@ -34,6 +34,7 @@ impl ContainerStoreBackend {
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
     after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
+  loftd --daemon
   loftd images list
   loftd images sync ghcr.io/example/loftd:dev
   loftd images sync ba5a514
@@ -94,6 +95,13 @@ pub(crate) struct Cli {
         long_help = "Enter the task shell as root instead of dropping to the host/dev identity. By default, loftd drops privileges for the interactive shell."
     )]
     root: bool,
+
+    #[arg(
+        long,
+        help = "Start the managed task through this TTY, then detach after initial output becomes idle",
+        long_help = "Start the managed task through the launching terminal, wait for the guest PTY target to emit initial output and become briefly idle, then detach while leaving the task running for loftd attach. This requires a TTY because terminal initialization queries must be answered by the real terminal."
+    )]
+    daemon: bool,
 
     #[arg(
         long,
@@ -360,6 +368,7 @@ impl Cli {
             log_settings,
             profile: self.profile,
             root: self.root,
+            daemon: self.daemon,
             hardened: self.hardened,
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -395,6 +404,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) log_settings: LogSettings,
     pub(crate) profile: bool,
     pub(crate) root: bool,
+    pub(crate) daemon: bool,
     pub(crate) hardened: bool,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -510,6 +520,7 @@ mod tests {
         );
         assert!(options.preserve_debug);
         assert!(options.root);
+        assert!(!options.daemon);
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
@@ -527,6 +538,26 @@ mod tests {
         assert!(matches!(
             cli.into_action(),
             crate::cli::CliAction::Attach { task_id, .. } if task_id == "workspace-123"
+        ));
+    }
+
+    #[test]
+    fn parses_daemon_runtime_option() {
+        let cli =
+            Cli::try_parse_from(["loftd", "--daemon"]).expect("daemon runtime option should parse");
+        let options = cli.into_runtime_options();
+
+        assert!(options.daemon);
+    }
+
+    #[test]
+    fn daemon_is_inert_for_management_subcommands() {
+        let cli = Cli::try_parse_from(["loftd", "--daemon", "ps"])
+            .expect("daemon stays parse-compatible for management commands");
+
+        assert!(matches!(
+            cli.into_action(),
+            crate::cli::CliAction::Ps { .. }
         ));
     }
 

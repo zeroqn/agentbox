@@ -54,6 +54,7 @@ pub(crate) trait Supervisor {
         task_state_dir: &Path,
         profiler: &mut LoftdHostProfiler,
         active_task: &ActiveTaskSpec,
+        daemon_initial_attach: bool,
     ) -> Result<ChildStatus>;
 }
 
@@ -67,10 +68,17 @@ impl Supervisor for HostSupervisor {
         task_state_dir: &Path,
         profiler: &mut LoftdHostProfiler,
         active_task: &ActiveTaskSpec,
+        daemon_initial_attach: bool,
     ) -> Result<ChildStatus> {
         let config_path = task_state_dir.join("launch.conf");
         config.write_to(&config_path)?;
-        command::run_helper_process(config, &config_path, profiler, active_task)
+        command::run_helper_process(
+            config,
+            &config_path,
+            profiler,
+            active_task,
+            daemon_initial_attach,
+        )
     }
 }
 

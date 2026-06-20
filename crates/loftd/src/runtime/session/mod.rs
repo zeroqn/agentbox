@@ -247,6 +247,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                                 lease.handle().task_dir(),
                                                 profiler,
                                                 &active_task,
+                                                plan.daemon,
                                             )
                                         },
                                     ),
@@ -381,6 +382,7 @@ mod tests {
             log_settings: crate::logging::LogSettings::resolve(None, debug, None),
             profile,
             root: false,
+            daemon: false,
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,

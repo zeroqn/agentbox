@@ -799,6 +799,7 @@ Run/help:
 ./result/bin/loftd --rootfs-backend fuse-overlay
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
+./result/bin/loftd --daemon
 ./result/bin/loftd --passt -- bash -lc 'echo ok'
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
@@ -825,6 +826,14 @@ Detach/attach behavior:
   killing the attach client, or losing SSH also behaves as detach: the guest
   shell or terminal-interactive command keeps running while the VM helper
   remains active.
+- `loftd --daemon` starts the managed guest PTY through the launching terminal,
+  forwards startup input/output so the target program can complete terminal
+  initialization, then detaches automatically after the first target output is
+  followed by a short idle window. The heuristic is generic and does not parse
+  shell prompts. This mode is TTY-only; if stdin or stdout is not a terminal,
+  loftd fails before sending the attach frame that starts the target program.
+  Use `loftd attach <task-id-or-handle-selector>` to reconnect and
+  `loftd kill <task-id-or-handle-selector>` to terminate the detached task.
 - Reconnect with `loftd attach <task-id-or-handle-selector>`. Selectors follow
   the same task-id/handle matching rules as `loftd kill`; use `loftd ps` to list
   running task IDs and handles. Reattach repaints the current visible terminal

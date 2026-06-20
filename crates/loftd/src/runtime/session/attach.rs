@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use loftd_attach_protocol::{DetachFilter, Frame, PROTOCOL_VERSION, read_frame, write_frame};
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +19,8 @@ const READY_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
 const READY_CONNECT_RETRY: Duration = Duration::from_millis(10);
 const IO_BUF_SIZE: usize = 16 * 1024;
 const ATTACH_IO_POLL_MS: i32 = 100;
+const DAEMON_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(10);
+const DAEMON_OUTPUT_IDLE_TIMEOUT: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttachOutcome {
@@ -64,8 +67,8 @@ pub(crate) fn attach_to_socket(socket_path: &Path) -> Result<AttachOutcome> {
     attach_stream(stream)
 }
 
-pub(crate) fn attach_to_ready_socket(socket_path: &Path) -> Result<AttachOutcome> {
-    attach_to_ready_socket_with_policy(socket_path, ConnectPolicy::post_ready())
+pub(crate) fn attach_to_ready_socket(socket_path: &Path, daemon: bool) -> Result<AttachOutcome> {
+    attach_to_ready_socket_with_policy(socket_path, ConnectPolicy::post_ready(), daemon)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,12 +117,14 @@ fn connect_with_retry(socket_path: &Path, policy: ConnectPolicy) -> Result<UnixS
 fn attach_to_ready_socket_with_policy(
     socket_path: &Path,
     policy: ConnectPolicy,
+    daemon: bool,
 ) -> Result<AttachOutcome> {
     let deadline = Instant::now() + policy.timeout;
     let mut last_error = None;
     while Instant::now() <= deadline {
         match UnixStream::connect(socket_path) {
             Ok(mut stream) => match read_initial_hello(&mut stream)? {
+                InitialHello::Ready if daemon => return attach_stream_after_hello_daemon(stream),
                 InitialHello::Ready => return attach_stream_after_hello(stream),
                 InitialHello::ClosedBeforeHandshake => {
                     last_error = Some(anyhow!("loftd attach socket closed before handshake"));
@@ -184,6 +189,57 @@ fn attach_stream_after_hello(mut stream: UnixStream) -> Result<AttachOutcome> {
     active.store(false, Ordering::Release);
     let _ = stdin_thread.join();
     outcome
+}
+
+fn attach_stream_after_hello_daemon(stream: UnixStream) -> Result<AttachOutcome> {
+    attach_stream_after_hello_daemon_with_tty_check(stream, || {
+        daemon_bootstrap_tty_available(libc::STDIN_FILENO, libc::STDOUT_FILENO)
+    })
+}
+
+fn attach_stream_after_hello_daemon_with_tty_check(
+    mut stream: UnixStream,
+    tty_available: impl FnOnce() -> bool,
+) -> Result<AttachOutcome> {
+    ensure_daemon_bootstrap_tty(tty_available)?;
+    let initial_size = terminal_size(libc::STDIN_FILENO);
+    let _raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
+    write_initial_attach_frames(&mut stream, initial_size)?;
+    let writer = Arc::new(Mutex::new(stream.try_clone()?));
+    let active = Arc::new(AtomicBool::new(true));
+    let stdin_writer = writer.clone();
+    let stdin_active = active.clone();
+    let stdin_thread = thread::spawn(move || proxy_stdin(stdin_writer, stdin_active));
+
+    let mut stdout = std::io::stdout().lock();
+    let outcome = proxy_remote_until_daemon_idle(
+        &mut stream,
+        &writer,
+        &mut stdout,
+        DAEMON_BOOTSTRAP_TIMEOUT,
+        DAEMON_OUTPUT_IDLE_TIMEOUT,
+    );
+    active.store(false, Ordering::Release);
+    let _ = stdin_thread.join();
+    outcome
+}
+
+fn ensure_daemon_bootstrap_tty(tty_available: impl FnOnce() -> bool) -> Result<()> {
+    if tty_available() {
+        Ok(())
+    } else {
+        bail!(
+            "loftd --daemon requires stdin and stdout to be connected to a TTY for target terminal initialization"
+        )
+    }
+}
+
+fn daemon_bootstrap_tty_available(stdin_fd: i32, stdout_fd: i32) -> bool {
+    is_tty(stdin_fd) && is_tty(stdout_fd)
+}
+
+fn is_tty(fd: i32) -> bool {
+    unsafe { libc::isatty(fd) == 1 }
 }
 
 fn write_initial_attach_frames<W>(writer: &mut W, initial_size: Option<TerminalSize>) -> Result<()>
@@ -323,6 +379,78 @@ fn proxy_remote(mut stream: UnixStream) -> Result<AttachOutcome> {
     }
 }
 
+fn proxy_remote_until_daemon_idle<W: Write>(
+    stream: &mut UnixStream,
+    writer: &Arc<Mutex<UnixStream>>,
+    stdout: &mut W,
+    startup_timeout: Duration,
+    idle_timeout: Duration,
+) -> Result<AttachOutcome> {
+    let startup_deadline = Instant::now() + startup_timeout;
+    let mut saw_output = false;
+    loop {
+        let timeout = if saw_output {
+            idle_timeout
+        } else {
+            startup_deadline
+                .checked_duration_since(Instant::now())
+                .unwrap_or_default()
+        };
+        match wait_for_remote_frame(stream.as_raw_fd(), timeout)? {
+            RemoteReadiness::TimedOut if saw_output => {
+                write_to_guest(writer, &Frame::Detach)?;
+                return Ok(AttachOutcome::Detached);
+            }
+            RemoteReadiness::TimedOut => {
+                bail!(
+                    "timed out waiting for initial output from loftd --daemon bootstrap before detach"
+                );
+            }
+            RemoteReadiness::Readable => {}
+        }
+        match read_frame(stream)? {
+            Some(Frame::Data(data)) => {
+                stdout.write_all(&data)?;
+                stdout.flush()?;
+                saw_output = true;
+            }
+            Some(Frame::Exit { code }) => return Ok(AttachOutcome::Exited(code)),
+            Some(Frame::Detach) | None => return Ok(AttachOutcome::Detached),
+            Some(Frame::Busy) => bail!("loftd task already has an attached client"),
+            Some(Frame::Error(message)) => bail!("loftd attach failed: {message}"),
+            Some(frame) => bail!("unexpected loftd attach frame from guest: {frame:?}"),
+        }
+    }
+}
+
+enum RemoteReadiness {
+    Readable,
+    TimedOut,
+}
+
+fn wait_for_remote_frame(fd: i32, timeout: Duration) -> Result<RemoteReadiness> {
+    let timeout_ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    let mut pollfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        let rc = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if rc > 0 {
+            return Ok(RemoteReadiness::Readable);
+        }
+        if rc == 0 {
+            return Ok(RemoteReadiness::TimedOut);
+        }
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(err).context("failed to poll loftd attach stream");
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TerminalSize {
     rows: u16,
@@ -356,7 +484,7 @@ struct RawTerminalMode {
 
 impl RawTerminalMode {
     fn enter(fd: i32) -> Result<Option<Self>> {
-        if unsafe { libc::isatty(fd) } != 1 {
+        if !is_tty(fd) {
             return Ok(None);
         }
         let mut original = unsafe { std::mem::zeroed::<libc::termios>() };
@@ -461,7 +589,7 @@ mod tests {
             write_frame(&mut client, &Frame::Exit { code: 7 }).unwrap();
         });
 
-        let outcome = attach_to_ready_socket(&socket).unwrap();
+        let outcome = attach_to_ready_socket(&socket, false).unwrap();
 
         assert_eq!(outcome, AttachOutcome::Exited(7));
         server.join().unwrap();
@@ -500,6 +628,103 @@ mod tests {
     }
 
     #[test]
+    fn daemon_bootstrap_requires_tty_fds() {
+        let file = tempfile::tempfile().unwrap();
+
+        assert!(!daemon_bootstrap_tty_available(
+            file.as_raw_fd(),
+            file.as_raw_fd()
+        ));
+    }
+
+    #[test]
+    fn daemon_tty_failure_closes_without_sending_attach() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let server_thread = thread::spawn(move || {
+            assert_eq!(read_frame(&mut server).unwrap(), None);
+        });
+
+        let err = attach_stream_after_hello_daemon_with_tty_check(client, || false)
+            .expect_err("daemon attach should fail when TTY bootstrap is unavailable");
+
+        assert!(
+            format!("{err:#}").contains("requires stdin and stdout"),
+            "unexpected error: {err:#}"
+        );
+        server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_remote_proxy_detaches_after_first_output_idle() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let writer = Arc::new(Mutex::new(client.try_clone().unwrap()));
+        let server_thread = thread::spawn(move || {
+            write_frame(&mut server, &Frame::Data(b"fish> ".to_vec())).unwrap();
+            assert_eq!(read_frame(&mut server).unwrap(), Some(Frame::Detach));
+        });
+        let mut output = Vec::new();
+
+        let outcome = proxy_remote_until_daemon_idle(
+            &mut client,
+            &writer,
+            &mut output,
+            Duration::from_secs(1),
+            Duration::from_millis(20),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(output, b"fish> ");
+        server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_remote_proxy_returns_exit_before_idle_detach() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let writer = Arc::new(Mutex::new(client.try_clone().unwrap()));
+        let server_thread = thread::spawn(move || {
+            write_frame(&mut server, &Frame::Data(b"booting".to_vec())).unwrap();
+            write_frame(&mut server, &Frame::Exit { code: 9 }).unwrap();
+        });
+        let mut output = Vec::new();
+
+        let outcome = proxy_remote_until_daemon_idle(
+            &mut client,
+            &writer,
+            &mut output,
+            Duration::from_secs(1),
+            Duration::from_millis(200),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Exited(9));
+        assert_eq!(output, b"booting");
+        server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_remote_proxy_times_out_without_initial_output() {
+        let (mut client, _server) = UnixStream::pair().unwrap();
+        let writer = Arc::new(Mutex::new(client.try_clone().unwrap()));
+        let mut output = Vec::new();
+
+        let err = proxy_remote_until_daemon_idle(
+            &mut client,
+            &writer,
+            &mut output,
+            Duration::from_millis(20),
+            Duration::from_millis(20),
+        )
+        .expect_err("daemon bootstrap should require initial output before detach");
+
+        assert!(
+            format!("{err:#}").contains("timed out waiting for initial output"),
+            "unexpected error: {err:#}"
+        );
+        assert!(output.is_empty());
+    }
+
+    #[test]
     fn post_ready_attach_retries_transient_busy_from_readiness_probe_teardown() {
         let temp = tempfile::tempdir().unwrap();
         let socket = temp.path().join("attach.sock");
@@ -520,7 +745,7 @@ mod tests {
             write_frame(&mut client, &Frame::Exit { code: 0 }).unwrap();
         });
 
-        let outcome = attach_to_ready_socket(&socket).unwrap();
+        let outcome = attach_to_ready_socket(&socket, false).unwrap();
 
         assert_eq!(outcome, AttachOutcome::Exited(0));
         server.join().unwrap();

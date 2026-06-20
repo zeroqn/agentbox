@@ -40,6 +40,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) log_level: LogLevel,
     pub(crate) profile: bool,
     pub(crate) root: bool,
+    pub(crate) daemon: bool,
     pub(crate) hardened: bool,
     pub(crate) preserve_debug: bool,
     pub(crate) config_diagnostics: ConfigDiagnostics,
@@ -121,6 +122,7 @@ impl LaunchPlan {
             log_level: options.log_settings.level,
             profile: options.profile,
             root: options.root,
+            daemon: options.daemon,
             hardened: options.hardened,
             preserve_debug: options.preserve_debug,
             config_diagnostics: ConfigDiagnostics {
@@ -252,6 +254,7 @@ mod tests {
             log_settings: LogSettings::resolve(None, false, None),
             profile: false,
             root: false,
+            daemon: false,
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,
@@ -290,6 +293,7 @@ mod tests {
         assert_eq!(plan.container_store_backend, ContainerStoreBackend::RawDisk);
         assert_eq!(plan.log_level, LogLevel::Off);
         assert!(!plan.debug);
+        assert!(!plan.daemon);
         assert!(!plan.config_diagnostics.config_loaded);
     }
 
@@ -530,6 +534,7 @@ mod tests {
         options.log_settings = LogSettings::resolve(None, true, None);
         options.profile = true;
         options.root = true;
+        options.daemon = true;
         options.preserve_debug = true;
 
         let plan = LaunchPlan::from_env_values(
@@ -551,6 +556,7 @@ mod tests {
         assert!(plan.debug);
         assert!(plan.profile);
         assert!(plan.root);
+        assert!(plan.daemon);
         assert!(plan.preserve_debug);
     }
 

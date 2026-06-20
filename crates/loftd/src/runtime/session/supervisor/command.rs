@@ -25,6 +25,7 @@ pub(crate) fn run_helper_process(
     config_path: &Path,
     profiler: &mut LoftdHostProfiler,
     active_task: &ActiveTaskSpec,
+    daemon_initial_attach: bool,
 ) -> Result<ChildStatus> {
     let host_profile_enabled = profiler.is_enabled();
     let mut ready_pipe = if config.managed_session.is_some() {
@@ -119,7 +120,7 @@ pub(crate) fn run_helper_process(
             return Err(err).context("failed while waiting for managed loftd attach readiness");
         }
         let attach_result = profiler.measure_result("helper_initial_attach", || {
-            attach::attach_to_ready_socket(&managed.attach_socket)
+            attach::attach_to_ready_socket(&managed.attach_socket, daemon_initial_attach)
         });
         return match attach_result {
             Ok(AttachOutcome::Detached) => Ok(ChildStatus::detached()),
