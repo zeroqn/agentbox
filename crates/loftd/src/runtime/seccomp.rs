@@ -272,8 +272,8 @@ pub(crate) fn synthesize_policy(input: &Path, output: &Path) -> Result<()> {
     }
     let policy = SeccompilerPolicy {
         main_thread: ThreadPolicy {
-            mismatch_action: "trap",
-            match_action: "allow",
+            mismatch_action: "trap".to_owned(),
+            match_action: "allow".to_owned(),
             filter: syscalls
                 .into_iter()
                 .map(|syscall| SyscallRule { syscall })
@@ -353,6 +353,15 @@ fn allowed_syscalls_from_policy_value(policy: &serde_json::Value) -> Result<BTre
     Ok(syscalls)
 }
 
+fn main_thread_action(policy: &serde_json::Value, key: &str) -> Result<String> {
+    policy
+        .get("main_thread")
+        .and_then(|value| value.get(key))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("seccomp policy main_thread.{key} must be a string"))
+}
+
 pub(crate) fn extend_policy(policy: &Path, trace: &Path, output: &Path) -> Result<()> {
     if policy == output {
         bail!(
@@ -366,35 +375,33 @@ pub(crate) fn extend_policy(policy: &Path, trace: &Path, output: &Path) -> Resul
             policy.display()
         )
     })?;
-    let mut policy_value = serde_json::from_str::<serde_json::Value>(&text).with_context(|| {
+    let policy_value = serde_json::from_str::<serde_json::Value>(&text).with_context(|| {
         format!(
             "failed to parse baseline seccomp policy '{}'",
             policy.display()
         )
     })?;
-    let existing = allowed_syscalls_from_policy_value(&policy_value).with_context(|| {
+    let mut syscalls = allowed_syscalls_from_policy_value(&policy_value).with_context(|| {
         format!(
             "failed to inspect baseline seccomp policy '{}'",
             policy.display()
         )
     })?;
-    let observed = syscalls_from_trace(trace)?;
-    let additions = observed
-        .difference(&existing)
-        .cloned()
-        .collect::<Vec<String>>();
+    syscalls.extend(syscalls_from_trace(trace)?);
 
-    let filter = policy_value
-        .get_mut("main_thread")
-        .and_then(|value| value.get_mut("filter"))
-        .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(|| anyhow!("seccomp policy main_thread.filter must be an array"))?;
-    for syscall in additions {
-        filter.push(serde_json::json!({ "syscall": syscall }));
-    }
+    let policy = SeccompilerPolicy {
+        main_thread: ThreadPolicy {
+            mismatch_action: main_thread_action(&policy_value, "mismatch_action")?,
+            match_action: main_thread_action(&policy_value, "match_action")?,
+            filter: syscalls
+                .into_iter()
+                .map(|syscall| SyscallRule { syscall })
+                .collect(),
+        },
+    };
 
     let mut bytes = Vec::new();
-    serde_json::to_writer_pretty(&mut bytes, &policy_value)
+    serde_json::to_writer_pretty(&mut bytes, &policy)
         .context("failed to encode extended seccomp policy")?;
     bytes.push(b'\n');
     validate_seccomp_policy_bytes(&bytes, output, "extended seccomp policy")?;
@@ -562,8 +569,8 @@ struct SeccompilerPolicy {
 
 #[derive(Debug, Clone, Serialize)]
 struct ThreadPolicy {
-    mismatch_action: &'static str,
-    match_action: &'static str,
+    mismatch_action: String,
+    match_action: String,
     filter: Vec<SyscallRule>,
 }
 
@@ -810,7 +817,7 @@ mod tests {
         let original = fs::read_to_string(&policy).expect("read original policy");
         fs::write(
             &trace,
-            "{\"syscall\":\"write\",\"raw\":\"write(1, \\\"x\\\", 1) = 1\"}\n{\"syscall\":\"openat\",\"raw\":\"openat(AT_FDCWD, \\\"/x\\\", O_RDONLY) = 3\"}\n{\"syscall\":\"read\",\"raw\":\"read(0, \\\"\\\", 1) = 0\"}\n",
+            "{\"syscall\":\"write\",\"raw\":\"write(1, \\\"x\\\", 1) = 1\"}\n{\"syscall\":\"openat\",\"raw\":\"openat(AT_FDCWD, \\\"/x\\\", O_RDONLY) = 3\"}\n{\"syscall\":\"access\",\"raw\":\"access(\\\"/x\\\", F_OK) = 0\"}\n{\"syscall\":\"accept\",\"raw\":\"accept(3, NULL, NULL) = 4\"}\n{\"syscall\":\"read\",\"raw\":\"read(0, \\\"\\\", 1) = 0\"}\n",
         )
         .expect("write trace");
 
@@ -821,8 +828,15 @@ mod tests {
             original
         );
         let updated = fs::read_to_string(&output).expect("read updated policy");
-        assert!(updated.find("\"read\"").unwrap() < updated.find("\"openat\"").unwrap());
-        assert!(updated.find("\"openat\"").unwrap() < updated.find("\"write\"").unwrap());
+        assert!(
+            updated.find("\"mismatch_action\"").unwrap()
+                < updated.find("\"match_action\"").unwrap()
+        );
+        assert!(updated.find("\"match_action\"").unwrap() < updated.find("\"filter\"").unwrap());
+        assert!(updated.find("\"accept\"").unwrap() < updated.find("\"access\"").unwrap());
+        assert!(updated.find("\"access\"").unwrap() < updated.find("\"openat\"").unwrap());
+        assert!(updated.find("\"openat\"").unwrap() < updated.find("\"read\"").unwrap());
+        assert!(updated.find("\"read\"").unwrap() < updated.find("\"write\"").unwrap());
         let file = fs::File::open(output).expect("open updated policy");
         let arch = std::env::consts::ARCH.try_into().expect("supported arch");
         let filters = seccompiler::compile_from_json(file, arch).expect("policy should compile");
