@@ -485,13 +485,21 @@ fn syscall_from_strace_line(line: &str) -> Option<String> {
 }
 
 fn strip_pid_prefix(line: &str) -> &str {
-    let Some(rest) = line.strip_prefix("[pid ") else {
+    if let Some(rest) = line.strip_prefix("[pid ") {
+        let Some((_, after)) = rest.split_once(']') else {
+            return line;
+        };
+        return after.trim_start();
+    }
+
+    let Some((pid, after)) = line.split_once(char::is_whitespace) else {
         return line;
     };
-    let Some((_, after)) = rest.split_once(']') else {
-        return line;
-    };
-    after.trim_start()
+    if !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()) {
+        after.trim_start()
+    } else {
+        line
+    }
 }
 
 fn valid_syscall_name(value: &str) -> bool {
@@ -533,6 +541,12 @@ mod tests {
         assert_eq!(
             syscall_from_strace_line("[pid 123] openat(AT_FDCWD, \"/tmp\", O_RDONLY) = 3"),
             Some("openat".to_owned())
+        );
+        assert_eq!(
+            syscall_from_strace_line(
+                "40860 execve(\"/nix/store/bin/loftd\", [\"loftd\"], 0x1234) = 0"
+            ),
+            Some("execve".to_owned())
         );
         assert_eq!(
             syscall_from_strace_line("<... read resumed> \"\", 8192) = 0"),
