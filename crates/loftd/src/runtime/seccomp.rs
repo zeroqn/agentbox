@@ -209,15 +209,32 @@ pub(crate) fn prepare_audit_trace_target(trace_path: &Path) -> Result<()> {
 
 pub(crate) fn finalize_audit_trace(trace_path: &Path) -> Result<()> {
     let raw_path = raw_strace_path(trace_path);
-    let raw = fs::File::open(&raw_path)
-        .with_context(|| format!("failed to open raw strace log '{}'", raw_path.display()))?;
     if let Some(parent) = trace_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!("failed to create seccomp trace dir '{}'", parent.display())
         })?;
     }
-    let mut out = fs::File::create(trace_path)
-        .with_context(|| format!("failed to create seccomp trace '{}'", trace_path.display()))?;
+    let temp_path = finalized_trace_temp_path(trace_path);
+    match write_finalized_audit_trace(&raw_path, &temp_path) {
+        Ok(()) => fs::rename(&temp_path, trace_path).with_context(|| {
+            format!(
+                "failed to publish finalized seccomp trace '{}' from '{}'",
+                trace_path.display(),
+                temp_path.display()
+            )
+        }),
+        Err(err) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(err)
+        }
+    }
+}
+
+fn write_finalized_audit_trace(raw_path: &Path, output_path: &Path) -> Result<()> {
+    let raw = fs::File::open(raw_path)
+        .with_context(|| format!("failed to open raw strace log '{}'", raw_path.display()))?;
+    let mut out = fs::File::create(output_path)
+        .with_context(|| format!("failed to create seccomp trace '{}'", output_path.display()))?;
     for line in BufReader::new(raw).lines() {
         let line = line.with_context(|| format!("failed to read '{}'", raw_path.display()))?;
         let Some(syscall) = syscall_from_strace_line(&line) else {
@@ -229,7 +246,20 @@ pub(crate) fn finalize_audit_trace(trace_path: &Path) -> Result<()> {
         out.write_all(b"\n")
             .context("failed to write seccomp audit trace record")?;
     }
+    out.flush()
+        .context("failed to flush seccomp audit trace records")?;
+    out.sync_all()
+        .context("failed to sync seccomp audit trace records")?;
     Ok(())
+}
+
+fn finalized_trace_temp_path(trace_path: &Path) -> PathBuf {
+    let mut name = trace_path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "loftd-seccomp-trace".into());
+    name.push(format!(".tmp-{}", std::process::id()));
+    trace_path.with_file_name(name)
 }
 
 pub(crate) fn synthesize_policy(input: &Path, output: &Path) -> Result<()> {
@@ -569,6 +599,45 @@ mod tests {
                 .expect("raw parent")
                 .is_dir()
         );
+    }
+
+    #[test]
+    fn finalizes_raw_strace_to_jsonl_atomically() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("trace.jsonl");
+        let raw = raw_strace_path(&trace);
+        fs::write(
+            &raw,
+            "123 read(0, \"\", 1) = 0\n123 write(1, \"x\", 1) = 1\n",
+        )
+        .expect("write raw trace");
+
+        finalize_audit_trace(&trace).expect("finalize trace");
+
+        let syscalls = syscalls_from_trace(&trace).expect("read finalized trace");
+        assert_eq!(
+            syscalls,
+            BTreeSet::from(["read".to_owned(), "write".to_owned()])
+        );
+        assert!(!finalized_trace_temp_path(&trace).exists());
+    }
+
+    #[test]
+    fn finalization_failure_preserves_existing_trace() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("trace.jsonl");
+        let raw = raw_strace_path(&trace);
+        fs::write(&trace, "old finalized trace\n").expect("write old trace");
+        fs::write(&raw, b"123 read(0, \"\", 1) = 0\n\xff\n").expect("write bad raw trace");
+
+        let err = finalize_audit_trace(&trace).expect_err("bad raw trace should fail");
+
+        assert!(format!("{err:#}").contains("failed to read"));
+        assert_eq!(
+            fs::read_to_string(&trace).expect("old trace should remain"),
+            "old finalized trace\n"
+        );
+        assert!(!finalized_trace_temp_path(&trace).exists());
     }
 
     #[test]
