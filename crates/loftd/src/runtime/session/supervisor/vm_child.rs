@@ -1,13 +1,18 @@
 //! Forked VM child process and direct libkrun entry path.
 
-use anyhow::{Result, bail};
-use std::path::Path;
+use anyhow::{Context, Result, anyhow, bail};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Instant;
 
+use crate::logging::{self, LogSettings};
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::seccomp::{self, SeccompMode};
 use crate::runtime::session::nix_overlay;
 use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_path};
+use crate::runtime::session::supervisor::LIBKRUN_VM_WORKER_ARG;
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
@@ -50,12 +55,33 @@ impl VmWorkerGuard {
             std::io::Error::last_os_error()
         );
     }
+
+    pub(crate) fn terminate(&mut self) {
+        if self.pid > 0 {
+            network::cleanup_pid(self.pid);
+            self.pid = -1;
+        }
+    }
 }
 
 impl Drop for VmWorkerGuard {
     fn drop(&mut self) {
-        if self.pid > 0 {
-            network::cleanup_pid(self.pid);
+        self.terminate();
+    }
+}
+
+pub(crate) fn start_vm_worker(
+    config_path: &Path,
+    holder_pid: libc::pid_t,
+    passt_fd: Option<i32>,
+    seccomp_mode: &SeccompMode,
+) -> Result<VmWorkerGuard> {
+    match seccomp_mode {
+        SeccompMode::Audit { trace_path } => {
+            spawn_traced_vm_worker(config_path, holder_pid, passt_fd, trace_path)
+        }
+        SeccompMode::Off | SeccompMode::Enforce { .. } => {
+            fork_vm_worker(config_path, holder_pid, passt_fd).map(VmWorkerGuard::new)
         }
     }
 }
@@ -78,6 +104,125 @@ pub(crate) fn fork_vm_worker(
         std::process::exit(run_vm_worker_child(config_path, holder_pid, passt_fd));
     }
     Ok(pid)
+}
+
+fn spawn_traced_vm_worker(
+    config_path: &Path,
+    holder_pid: libc::pid_t,
+    passt_fd: Option<i32>,
+    trace_path: &Path,
+) -> Result<VmWorkerGuard> {
+    seccomp::prepare_audit_trace_target(trace_path)?;
+    let executable = std::env::current_exe()
+        .context("failed to resolve loftd executable for traced VM worker")?;
+    let spec =
+        build_traced_vm_worker_command(&executable, trace_path, config_path, holder_pid, passt_fd);
+    tracing::debug!(program = ?spec.program, args = ?spec.args, "loftd traced VM worker command constructed");
+    let child = spec.into_command().spawn().with_context(|| {
+        format!(
+            "failed to start traced loftd VM worker for '{}'; {}",
+            config_path.display(),
+            seccomp::ptrace_failure_hint()
+        )
+    })?;
+    let pid = libc::pid_t::try_from(child.id()).context("traced VM worker pid overflowed pid_t")?;
+    Ok(VmWorkerGuard::new(pid))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VmWorkerCommandSpec {
+    pub(crate) program: OsString,
+    pub(crate) args: Vec<OsString>,
+}
+
+impl VmWorkerCommandSpec {
+    fn into_command(self) -> Command {
+        let mut command = Command::new(self.program);
+        command.args(self.args);
+        command
+    }
+}
+
+pub(crate) fn build_traced_vm_worker_command(
+    executable: &Path,
+    trace_path: &Path,
+    config_path: &Path,
+    holder_pid: libc::pid_t,
+    passt_fd: Option<i32>,
+) -> VmWorkerCommandSpec {
+    let raw_path = seccomp::raw_strace_path(trace_path);
+    let mut args = vec![
+        OsString::from("-f"),
+        OsString::from("-qq"),
+        OsString::from("-o"),
+        raw_path.into_os_string(),
+        OsString::from("--"),
+        executable.as_os_str().to_owned(),
+        OsString::from("internal"),
+        OsString::from(LIBKRUN_VM_WORKER_ARG),
+        config_path.as_os_str().to_owned(),
+        OsString::from(holder_pid.to_string()),
+    ];
+    if let Some(fd) = passt_fd {
+        args.push(OsString::from(fd.to_string()));
+    }
+    VmWorkerCommandSpec {
+        program: runtime_tool_program(RuntimeTool::Strace),
+        args,
+    }
+}
+
+pub(crate) fn run_vm_worker_internal(args: Vec<OsString>) -> Result<()> {
+    let invocation = parse_vm_worker_internal_args(args)?;
+    HelperReadyWriter::close_in_vm_worker_child_from_env();
+    std::process::exit(run_vm_worker_child(
+        &invocation.config_path,
+        invocation.holder_pid,
+        invocation.passt_fd,
+    ));
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VmWorkerInternalInvocation {
+    pub(crate) config_path: PathBuf,
+    pub(crate) holder_pid: libc::pid_t,
+    pub(crate) passt_fd: Option<i32>,
+}
+
+pub(crate) fn parse_vm_worker_internal_args(
+    args: Vec<OsString>,
+) -> Result<VmWorkerInternalInvocation> {
+    if !(2..=3).contains(&args.len()) {
+        bail!(
+            "expected internal {LIBKRUN_VM_WORKER_ARG} <launch.conf> <holder-pid> [passt-fd], got {} argument(s)",
+            args.len() + 1
+        );
+    }
+    let mut args = args.into_iter();
+    let config_path = args
+        .next()
+        .expect("validated VM worker internal config argument");
+    let holder_pid = args
+        .next()
+        .expect("validated VM worker internal holder pid argument");
+    let holder_pid = parse_i32_arg("holder-pid", holder_pid)?;
+    let passt_fd = args
+        .next()
+        .map(|fd| parse_i32_arg("passt-fd", fd))
+        .transpose()?;
+    Ok(VmWorkerInternalInvocation {
+        config_path: PathBuf::from(config_path),
+        holder_pid,
+        passt_fd,
+    })
+}
+
+fn parse_i32_arg(label: &str, value: OsString) -> Result<i32> {
+    value
+        .to_str()
+        .ok_or_else(|| anyhow!("internal {label} argument is not valid UTF-8"))?
+        .parse::<i32>()
+        .with_context(|| format!("internal {label} argument is not a valid i32"))
 }
 
 fn run_vm_worker_child(config_path: &Path, holder_pid: libc::pid_t, passt_fd: Option<i32>) -> i32 {
@@ -109,6 +254,9 @@ fn run_vm_worker(
 ) -> Result<()> {
     let config = profiler.measure_result("vm_worker_config_read", || {
         LaunchConfig::read_from(config_path)
+    })?;
+    profiler.measure_result("vm_worker_tracing_init", || {
+        logging::init_tracing(&LogSettings::for_internal_helper(config.log_level))
     })?;
     profiler.measure_result("vm_worker_identity_configure", || {
         identity::configure_vm_worker_filesystem_identity()
@@ -264,6 +412,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use std::cell::RefCell;
+    use std::ffi::OsStr;
 
     #[test]
     fn finalization_unmounts_prepared_root_before_nix_overlay() {
@@ -318,5 +467,82 @@ mod tests {
         let message = format!("{err:#}");
         assert!(message.contains("prepared-root busy"));
         assert!(message.contains("libkrun failed"));
+    }
+
+    #[test]
+    fn traced_vm_worker_command_targets_private_worker_entrypoint() {
+        let spec = build_traced_vm_worker_command(
+            Path::new("/nix/store/bin/loftd"),
+            Path::new("/tmp/loftd-seccomp.trace.jsonl"),
+            Path::new("/tmp/task/launch.conf"),
+            12345,
+            None,
+        );
+
+        assert_eq!(
+            spec.args,
+            vec![
+                OsString::from("-f"),
+                OsString::from("-qq"),
+                OsString::from("-o"),
+                OsString::from("/tmp/loftd-seccomp.trace.jsonl.strace"),
+                OsString::from("--"),
+                OsString::from("/nix/store/bin/loftd"),
+                OsString::from("internal"),
+                OsString::from(LIBKRUN_VM_WORKER_ARG),
+                OsString::from("/tmp/task/launch.conf"),
+                OsString::from("12345"),
+            ]
+        );
+    }
+
+    #[test]
+    fn traced_vm_worker_command_preserves_passt_fd_argument() {
+        let spec = build_traced_vm_worker_command(
+            Path::new("/bin/loftd"),
+            Path::new("/tmp/trace.jsonl"),
+            Path::new("/tmp/task/launch.conf"),
+            99,
+            Some(42),
+        );
+
+        assert_eq!(
+            spec.args.last().map(OsString::as_os_str),
+            Some(OsStr::new("42"))
+        );
+    }
+
+    #[test]
+    fn vm_worker_internal_args_parse_required_and_optional_values() {
+        let invocation = parse_vm_worker_internal_args(vec![
+            "/tmp/task/launch.conf".into(),
+            "123".into(),
+            "44".into(),
+        ])
+        .expect("VM worker internal args should parse");
+
+        assert_eq!(
+            invocation.config_path,
+            PathBuf::from("/tmp/task/launch.conf")
+        );
+        assert_eq!(invocation.holder_pid, 123);
+        assert_eq!(invocation.passt_fd, Some(44));
+
+        let invocation =
+            parse_vm_worker_internal_args(vec!["/tmp/task/launch.conf".into(), "123".into()])
+                .expect("VM worker internal args should parse without passt fd");
+        assert_eq!(invocation.passt_fd, None);
+    }
+
+    #[test]
+    fn vm_worker_internal_args_reject_bad_shape_and_numbers() {
+        let err = parse_vm_worker_internal_args(vec!["/tmp/task/launch.conf".into()])
+            .expect_err("missing holder pid should fail");
+        assert!(format!("{err:#}").contains("expected internal"));
+
+        let err =
+            parse_vm_worker_internal_args(vec!["/tmp/task/launch.conf".into(), "not-a-pid".into()])
+                .expect_err("invalid holder pid should fail");
+        assert!(format!("{err:#}").contains("holder-pid"));
     }
 }

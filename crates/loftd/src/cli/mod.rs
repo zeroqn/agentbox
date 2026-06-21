@@ -110,7 +110,7 @@ pub(crate) struct Cli {
         value_name = "MODE:PATH",
         value_parser = parse_seccomp_arg,
         help = "Configure host-side loftd seccomp mode for this run",
-        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, and enforce:POLICY_JSON. If omitted, seccomp is off. Audit mode uses strace/ptrace to write a tracer-owned record file; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
+        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, and enforce:POLICY_JSON. If omitted, seccomp is off. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
     )]
     seccomp: Option<SeccompMode>,
 

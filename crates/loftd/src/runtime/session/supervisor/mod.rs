@@ -17,6 +17,11 @@ use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::task_control::ActiveTaskSpec;
 
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
+pub(crate) const LIBKRUN_VM_WORKER_ARG: &str = "libkrun-vm-worker-enter";
+
+pub(crate) fn is_supervisor_internal_arg(arg: &str) -> bool {
+    matches!(arg, LIBKRUN_ENTER_HELPER_ARG | LIBKRUN_VM_WORKER_ARG)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChildStatus {
@@ -110,6 +115,13 @@ mod tests {
         let err = run_internal(vec!["btrfs-rootfs".into(), "/tmp/x".into()])
             .expect_err("wrong subcommand");
         assert!(format!("{err:#}").contains("unknown loftd internal command"));
+    }
+
+    #[test]
+    fn supervisor_internal_arg_recognizes_helper_and_vm_worker() {
+        assert!(is_supervisor_internal_arg(LIBKRUN_ENTER_HELPER_ARG));
+        assert!(is_supervisor_internal_arg(LIBKRUN_VM_WORKER_ARG));
+        assert!(!is_supervisor_internal_arg("btrfs-rootfs"));
     }
 
     #[test]

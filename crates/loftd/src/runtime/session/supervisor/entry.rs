@@ -6,32 +6,43 @@ use std::path::{Path, PathBuf};
 
 use crate::logging::{self, LogSettings};
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
+use crate::runtime::seccomp::{self, SeccompMode};
 use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::rootfs::task::{UnsharedBtrfsRootfsCommands, cleanup_task_rootfs_dir};
-use crate::runtime::session::supervisor::LIBKRUN_ENTER_HELPER_ARG;
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::session::supervisor::managed_ready;
 use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
 use crate::runtime::session::supervisor::rlimits;
-use crate::runtime::session::supervisor::vm_child::{self, VmWorkerGuard};
+use crate::runtime::session::supervisor::vm_child;
+use crate::runtime::session::supervisor::{LIBKRUN_ENTER_HELPER_ARG, LIBKRUN_VM_WORKER_ARG};
 use crate::runtime::session::task_control;
 use crate::runtime::vm::network::{NetworkManagerSession, PasstWorkerSession, status_exit_code};
 use crate::runtime::vm::prepared_root;
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
-    let [subcommand, config_path]: [OsString; 2] = args.try_into().map_err(|args: Vec<_>| {
+    let mut args = args.into_iter();
+    let subcommand = args.next().ok_or_else(|| {
         anyhow!(
-            "expected internal {LIBKRUN_ENTER_HELPER_ARG} <launch.conf>, got {} argument(s)",
-            args.len()
+            "expected internal {LIBKRUN_ENTER_HELPER_ARG} <launch.conf> or {LIBKRUN_VM_WORKER_ARG} <launch.conf> <holder-pid> [passt-fd], got 0 argument(s)"
         )
     })?;
-    if subcommand.to_str() != Some(LIBKRUN_ENTER_HELPER_ARG) {
-        anyhow::bail!(
-            "unknown loftd internal command '{}'; expected {LIBKRUN_ENTER_HELPER_ARG}",
-            subcommand.to_string_lossy()
-        );
+    let subcommand_text = subcommand.to_string_lossy();
+    match subcommand.to_str() {
+        Some(LIBKRUN_ENTER_HELPER_ARG) => {
+            let tail: Vec<_> = args.collect();
+            let [config_path]: [OsString; 1] = tail.try_into().map_err(|tail: Vec<_>| {
+                anyhow!(
+                    "expected internal {LIBKRUN_ENTER_HELPER_ARG} <launch.conf>, got {} argument(s)",
+                    tail.len() + 1
+                )
+            })?;
+            run_helper(PathBuf::from(config_path).as_path())
+        }
+        Some(LIBKRUN_VM_WORKER_ARG) => vm_child::run_vm_worker_internal(args.collect()),
+        _ => bail!(
+            "unknown loftd internal command '{subcommand_text}'; expected {LIBKRUN_ENTER_HELPER_ARG} or {LIBKRUN_VM_WORKER_ARG}"
+        ),
     }
-    run_helper(PathBuf::from(config_path).as_path())
 }
 
 fn run_helper(config_path: &Path) -> Result<()> {
@@ -100,10 +111,14 @@ fn run_helper_profiled_inner(
         None
     };
     let passt_fd = passt_session.as_ref().map(PasstWorkerSession::fd);
-    let mut worker =
-        VmWorkerGuard::new(profiler.measure_result("helper_vm_worker_fork", || {
-            vm_child::fork_vm_worker(config_path, network_session.holder_pid(), passt_fd)
-        })?);
+    let mut worker = profiler.measure_result("helper_vm_worker_start", || {
+        vm_child::start_vm_worker(
+            config_path,
+            network_session.holder_pid(),
+            passt_fd,
+            &config.seccomp,
+        )
+    })?;
     if let Some(managed) = &config.managed_session
         && let Some(writer) = ready_writer.take()
     {
@@ -113,7 +128,8 @@ fn run_helper_profiled_inner(
             Ok(()) => writer.send_ready()?,
             Err(err) => {
                 let _ = writer.send_error(&format!("{err:#}"));
-                return Err(err);
+                worker.terminate();
+                return finalize_helper_seccomp_audit(Err(err), &config.seccomp);
             }
         }
     }
@@ -121,6 +137,11 @@ fn run_helper_profiled_inner(
         profiler.measure_result_with_duration("helper_wait_vm_worker", || worker.wait())?;
     profiler.record_vm_worker_wait_details(task_state_dir, wait_duration);
     let cleanup_error = cleanup_managed_task_after_vm_exit(&config, task_state_dir).err();
+    let worker_result = vm_worker_status_result(status, cleanup_error);
+    finalize_helper_seccomp_audit(worker_result, &config.seccomp)
+}
+
+fn vm_worker_status_result(status: i32, cleanup_error: Option<anyhow::Error>) -> Result<()> {
     if let Some(code) = status_exit_code(status) {
         if code == 0 {
             if let Some(err) = cleanup_error {
@@ -137,6 +158,26 @@ fn run_helper_profiled_inner(
         return Err(err).context("loftd VM worker exited due to signal");
     }
     bail!("loftd VM worker exited due to signal")
+}
+
+fn finalize_helper_seccomp_audit(run_result: Result<()>, seccomp_mode: &SeccompMode) -> Result<()> {
+    let Some(trace_path) = seccomp_mode.audit_trace_path() else {
+        return run_result;
+    };
+    let trace_result = seccomp::finalize_audit_trace(trace_path).with_context(|| {
+        format!(
+            "failed to finalize loftd seccomp audit trace '{}'",
+            trace_path.display()
+        )
+    });
+    match (run_result, trace_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(trace_error)) => Err(trace_error),
+        (Err(run_error), Ok(())) => Err(run_error),
+        (Err(run_error), Err(trace_error)) => Err(run_error.context(format!(
+            "also failed to finalize loftd seccomp audit trace: {trace_error:#}"
+        ))),
+    }
 }
 
 fn cleanup_managed_task_after_vm_exit(config: &LaunchConfig, task_state_dir: &Path) -> Result<()> {
@@ -185,6 +226,8 @@ mod tests {
     use super::*;
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::ManagedSessionConfig;
+    use crate::runtime::seccomp::raw_strace_path;
+    use anyhow::anyhow;
     use std::cell::RefCell;
 
     #[test]
@@ -235,6 +278,42 @@ mod tests {
         .expect("managed cleanup should succeed");
 
         assert!(calls.into_inner().is_empty());
+    }
+
+    #[test]
+    fn audit_finalization_runs_even_when_vm_worker_result_failed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let trace_path = temp.path().join("trace.jsonl");
+        std::fs::write(
+            raw_strace_path(&trace_path),
+            "[pid 123] openat(AT_FDCWD, \"/x\", O_RDONLY) = 3\n",
+        )
+        .expect("raw trace");
+        let seccomp = SeccompMode::Audit {
+            trace_path: trace_path.clone(),
+        };
+
+        let err = finalize_helper_seccomp_audit(Err(anyhow!("readiness failed")), &seccomp)
+            .expect_err("original failure should be preserved");
+
+        assert!(format!("{err:#}").contains("readiness failed"));
+        let trace = std::fs::read_to_string(trace_path).expect("finalized trace");
+        assert!(trace.contains("\"syscall\":\"openat\""));
+    }
+
+    #[test]
+    fn audit_finalization_failure_is_context_on_vm_worker_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let seccomp = SeccompMode::Audit {
+            trace_path: temp.path().join("missing.jsonl"),
+        };
+
+        let err = finalize_helper_seccomp_audit(Err(anyhow!("readiness failed")), &seccomp)
+            .expect_err("combined error should fail");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("readiness failed"));
+        assert!(message.contains("also failed to finalize loftd seccomp audit trace"));
     }
 
     fn managed_config(task_dir: &Path, cleanup_task_rootfs_on_exit: bool) -> LaunchConfig {

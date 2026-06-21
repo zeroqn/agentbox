@@ -73,8 +73,9 @@ managed sidecar.
   `.#loftd-prebuilt`, and `nix develop` environments.
 - `strace` for explicit `loftd --seccomp=audit:<trace>` policy-discovery
   runs. It is included in the Nix `.#loftd` helper dir and `nix develop`
-  environments. Audit mode uses ptrace; if a host disables ptrace, enable it for
-  the audit run before tracing.
+  environments. Audit mode uses ptrace on the loftd VM worker only; normal
+  child tracing should work with `kernel.yama.ptrace_scope=1`, but hosts that
+  disable ptrace entirely must allow ptrace for the audit run.
 - `btrfs`, `mkfs.btrfs`, and `blkid` on the host for microvm btrfs-snapshot
   storage, first-time libkrun/microvm raw-image creation, and reuse validation
   (`btrfs-progs` + `util-linux`; included in `nix develop`, included in the
@@ -867,10 +868,11 @@ Seccomp behavior:
   tracer.
 - `--seccomp=off` is the explicit no-filter spelling.
 - `--seccomp=audit:<trace>` (also accepted as `--seccomp=trace:<trace>`) runs
-  the host-side loftd helper under `strace -f`, writes a tracer-owned raw log,
-  and converts it to the requested JSONL trace when the foreground loftd run
-  waits for the helper to exit. Use the raw `.strace` sidecar only for
-  debugging; the JSONL trace path is the stable input for synthesis.
+  the libkrun VM-worker entrypoint under `strace -f`, writes a tracer-owned raw
+  log, and converts it to the requested JSONL trace when the helper observes
+  the VM worker exit. The keep-id helper setup, including `newuidmap` and
+  `newgidmap`, is not traced. Use the raw `.strace` sidecar only for debugging;
+  the JSONL trace path is the stable input for synthesis.
 - `loftd seccomp synthesize --input <trace> --output <policy>` extracts syscall
   names from the trace and writes a deterministic `seccompiler` JSON policy with
   a `main_thread` allowlist.
@@ -881,20 +883,23 @@ Seccomp behavior:
 - This is loftd host-helper filtering only. It does not change guest Podman's
   seccomp profile.
 - On NixOS hosts where audit mode fails with ptrace errors such as
-  `PTRACE_TRACEME: Operation not permitted`, check:
+  `PTRACE_TRACEME: Operation not permitted`, first check:
 
   ```bash
   sysctl kernel.yama.ptrace_scope
   ```
 
-  For a temporary audit run, use:
+  `kernel.yama.ptrace_scope=1` normally allows tracing a direct child, which is
+  the audit-mode workflow. Only hosts that disable ptrace more broadly should
+  need a temporary host-policy change such as:
 
   ```bash
   sudo sysctl kernel.yama.ptrace_scope=0
   ```
 
-  Persisting that choice is a host policy decision, commonly represented as
-  `boot.kernel.sysctl."kernel.yama.ptrace_scope" = 0;` in NixOS configuration.
+  Persisting any ptrace relaxation is a host policy decision, commonly
+  represented with `boot.kernel.sysctl."kernel.yama.ptrace_scope"` in NixOS
+  configuration.
 
 Container-store disk maintenance:
 

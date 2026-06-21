@@ -354,7 +354,11 @@ fn finalize_btrfs_run_result(
 }
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
-    if args.first().and_then(|arg| arg.to_str()) == Some(supervisor::LIBKRUN_ENTER_HELPER_ARG) {
+    if args
+        .first()
+        .and_then(|arg| arg.to_str())
+        .is_some_and(supervisor::is_supervisor_internal_arg)
+    {
         return supervisor::run_internal(args);
     }
     rootfs::image_source::run_internal(args)

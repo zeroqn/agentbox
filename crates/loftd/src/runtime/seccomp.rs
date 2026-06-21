@@ -102,7 +102,7 @@ pub(crate) fn raw_strace_path(trace_path: &Path) -> PathBuf {
 }
 
 pub(crate) fn ptrace_failure_hint() -> &'static str {
-    "seccomp audit mode uses strace/ptrace; if ptrace is disabled on NixOS, check `boot.kernel.sysctl.\"kernel.yama.ptrace_scope\"` and temporarily set `sudo sysctl kernel.yama.ptrace_scope=0` for the audit run"
+    "seccomp audit mode uses strace/ptrace on the loftd VM worker only; normal child tracing should work with `kernel.yama.ptrace_scope=1`, but hosts that disable ptrace entirely must allow ptrace for the audit run"
 }
 
 pub(crate) fn prepare_audit_trace_target(trace_path: &Path) -> Result<()> {
