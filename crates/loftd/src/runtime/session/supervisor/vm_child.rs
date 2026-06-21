@@ -9,7 +9,7 @@ use std::time::Instant;
 use crate::logging::{self, LogSettings};
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
-use crate::runtime::seccomp::{self, SeccompMode};
+use crate::runtime::seccomp::{self, AuditMode, SeccompMode};
 use crate::runtime::session::nix_overlay;
 use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_path};
 use crate::runtime::session::supervisor::LIBKRUN_VM_WORKER_ARG;
@@ -77,8 +77,8 @@ pub(crate) fn start_vm_worker(
     seccomp_mode: &SeccompMode,
 ) -> Result<VmWorkerGuard> {
     match seccomp_mode {
-        SeccompMode::Audit { trace_path } => {
-            spawn_traced_vm_worker(config_path, holder_pid, passt_fd, trace_path)
+        SeccompMode::Audit(audit_mode) => {
+            spawn_traced_vm_worker(config_path, holder_pid, passt_fd, audit_mode)
         }
         SeccompMode::Off | SeccompMode::Enforce { .. } => {
             fork_vm_worker(config_path, holder_pid, passt_fd).map(VmWorkerGuard::new)
@@ -110,13 +110,29 @@ fn spawn_traced_vm_worker(
     config_path: &Path,
     holder_pid: libc::pid_t,
     passt_fd: Option<i32>,
-    trace_path: &Path,
+    audit_mode: &AuditMode,
 ) -> Result<VmWorkerGuard> {
+    let trace_path = audit_mode.trace_path();
     seccomp::prepare_audit_trace_target(trace_path)?;
     let executable = std::env::current_exe()
         .context("failed to resolve loftd executable for traced VM worker")?;
-    let spec =
-        build_traced_vm_worker_command(&executable, trace_path, config_path, holder_pid, passt_fd);
+    let strace_filter = match audit_mode {
+        AuditMode::Full { .. } => None,
+        AuditMode::Gap {
+            baseline_policy_path,
+            ..
+        } => Some(seccomp::strace_exclusion_filter_from_policy(
+            baseline_policy_path,
+        )?),
+    };
+    let spec = build_traced_vm_worker_command(
+        &executable,
+        trace_path,
+        strace_filter.as_deref(),
+        config_path,
+        holder_pid,
+        passt_fd,
+    );
     tracing::debug!(program = ?spec.program, args = ?spec.args, "loftd traced VM worker command constructed");
     let child = spec.into_command().spawn().with_context(|| {
         format!(
@@ -146,14 +162,18 @@ impl VmWorkerCommandSpec {
 pub(crate) fn build_traced_vm_worker_command(
     executable: &Path,
     trace_path: &Path,
+    strace_filter: Option<&str>,
     config_path: &Path,
     holder_pid: libc::pid_t,
     passt_fd: Option<i32>,
 ) -> VmWorkerCommandSpec {
     let raw_path = seccomp::raw_strace_path(trace_path);
-    let mut args = vec![
-        OsString::from("-f"),
-        OsString::from("-qq"),
+    let mut args = vec![OsString::from("-f"), OsString::from("-qq")];
+    if let Some(filter) = strace_filter {
+        args.push(OsString::from("-e"));
+        args.push(OsString::from(filter));
+    }
+    args.extend([
         OsString::from("-o"),
         raw_path.into_os_string(),
         OsString::from("--"),
@@ -162,7 +182,7 @@ pub(crate) fn build_traced_vm_worker_command(
         OsString::from(LIBKRUN_VM_WORKER_ARG),
         config_path.as_os_str().to_owned(),
         OsString::from(holder_pid.to_string()),
-    ];
+    ]);
     if let Some(fd) = passt_fd {
         args.push(OsString::from(fd.to_string()));
     }
@@ -474,6 +494,7 @@ mod tests {
         let spec = build_traced_vm_worker_command(
             Path::new("/nix/store/bin/loftd"),
             Path::new("/tmp/loftd-seccomp.trace.jsonl"),
+            None,
             Path::new("/tmp/task/launch.conf"),
             12345,
             None,
@@ -497,10 +518,41 @@ mod tests {
     }
 
     #[test]
+    fn traced_vm_worker_command_includes_gap_audit_filter() {
+        let spec = build_traced_vm_worker_command(
+            Path::new("/nix/store/bin/loftd"),
+            Path::new("/tmp/loftd-seccomp.denied.jsonl"),
+            Some("trace=!read,write"),
+            Path::new("/tmp/task/launch.conf"),
+            12345,
+            None,
+        );
+
+        assert_eq!(
+            spec.args,
+            vec![
+                OsString::from("-f"),
+                OsString::from("-qq"),
+                OsString::from("-e"),
+                OsString::from("trace=!read,write"),
+                OsString::from("-o"),
+                OsString::from("/tmp/loftd-seccomp.denied.jsonl.strace"),
+                OsString::from("--"),
+                OsString::from("/nix/store/bin/loftd"),
+                OsString::from("internal"),
+                OsString::from(LIBKRUN_VM_WORKER_ARG),
+                OsString::from("/tmp/task/launch.conf"),
+                OsString::from("12345"),
+            ]
+        );
+    }
+
+    #[test]
     fn traced_vm_worker_command_preserves_passt_fd_argument() {
         let spec = build_traced_vm_worker_command(
             Path::new("/bin/loftd"),
             Path::new("/tmp/trace.jsonl"),
+            None,
             Path::new("/tmp/task/launch.conf"),
             99,
             Some(42),

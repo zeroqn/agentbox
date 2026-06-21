@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::launch::config::NetworkMode;
-use crate::runtime::seccomp::{SeccompCommand, SeccompMode};
+use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
 use crate::task_rootfs::TaskRootfsBackend;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,10 +107,10 @@ pub(crate) struct Cli {
 
     #[arg(
         long = "seccomp",
-        value_name = "MODE:PATH",
+        value_name = "MODE[:POLICY]:PATH",
         value_parser = parse_seccomp_arg,
         help = "Configure host-side loftd seccomp mode for this run",
-        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, and enforce:POLICY_JSON. If omitted, seccomp is off. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
+        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, audit:POLICY_JSON:MISSING_TRACE_JSONL, trace:POLICY_JSON:MISSING_TRACE_JSONL, and enforce:POLICY_JSON. If omitted, seccomp is off. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; gap audit records syscalls missing from the baseline policy by syscall name; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
     )]
     seccomp: Option<SeccompMode>,
 
@@ -472,20 +472,29 @@ fn parse_seccomp_arg(value: &str) -> Result<SeccompMode, String> {
     if value == "off" {
         return Ok(SeccompMode::Off);
     }
-    let (mode, path) = value.split_once(':').ok_or_else(|| {
-        "seccomp must be off, audit:TRACE_JSONL, trace:TRACE_JSONL, or enforce:POLICY_JSON"
-            .to_owned()
-    })?;
-    if path.trim().is_empty() {
-        return Err("seccomp path must not be empty".to_owned());
-    }
-    match mode {
-        "audit" | "trace" => Ok(SeccompMode::Audit {
-            trace_path: PathBuf::from(path),
+    let parts = value.split(':').collect::<Vec<_>>();
+    match parts.as_slice() {
+        ["audit" | "trace", trace_path] if !trace_path.trim().is_empty() => {
+            Ok(SeccompMode::Audit(AuditMode::Full {
+                trace_path: PathBuf::from(trace_path),
+            }))
+        }
+        ["audit" | "trace", baseline_policy_path, trace_path]
+            if !baseline_policy_path.trim().is_empty() && !trace_path.trim().is_empty() =>
+        {
+            Ok(SeccompMode::Audit(AuditMode::Gap {
+                baseline_policy_path: PathBuf::from(baseline_policy_path),
+                trace_path: PathBuf::from(trace_path),
+            }))
+        }
+        ["enforce", policy_path] if !policy_path.trim().is_empty() => Ok(SeccompMode::Enforce {
+            policy_path: PathBuf::from(policy_path),
         }),
-        "enforce" => Ok(SeccompMode::Enforce {
-            policy_path: PathBuf::from(path),
-        }),
+        ["audit" | "trace", ..] => Err(
+            "seccomp audit mode must be audit:TRACE_JSONL or audit:POLICY_JSON:TRACE_JSONL"
+                .to_owned(),
+        ),
+        ["enforce", ..] => Err("seccomp enforce mode must be enforce:POLICY_JSON".to_owned()),
         _ => Err("seccomp mode must be off, audit, trace, or enforce".to_owned()),
     }
 }
@@ -540,11 +549,12 @@ fn parse_volume_arg(value: &str) -> Result<VolumeSpec, String> {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use std::path::PathBuf;
 
     use crate::cli::{Cli, ContainerStoreBackend, VolumeSpec};
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::NetworkMode;
-    use crate::runtime::seccomp::SeccompMode;
+    use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
     use crate::task_rootfs::TaskRootfsBackend;
 
     #[test]
@@ -624,9 +634,9 @@ mod tests {
             .seccomp;
         assert_eq!(
             audit,
-            SeccompMode::Audit {
+            SeccompMode::Audit(AuditMode::Full {
                 trace_path: "/tmp/trace.jsonl".into(),
-            }
+            })
         );
 
         let trace_alias = Cli::try_parse_from(["loftd", "--seccomp", "trace:/tmp/trace.jsonl"])
@@ -635,9 +645,41 @@ mod tests {
             .seccomp;
         assert_eq!(
             trace_alias,
-            SeccompMode::Audit {
+            SeccompMode::Audit(AuditMode::Full {
                 trace_path: "/tmp/trace.jsonl".into(),
-            }
+            })
+        );
+
+        let gap_audit = Cli::try_parse_from([
+            "loftd",
+            "--seccomp",
+            "audit:/tmp/baseline.json:/tmp/denied.jsonl",
+        ])
+        .expect("gap audit seccomp should parse")
+        .into_runtime_options()
+        .seccomp;
+        assert_eq!(
+            gap_audit,
+            SeccompMode::Audit(AuditMode::Gap {
+                baseline_policy_path: "/tmp/baseline.json".into(),
+                trace_path: "/tmp/denied.jsonl".into(),
+            })
+        );
+
+        let trace_gap_alias = Cli::try_parse_from([
+            "loftd",
+            "--seccomp",
+            "trace:/tmp/baseline.json:/tmp/denied.jsonl",
+        ])
+        .expect("trace gap alias should parse")
+        .into_runtime_options()
+        .seccomp;
+        assert_eq!(
+            trace_gap_alias,
+            SeccompMode::Audit(AuditMode::Gap {
+                baseline_policy_path: "/tmp/baseline.json".into(),
+                trace_path: "/tmp/denied.jsonl".into(),
+            })
         );
 
         let enforce = Cli::try_parse_from(["loftd", "--seccomp", "enforce:/tmp/policy.json"])
@@ -657,7 +699,11 @@ mod tests {
         for args in [
             ["loftd", "--seccomp", ""],
             ["loftd", "--seccomp", "audit:"],
+            ["loftd", "--seccomp", "audit::trace.jsonl"],
+            ["loftd", "--seccomp", "audit:policy.json:"],
+            ["loftd", "--seccomp", "audit:policy.json:trace.jsonl:extra"],
             ["loftd", "--seccomp", "enforce:"],
+            ["loftd", "--seccomp", "enforce:/tmp/policy.json:extra"],
             ["loftd", "--seccomp", "default"],
             ["loftd", "--seccomp", "log:/tmp/trace.jsonl"],
         ] {
@@ -683,6 +729,39 @@ mod tests {
             cli.into_action(),
             crate::cli::CliAction::Seccomp { .. }
         ));
+    }
+
+    #[test]
+    fn parses_seccomp_extend_subcommand() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "seccomp",
+            "extend",
+            "--policy",
+            "baseline.json",
+            "--trace",
+            "denied.jsonl",
+            "--output",
+            "updated.json",
+        ])
+        .expect("seccomp extend command should parse");
+
+        match cli.into_action() {
+            crate::cli::CliAction::Seccomp {
+                command:
+                    SeccompCommand::Extend {
+                        policy,
+                        trace,
+                        output,
+                    },
+                ..
+            } => {
+                assert_eq!(policy, PathBuf::from("baseline.json"));
+                assert_eq!(trace, PathBuf::from("denied.jsonl"));
+                assert_eq!(output, PathBuf::from("updated.json"));
+            }
+            other => panic!("expected seccomp extend action, got {other:?}"),
+        }
     }
 
     #[test]

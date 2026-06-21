@@ -5,26 +5,53 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Cursor, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum SeccompMode {
     #[default]
     Off,
-    Audit {
-        trace_path: PathBuf,
-    },
+    Audit(AuditMode),
     Enforce {
         policy_path: PathBuf,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AuditMode {
+    Full {
+        trace_path: PathBuf,
+    },
+    Gap {
+        baseline_policy_path: PathBuf,
+        trace_path: PathBuf,
+    },
+}
+
+impl AuditMode {
+    pub(crate) fn trace_path(&self) -> &Path {
+        match self {
+            Self::Full { trace_path } | Self::Gap { trace_path, .. } => trace_path,
+        }
+    }
+
+    pub(crate) fn baseline_policy_path(&self) -> Option<&Path> {
+        match self {
+            Self::Gap {
+                baseline_policy_path,
+                ..
+            } => Some(baseline_policy_path),
+            Self::Full { .. } => None,
+        }
+    }
 }
 
 impl SeccompMode {
     pub(crate) fn as_config_value(&self) -> &'static str {
         match self {
             Self::Off => "off",
-            Self::Audit { .. } => "audit",
+            Self::Audit(_) => "audit",
             Self::Enforce { .. } => "enforce",
         }
     }
@@ -32,27 +59,58 @@ impl SeccompMode {
     pub(crate) fn parse_config_value(
         mode: Option<&str>,
         audit_trace_path: Option<&str>,
+        audit_baseline_policy_path: Option<&str>,
         enforce_policy_path: Option<&str>,
     ) -> Result<Self> {
         match mode.unwrap_or("off") {
-            "off" => Ok(Self::Off),
-            "audit" => Ok(Self::Audit {
-                trace_path: PathBuf::from(audit_trace_path.ok_or_else(|| {
+            "off" => {
+                if audit_trace_path.is_some()
+                    || audit_baseline_policy_path.is_some()
+                    || enforce_policy_path.is_some()
+                {
+                    bail!("loftd launch config seccomp off mode rejects seccomp path fields");
+                }
+                Ok(Self::Off)
+            }
+            "audit" => {
+                if enforce_policy_path.is_some() {
+                    bail!("loftd launch config audit mode rejects seccomp.enforce_policy_path");
+                }
+                let trace_path = PathBuf::from(audit_trace_path.ok_or_else(|| {
                     anyhow!("loftd launch config seccomp.audit_trace_path is required")
-                })?),
-            }),
-            "enforce" => Ok(Self::Enforce {
-                policy_path: PathBuf::from(enforce_policy_path.ok_or_else(|| {
-                    anyhow!("loftd launch config seccomp.enforce_policy_path is required")
-                })?),
-            }),
+                })?);
+                Ok(Self::Audit(match audit_baseline_policy_path {
+                    Some(path) => AuditMode::Gap {
+                        baseline_policy_path: PathBuf::from(path),
+                        trace_path,
+                    },
+                    None => AuditMode::Full { trace_path },
+                }))
+            }
+            "enforce" => {
+                if audit_trace_path.is_some() || audit_baseline_policy_path.is_some() {
+                    bail!("loftd launch config enforce mode rejects seccomp audit path fields");
+                }
+                Ok(Self::Enforce {
+                    policy_path: PathBuf::from(enforce_policy_path.ok_or_else(|| {
+                        anyhow!("loftd launch config seccomp.enforce_policy_path is required")
+                    })?),
+                })
+            }
             _ => bail!("loftd launch config seccomp.mode is invalid"),
         }
     }
 
     pub(crate) fn audit_trace_path(&self) -> Option<&Path> {
         match self {
-            Self::Audit { trace_path } => Some(trace_path),
+            Self::Audit(mode) => Some(mode.trace_path()),
+            Self::Off | Self::Enforce { .. } => None,
+        }
+    }
+
+    pub(crate) fn audit_baseline_policy_path(&self) -> Option<&Path> {
+        match self {
+            Self::Audit(mode) => mode.baseline_policy_path(),
             Self::Off | Self::Enforce { .. } => None,
         }
     }
@@ -60,7 +118,7 @@ impl SeccompMode {
     pub(crate) fn enforce_policy_path(&self) -> Option<&Path> {
         match self {
             Self::Enforce { policy_path } => Some(policy_path),
-            Self::Off | Self::Audit { .. } => None,
+            Self::Off | Self::Audit(_) => None,
         }
     }
 }
@@ -77,6 +135,19 @@ pub(crate) enum SeccompCommand {
         #[arg(long = "output", value_name = "POLICY_JSON")]
         output: PathBuf,
     },
+
+    #[command(
+        name = "extend",
+        about = "Add missing audited syscalls to an existing seccompiler allowlist policy"
+    )]
+    Extend {
+        #[arg(long = "policy", value_name = "BASELINE_POLICY_JSON")]
+        policy: PathBuf,
+        #[arg(long = "trace", value_name = "MISSING_TRACE_JSONL")]
+        trace: PathBuf,
+        #[arg(long = "output", value_name = "UPDATED_POLICY_JSON")]
+        output: PathBuf,
+    },
 }
 
 pub(crate) fn run_seccomp_command(command: SeccompCommand) -> Result<String> {
@@ -87,6 +158,19 @@ pub(crate) fn run_seccomp_command(command: SeccompCommand) -> Result<String> {
                 "wrote seccomp policy '{}' from '{}'\n",
                 output.display(),
                 input.display()
+            ))
+        }
+        SeccompCommand::Extend {
+            policy,
+            trace,
+            output,
+        } => {
+            extend_policy(&policy, &trace, &output)?;
+            Ok(format!(
+                "wrote extended seccomp policy '{}' from policy '{}' and trace '{}'\n",
+                output.display(),
+                policy.display(),
+                trace.display()
             ))
         }
     }
@@ -176,6 +260,144 @@ pub(crate) fn synthesize_policy(input: &Path, output: &Path) -> Result<()> {
     serde_json::to_writer_pretty(&mut file, &policy).context("failed to write seccomp policy")?;
     file.write_all(b"\n")
         .context("failed to finish seccomp policy")?;
+    Ok(())
+}
+
+pub(crate) fn strace_exclusion_filter_from_policy(policy_path: &Path) -> Result<String> {
+    let syscalls = allowed_syscalls_from_policy(policy_path)?;
+    if syscalls.is_empty() {
+        bail!(
+            "seccomp gap audit baseline policy '{}' has an empty main_thread.filter allowlist",
+            policy_path.display()
+        );
+    }
+    Ok(format!(
+        "trace=!{}",
+        syscalls.into_iter().collect::<Vec<_>>().join(",")
+    ))
+}
+
+pub(crate) fn allowed_syscalls_from_policy(policy_path: &Path) -> Result<BTreeSet<String>> {
+    let text = fs::read_to_string(policy_path).with_context(|| {
+        format!(
+            "failed to read seccomp baseline policy '{}'",
+            policy_path.display()
+        )
+    })?;
+    let policy = serde_json::from_str::<serde_json::Value>(&text).with_context(|| {
+        format!(
+            "failed to parse seccomp baseline policy '{}'",
+            policy_path.display()
+        )
+    })?;
+    allowed_syscalls_from_policy_value(&policy).with_context(|| {
+        format!(
+            "failed to inspect seccomp baseline policy '{}'",
+            policy_path.display()
+        )
+    })
+}
+
+fn allowed_syscalls_from_policy_value(policy: &serde_json::Value) -> Result<BTreeSet<String>> {
+    let filter = policy
+        .get("main_thread")
+        .and_then(|value| value.get("filter"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("seccomp policy main_thread.filter must be an array"))?;
+    let mut syscalls = BTreeSet::new();
+    for (index, rule) in filter.iter().enumerate() {
+        let syscall = rule
+            .get("syscall")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                anyhow!("seccomp policy main_thread.filter[{index}].syscall must be a string")
+            })?;
+        if !valid_syscall_name(syscall) {
+            bail!(
+                "invalid syscall name '{}' in seccomp policy main_thread.filter[{index}]",
+                syscall
+            );
+        }
+        syscalls.insert(syscall.to_owned());
+    }
+    Ok(syscalls)
+}
+
+pub(crate) fn extend_policy(policy: &Path, trace: &Path, output: &Path) -> Result<()> {
+    if policy == output {
+        bail!(
+            "refusing to overwrite baseline seccomp policy '{}'",
+            policy.display()
+        );
+    }
+    let text = fs::read_to_string(policy).with_context(|| {
+        format!(
+            "failed to read baseline seccomp policy '{}'",
+            policy.display()
+        )
+    })?;
+    let mut policy_value = serde_json::from_str::<serde_json::Value>(&text).with_context(|| {
+        format!(
+            "failed to parse baseline seccomp policy '{}'",
+            policy.display()
+        )
+    })?;
+    let existing = allowed_syscalls_from_policy_value(&policy_value).with_context(|| {
+        format!(
+            "failed to inspect baseline seccomp policy '{}'",
+            policy.display()
+        )
+    })?;
+    let observed = syscalls_from_trace(trace)?;
+    let additions = observed
+        .difference(&existing)
+        .cloned()
+        .collect::<Vec<String>>();
+
+    let filter = policy_value
+        .get_mut("main_thread")
+        .and_then(|value| value.get_mut("filter"))
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| anyhow!("seccomp policy main_thread.filter must be an array"))?;
+    for syscall in additions {
+        filter.push(serde_json::json!({ "syscall": syscall }));
+    }
+
+    let mut bytes = Vec::new();
+    serde_json::to_writer_pretty(&mut bytes, &policy_value)
+        .context("failed to encode extended seccomp policy")?;
+    bytes.push(b'\n');
+    validate_seccomp_policy_bytes(&bytes, output)?;
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create seccomp policy dir '{}'", parent.display())
+        })?;
+    }
+    let mut file = fs::File::create(output).with_context(|| {
+        format!(
+            "failed to create extended seccomp policy '{}'",
+            output.display()
+        )
+    })?;
+    file.write_all(&bytes)
+        .context("failed to write extended seccomp policy")?;
+    Ok(())
+}
+
+fn validate_seccomp_policy_bytes(policy_bytes: &[u8], output: &Path) -> Result<()> {
+    let arch = std::env::consts::ARCH.try_into().map_err(|_| {
+        anyhow!(
+            "seccomp does not support host architecture {}",
+            std::env::consts::ARCH
+        )
+    })?;
+    seccompiler::compile_from_json(Cursor::new(policy_bytes), arch).with_context(|| {
+        format!(
+            "extended seccomp policy '{}' is not valid for seccompiler",
+            output.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -367,5 +589,154 @@ mod tests {
         let err = synthesize_policy(&input, &output).expect_err("malformed JSONL should fail");
 
         assert!(format!("{err:#}").contains("invalid seccomp JSONL trace record"));
+    }
+
+    #[test]
+    fn extracts_allowed_syscalls_from_baseline_policy() {
+        let policy = serde_json::json!({
+            "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                    { "syscall": "write" },
+                    { "syscall": "read" }
+                ]
+            }
+        });
+
+        let syscalls =
+            allowed_syscalls_from_policy_value(&policy).expect("allowed syscalls should parse");
+
+        assert_eq!(
+            syscalls,
+            BTreeSet::from(["read".to_owned(), "write".to_owned()])
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_baseline_policy_filter_entries() {
+        let missing_filter = serde_json::json!({
+            "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow"
+            }
+        });
+        let bad_name = serde_json::json!({
+            "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                    { "syscall": "BadName" }
+                ]
+            }
+        });
+
+        let missing_err = allowed_syscalls_from_policy_value(&missing_filter)
+            .expect_err("missing filter should fail");
+        let bad_name_err =
+            allowed_syscalls_from_policy_value(&bad_name).expect_err("bad syscall should fail");
+
+        assert!(format!("{missing_err:#}").contains("main_thread.filter must be an array"));
+        assert!(format!("{bad_name_err:#}").contains("invalid syscall name"));
+    }
+
+    #[test]
+    fn gap_audit_rejects_empty_baseline_allowlist() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("empty-policy.json");
+        fs::write(
+            &policy,
+            r#"{
+              "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": []
+              }
+            }"#,
+        )
+        .expect("write policy");
+
+        let err =
+            strace_exclusion_filter_from_policy(&policy).expect_err("empty allowlist should fail");
+
+        assert!(format!("{err:#}").contains("empty main_thread.filter allowlist"));
+    }
+
+    #[test]
+    fn builds_deterministic_gap_audit_strace_filter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("policy.json");
+        fs::write(
+            &policy,
+            r#"{
+              "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                  { "syscall": "write" },
+                  { "syscall": "read" }
+                ]
+              }
+            }"#,
+        )
+        .expect("write policy");
+
+        let filter = strace_exclusion_filter_from_policy(&policy).expect("gap filter");
+
+        assert_eq!(filter, "trace=!read,write");
+    }
+
+    #[test]
+    fn extend_policy_adds_missing_syscalls_without_mutating_baseline() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("policy.json");
+        let trace = dir.path().join("denied.jsonl");
+        let output = dir.path().join("updated.json");
+        fs::write(
+            &policy,
+            r#"{
+              "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                  { "syscall": "read" }
+                ]
+              }
+            }"#,
+        )
+        .expect("write policy");
+        let original = fs::read_to_string(&policy).expect("read original policy");
+        fs::write(
+            &trace,
+            "{\"syscall\":\"write\",\"raw\":\"write(1, \\\"x\\\", 1) = 1\"}\n{\"syscall\":\"openat\",\"raw\":\"openat(AT_FDCWD, \\\"/x\\\", O_RDONLY) = 3\"}\n{\"syscall\":\"read\",\"raw\":\"read(0, \\\"\\\", 1) = 0\"}\n",
+        )
+        .expect("write trace");
+
+        extend_policy(&policy, &trace, &output).expect("extend policy");
+
+        assert_eq!(
+            fs::read_to_string(&policy).expect("baseline still readable"),
+            original
+        );
+        let updated = fs::read_to_string(&output).expect("read updated policy");
+        assert!(updated.find("\"read\"").unwrap() < updated.find("\"openat\"").unwrap());
+        assert!(updated.find("\"openat\"").unwrap() < updated.find("\"write\"").unwrap());
+        let file = fs::File::open(output).expect("open updated policy");
+        let arch = std::env::consts::ARCH.try_into().expect("supported arch");
+        let filters = seccompiler::compile_from_json(file, arch).expect("policy should compile");
+        assert!(filters.contains_key("main_thread"));
+    }
+
+    #[test]
+    fn extend_policy_refuses_to_overwrite_baseline() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("policy.json");
+        let trace = dir.path().join("trace.jsonl");
+        fs::write(&policy, "{}").expect("write policy");
+        fs::write(&trace, "").expect("write trace");
+
+        let err = extend_policy(&policy, &trace, &policy).expect_err("same output should fail");
+
+        assert!(format!("{err:#}").contains("refusing to overwrite baseline"));
     }
 }

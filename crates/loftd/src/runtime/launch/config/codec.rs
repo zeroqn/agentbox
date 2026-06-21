@@ -198,6 +198,13 @@ impl LaunchConfig {
                 &path.display().to_string(),
             );
         }
+        if let Some(path) = self.seccomp.audit_baseline_policy_path() {
+            push_field(
+                &mut out,
+                "seccomp.audit_baseline_policy_path",
+                &path.display().to_string(),
+            );
+        }
         if let Some(path) = self.seccomp.enforce_policy_path() {
             push_field(
                 &mut out,
@@ -337,6 +344,7 @@ impl LaunchConfig {
                     | "managed_session.cleanup_task_rootfs_on_exit"
                     | "seccomp.mode"
                     | "seccomp.audit_trace_path"
+                    | "seccomp.audit_baseline_policy_path"
                     | "seccomp.enforce_policy_path"
             ) {
                 if fields.insert(key.to_owned(), value).is_some() {
@@ -371,6 +379,9 @@ impl LaunchConfig {
         let seccomp = SeccompMode::parse_config_value(
             fields.get("seccomp.mode").map(String::as_str),
             fields.get("seccomp.audit_trace_path").map(String::as_str),
+            fields
+                .get("seccomp.audit_baseline_policy_path")
+                .map(String::as_str),
             fields
                 .get("seccomp.enforce_policy_path")
                 .map(String::as_str),

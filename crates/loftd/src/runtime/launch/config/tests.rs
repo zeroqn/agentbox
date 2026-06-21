@@ -1,6 +1,6 @@
 use super::*;
 use crate::logging::LogLevel;
-use crate::runtime::seccomp::SeccompMode;
+use crate::runtime::seccomp::{AuditMode, SeccompMode};
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
 use std::fs;
 use std::path::Path;
@@ -270,11 +270,19 @@ fn launch_config_round_trips_seccomp_modes() {
         managed_session: None,
     })
     .expect("launch config should build");
-    config.seccomp = SeccompMode::Audit {
+    config.seccomp = SeccompMode::Audit(AuditMode::Full {
         trace_path: Path::new("/tmp/loftd.trace.jsonl").to_path_buf(),
-    };
+    });
 
     let parsed = LaunchConfig::parse(&config.serialize()).expect("audit config should parse");
+    assert_eq!(parsed.seccomp, config.seccomp);
+
+    config.seccomp = SeccompMode::Audit(AuditMode::Gap {
+        baseline_policy_path: Path::new("/tmp/loftd.baseline.json").to_path_buf(),
+        trace_path: Path::new("/tmp/loftd.denied.jsonl").to_path_buf(),
+    });
+
+    let parsed = LaunchConfig::parse(&config.serialize()).expect("gap audit config should parse");
     assert_eq!(parsed.seccomp, config.seccomp);
 
     config.seccomp = SeccompMode::Enforce {
@@ -283,6 +291,72 @@ fn launch_config_round_trips_seccomp_modes() {
 
     let parsed = LaunchConfig::parse(&config.serialize()).expect("enforce config should parse");
     assert_eq!(parsed.seccomp, config.seccomp);
+}
+
+#[test]
+fn launch_config_rejects_inconsistent_seccomp_fields() {
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &OciProcessConfig::default(),
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build");
+
+    let mut off_with_audit_path = config.serialize();
+    push_field(
+        &mut off_with_audit_path,
+        "seccomp.audit_trace_path",
+        "/tmp/trace.jsonl",
+    );
+    let err =
+        LaunchConfig::parse(&off_with_audit_path).expect_err("off mode should reject audit path");
+    assert!(format!("{err:#}").contains("off mode rejects seccomp path fields"));
+
+    let mut audit_config = config.clone();
+    audit_config.seccomp = SeccompMode::Audit(AuditMode::Full {
+        trace_path: Path::new("/tmp/trace.jsonl").to_path_buf(),
+    });
+    let mut audit_with_enforce_path = audit_config.serialize();
+    push_field(
+        &mut audit_with_enforce_path,
+        "seccomp.enforce_policy_path",
+        "/tmp/policy.json",
+    );
+    let err = LaunchConfig::parse(&audit_with_enforce_path)
+        .expect_err("audit mode should reject enforce path");
+    assert!(format!("{err:#}").contains("audit mode rejects seccomp.enforce_policy_path"));
+
+    let mut enforce_config = config;
+    enforce_config.seccomp = SeccompMode::Enforce {
+        policy_path: Path::new("/tmp/policy.json").to_path_buf(),
+    };
+    let mut enforce_with_audit_path = enforce_config.serialize();
+    push_field(
+        &mut enforce_with_audit_path,
+        "seccomp.audit_baseline_policy_path",
+        "/tmp/baseline.json",
+    );
+    let err = LaunchConfig::parse(&enforce_with_audit_path)
+        .expect_err("enforce mode should reject audit path");
+    assert!(format!("{err:#}").contains("enforce mode rejects seccomp audit path fields"));
 }
 
 #[test]

@@ -807,7 +807,9 @@ Run/help:
 ./result/bin/loftd --daemon
 ./result/bin/loftd --seccomp=audit:loftd-seccomp.trace.jsonl -- bash -lc 'echo ok'
 ./result/bin/loftd seccomp synthesize --input loftd-seccomp.trace.jsonl --output loftd-seccomp.policy.json
-./result/bin/loftd --seccomp=enforce:loftd-seccomp.policy.json -- bash -lc 'echo ok'
+./result/bin/loftd --seccomp=audit:loftd-seccomp.policy.json:loftd-seccomp.denied.jsonl -- bash -lc 'echo ok'
+./result/bin/loftd seccomp extend --policy loftd-seccomp.policy.json --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
+./result/bin/loftd --seccomp=enforce:loftd-seccomp.updated.json -- bash -lc 'echo ok'
 ./result/bin/loftd --passt -- bash -lc 'echo ok'
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
@@ -876,10 +878,28 @@ Seccomp behavior:
 - `loftd seccomp synthesize --input <trace> --output <policy>` extracts syscall
   names from the trace and writes a deterministic `seccompiler` JSON policy with
   a `main_thread` allowlist.
+- `--seccomp=audit:<policy>:<denied-trace>` (also accepted as
+  `--seccomp=trace:<policy>:<denied-trace>`) is a policy-aware gap audit. It
+  still runs without installing a seccomp filter, but asks `strace` to record
+  only syscall names that are not already listed in
+  `<policy>`'s `main_thread.filter[*].syscall` allowlist. The resulting
+  `<denied-trace>` JSONL uses the same trace record shape as full audit.
+  "Denied" here means "observed by strace but missing from the baseline policy";
+  it does not mean a kernel seccomp denial occurred.
+- `loftd seccomp extend --policy <baseline> --trace <denied-trace> --output
+  <updated-policy>` additively appends missing syscall allow rules from a full
+  or gap audit trace to an existing policy. It preserves existing filter entries
+  and appends new syscall-only entries in deterministic syscall-name order. The
+  output is validated with `seccompiler` before loftd writes it; the baseline
+  policy file is not modified.
 - `--seccomp=enforce:<policy>` loads that `seccompiler` JSON policy and
   installs it in the VM worker immediately before `krun_start_enter`. There is
   no packaged default-enforce policy in this milestone: users must pass an
   explicit policy path.
+- Gap audit is a debugging aid, not proof that enforcement is safe. It compares
+  syscall names only; it does not diff or prove seccompiler argument-condition
+  rules. Always test the updated policy explicitly with
+  `--seccomp=enforce:<policy>`.
 - This is loftd host-helper filtering only. It does not change guest Podman's
   seccomp profile.
 - On NixOS hosts where audit mode fails with ptrace errors such as

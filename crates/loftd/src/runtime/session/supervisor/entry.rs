@@ -226,7 +226,7 @@ mod tests {
     use super::*;
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::ManagedSessionConfig;
-    use crate::runtime::seccomp::raw_strace_path;
+    use crate::runtime::seccomp::{AuditMode, raw_strace_path};
     use anyhow::anyhow;
     use std::cell::RefCell;
 
@@ -289,9 +289,9 @@ mod tests {
             "[pid 123] openat(AT_FDCWD, \"/x\", O_RDONLY) = 3\n",
         )
         .expect("raw trace");
-        let seccomp = SeccompMode::Audit {
+        let seccomp = SeccompMode::Audit(AuditMode::Full {
             trace_path: trace_path.clone(),
-        };
+        });
 
         let err = finalize_helper_seccomp_audit(Err(anyhow!("readiness failed")), &seccomp)
             .expect_err("original failure should be preserved");
@@ -304,9 +304,9 @@ mod tests {
     #[test]
     fn audit_finalization_failure_is_context_on_vm_worker_failure() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let seccomp = SeccompMode::Audit {
+        let seccomp = SeccompMode::Audit(AuditMode::Full {
             trace_path: temp.path().join("missing.jsonl"),
-        };
+        });
 
         let err = finalize_helper_seccomp_audit(Err(anyhow!("readiness failed")), &seccomp)
             .expect_err("combined error should fail");
