@@ -9,7 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::logging::INTERNAL_LOG_LEVEL_ENV;
+use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::config::LaunchConfig;
+use crate::runtime::seccomp;
 use crate::runtime::session::attach::{self, AttachOutcome};
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
@@ -46,7 +48,14 @@ pub(crate) fn run_helper_process(
         )
     })?;
     tracing::debug!(program = ?spec.program, args = ?spec.args, log_level = config.log_level.as_str(), "loftd libkrun helper command constructed");
-    let mut command = spec.into_command();
+    let audit_trace_path = config.seccomp.audit_trace_path().map(Path::to_path_buf);
+    if let Some(trace_path) = audit_trace_path.as_deref() {
+        seccomp::prepare_audit_trace_target(trace_path)?;
+    }
+    let mut command = match audit_trace_path.as_deref() {
+        Some(trace_path) => wrap_with_strace(spec, trace_path).into_command(),
+        None => spec.into_command(),
+    };
     if config.managed_session.is_some() {
         command
             .stdin(Stdio::null())
@@ -117,7 +126,11 @@ pub(crate) fn run_helper_process(
         }) {
             terminate_spawned_child_group(&mut child);
             let _ = remove_active_task(&active_task.task_dir);
-            return Err(err).context("failed while waiting for managed loftd attach readiness");
+            return Err(context_audit_error(
+                err,
+                audit_trace_path.as_deref(),
+                "failed while waiting for managed loftd attach readiness",
+            ));
         }
         let attach_result = profiler.measure_result("helper_initial_attach", || {
             attach::attach_to_ready_socket(&managed.attach_socket, daemon_initial_attach)
@@ -126,12 +139,19 @@ pub(crate) fn run_helper_process(
             Ok(AttachOutcome::Detached) => Ok(ChildStatus::detached()),
             Ok(AttachOutcome::Exited(code)) => {
                 let _ = child.wait();
+                if let Some(trace_path) = audit_trace_path.as_deref() {
+                    seccomp::finalize_audit_trace(trace_path)?;
+                }
                 Ok(ChildStatus::exited(code))
             }
             Err(err) => {
                 terminate_spawned_child_group(&mut child);
                 let _ = remove_active_task(&active_task.task_dir);
-                Err(err).context("failed to attach to managed loftd guest session")
+                Err(context_audit_error(
+                    err,
+                    audit_trace_path.as_deref(),
+                    "failed to attach to managed loftd guest session",
+                ))
             }
         };
     }
@@ -142,10 +162,43 @@ pub(crate) fn run_helper_process(
             .context("failed to wait for loftd libkrun helper")
     })?;
     tracing::debug!(?status, "loftd libkrun helper exited");
+    if let Some(trace_path) = audit_trace_path.as_deref() {
+        seccomp::finalize_audit_trace(trace_path)?;
+    }
     Ok(match status.code() {
         Some(code) => ChildStatus::exited(code),
         None => ChildStatus::signaled(),
     })
+}
+
+fn wrap_with_strace(spec: HelperCommandSpec, trace_path: &Path) -> HelperCommandSpec {
+    let raw_path = seccomp::raw_strace_path(trace_path);
+    let mut args = vec![
+        OsString::from("-f"),
+        OsString::from("-qq"),
+        OsString::from("-o"),
+        raw_path.into_os_string(),
+        OsString::from("--"),
+        spec.program,
+    ];
+    args.extend(spec.args);
+    HelperCommandSpec {
+        program: runtime_tool_program(RuntimeTool::Strace),
+        env: spec.env,
+        args,
+    }
+}
+
+fn context_audit_error(
+    err: anyhow::Error,
+    audit_trace_path: Option<&Path>,
+    context: &'static str,
+) -> anyhow::Error {
+    if audit_trace_path.is_some() {
+        err.context(format!("{context}; {}", seccomp::ptrace_failure_hint()))
+    } else {
+        err.context(context)
+    }
 }
 
 fn terminate_spawned_child_group(child: &mut Child) {

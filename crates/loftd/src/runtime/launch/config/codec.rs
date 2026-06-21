@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::logging::LogLevel;
+use crate::runtime::seccomp::SeccompMode;
 
 use super::components::{guest_init, mounts};
 use super::guest_env::guest_config_json;
@@ -189,6 +190,21 @@ impl LaunchConfig {
                 },
             );
         }
+        push_field(&mut out, "seccomp.mode", self.seccomp.as_config_value());
+        if let Some(path) = self.seccomp.audit_trace_path() {
+            push_field(
+                &mut out,
+                "seccomp.audit_trace_path",
+                &path.display().to_string(),
+            );
+        }
+        if let Some(path) = self.seccomp.enforce_policy_path() {
+            push_field(
+                &mut out,
+                "seccomp.enforce_policy_path",
+                &path.display().to_string(),
+            );
+        }
         for (index, disk) in self.disks.iter().enumerate() {
             push_field(&mut out, &format!("disk.{index}.id"), &disk.id);
             push_field(
@@ -319,6 +335,9 @@ impl LaunchConfig {
                     | "managed_session.attach_socket_uid"
                     | "managed_session.attach_socket_gid"
                     | "managed_session.cleanup_task_rootfs_on_exit"
+                    | "seccomp.mode"
+                    | "seccomp.audit_trace_path"
+                    | "seccomp.enforce_policy_path"
             ) {
                 if fields.insert(key.to_owned(), value).is_some() {
                     anyhow::bail!("loftd launch config repeats key {key}");
@@ -349,6 +368,13 @@ impl LaunchConfig {
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
         let host_nix_overlay = parse_host_nix_overlay(&fields)?;
         let managed_session = parse_managed_session(&fields)?;
+        let seccomp = SeccompMode::parse_config_value(
+            fields.get("seccomp.mode").map(String::as_str),
+            fields.get("seccomp.audit_trace_path").map(String::as_str),
+            fields
+                .get("seccomp.enforce_policy_path")
+                .map(String::as_str),
+        )?;
         Ok(Self {
             task_rootfs: PathBuf::from(required("task_rootfs")?),
             hostname: required("hostname")?,
@@ -371,6 +397,7 @@ impl LaunchConfig {
             guest_config_env: guest_config_env.into_values().collect(),
             passt_fd: None,
             managed_session,
+            seccomp,
         })
     }
 }

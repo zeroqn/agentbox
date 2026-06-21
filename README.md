@@ -71,6 +71,10 @@ managed sidecar.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
   default TSI and `--passt` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
+- `strace` for explicit `loftd --seccomp=audit:<trace>` policy-discovery
+  runs. It is included in the Nix `.#loftd` helper dir and `nix develop`
+  environments. Audit mode uses ptrace; if a host disables ptrace, enable it for
+  the audit run before tracing.
 - `btrfs`, `mkfs.btrfs`, and `blkid` on the host for microvm btrfs-snapshot
   storage, first-time libkrun/microvm raw-image creation, and reuse validation
   (`btrfs-progs` + `util-linux`; included in `nix develop`, included in the
@@ -800,6 +804,9 @@ Run/help:
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
 ./result/bin/loftd --daemon
+./result/bin/loftd --seccomp=audit:loftd-seccomp.trace.jsonl -- bash -lc 'echo ok'
+./result/bin/loftd seccomp synthesize --input loftd-seccomp.trace.jsonl --output loftd-seccomp.policy.json
+./result/bin/loftd --seccomp=enforce:loftd-seccomp.policy.json -- bash -lc 'echo ok'
 ./result/bin/loftd --passt -- bash -lc 'echo ok'
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
@@ -852,6 +859,42 @@ Detach/attach behavior:
 - Exiting the guest shell or command terminates the VM and removes the active
   task/rootfs unless `--preserve-debug` was used. Detached tasks can be
   terminated with `loftd kill <task-id-or-handle-selector>`.
+
+Seccomp behavior:
+
+- Host-side loftd seccomp is incubating and off by default. If `--seccomp` is
+  omitted, loftd does not install a host-side filter and does not start a
+  tracer.
+- `--seccomp=off` is the explicit no-filter spelling.
+- `--seccomp=audit:<trace>` (also accepted as `--seccomp=trace:<trace>`) runs
+  the host-side loftd helper under `strace -f`, writes a tracer-owned raw log,
+  and converts it to the requested JSONL trace when the foreground loftd run
+  waits for the helper to exit. Use the raw `.strace` sidecar only for
+  debugging; the JSONL trace path is the stable input for synthesis.
+- `loftd seccomp synthesize --input <trace> --output <policy>` extracts syscall
+  names from the trace and writes a deterministic `seccompiler` JSON policy with
+  a `main_thread` allowlist.
+- `--seccomp=enforce:<policy>` loads that `seccompiler` JSON policy and
+  installs it in the VM worker immediately before `krun_start_enter`. There is
+  no packaged default-enforce policy in this milestone: users must pass an
+  explicit policy path.
+- This is loftd host-helper filtering only. It does not change guest Podman's
+  seccomp profile.
+- On NixOS hosts where audit mode fails with ptrace errors such as
+  `PTRACE_TRACEME: Operation not permitted`, check:
+
+  ```bash
+  sysctl kernel.yama.ptrace_scope
+  ```
+
+  For a temporary audit run, use:
+
+  ```bash
+  sudo sysctl kernel.yama.ptrace_scope=0
+  ```
+
+  Persisting that choice is a host policy decision, commonly represented as
+  `boot.kernel.sysctl."kernel.yama.ptrace_scope" = 0;` in NixOS configuration.
 
 Container-store disk maintenance:
 

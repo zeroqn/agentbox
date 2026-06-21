@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::launch::config::NetworkMode;
+use crate::runtime::seccomp::{SeccompCommand, SeccompMode};
 use crate::task_rootfs::TaskRootfsBackend;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +46,8 @@ impl ContainerStoreBackend {
   loftd container-store reset --force
   loftd ps
   loftd attach <task-id-or-handle-selector>
-  loftd kill <task-id-or-handle-selector>"
+  loftd kill <task-id-or-handle-selector>
+  loftd seccomp synthesize --input trace.jsonl --output policy.json"
 )]
 pub(crate) struct Cli {
     #[arg(
@@ -102,6 +104,15 @@ pub(crate) struct Cli {
         long_help = "Start the managed task through the launching terminal, wait for the guest PTY target to emit initial output and become briefly idle, then detach while leaving the task running for loftd attach. This requires a TTY because terminal initialization queries must be answered by the real terminal."
     )]
     daemon: bool,
+
+    #[arg(
+        long = "seccomp",
+        value_name = "MODE:PATH",
+        value_parser = parse_seccomp_arg,
+        help = "Configure host-side loftd seccomp mode for this run",
+        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, and enforce:POLICY_JSON. If omitted, seccomp is off. Audit mode uses strace/ptrace to write a tracer-owned record file; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
+    )]
+    seccomp: Option<SeccompMode>,
 
     #[arg(
         long,
@@ -230,6 +241,15 @@ pub(crate) enum CliCommand {
         #[arg(value_name = "TASK_ID_OR_HANDLE_SELECTOR")]
         task_id: String,
     },
+
+    #[command(
+        name = "seccomp",
+        about = "Audit and synthesize loftd host-side seccomp policies"
+    )]
+    Seccomp {
+        #[command(subcommand)]
+        command: SeccompCommand,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
@@ -317,6 +337,10 @@ pub(crate) enum CliAction {
         task_id: String,
         log_settings: LogSettings,
     },
+    Seccomp {
+        command: SeccompCommand,
+        log_settings: LogSettings,
+    },
 }
 
 impl Cli {
@@ -341,6 +365,10 @@ impl Cli {
                 },
                 CliCommand::Attach { task_id } => CliAction::Attach {
                     task_id,
+                    log_settings: LogSettings::from_process_env(self.log_level, self.debug),
+                },
+                CliCommand::Seccomp { command } => CliAction::Seccomp {
+                    command,
                     log_settings: LogSettings::from_process_env(self.log_level, self.debug),
                 },
             }
@@ -369,6 +397,7 @@ impl Cli {
             profile: self.profile,
             root: self.root,
             daemon: self.daemon,
+            seccomp: self.seccomp.unwrap_or_default(),
             hardened: self.hardened,
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -405,6 +434,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) daemon: bool,
+    pub(crate) seccomp: SeccompMode,
     pub(crate) hardened: bool,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -435,6 +465,29 @@ fn parse_rootfs_backend_arg(value: &str) -> Result<TaskRootfsBackend, String> {
 
 fn parse_container_store_backend_arg(value: &str) -> Result<ContainerStoreBackend, String> {
     ContainerStoreBackend::parse_config_value(value)
+}
+
+fn parse_seccomp_arg(value: &str) -> Result<SeccompMode, String> {
+    let value = value.trim();
+    if value == "off" {
+        return Ok(SeccompMode::Off);
+    }
+    let (mode, path) = value.split_once(':').ok_or_else(|| {
+        "seccomp must be off, audit:TRACE_JSONL, trace:TRACE_JSONL, or enforce:POLICY_JSON"
+            .to_owned()
+    })?;
+    if path.trim().is_empty() {
+        return Err("seccomp path must not be empty".to_owned());
+    }
+    match mode {
+        "audit" | "trace" => Ok(SeccompMode::Audit {
+            trace_path: PathBuf::from(path),
+        }),
+        "enforce" => Ok(SeccompMode::Enforce {
+            policy_path: PathBuf::from(path),
+        }),
+        _ => Err("seccomp mode must be off, audit, trace, or enforce".to_owned()),
+    }
 }
 
 fn parse_publish_arg(value: &str) -> Result<String, String> {
@@ -491,6 +544,7 @@ mod tests {
     use crate::cli::{Cli, ContainerStoreBackend, VolumeSpec};
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::NetworkMode;
+    use crate::runtime::seccomp::SeccompMode;
     use crate::task_rootfs::TaskRootfsBackend;
 
     #[test]
@@ -521,6 +575,7 @@ mod tests {
         assert!(options.preserve_debug);
         assert!(options.root);
         assert!(!options.daemon);
+        assert_eq!(options.seccomp, SeccompMode::Off);
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
@@ -558,6 +613,75 @@ mod tests {
         assert!(matches!(
             cli.into_action(),
             crate::cli::CliAction::Ps { .. }
+        ));
+    }
+
+    #[test]
+    fn parses_seccomp_runtime_modes() {
+        let audit = Cli::try_parse_from(["loftd", "--seccomp", "audit:/tmp/trace.jsonl"])
+            .expect("audit seccomp should parse")
+            .into_runtime_options()
+            .seccomp;
+        assert_eq!(
+            audit,
+            SeccompMode::Audit {
+                trace_path: "/tmp/trace.jsonl".into(),
+            }
+        );
+
+        let trace_alias = Cli::try_parse_from(["loftd", "--seccomp", "trace:/tmp/trace.jsonl"])
+            .expect("trace alias should parse")
+            .into_runtime_options()
+            .seccomp;
+        assert_eq!(
+            trace_alias,
+            SeccompMode::Audit {
+                trace_path: "/tmp/trace.jsonl".into(),
+            }
+        );
+
+        let enforce = Cli::try_parse_from(["loftd", "--seccomp", "enforce:/tmp/policy.json"])
+            .expect("enforce seccomp should parse")
+            .into_runtime_options()
+            .seccomp;
+        assert_eq!(
+            enforce,
+            SeccompMode::Enforce {
+                policy_path: "/tmp/policy.json".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn seccomp_rejects_malformed_runtime_modes() {
+        for args in [
+            ["loftd", "--seccomp", ""],
+            ["loftd", "--seccomp", "audit:"],
+            ["loftd", "--seccomp", "enforce:"],
+            ["loftd", "--seccomp", "default"],
+            ["loftd", "--seccomp", "log:/tmp/trace.jsonl"],
+        ] {
+            let err = Cli::try_parse_from(args).expect_err("bad seccomp mode should fail");
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        }
+    }
+
+    #[test]
+    fn parses_seccomp_synthesize_subcommand() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "seccomp",
+            "synthesize",
+            "--input",
+            "trace.jsonl",
+            "--output",
+            "policy.json",
+        ])
+        .expect("seccomp synthesize command should parse");
+
+        assert!(matches!(
+            cli.into_action(),
+            crate::cli::CliAction::Seccomp { .. }
         ));
     }
 

@@ -1,5 +1,6 @@
 use super::*;
 use crate::logging::LogLevel;
+use crate::runtime::seccomp::SeccompMode;
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
 use std::fs;
 use std::path::Path;
@@ -241,6 +242,47 @@ fn launch_config_round_trips_managed_session_contract() {
     assert!(parsed.guest_config_env_contains("LOFTD_SESSION_MANAGED", "1"));
     assert!(parsed.guest_config_env_contains("LOFTD_ATTACH_PORT", "50426"));
     assert!(parsed.guest_config_env_contains("LOFTD_ATTACH_PROTOCOL_VERSION", "1"));
+}
+
+#[test]
+fn launch_config_round_trips_seccomp_modes() {
+    let mut config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &OciProcessConfig::default(),
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build");
+    config.seccomp = SeccompMode::Audit {
+        trace_path: Path::new("/tmp/loftd.trace.jsonl").to_path_buf(),
+    };
+
+    let parsed = LaunchConfig::parse(&config.serialize()).expect("audit config should parse");
+    assert_eq!(parsed.seccomp, config.seccomp);
+
+    config.seccomp = SeccompMode::Enforce {
+        policy_path: Path::new("/tmp/loftd.policy.json").to_path_buf(),
+    };
+
+    let parsed = LaunchConfig::parse(&config.serialize()).expect("enforce config should parse");
+    assert_eq!(parsed.seccomp, config.seccomp);
 }
 
 #[test]

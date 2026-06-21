@@ -101,6 +101,7 @@ impl LaunchConfig {
             guest_config_env: guest_config_env.into_iter().collect(),
             passt_fd: None,
             managed_session: spec.managed_session,
+            seccomp: Default::default(),
         })
     }
 

@@ -209,7 +209,8 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                 managed_session: Some(managed_session.clone()),
                             })
                         }) {
-                            Ok(config) => {
+                            Ok(mut config) => {
+                                config.seccomp = plan.seccomp.clone();
                                 tracing::debug!(
                                     guest_init = %guest_init.guest_exec_path,
                                     disks = config.disks.len(),
@@ -383,6 +384,7 @@ mod tests {
             profile,
             root: false,
             daemon: false,
+            seccomp: Default::default(),
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,

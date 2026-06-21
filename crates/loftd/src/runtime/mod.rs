@@ -10,6 +10,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use crate::cli::{ContainerStoreCommand, ContainerStoreOptions, RuntimeOptions};
+use crate::runtime::seccomp::SeccompCommand;
 use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
 use crate::runtime::session::task_control::TaskControlCommand;
 
@@ -17,6 +18,7 @@ pub(crate) mod host_tools;
 pub(crate) mod launch;
 pub(crate) mod maintenance;
 pub(crate) mod publish;
+pub(crate) mod seccomp;
 pub(crate) mod session;
 pub(crate) mod vm;
 
@@ -52,6 +54,10 @@ pub(crate) fn run_container_store_command(
 
 pub(crate) fn run_task_control_command(command: TaskControlCommand) -> Result<String> {
     session::run_task_control_command(command)
+}
+
+pub(crate) fn run_seccomp_command(command: SeccompCommand) -> Result<String> {
+    seccomp::run_seccomp_command(command)
 }
 
 pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {

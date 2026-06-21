@@ -142,6 +142,25 @@ pub fn entrypoint() -> ExitCode {
                 }
             }
         }
+        CliAction::Seccomp {
+            command,
+            log_settings,
+        } => {
+            if let Err(err) = logging::init_tracing(&log_settings) {
+                eprintln!("loftd: {err:#}");
+                return ExitCode::from(1);
+            }
+            match runtime::run_seccomp_command(command) {
+                Ok(output) => {
+                    print!("{output}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("loftd: {err:#}");
+                    ExitCode::from(1)
+                }
+            }
+        }
     }
 }
 

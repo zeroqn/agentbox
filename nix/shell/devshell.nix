@@ -17,6 +17,7 @@ pkgs.mkShell {
     pkgs.rustc
     pkgs.rustfmt
     pkgs.starship
+    pkgs.strace
     pkgs.util-linux
   ];
 

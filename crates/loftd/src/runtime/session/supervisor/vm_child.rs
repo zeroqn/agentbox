@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
+use crate::runtime::seccomp::{self, SeccompMode};
 use crate::runtime::session::nix_overlay;
 use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_path};
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
@@ -196,6 +197,14 @@ fn run_libkrun_with_prepared_root(
             pre_enter_reached = true;
             profiler.record_vm_worker_libkrun_configure(configure_duration);
             let _ = profiler.write_vm_worker_wait_details(task_state_dir);
+            if let SeccompMode::Enforce { policy_path } = &launch_config.seccomp {
+                seccomp::apply_enforce_policy(policy_path)?;
+            }
+            tracing::debug!(
+                seccomp = launch_config.seccomp.as_config_value(),
+                "loftd internal: pre-enter hook complete"
+            );
+            Ok(())
         },
     );
     let session_duration = session_started_at.elapsed();

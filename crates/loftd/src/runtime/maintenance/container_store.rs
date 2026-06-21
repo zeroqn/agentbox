@@ -166,6 +166,7 @@ fn maintenance_launch_config(
         guest_config_env: Vec::new(),
         passt_fd: None,
         managed_session: None,
+        seccomp: Default::default(),
     })
 }
 
@@ -194,7 +195,7 @@ impl MaintenanceVmRunner for HostMaintenanceVmRunner {
         DirectLibkrunLauncher::new(api).start_enter_profiled_with_pre_enter_hook(
             &launch_config,
             None,
-            || {},
+            || Ok(()),
         )
     }
 }

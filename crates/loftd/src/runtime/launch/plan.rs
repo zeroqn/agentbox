@@ -11,6 +11,7 @@ use crate::runtime::launch::components::mounts;
 use crate::runtime::launch::config::{
     BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
 };
+use crate::runtime::seccomp::SeccompMode;
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -41,6 +42,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) daemon: bool,
+    pub(crate) seccomp: SeccompMode,
     pub(crate) hardened: bool,
     pub(crate) preserve_debug: bool,
     pub(crate) config_diagnostics: ConfigDiagnostics,
@@ -123,6 +125,7 @@ impl LaunchPlan {
             profile: options.profile,
             root: options.root,
             daemon: options.daemon,
+            seccomp: options.seccomp,
             hardened: options.hardened,
             preserve_debug: options.preserve_debug,
             config_diagnostics: ConfigDiagnostics {
@@ -255,6 +258,7 @@ mod tests {
             profile: false,
             root: false,
             daemon: false,
+            seccomp: Default::default(),
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,

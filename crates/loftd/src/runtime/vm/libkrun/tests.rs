@@ -705,6 +705,7 @@ fn pre_enter_hook_runs_after_setup_and_before_start() {
                     .iter()
                     .any(|call| matches!(call, Call::StartEnter(..)))
             );
+            Ok(())
         })
         .expect("launch should succeed");
 
@@ -750,6 +751,7 @@ fn profile_setup_runs_after_exec_and_before_pre_enter_hook() {
                         .iter()
                         .any(|call| matches!(call, Call::StartEnter(..)))
                 );
+                Ok(())
             },
         )
         .expect("launch should succeed");

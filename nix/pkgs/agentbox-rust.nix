@@ -10,6 +10,7 @@ let
     pkgs.btrfs-progs
     pkgs.fuse-overlayfs
     pkgs.passt
+    pkgs.strace
     pkgs.util-linux
   ];
   runtimeWrapperArgs =
@@ -45,6 +46,7 @@ let
       ln -s ${pkgs.util-linux}/bin/blkid "$out/libexec/loftd-helpers/blkid"
       ln -s ${pkgs.passt}/bin/pasta "$out/libexec/loftd-helpers/pasta"
       ln -s ${pkgs.passt}/bin/passt "$out/libexec/loftd-helpers/passt"
+      ln -s ${pkgs.strace}/bin/strace "$out/libexec/loftd-helpers/strace"
       ${pkgs.lib.optionalString (libkrun != null) ''
         for library in ${pkgs.lib.getLib libkrun}/lib/libkrun.so*; do
           ln -s "$library" "$out/lib/loftd/$(basename "$library")"

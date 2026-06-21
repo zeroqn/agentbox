@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::{Component, Path, PathBuf};
 
 use crate::logging::LogLevel;
+use crate::runtime::seccomp::SeccompMode;
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
 
 pub(crate) const WORKSPACE_TAG: &str = "loftd-workspace";
@@ -249,4 +250,5 @@ pub(crate) struct LaunchConfig {
     pub(crate) guest_config_env: Vec<(String, String)>,
     pub(crate) passt_fd: Option<i32>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,
+    pub(crate) seccomp: SeccompMode,
 }

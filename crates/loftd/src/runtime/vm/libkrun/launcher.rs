@@ -25,14 +25,14 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
 
     #[cfg(test)]
     pub(in crate::runtime) fn start_enter(self, config: &LaunchConfig) -> Result<()> {
-        self.start_enter_with_pre_enter_hook(config, || {})
+        self.start_enter_with_pre_enter_hook(config, || Ok(()))
     }
 
     #[cfg(test)]
     pub(in crate::runtime) fn start_enter_with_pre_enter_hook(
         self,
         config: &LaunchConfig,
-        before_start_enter: impl FnOnce(),
+        before_start_enter: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         self.start_enter_profiled_with_pre_enter_hook(config, None, before_start_enter)
     }
@@ -41,7 +41,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         self,
         config: &LaunchConfig,
         profile_path: Option<&Path>,
-        before_start_enter: impl FnOnce(),
+        before_start_enter: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         let host_nofile_hard_limit = host_nofile_hard_limit()?;
         self.start_enter_profiled_with_nofile_hard_limit(
@@ -61,7 +61,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         self.start_enter_profiled_with_nofile_hard_limit(
             config,
             None,
-            || {},
+            || Ok(()),
             host_nofile_hard_limit,
         )
     }
@@ -70,7 +70,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         mut self,
         config: &LaunchConfig,
         profile_path: Option<&Path>,
-        before_start_enter: impl FnOnce(),
+        before_start_enter: impl FnOnce() -> Result<()>,
         host_nofile_hard_limit: libc::rlim_t,
     ) -> Result<()> {
         tracing::debug!(level = ?config.log_level, libkrun_level = config.log_level.libkrun_level(), "libkrun log init: begin");
@@ -103,7 +103,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         ctx_id: u32,
         config: &LaunchConfig,
         profile_path: Option<&Path>,
-        before_start_enter: impl FnOnce(),
+        before_start_enter: impl FnOnce() -> Result<()>,
         host_nofile_hard_limit: libc::rlim_t,
     ) -> Result<()> {
         tracing::debug!(
@@ -226,7 +226,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         let rc = self.api.set_rlimits(ctx_id, &[guest_nofile_rlimit])?;
         check_setup("krun_set_rlimits", rc)?;
         tracing::debug!(ctx_id, "krun_set_rlimits: complete");
-        before_start_enter();
+        before_start_enter()?;
         tracing::debug!(ctx_id, "krun_start_enter: begin");
         let rc = self.api.start_enter(ctx_id)?;
         tracing::debug!(ctx_id, rc, "krun_start_enter: returned");

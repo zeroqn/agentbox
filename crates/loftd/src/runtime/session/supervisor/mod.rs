@@ -172,6 +172,7 @@ mod tests {
             guest_config_env: Vec::new(),
             passt_fd: None,
             managed_session: None,
+            seccomp: Default::default(),
         }
     }
 

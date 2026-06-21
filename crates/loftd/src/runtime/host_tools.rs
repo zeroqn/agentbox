@@ -18,6 +18,7 @@ pub(crate) enum RuntimeTool {
     Blkid,
     Pasta,
     Passt,
+    Strace,
 }
 
 impl RuntimeTool {
@@ -29,6 +30,7 @@ impl RuntimeTool {
             Self::Blkid => "blkid",
             Self::Pasta => "pasta",
             Self::Passt => "passt",
+            Self::Strace => "strace",
         }
     }
 
@@ -40,6 +42,7 @@ impl RuntimeTool {
             Self::Blkid => "LOFTD_BLKID",
             Self::Pasta => "LOFTD_PASTA",
             Self::Passt => "LOFTD_PASST",
+            Self::Strace => "LOFTD_STRACE",
         }
     }
 }

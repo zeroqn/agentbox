@@ -264,6 +264,7 @@ mod tests {
                 attach_socket_gid: 1000,
                 cleanup_task_rootfs_on_exit,
             }),
+            seccomp: Default::default(),
         }
     }
 }
