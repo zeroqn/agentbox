@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,11 +7,12 @@ use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec};
 use crate::config;
 use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
+use crate::runtime::host_tools;
 use crate::runtime::launch::components::mounts;
 use crate::runtime::launch::config::{
     BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
 };
-use crate::runtime::seccomp::SeccompMode;
+use crate::runtime::seccomp::{self, SeccompMode};
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -100,6 +101,7 @@ impl LaunchPlan {
             .rootfs_backend
             .or_else(|| config.task_rootfs_backend())
             .unwrap_or(TaskRootfsBackend::DEFAULT);
+        let seccomp = resolve_normal_launch_seccomp(options.seccomp)?;
 
         Ok(Self {
             workspace_dir,
@@ -125,7 +127,7 @@ impl LaunchPlan {
             profile: options.profile,
             root: options.root,
             daemon: options.daemon,
-            seccomp: options.seccomp,
+            seccomp,
             hardened: options.hardened,
             preserve_debug: options.preserve_debug,
             config_diagnostics: ConfigDiagnostics {
@@ -134,6 +136,34 @@ impl LaunchPlan {
             },
         })
     }
+}
+
+fn resolve_normal_launch_seccomp(seccomp: Option<SeccompMode>) -> Result<SeccompMode> {
+    resolve_normal_launch_seccomp_with(seccomp, host_tools::default_seccomp_policy_path)
+}
+
+fn resolve_normal_launch_seccomp_with(
+    seccomp: Option<SeccompMode>,
+    default_policy_path: impl FnOnce() -> Option<PathBuf>,
+) -> Result<SeccompMode> {
+    if let Some(seccomp) = seccomp {
+        return Ok(seccomp);
+    }
+
+    let policy_path = default_policy_path().ok_or_else(|| {
+        anyhow!(
+            "loftd default seccomp policy is unavailable for this executable; \
+             install loftd with share/loftd/seccomp/default.json or pass --seccomp=off to disable host-side seccomp for this run"
+        )
+    })?;
+    seccomp::validate_seccomp_policy_file(&policy_path, "default loftd seccomp policy")
+        .with_context(|| {
+            format!(
+                "failed to load default loftd seccomp policy '{}'; pass --seccomp=off to disable host-side seccomp for this run",
+                policy_path.display()
+            )
+        })?;
+    Ok(SeccompMode::Enforce { policy_path })
 }
 
 fn prepare_user_volume_mounts(
@@ -245,7 +275,10 @@ mod tests {
     use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec};
     use crate::logging::{LogLevel, LogSettings};
     use crate::runtime::launch::config::{BindMountSourceKind, NetworkMode};
-    use crate::runtime::launch::plan::{ImageSelection, LaunchPlan};
+    use crate::runtime::launch::plan::{
+        ImageSelection, LaunchPlan, resolve_normal_launch_seccomp_with,
+    };
+    use crate::runtime::seccomp::SeccompMode;
     use crate::task_rootfs::TaskRootfsBackend;
     use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
@@ -258,7 +291,7 @@ mod tests {
             profile: false,
             root: false,
             daemon: false,
-            seccomp: Default::default(),
+            seccomp: Some(SeccompMode::Off),
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,
@@ -299,6 +332,46 @@ mod tests {
         assert!(!plan.debug);
         assert!(!plan.daemon);
         assert!(!plan.config_diagnostics.config_loaded);
+    }
+
+    #[test]
+    fn omitted_normal_launch_seccomp_resolves_to_valid_packaged_default_policy() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let policy = dir.path().join("default.json");
+        fs::write(
+            &policy,
+            include_bytes!("../../../assets/seccomp/default.json"),
+        )
+        .expect("default policy fixture should be written");
+        let seccomp = resolve_normal_launch_seccomp_with(None, || Some(policy.clone()))
+            .expect("default seccomp should resolve");
+
+        assert_eq!(
+            seccomp,
+            SeccompMode::Enforce {
+                policy_path: policy
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_normal_launch_seccomp_off_bypasses_default_policy_lookup() {
+        let seccomp = resolve_normal_launch_seccomp_with(Some(SeccompMode::Off), || {
+            panic!("explicit seccomp mode should not resolve the packaged default policy")
+        })
+        .expect("explicit off should resolve");
+
+        assert_eq!(seccomp, SeccompMode::Off);
+    }
+
+    #[test]
+    fn omitted_normal_launch_seccomp_fails_closed_without_default_policy() {
+        let err = resolve_normal_launch_seccomp_with(None, || None)
+            .expect_err("missing default policy should fail closed");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("default seccomp policy"));
+        assert!(message.contains("--seccomp=off"));
     }
 
     #[test]

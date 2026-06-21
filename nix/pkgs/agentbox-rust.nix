@@ -40,6 +40,7 @@ let
 
     postInstall = ''
       mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd"
+      install -Dm644 ${self}/crates/loftd/assets/seccomp/default.json "$out/share/loftd/seccomp/default.json"
       ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah"
       ln -s ${pkgs.btrfs-progs}/bin/btrfs "$out/libexec/loftd-helpers/btrfs"
       ln -s ${pkgs.btrfs-progs}/bin/mkfs.btrfs "$out/libexec/loftd-helpers/mkfs.btrfs"

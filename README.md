@@ -71,6 +71,10 @@ managed sidecar.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
   default TSI and `--passt` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
+- The packaged loftd default seccomp policy at
+  `$out/share/loftd/seccomp/default.json` for ordinary `loftd` task launches
+  that omit `--seccomp`; source-built and prebuilt loftd packages install this
+  file.
 - `strace` for explicit `loftd --seccomp=audit:<trace>` policy-discovery
   runs. It is included in the Nix `.#loftd` helper dir and `nix develop`
   environments. Audit mode uses ptrace on the loftd VM worker only; normal
@@ -805,6 +809,7 @@ Run/help:
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
 ./result/bin/loftd --daemon
+./result/bin/loftd --seccomp=off -- bash -lc 'echo ok'
 ./result/bin/loftd --seccomp=audit:loftd-seccomp.trace.jsonl -- bash -lc 'echo ok'
 ./result/bin/loftd seccomp synthesize --input loftd-seccomp.trace.jsonl --output loftd-seccomp.policy.json
 ./result/bin/loftd --seccomp=audit:loftd-seccomp.policy.json:loftd-seccomp.denied.jsonl -- bash -lc 'echo ok'
@@ -865,10 +870,14 @@ Detach/attach behavior:
 
 Seccomp behavior:
 
-- Host-side loftd seccomp is incubating and off by default. If `--seccomp` is
-  omitted, loftd does not install a host-side filter and does not start a
-  tracer.
-- `--seccomp=off` is the explicit no-filter spelling.
+- Host-side loftd seccomp is incubating. For ordinary task launches, omitting
+  `--seccomp` makes loftd enforce the packaged default policy at
+  `$out/share/loftd/seccomp/default.json`. This is fail-closed: if the packaged
+  policy is missing, unreadable, invalid, or cannot be compiled for the host
+  architecture, the launch fails before the VM worker enters libkrun.
+- `--seccomp=off` is the explicit no-filter spelling and opt-out for a normal
+  task launch. Maintenance/internal one-shot VMs such as
+  `loftd container-store resize/reset` remain default-off for this milestone.
 - `--seccomp=audit:<trace>` (also accepted as `--seccomp=trace:<trace>`) runs
   the libkrun VM-worker entrypoint under `strace -f`, writes a tracer-owned raw
   log, and converts it to the requested JSONL trace when the helper observes
@@ -893,9 +902,8 @@ Seccomp behavior:
   output is validated with `seccompiler` before loftd writes it; the baseline
   policy file is not modified.
 - `--seccomp=enforce:<policy>` loads that `seccompiler` JSON policy and
-  installs it in the VM worker immediately before `krun_start_enter`. There is
-  no packaged default-enforce policy in this milestone: users must pass an
-  explicit policy path.
+  installs it in the VM worker immediately before `krun_start_enter`. Passing an
+  explicit enforce path overrides the packaged default policy for that run.
 - Gap audit is a debugging aid, not proof that enforcement is safe. It compares
   syscall names only; it does not diff or prove seccompiler argument-condition
   rules. Always test the updated policy explicitly with
@@ -1634,7 +1642,15 @@ For a source-build fallback, use:
 agentbox.packages.${pkgs.system}.agentbox
 ```
 
-Downstream flakes can also depend on the packaged seccomp policy via:
+Downstream flakes that install `.#loftd` or `.#loftd-prebuilt` receive the
+loftd host-side default policy at:
+
+```text
+$out/share/loftd/seccomp/default.json
+```
+
+Downstream flakes can also depend on the separate packaged guest/container
+seccomp policy via:
 
 ```nix
 agentbox.packages.${pkgs.system}.container-lib-policy-seccomp-json

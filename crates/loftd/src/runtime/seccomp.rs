@@ -397,7 +397,7 @@ pub(crate) fn extend_policy(policy: &Path, trace: &Path, output: &Path) -> Resul
     serde_json::to_writer_pretty(&mut bytes, &policy_value)
         .context("failed to encode extended seccomp policy")?;
     bytes.push(b'\n');
-    validate_seccomp_policy_bytes(&bytes, output)?;
+    validate_seccomp_policy_bytes(&bytes, output, "extended seccomp policy")?;
 
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent).with_context(|| {
@@ -415,7 +415,17 @@ pub(crate) fn extend_policy(policy: &Path, trace: &Path, output: &Path) -> Resul
     Ok(())
 }
 
-fn validate_seccomp_policy_bytes(policy_bytes: &[u8], output: &Path) -> Result<()> {
+pub(crate) fn validate_seccomp_policy_file(policy_path: &Path, description: &str) -> Result<()> {
+    let bytes = fs::read(policy_path)
+        .with_context(|| format!("failed to read {description} '{}'", policy_path.display()))?;
+    validate_seccomp_policy_bytes(&bytes, policy_path, description)
+}
+
+fn validate_seccomp_policy_bytes(
+    policy_bytes: &[u8],
+    policy_path: &Path,
+    description: &str,
+) -> Result<()> {
     let arch = std::env::consts::ARCH.try_into().map_err(|_| {
         anyhow!(
             "seccomp does not support host architecture {}",
@@ -424,8 +434,8 @@ fn validate_seccomp_policy_bytes(policy_bytes: &[u8], output: &Path) -> Result<(
     })?;
     seccompiler::compile_from_json(Cursor::new(policy_bytes), arch).with_context(|| {
         format!(
-            "extended seccomp policy '{}' is not valid for seccompiler",
-            output.display()
+            "{description} '{}' is not valid for seccompiler",
+            policy_path.display()
         )
     })?;
     Ok(())
@@ -638,6 +648,15 @@ mod tests {
             "old finalized trace\n"
         );
         assert!(!finalized_trace_temp_path(&trace).exists());
+    }
+
+    #[test]
+    fn packaged_default_seccomp_policy_compiles() {
+        let policy = include_bytes!("../../assets/seccomp/default.json");
+        let arch = std::env::consts::ARCH.try_into().expect("supported arch");
+        let filters = seccompiler::compile_from_json(Cursor::new(policy), arch)
+            .expect("default seccomp policy should compile");
+        assert!(filters.contains_key("main_thread"));
     }
 
     #[test]

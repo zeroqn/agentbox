@@ -36,6 +36,7 @@ impl ContainerStoreBackend {
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
     after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
   loftd --daemon
+  loftd --seccomp=off -- bash -lc 'echo ok'
   loftd images list
   loftd images sync ghcr.io/example/loftd:dev
   loftd images sync ba5a514
@@ -110,7 +111,7 @@ pub(crate) struct Cli {
         value_name = "MODE[:POLICY]:PATH",
         value_parser = parse_seccomp_arg,
         help = "Configure host-side loftd seccomp mode for this run",
-        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, audit:POLICY_JSON:MISSING_TRACE_JSONL, trace:POLICY_JSON:MISSING_TRACE_JSONL, and enforce:POLICY_JSON. If omitted, seccomp is off. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; gap audit records syscalls missing from the baseline policy by syscall name; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
+        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, audit:POLICY_JSON:MISSING_TRACE_JSONL, trace:POLICY_JSON:MISSING_TRACE_JSONL, and enforce:POLICY_JSON. If omitted for a normal task launch, loftd enforces the packaged default policy at $out/share/loftd/seccomp/default.json and fails closed if that policy cannot be loaded; pass --seccomp=off to opt out. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; gap audit records syscalls missing from the baseline policy by syscall name; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
     )]
     seccomp: Option<SeccompMode>,
 
@@ -397,7 +398,7 @@ impl Cli {
             profile: self.profile,
             root: self.root,
             daemon: self.daemon,
-            seccomp: self.seccomp.unwrap_or_default(),
+            seccomp: self.seccomp,
             hardened: self.hardened,
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -434,7 +435,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) daemon: bool,
-    pub(crate) seccomp: SeccompMode,
+    pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) hardened: bool,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -585,7 +586,7 @@ mod tests {
         assert!(options.preserve_debug);
         assert!(options.root);
         assert!(!options.daemon);
-        assert_eq!(options.seccomp, SeccompMode::Off);
+        assert_eq!(options.seccomp, None);
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
@@ -634,9 +635,9 @@ mod tests {
             .seccomp;
         assert_eq!(
             audit,
-            SeccompMode::Audit(AuditMode::Full {
+            Some(SeccompMode::Audit(AuditMode::Full {
                 trace_path: "/tmp/trace.jsonl".into(),
-            })
+            }))
         );
 
         let trace_alias = Cli::try_parse_from(["loftd", "--seccomp", "trace:/tmp/trace.jsonl"])
@@ -645,9 +646,9 @@ mod tests {
             .seccomp;
         assert_eq!(
             trace_alias,
-            SeccompMode::Audit(AuditMode::Full {
+            Some(SeccompMode::Audit(AuditMode::Full {
                 trace_path: "/tmp/trace.jsonl".into(),
-            })
+            }))
         );
 
         let gap_audit = Cli::try_parse_from([
@@ -660,10 +661,10 @@ mod tests {
         .seccomp;
         assert_eq!(
             gap_audit,
-            SeccompMode::Audit(AuditMode::Gap {
+            Some(SeccompMode::Audit(AuditMode::Gap {
                 baseline_policy_path: "/tmp/baseline.json".into(),
                 trace_path: "/tmp/denied.jsonl".into(),
-            })
+            }))
         );
 
         let trace_gap_alias = Cli::try_parse_from([
@@ -676,10 +677,10 @@ mod tests {
         .seccomp;
         assert_eq!(
             trace_gap_alias,
-            SeccompMode::Audit(AuditMode::Gap {
+            Some(SeccompMode::Audit(AuditMode::Gap {
                 baseline_policy_path: "/tmp/baseline.json".into(),
                 trace_path: "/tmp/denied.jsonl".into(),
-            })
+            }))
         );
 
         let enforce = Cli::try_parse_from(["loftd", "--seccomp", "enforce:/tmp/policy.json"])
@@ -688,9 +689,9 @@ mod tests {
             .seccomp;
         assert_eq!(
             enforce,
-            SeccompMode::Enforce {
+            Some(SeccompMode::Enforce {
                 policy_path: "/tmp/policy.json".into(),
-            }
+            })
         );
     }
 

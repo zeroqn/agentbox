@@ -61,6 +61,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
         readelf -h "$src" >/dev/null
 
         install -Dm755 "$src" "$out/bin/loftd"
+        install -Dm644 ${../../crates/loftd/assets/seccomp/default.json} "$out/share/loftd/seccomp/default.json"
         mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd"
         ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah"
         ln -s ${pkgs.btrfs-progs}/bin/btrfs "$out/libexec/loftd-helpers/btrfs"

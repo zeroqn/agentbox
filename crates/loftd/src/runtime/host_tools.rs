@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 const HELPER_BINARY_DIR_ENV: &str = "LOFTD_HELPER_BINARY_DIR";
 const HELPER_BINARY_DIR: &str = "libexec/loftd-helpers";
+const DEFAULT_SECCOMP_POLICY: &str = "share/loftd/seccomp/default.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeTool {
@@ -90,6 +91,16 @@ pub(crate) fn package_helper_path_for_exe(exe: &Path, tool: RuntimeTool) -> Opti
     package_root_from_exe(exe).map(|root| root.join(HELPER_BINARY_DIR).join(tool.basename()))
 }
 
+pub(crate) fn default_seccomp_policy_path() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| package_default_seccomp_policy_path_for_exe(&exe))
+}
+
+pub(crate) fn package_default_seccomp_policy_path_for_exe(exe: &Path) -> Option<PathBuf> {
+    package_root_from_exe(exe).map(|root| root.join(DEFAULT_SECCOMP_POLICY))
+}
+
 pub(crate) fn package_root_from_exe(exe: &Path) -> Option<PathBuf> {
     let executable_dir = exe.parent()?;
     if matches!(
@@ -131,6 +142,26 @@ mod tests {
             ),
             Some(PathBuf::from(
                 "/nix/store/hash-agentbox/libexec/loftd-helpers/passt"
+            ))
+        );
+    }
+
+    #[test]
+    fn default_seccomp_policy_path_is_package_relative() {
+        assert_eq!(
+            package_default_seccomp_policy_path_for_exe(Path::new(
+                "/nix/store/hash-agentbox/bin/loftd"
+            )),
+            Some(PathBuf::from(
+                "/nix/store/hash-agentbox/share/loftd/seccomp/default.json"
+            ))
+        );
+        assert_eq!(
+            package_default_seccomp_policy_path_for_exe(Path::new(
+                "/nix/store/hash-agentbox/libexec/loftd"
+            )),
+            Some(PathBuf::from(
+                "/nix/store/hash-agentbox/share/loftd/seccomp/default.json"
             ))
         );
     }

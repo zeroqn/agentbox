@@ -388,7 +388,7 @@ mod tests {
             profile,
             root: false,
             daemon: false,
-            seccomp: Default::default(),
+            seccomp: Some(crate::runtime::seccomp::SeccompMode::Off),
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,
