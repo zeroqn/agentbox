@@ -8,6 +8,7 @@ use crate::config;
 use crate::logging::LogLevel;
 use crate::naming::derive_workspace_slug;
 use crate::runtime::host_tools;
+use crate::runtime::landlock::LandlockMode;
 use crate::runtime::launch::components::mounts;
 use crate::runtime::launch::config::{
     BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
@@ -44,6 +45,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) root: bool,
     pub(crate) daemon: bool,
     pub(crate) seccomp: SeccompMode,
+    pub(crate) landlock: LandlockMode,
     pub(crate) hardened: bool,
     pub(crate) preserve_debug: bool,
     pub(crate) config_diagnostics: ConfigDiagnostics,
@@ -102,6 +104,7 @@ impl LaunchPlan {
             .or_else(|| config.task_rootfs_backend())
             .unwrap_or(TaskRootfsBackend::DEFAULT);
         let seccomp = resolve_normal_launch_seccomp(options.seccomp)?;
+        let landlock = resolve_normal_launch_landlock(options.landlock);
 
         Ok(Self {
             workspace_dir,
@@ -128,6 +131,7 @@ impl LaunchPlan {
             root: options.root,
             daemon: options.daemon,
             seccomp,
+            landlock,
             hardened: options.hardened,
             preserve_debug: options.preserve_debug,
             config_diagnostics: ConfigDiagnostics {
@@ -168,6 +172,10 @@ fn resolve_normal_launch_seccomp_with(
             Ok(SeccompMode::Enforce { policy_path })
         }
     }
+}
+
+fn resolve_normal_launch_landlock(landlock: Option<LandlockMode>) -> LandlockMode {
+    landlock.unwrap_or(LandlockMode::Enforce)
 }
 
 fn prepare_user_volume_mounts(
@@ -278,9 +286,11 @@ mod tests {
 
     use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec};
     use crate::logging::{LogLevel, LogSettings};
+    use crate::runtime::landlock::LandlockMode;
     use crate::runtime::launch::config::{BindMountSourceKind, NetworkMode};
     use crate::runtime::launch::plan::{
-        ImageSelection, LaunchPlan, resolve_normal_launch_seccomp_with,
+        ImageSelection, LaunchPlan, resolve_normal_launch_landlock,
+        resolve_normal_launch_seccomp_with,
     };
     use crate::runtime::seccomp::{AuditMode, SeccompMode};
     use crate::task_rootfs::TaskRootfsBackend;
@@ -296,6 +306,7 @@ mod tests {
             root: false,
             daemon: false,
             seccomp: Some(SeccompMode::Off),
+            landlock: None,
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,
@@ -333,9 +344,23 @@ mod tests {
         assert_eq!(plan.task_rootfs_backend, TaskRootfsBackend::BtrfsSnapshot);
         assert_eq!(plan.container_store_backend, ContainerStoreBackend::RawDisk);
         assert_eq!(plan.log_level, LogLevel::Off);
+        assert_eq!(plan.landlock, LandlockMode::Enforce);
         assert!(!plan.debug);
         assert!(!plan.daemon);
         assert!(!plan.config_diagnostics.config_loaded);
+    }
+
+    #[test]
+    fn normal_launch_landlock_defaults_to_enforce_and_carries_explicit_modes() {
+        assert_eq!(resolve_normal_launch_landlock(None), LandlockMode::Enforce);
+        assert_eq!(
+            resolve_normal_launch_landlock(Some(LandlockMode::BestEffort)),
+            LandlockMode::BestEffort
+        );
+        assert_eq!(
+            resolve_normal_launch_landlock(Some(LandlockMode::Off)),
+            LandlockMode::Off
+        );
     }
 
     #[test]

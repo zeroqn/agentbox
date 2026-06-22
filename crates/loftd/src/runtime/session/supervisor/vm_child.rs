@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use crate::logging::{self, LogSettings};
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
+use crate::runtime::landlock;
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::seccomp::{self, AuditMode, SeccompMode};
 use crate::runtime::session::nix_overlay;
@@ -368,10 +369,12 @@ fn run_libkrun_with_prepared_root(
             pre_enter_reached = true;
             profiler.record_vm_worker_libkrun_configure(configure_duration);
             let _ = profiler.write_vm_worker_wait_details(task_state_dir);
+            landlock::apply(&launch_config, task_state_dir, profiler.is_enabled())?;
             if let SeccompMode::Enforce { policy_path } = &launch_config.seccomp {
                 seccomp::apply_enforce_policy(policy_path)?;
             }
             tracing::debug!(
+                landlock = launch_config.landlock.as_config_value(),
                 seccomp = launch_config.seccomp.as_config_value(),
                 "loftd internal: pre-enter hook complete"
             );
@@ -385,6 +388,18 @@ fn run_libkrun_with_prepared_root(
             .record_vm_worker_libkrun_enter(session_duration.saturating_sub(configure_duration));
     }
     result
+}
+
+#[cfg(test)]
+fn pre_enter_security_order_for_test(config: &LaunchConfig) -> Vec<&'static str> {
+    let mut steps = Vec::new();
+    if config.landlock != crate::runtime::landlock::LandlockMode::Off {
+        steps.push("landlock");
+    }
+    if matches!(config.seccomp, SeccompMode::Enforce { .. }) {
+        steps.push("seccomp");
+    }
+    steps
 }
 
 fn finalize_vm_worker_run<PreparedCleanup, NixCleanup>(
@@ -436,6 +451,42 @@ mod tests {
     use anyhow::anyhow;
     use std::cell::RefCell;
     use std::ffi::OsStr;
+
+    #[test]
+    fn pre_enter_security_order_applies_landlock_before_seccomp() {
+        let mut config = LaunchConfig {
+            task_rootfs: Path::new("/rootfs").to_path_buf(),
+            hostname: "loftd-test".to_owned(),
+            mounts: Vec::new(),
+            host_nix_overlay: None,
+            guest_init_override: None,
+            disks: Vec::new(),
+            ram_mib: 1024,
+            vcpus: 1,
+            log_level: crate::logging::LogLevel::Off,
+            network_mode: NetworkMode::Tsi,
+            publish: Vec::new(),
+            workdir: "/workspace".to_owned(),
+            exec_path: "/init".to_owned(),
+            argv: Vec::new(),
+            env: Vec::new(),
+            guest_config_env: Vec::new(),
+            passt_fd: None,
+            managed_session: None,
+            seccomp: SeccompMode::Enforce {
+                policy_path: Path::new("/policy.json").to_path_buf(),
+            },
+            landlock: crate::runtime::landlock::LandlockMode::Enforce,
+        };
+
+        assert_eq!(
+            pre_enter_security_order_for_test(&config),
+            ["landlock", "seccomp"]
+        );
+
+        config.landlock = crate::runtime::landlock::LandlockMode::Off;
+        assert_eq!(pre_enter_security_order_for_test(&config), ["seccomp"]);
+    }
 
     #[test]
     fn finalization_unmounts_prepared_root_before_nix_overlay() {

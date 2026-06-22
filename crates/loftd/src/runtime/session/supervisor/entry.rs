@@ -344,6 +344,7 @@ mod tests {
                 cleanup_task_rootfs_on_exit,
             }),
             seccomp: Default::default(),
+            landlock: Default::default(),
         }
     }
 }

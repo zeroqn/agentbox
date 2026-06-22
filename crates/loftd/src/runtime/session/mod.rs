@@ -211,6 +211,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                         }) {
                             Ok(mut config) => {
                                 config.seccomp = plan.seccomp.clone();
+                                config.landlock = plan.landlock;
                                 tracing::debug!(
                                     guest_init = %guest_init.guest_exec_path,
                                     disks = config.disks.len(),
@@ -389,6 +390,7 @@ mod tests {
             root: false,
             daemon: false,
             seccomp: Some(crate::runtime::seccomp::SeccompMode::Off),
+            landlock: None,
             hardened: false,
             rootfs_backend: None,
             container_store_backend: None,

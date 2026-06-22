@@ -185,6 +185,7 @@ mod tests {
             passt_fd: None,
             managed_session: None,
             seccomp: Default::default(),
+            landlock: Default::default(),
         }
     }
 

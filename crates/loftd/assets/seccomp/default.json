@@ -280,6 +280,9 @@
         "syscall": "umask"
       },
       {
+        "syscall": "umount2"
+      },
+      {
         "syscall": "unlinkat"
       },
       {

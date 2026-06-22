@@ -15,6 +15,7 @@ use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
 use crate::runtime::session::task_control::TaskControlCommand;
 
 pub(crate) mod host_tools;
+pub(crate) mod landlock;
 pub(crate) mod launch;
 pub(crate) mod maintenance;
 pub(crate) mod publish;

@@ -167,6 +167,7 @@ fn maintenance_launch_config(
         passt_fd: None,
         managed_session: None,
         seccomp: Default::default(),
+        landlock: crate::runtime::landlock::LandlockMode::Off,
     })
 }
 

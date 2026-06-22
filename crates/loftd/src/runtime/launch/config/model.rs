@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::{Component, Path, PathBuf};
 
 use crate::logging::LogLevel;
+use crate::runtime::landlock::LandlockMode;
 use crate::runtime::seccomp::SeccompMode;
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
 
@@ -251,4 +252,5 @@ pub(crate) struct LaunchConfig {
     pub(crate) passt_fd: Option<i32>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,
     pub(crate) seccomp: SeccompMode,
+    pub(crate) landlock: LandlockMode,
 }

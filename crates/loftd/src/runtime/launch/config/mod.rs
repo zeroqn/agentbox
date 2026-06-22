@@ -102,6 +102,7 @@ impl LaunchConfig {
             passt_fd: None,
             managed_session: spec.managed_session,
             seccomp: Default::default(),
+            landlock: Default::default(),
         })
     }
 

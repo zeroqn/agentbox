@@ -2,6 +2,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
+use crate::runtime::landlock::LandlockMode;
 use crate::runtime::launch::config::NetworkMode;
 use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
 use crate::task_rootfs::TaskRootfsBackend;
@@ -36,6 +37,7 @@ impl ContainerStoreBackend {
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
     after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
   loftd --daemon
+  loftd --landlock=best-effort -- bash -lc 'echo ok'
   loftd --seccomp=off -- bash -lc 'echo ok'
   loftd images list
   loftd images sync ghcr.io/example/loftd:dev
@@ -114,6 +116,14 @@ pub(crate) struct Cli {
         long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, audit:POLICY_JSON:MISSING_TRACE_JSONL, trace:POLICY_JSON:MISSING_TRACE_JSONL, audit-default:MISSING_TRACE_JSONL, trace-default:MISSING_TRACE_JSONL, and enforce:POLICY_JSON. If omitted for a normal task launch, loftd enforces the packaged default policy at $out/share/loftd/seccomp/default.json and fails closed if that policy cannot be loaded; pass --seccomp=off to opt out. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; gap audit records syscalls missing from the baseline policy by syscall name; audit-default and trace-default use the packaged default policy as the baseline and fail closed if it cannot be loaded; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
     )]
     seccomp: Option<SeccompMode>,
+    #[arg(
+        long = "landlock",
+        value_enum,
+        value_name = "MODE",
+        help = "Configure host-side loftd Landlock mode for this run",
+        long_help = "Configure host-side loftd Landlock mode for this run. Allowed values are enforce, best-effort, and off. If omitted for a normal task launch, loftd uses enforce and fails closed unless filesystem, device ioctl, IPC scope, TCP BindTcp, and audit-flag Landlock coverage is fully enforced. best-effort applies the supported subset and reports degraded coverage; off disables this host VM-worker Landlock layer. Landlock is applied to the VM worker before seccomp and before krun_start_enter; it does not confine the guest kernel, guest Podman, or helper/network-manager/passt processes started before the VM worker."
+    )]
+    landlock: Option<LandlockMode>,
 
     #[arg(
         long,
@@ -399,6 +409,7 @@ impl Cli {
             root: self.root,
             daemon: self.daemon,
             seccomp: self.seccomp,
+            landlock: self.landlock,
             hardened: self.hardened,
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -436,6 +447,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) root: bool,
     pub(crate) daemon: bool,
     pub(crate) seccomp: Option<SeccompMode>,
+    pub(crate) landlock: Option<LandlockMode>,
     pub(crate) hardened: bool,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -565,6 +577,7 @@ mod tests {
 
     use crate::cli::{Cli, ContainerStoreBackend, VolumeSpec};
     use crate::logging::LogLevel;
+    use crate::runtime::landlock::LandlockMode;
     use crate::runtime::launch::config::NetworkMode;
     use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
     use crate::task_rootfs::TaskRootfsBackend;
@@ -598,6 +611,7 @@ mod tests {
         assert!(options.root);
         assert!(!options.daemon);
         assert_eq!(options.seccomp, None);
+        assert_eq!(options.landlock, None);
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
@@ -636,6 +650,33 @@ mod tests {
             cli.into_action(),
             crate::cli::CliAction::Ps { .. }
         ));
+    }
+
+    #[test]
+    fn parses_landlock_runtime_modes() {
+        for (value, expected) in [
+            ("enforce", LandlockMode::Enforce),
+            ("best-effort", LandlockMode::BestEffort),
+            ("off", LandlockMode::Off),
+        ] {
+            let actual = Cli::try_parse_from(["loftd", "--landlock", value])
+                .expect("landlock mode should parse")
+                .into_runtime_options()
+                .landlock;
+            assert_eq!(actual, Some(expected));
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_landlock_runtime_modes() {
+        for value in ["", "audit", "default", "best_effort"] {
+            let err = Cli::try_parse_from(["loftd", "--landlock", value])
+                .expect_err("bad landlock mode should fail");
+            assert!(matches!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation | clap::error::ErrorKind::InvalidValue
+            ));
+        }
     }
 
     #[test]

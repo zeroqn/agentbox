@@ -71,6 +71,10 @@ managed sidecar.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
   default TSI and `--passt` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
+- Linux Landlock enabled in the host kernel for default `loftd` task launches.
+  Ordinary launches now use host-side Landlock `enforce` mode by default; use
+  `--landlock=best-effort` on older/degraded kernels or `--landlock=off` as an
+  explicit debugging escape hatch.
 - The packaged loftd default seccomp policy at
   `$out/share/loftd/seccomp/default.json` for ordinary `loftd` task launches
   that omit `--seccomp`; source-built and prebuilt loftd packages install this
@@ -809,6 +813,8 @@ Run/help:
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
 ./result/bin/loftd --daemon
+./result/bin/loftd --landlock=best-effort -- bash -lc 'echo ok'
+./result/bin/loftd --landlock=off -- bash -lc 'echo ok'
 ./result/bin/loftd --seccomp=off -- bash -lc 'echo ok'
 ./result/bin/loftd --seccomp=audit:loftd-seccomp.trace.jsonl -- bash -lc 'echo ok'
 ./result/bin/loftd seccomp synthesize --input loftd-seccomp.trace.jsonl --output loftd-seccomp.policy.json
@@ -869,6 +875,46 @@ Detach/attach behavior:
 - Exiting the guest shell or command terminates the VM and removes the active
   task/rootfs unless `--preserve-debug` was used. Detached tasks can be
   terminated with `loftd kill <task-id-or-handle-selector>`.
+
+
+Landlock behavior:
+
+- Host-side loftd Landlock is applied to the libkrun VM-worker process after
+  prepared-root and libkrun setup that require broader host access, but before
+  `krun_start_enter`. It is applied before seccomp so the Landlock syscalls are
+  not blocked by the seccomp filter.
+- For ordinary task launches, omitting `--landlock` is equivalent to
+  `--landlock=enforce`. Enforce mode is strict and fail-closed: loftd requires
+  the first-cut Landlock feature families to be fully enforced, including
+  filesystem access rules, device ioctl access handling, IPC scopes for abstract
+  UNIX sockets and signals, TCP `BindTcp` handling, and audit-flag support.
+- `--landlock=best-effort` applies the supported subset and logs the effective
+  policy plus any non-fully-enforced status. This is the explicit compatibility
+  path for older kernels or hosts with partial Landlock support.
+- `--landlock=off` disables only this host-side Landlock layer. It does not
+  disable the default host-side seccomp policy; use `--seccomp=off` separately
+  if you need to debug seccomp.
+- The first cut confines the VM worker and its future children only. It does not
+  claim to confine the guest kernel, guest Podman, the keep-id helper before the
+  VM worker, or network manager/pasta/passt processes started before the VM
+  worker.
+- Filesystem rules are derived from the launch config: the prepared root is
+  read/execute only, declared read-write bind mounts and disks are writable,
+  declared read-only bind mounts remain read-only, and host `/nix` overlay paths
+  are categorized by lower/upper/work/merged role. If a broader writable parent
+  rule is required for profiling output, the effective-policy report labels
+  affected read-only children as mount-enforced instead of Landlock-enforced.
+- TCP `ConnectTcp` is intentionally unrestricted by this first cut to preserve
+  existing guest/network behavior. Landlock's connect rules are per remote TCP
+  port, and loftd does not yet have an outbound allowlist. TCP `BindTcp` is
+  handled and constrained to simple published TCP host ports when they are known.
+- Before restriction, loftd inventories retained file descriptors. Strict mode
+  fails on unexpected retained regular files because descriptors opened before
+  Landlock can retain access outside the filesystem rules.
+- The effective-policy report is emitted in debug logs and includes mode, path
+  categories/access classes, BindTcp ports, the explicit `ConnectTcp`
+  unrestricted-by-design marker, IPC scopes, audit flags, and retained-FD
+  classifications.
 
 Seccomp behavior:
 

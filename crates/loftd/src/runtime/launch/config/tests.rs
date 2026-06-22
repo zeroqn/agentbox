@@ -294,6 +294,87 @@ fn launch_config_round_trips_seccomp_modes() {
 }
 
 #[test]
+fn launch_config_round_trips_landlock_modes() {
+    let mut config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &OciProcessConfig::default(),
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build");
+
+    for mode in [
+        crate::runtime::landlock::LandlockMode::Enforce,
+        crate::runtime::landlock::LandlockMode::BestEffort,
+        crate::runtime::landlock::LandlockMode::Off,
+    ] {
+        config.landlock = mode;
+        let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
+        assert_eq!(parsed.landlock, mode);
+        assert_eq!(parsed, config);
+    }
+}
+
+#[test]
+fn launch_config_legacy_missing_landlock_mode_defaults_to_enforce() {
+    let mut config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &OciProcessConfig::default(),
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build")
+    .serialize();
+    config = config
+        .lines()
+        .filter(|line| !line.starts_with("landlock.mode="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    config.push('\n');
+
+    let parsed = LaunchConfig::parse(&config).expect("legacy config should parse");
+
+    assert_eq!(
+        parsed.landlock,
+        crate::runtime::landlock::LandlockMode::Enforce
+    );
+}
+
+#[test]
 fn launch_config_refuses_to_serialize_unresolved_default_gap_audit() {
     let image_process_config = OciProcessConfig::default();
     let mut config = LaunchConfig::build_for_task(LaunchSpec {

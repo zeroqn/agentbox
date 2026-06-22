@@ -8,6 +8,7 @@
 //! host_uid:host_uid:1 preserves file ownership visibility into the guest VM.
 
 use anyhow::{Context, Result, anyhow, bail};
+use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -196,22 +197,12 @@ impl NixOverlayCommands for HostNixOverlayCommands {
     }
 
     fn unmount_overlay(&self, intent: &HostNixOverlay) -> Result<()> {
-        let status = Command::new("umount")
-            .arg(&intent.mergeddir)
-            .status()
-            .with_context(|| {
-                format!(
-                    "failed to run loftd host /nix overlay unmount inside buildah-unshare VM worker namespace for '{}'",
-                    intent.mergeddir.display()
-                )
-            })?;
-        if !status.success() {
-            bail!(
-                "loftd host /nix overlay unmount inside buildah-unshare VM worker namespace '{}' failed with {status}; retaining lease/state for diagnostics and manual cleanup with `buildah unshare umount <merged>`",
+        umount_path(&intent.mergeddir).with_context(|| {
+            format!(
+                "loftd host /nix overlay unmount inside buildah-unshare VM worker namespace '{}' failed; retaining lease/state for diagnostics and manual cleanup with `buildah unshare umount <merged>`",
                 intent.mergeddir.display()
-            );
-        }
-        Ok(())
+            )
+        })
     }
 }
 
@@ -340,6 +331,30 @@ fn overlay_options(intent: &HostNixOverlay) -> String {
         intent.upperdir.display(),
         intent.workdir.display(),
     )
+}
+
+fn umount_path(target: &Path) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let raw = CString::new(target.as_os_str().as_bytes()).with_context(|| {
+        format!(
+            "host /nix overlay unmount target '{}' contains an interior NUL byte",
+            target.display()
+        )
+    })?;
+    // SAFETY: `raw` is a NUL-terminated copy of the target path and remains
+    // valid for the duration of the syscall.
+    let rc = unsafe { libc::umount(raw.as_ptr()) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error()).with_context(|| {
+            format!(
+                "loftd host /nix overlay unmount '{}' failed",
+                target.display()
+            )
+        })
+    }
 }
 
 #[cfg(test)]

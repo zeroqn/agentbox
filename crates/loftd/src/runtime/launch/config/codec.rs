@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::logging::LogLevel;
+use crate::runtime::landlock::LandlockMode;
 use crate::runtime::seccomp::SeccompMode;
 
 use super::components::{guest_init, mounts};
@@ -191,6 +192,7 @@ impl LaunchConfig {
             );
         }
         push_field(&mut out, "seccomp.mode", self.seccomp.as_config_value());
+        push_field(&mut out, "landlock.mode", self.landlock.as_config_value());
         if let Some(path) = self.seccomp.audit_trace_path() {
             push_field(
                 &mut out,
@@ -343,6 +345,7 @@ impl LaunchConfig {
                     | "managed_session.attach_socket_gid"
                     | "managed_session.cleanup_task_rootfs_on_exit"
                     | "seccomp.mode"
+                    | "landlock.mode"
                     | "seccomp.audit_trace_path"
                     | "seccomp.audit_baseline_policy_path"
                     | "seccomp.enforce_policy_path"
@@ -386,6 +389,8 @@ impl LaunchConfig {
                 .get("seccomp.enforce_policy_path")
                 .map(String::as_str),
         )?;
+        let landlock =
+            LandlockMode::parse_config_value(fields.get("landlock.mode").map(String::as_str))?;
         Ok(Self {
             task_rootfs: PathBuf::from(required("task_rootfs")?),
             hostname: required("hostname")?,
@@ -409,6 +414,7 @@ impl LaunchConfig {
             passt_fd: None,
             managed_session,
             seccomp,
+            landlock,
         })
     }
 }
