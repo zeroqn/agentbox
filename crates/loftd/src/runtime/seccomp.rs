@@ -33,6 +33,12 @@ pub(crate) enum AuditMode {
     },
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledEnforcePolicy {
+    policy_path: PathBuf,
+    main_thread: seccompiler::BpfProgram,
+}
+
 impl AuditMode {
     pub(crate) fn trace_path(&self) -> &Path {
         match self {
@@ -517,7 +523,7 @@ fn validate_seccomp_policy_bytes(
     Ok(())
 }
 
-pub(crate) fn apply_enforce_policy(policy_path: &Path) -> Result<()> {
+pub(crate) fn compile_enforce_policy(policy_path: &Path) -> Result<CompiledEnforcePolicy> {
     let policy = fs::File::open(policy_path)
         .with_context(|| format!("failed to open seccomp policy '{}'", policy_path.display()))?;
     let arch = std::env::consts::ARCH.try_into().map_err(|_| {
@@ -526,20 +532,27 @@ pub(crate) fn apply_enforce_policy(policy_path: &Path) -> Result<()> {
             std::env::consts::ARCH
         )
     })?;
-    let filters = seccompiler::compile_from_json(policy, arch).with_context(|| {
+    let mut filters = seccompiler::compile_from_json(policy, arch).with_context(|| {
         format!(
             "failed to compile seccomp policy '{}'",
             policy_path.display()
         )
     })?;
-    let filter = filters
-        .get("main_thread")
+    let main_thread = filters
+        .remove("main_thread")
         .ok_or_else(|| anyhow!("seccomp policy must contain a main_thread filter"))?;
+    Ok(CompiledEnforcePolicy {
+        policy_path: policy_path.to_path_buf(),
+        main_thread,
+    })
+}
+
+pub(crate) fn apply_compiled_enforce_policy(policy: &CompiledEnforcePolicy) -> Result<()> {
     set_no_new_privs()?;
-    seccompiler::apply_filter(filter).with_context(|| {
+    seccompiler::apply_filter(&policy.main_thread).with_context(|| {
         format!(
             "failed to install seccomp policy '{}'",
-            policy_path.display()
+            policy.policy_path.display()
         )
     })
 }
@@ -744,6 +757,22 @@ mod tests {
             allowed_syscalls_from_policy_value(&policy).expect("default policy should inspect");
 
         assert!(syscalls.contains("umount2"));
+    }
+
+    #[test]
+    fn compile_enforce_policy_reads_policy_before_apply() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy_path = dir.path().join("default.json");
+        fs::write(
+            &policy_path,
+            include_bytes!("../../assets/seccomp/default.json"),
+        )
+        .expect("write default policy");
+
+        let policy = compile_enforce_policy(&policy_path).expect("policy should compile");
+
+        assert_eq!(policy.policy_path, policy_path);
+        assert!(!policy.main_thread.is_empty());
     }
 
     #[test]

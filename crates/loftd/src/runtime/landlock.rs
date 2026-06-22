@@ -14,6 +14,8 @@ use landlock::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
+use std::mem::MaybeUninit;
+use std::os::fd::{AsFd, AsRawFd};
 use std::path::{Path, PathBuf};
 
 use crate::runtime::launch::config::{BindMount, DiskAttachment, HostNixOverlay, LaunchConfig};
@@ -534,8 +536,17 @@ fn apply_policy(policy: &EffectivePolicy) -> Result<()> {
         .set_compatibility(compat);
 
     for rule in &policy.path_rules {
+        let path_fd = PathFd::new(&rule.path).with_context(|| {
+            format!("failed to open Landlock path rule {}", rule.path.display())
+        })?;
+        let is_file = path_fd_points_to_file(&path_fd).with_context(|| {
+            format!(
+                "failed to inspect Landlock path rule {}",
+                rule.path.display()
+            )
+        })?;
         ruleset = ruleset.add_rule(
-            PathBeneath::new(PathFd::new(&rule.path)?, landlock_access_for(rule.access))
+            PathBeneath::new(path_fd, landlock_access_for(rule.access, is_file))
                 .set_compatibility(compat),
         )?;
     }
@@ -552,9 +563,19 @@ fn apply_policy(policy: &EffectivePolicy) -> Result<()> {
     ensure_status(policy.mode, status)
 }
 
-fn landlock_access_for(access: PathAccess) -> landlock::BitFlags<AccessFs> {
+fn path_fd_points_to_file(path_fd: &PathFd) -> Result<bool> {
+    let mut stat = MaybeUninit::<libc::stat>::uninit();
+    let rc = unsafe { libc::fstat(path_fd.as_fd().as_raw_fd(), stat.as_mut_ptr()) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error()).context("failed to stat Landlock path fd");
+    }
+    let stat = unsafe { stat.assume_init() };
+    Ok((stat.st_mode & libc::S_IFMT) != libc::S_IFDIR)
+}
+
+fn landlock_access_for(access: PathAccess, is_file: bool) -> landlock::BitFlags<AccessFs> {
     let read = make_bitflags!(AccessFs::{Execute | ReadFile | ReadDir});
-    match access {
+    let access = match access {
         PathAccess::ReadOnly => read,
         PathAccess::ReadWrite => {
             read | make_bitflags!(AccessFs::{
@@ -562,7 +583,16 @@ fn landlock_access_for(access: PathAccess) -> landlock::BitFlags<AccessFs> {
                 MakeFifo | MakeBlock | MakeSym | Refer | Truncate | IoctlDev
             })
         }
+    };
+    if is_file {
+        access & file_access_rights()
+    } else {
+        access
     }
+}
+
+fn file_access_rights() -> landlock::BitFlags<AccessFs> {
+    make_bitflags!(AccessFs::{ReadFile | WriteFile | Execute | Truncate | IoctlDev})
 }
 
 fn ensure_status(mode: LandlockMode, status: RestrictionStatus) -> Result<()> {
@@ -761,6 +791,41 @@ mod tests {
         assert!(ensure_fully_enforced_for_test(LandlockMode::Enforce, false).is_err());
         assert!(ensure_fully_enforced_for_test(LandlockMode::BestEffort, false).is_ok());
         assert!(ensure_fully_enforced_for_test(LandlockMode::Enforce, true).is_ok());
+    }
+
+    #[test]
+    fn landlock_access_for_regular_files_excludes_directory_only_rights() {
+        let file_rw = landlock_access_for(PathAccess::ReadWrite, true);
+        let directory_only = make_bitflags!(AccessFs::{
+            ReadDir | RemoveDir | RemoveFile | MakeChar | MakeDir | MakeReg | MakeSock |
+            MakeFifo | MakeBlock | MakeSym | Refer
+        });
+
+        assert_eq!(file_rw & directory_only, landlock::BitFlags::EMPTY);
+        assert!(file_rw.contains(AccessFs::ReadFile));
+        assert!(file_rw.contains(AccessFs::WriteFile));
+        assert!(file_rw.contains(AccessFs::Truncate));
+        assert!(file_rw.contains(AccessFs::IoctlDev));
+    }
+
+    #[test]
+    fn landlock_access_for_directories_keeps_hierarchy_rights() {
+        let directory_rw = landlock_access_for(PathAccess::ReadWrite, false);
+
+        assert!(directory_rw.contains(AccessFs::ReadDir));
+        assert!(directory_rw.contains(AccessFs::MakeReg));
+        assert!(directory_rw.contains(AccessFs::Refer));
+    }
+
+    #[test]
+    fn landlock_path_fd_type_detection_distinguishes_files_from_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        let file_fd = PathFd::new(file.path()).unwrap();
+        let dir_fd = PathFd::new(dir.path()).unwrap();
+
+        assert!(path_fd_points_to_file(&file_fd).unwrap());
+        assert!(!path_fd_points_to_file(&dir_fd).unwrap());
     }
 
     #[test]

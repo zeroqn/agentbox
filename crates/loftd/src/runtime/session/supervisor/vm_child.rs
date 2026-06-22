@@ -2,9 +2,12 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::OsString;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
+use std::process::{self, Command};
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::logging::{self, LogSettings};
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
@@ -20,6 +23,10 @@ use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
 use crate::runtime::vm::libkrun::{DirectLibkrunLauncher, DynamicLibkrunApi};
 use crate::runtime::vm::network;
 use crate::runtime::vm::prepared_root;
+
+const SANDBOXED_CHILD_POLL: Duration = Duration::from_millis(25);
+const SANDBOXED_PARENT_SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
+static SANDBOXED_PARENT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
 pub(crate) struct VmWorkerGuard {
     pid: libc::pid_t,
@@ -317,9 +324,225 @@ fn run_libkrun_in_current_namespace(
         prepared_root::prepare(config, task_state_dir)
     })?;
     let run_result =
-        run_libkrun_with_prepared_root(config, task_state_dir, profiler, &prepared_root);
+        run_libkrun_in_sandboxed_child(config, task_state_dir, profiler, &prepared_root);
     let nix_overlay_cleanup = nix_overlay_mount.map(|mount| move || mount.unmount());
     finalize_vm_worker_run(run_result, || prepared_root.unmount(), nix_overlay_cleanup)
+}
+
+fn run_libkrun_in_sandboxed_child(
+    config: &LaunchConfig,
+    task_state_dir: &Path,
+    profiler: &mut LoftdHostProfiler,
+    prepared_root: &prepared_root::PreparedRoot,
+) -> Result<()> {
+    let _signal_handlers = SandboxedParentSignalHandlers::install()?;
+    let mut child = fork_sandboxed_libkrun_child(config, task_state_dir, profiler, prepared_root)?;
+    let status = wait_for_sandboxed_child(&mut child)?;
+    sandboxed_child_status_result(status)
+}
+
+fn fork_sandboxed_libkrun_child(
+    config: &LaunchConfig,
+    task_state_dir: &Path,
+    profiler: &mut LoftdHostProfiler,
+    prepared_root: &prepared_root::PreparedRoot,
+) -> Result<VmWorkerGuard> {
+    // SAFETY: getpid only reads this process id.
+    let cleanup_parent_pid = unsafe { libc::getpid() };
+    // SAFETY: fork creates a child inside the already-prepared VM worker mount
+    // namespace. The parent intentionally stays unlandlocked so it can clean up
+    // prepared-root and host /nix overlay mounts after the sandboxed child exits.
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        bail!(
+            "failed to fork sandboxed loftd VM worker child: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    if pid == 0 {
+        process::exit(run_sandboxed_libkrun_child(
+            config,
+            task_state_dir,
+            profiler,
+            prepared_root,
+            cleanup_parent_pid,
+        ));
+    }
+    Ok(VmWorkerGuard::new(pid))
+}
+
+fn run_sandboxed_libkrun_child(
+    config: &LaunchConfig,
+    task_state_dir: &Path,
+    profiler: &mut LoftdHostProfiler,
+    prepared_root: &prepared_root::PreparedRoot,
+    cleanup_parent_pid: libc::pid_t,
+) -> i32 {
+    if let Err(err) = prepare_sandboxed_child_signal_lifecycle(cleanup_parent_pid) {
+        eprintln!("loftd sandboxed VM worker: {err:#}");
+        return 1;
+    }
+    let result = run_libkrun_with_prepared_root(config, task_state_dir, profiler, prepared_root);
+    if let Err(err) = &result {
+        eprintln!("loftd sandboxed VM worker: {err:#}");
+    }
+    if result.is_ok() { 0 } else { 1 }
+}
+
+fn prepare_sandboxed_child_signal_lifecycle(cleanup_parent_pid: libc::pid_t) -> Result<()> {
+    restore_default_sandboxed_parent_signals()?;
+    set_parent_death_signal(libc::SIGTERM)?;
+    ensure_sandboxed_parent_still_alive(cleanup_parent_pid)
+}
+
+fn wait_for_sandboxed_child(child: &mut VmWorkerGuard) -> Result<i32> {
+    loop {
+        if let Some(signal) = take_sandboxed_parent_signal() {
+            child.terminate();
+            bail!(
+                "loftd VM worker cleanup parent was interrupted by signal {signal}; terminated sandboxed child before mount cleanup"
+            );
+        }
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        thread::sleep(SANDBOXED_CHILD_POLL);
+    }
+}
+
+fn take_sandboxed_parent_signal() -> Option<libc::c_int> {
+    match SANDBOXED_PARENT_SIGNAL.swap(0, Ordering::SeqCst) {
+        0 => None,
+        signal => Some(signal),
+    }
+}
+
+extern "C" fn record_sandboxed_parent_signal(signal: libc::c_int) {
+    SANDBOXED_PARENT_SIGNAL.store(signal, Ordering::SeqCst);
+}
+
+struct SandboxedParentSignalHandlers {
+    previous: Vec<(libc::c_int, libc::sigaction)>,
+}
+
+impl SandboxedParentSignalHandlers {
+    fn install() -> Result<Self> {
+        SANDBOXED_PARENT_SIGNAL.store(0, Ordering::SeqCst);
+        let mut previous = Vec::with_capacity(SANDBOXED_PARENT_SIGNALS.len());
+        for signal in SANDBOXED_PARENT_SIGNALS {
+            previous.push((signal, install_signal_handler(signal)?));
+        }
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for SandboxedParentSignalHandlers {
+    fn drop(&mut self) {
+        for (signal, previous) in &self.previous {
+            // SAFETY: Restores handlers captured from successful sigaction calls
+            // in this process. Errors are ignored because the VM worker is
+            // already leaving the sandbox-child wait scope.
+            let _ = unsafe { libc::sigaction(*signal, previous, std::ptr::null_mut()) };
+        }
+        SANDBOXED_PARENT_SIGNAL.store(0, Ordering::SeqCst);
+    }
+}
+
+fn install_signal_handler(signal: libc::c_int) -> Result<libc::sigaction> {
+    let mut action = zeroed_sigaction();
+    action.sa_sigaction = record_sandboxed_parent_signal as *const () as libc::sighandler_t;
+    action.sa_flags = 0;
+    // SAFETY: Initializes an empty mask for this local sigaction value.
+    let mask_rc = unsafe { libc::sigemptyset(&mut action.sa_mask) };
+    if mask_rc != 0 {
+        return Err(std::io::Error::last_os_error()).context("failed to initialize signal mask");
+    }
+    let mut previous = MaybeUninit::<libc::sigaction>::uninit();
+    // SAFETY: Installs a simple async-signal-safe handler for the VM worker
+    // cleanup parent and writes the previous handler to `previous`.
+    let rc = unsafe { libc::sigaction(signal, &action, previous.as_mut_ptr()) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("failed to install sandboxed child signal handler {signal}"));
+    }
+    // SAFETY: `sigaction` succeeded and initialized `previous`.
+    Ok(unsafe { previous.assume_init() })
+}
+
+fn restore_default_sandboxed_parent_signals() -> Result<()> {
+    for signal in SANDBOXED_PARENT_SIGNALS {
+        restore_default_signal(signal)?;
+    }
+    Ok(())
+}
+
+fn restore_default_signal(signal: libc::c_int) -> Result<()> {
+    let mut action = zeroed_sigaction();
+    action.sa_sigaction = libc::SIG_DFL;
+    // SAFETY: Initializes an empty mask for this local sigaction value.
+    let mask_rc = unsafe { libc::sigemptyset(&mut action.sa_mask) };
+    if mask_rc != 0 {
+        return Err(std::io::Error::last_os_error()).context("failed to initialize signal mask");
+    }
+    // SAFETY: Restores the default disposition for the sandboxed child so it
+    // does not inherit the cleanup parent's handler.
+    let rc = unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("failed to restore default signal handler {signal}"));
+    }
+    Ok(())
+}
+
+fn set_parent_death_signal(signal: libc::c_int) -> Result<()> {
+    // SAFETY: prctl with PR_SET_PDEATHSIG only affects this sandboxed child and
+    // asks the kernel to deliver `signal` if the unlandlocked cleanup parent dies.
+    let rc = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, signal, 0, 0, 0) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+            .context("failed to configure sandboxed VM worker parent-death signal")
+    }
+}
+
+fn ensure_sandboxed_parent_still_alive(expected_parent_pid: libc::pid_t) -> Result<()> {
+    // SAFETY: getppid only reads this process's current parent pid.
+    let current_parent_pid = unsafe { libc::getppid() };
+    sandboxed_parent_liveness_result(expected_parent_pid, current_parent_pid)
+}
+
+fn sandboxed_parent_liveness_result(
+    expected_parent_pid: libc::pid_t,
+    current_parent_pid: libc::pid_t,
+) -> Result<()> {
+    if current_parent_pid == expected_parent_pid {
+        return Ok(());
+    }
+    bail!(
+        "sandboxed VM worker cleanup parent exited before parent-death signal was armed: expected parent pid {expected_parent_pid}, current parent pid {current_parent_pid}"
+    )
+}
+
+fn zeroed_sigaction() -> libc::sigaction {
+    // SAFETY: A zeroed sigaction is immediately initialized before installation.
+    unsafe { std::mem::zeroed() }
+}
+
+fn sandboxed_child_status_result(status: i32) -> Result<()> {
+    if let Some(code) = network::status_exit_code(status) {
+        if code == 0 {
+            return Ok(());
+        }
+        bail!("sandboxed loftd VM worker child exited with status {code}");
+    }
+    if libc::WIFSIGNALED(status) {
+        bail!(
+            "sandboxed loftd VM worker child was terminated by signal {}",
+            libc::WTERMSIG(status)
+        );
+    }
+    bail!("sandboxed loftd VM worker child ended with unexpected wait status {status}")
 }
 
 fn run_libkrun_with_prepared_root(
@@ -332,6 +555,15 @@ fn run_libkrun_with_prepared_root(
     let guest_config_path = profiler.measure_result("vm_worker_guest_config_write", || {
         launch_config.write_guest_config_to_rootfs()
     })?;
+    let enforce_seccomp_policy = profiler.measure_result(
+        "vm_worker_seccomp_policy_compile",
+        || match &launch_config.seccomp {
+            SeccompMode::Enforce { policy_path } => {
+                seccomp::compile_enforce_policy(policy_path).map(Some)
+            }
+            SeccompMode::Off | SeccompMode::Audit(_) => Ok(None),
+        },
+    )?;
     tracing::debug!(
         task_state = %task_state_dir.display(),
         source_rootfs = %config.task_rootfs.display(),
@@ -370,8 +602,8 @@ fn run_libkrun_with_prepared_root(
             profiler.record_vm_worker_libkrun_configure(configure_duration);
             let _ = profiler.write_vm_worker_wait_details(task_state_dir);
             landlock::apply(&launch_config, task_state_dir, profiler.is_enabled())?;
-            if let SeccompMode::Enforce { policy_path } = &launch_config.seccomp {
-                seccomp::apply_enforce_policy(policy_path)?;
+            if let Some(policy) = &enforce_seccomp_policy {
+                seccomp::apply_compiled_enforce_policy(policy)?;
             }
             tracing::debug!(
                 landlock = launch_config.landlock.as_config_value(),
@@ -393,11 +625,14 @@ fn run_libkrun_with_prepared_root(
 #[cfg(test)]
 fn pre_enter_security_order_for_test(config: &LaunchConfig) -> Vec<&'static str> {
     let mut steps = Vec::new();
+    if matches!(config.seccomp, SeccompMode::Enforce { .. }) {
+        steps.push("seccomp-compile");
+    }
     if config.landlock != crate::runtime::landlock::LandlockMode::Off {
         steps.push("landlock");
     }
     if matches!(config.seccomp, SeccompMode::Enforce { .. }) {
-        steps.push("seccomp");
+        steps.push("seccomp-apply");
     }
     steps
 }
@@ -453,7 +688,7 @@ mod tests {
     use std::ffi::OsStr;
 
     #[test]
-    fn pre_enter_security_order_applies_landlock_before_seccomp() {
+    fn pre_enter_security_order_compiles_seccomp_before_landlock_then_applies_after() {
         let mut config = LaunchConfig {
             task_rootfs: Path::new("/rootfs").to_path_buf(),
             hostname: "loftd-test".to_owned(),
@@ -481,11 +716,74 @@ mod tests {
 
         assert_eq!(
             pre_enter_security_order_for_test(&config),
-            ["landlock", "seccomp"]
+            ["seccomp-compile", "landlock", "seccomp-apply"]
         );
 
         config.landlock = crate::runtime::landlock::LandlockMode::Off;
-        assert_eq!(pre_enter_security_order_for_test(&config), ["seccomp"]);
+        assert_eq!(
+            pre_enter_security_order_for_test(&config),
+            ["seccomp-compile", "seccomp-apply"]
+        );
+    }
+
+    #[test]
+    fn sandboxed_child_status_accepts_clean_exit() {
+        assert!(sandboxed_child_status_result(0).is_ok());
+    }
+
+    #[test]
+    fn sandboxed_child_status_rejects_nonzero_exit() {
+        let status = 7 << 8;
+        let err = sandboxed_child_status_result(status).expect_err("nonzero exit should fail");
+
+        assert!(format!("{err:#}").contains("exited with status 7"));
+    }
+
+    #[test]
+    fn sandboxed_child_status_rejects_signaled_exit() {
+        let err =
+            sandboxed_child_status_result(libc::SIGTERM).expect_err("signaled child should fail");
+
+        assert!(format!("{err:#}").contains("terminated by signal"));
+    }
+
+    #[test]
+    fn sandboxed_child_wait_terminates_child_when_cleanup_parent_is_signaled() {
+        // SAFETY: test forks a child that only waits for a signal and exits.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork should succeed");
+        if pid == 0 {
+            loop {
+                // SAFETY: pause blocks until the parent sends a terminating signal.
+                unsafe { libc::pause() };
+            }
+        }
+
+        let mut child = VmWorkerGuard::new(pid);
+        SANDBOXED_PARENT_SIGNAL.store(libc::SIGTERM, Ordering::SeqCst);
+        let err =
+            wait_for_sandboxed_child(&mut child).expect_err("signal should interrupt child wait");
+
+        assert!(format!("{err:#}").contains("interrupted by signal"));
+        // SAFETY: kill(pid, 0) probes whether the process still exists.
+        let rc = unsafe { libc::kill(pid, 0) };
+        assert_eq!(rc, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[test]
+    fn sandboxed_parent_liveness_check_closes_parent_death_signal_race() {
+        assert!(sandboxed_parent_liveness_result(123, 123).is_ok());
+
+        let err = sandboxed_parent_liveness_result(123, 1)
+            .expect_err("reparented child should fail before libkrun starts");
+
+        assert!(format!("{err:#}").contains("parent-death signal was armed"));
+        assert!(format!("{err:#}").contains("expected parent pid 123"));
+        assert!(format!("{err:#}").contains("current parent pid 1"));
     }
 
     #[test]
