@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::runtime::launch::config::{BindMount, DiskAttachment, HostNixOverlay, LaunchConfig};
 
 const FD_DIR: &str = "/proc/self/fd";
+const LIBKRUN_KVM_DEVICE: &str = "/dev/kvm";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 pub(crate) enum LandlockMode {
@@ -89,6 +90,7 @@ pub(crate) enum PathCategory {
     GuestInitOverride,
     HostNixOverlay { role: HostNixOverlayRole },
     ProfileOutput,
+    RuntimeDevice { name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +219,7 @@ impl EffectivePolicy {
                 PathAccess::ReadWrite,
             ));
         }
+        path_rules.extend(libkrun_runtime_device_rules());
 
         normalize_path_rules(&mut path_rules);
         compute_read_only_guarantees(&mut path_rules);
@@ -304,6 +307,7 @@ impl PathCategory {
             Self::GuestInitOverride => "guest-init-override".to_owned(),
             Self::HostNixOverlay { role } => format!("host-nix-overlay:{role:?}"),
             Self::ProfileOutput => "profile-output".to_owned(),
+            Self::RuntimeDevice { name } => format!("runtime-device:{name}"),
         }
     }
 }
@@ -367,6 +371,26 @@ fn host_nix_overlay_rules(overlay: &HostNixOverlay) -> Vec<PathRule> {
             PathAccess::ReadOnly,
         ),
     ]
+}
+
+fn libkrun_runtime_device_rules() -> Vec<PathRule> {
+    runtime_device_rules_from(&[("kvm", PathBuf::from(LIBKRUN_KVM_DEVICE))])
+}
+
+fn runtime_device_rules_from(candidates: &[(&str, PathBuf)]) -> Vec<PathRule> {
+    candidates
+        .iter()
+        .filter(|(_name, path)| path.exists())
+        .map(|(name, path)| {
+            PathRule::new(
+                PathCategory::RuntimeDevice {
+                    name: (*name).to_owned(),
+                },
+                path.clone(),
+                PathAccess::ReadWrite,
+            )
+        })
+        .collect()
 }
 
 fn normalize_path_rules(rules: &mut Vec<PathRule>) {
@@ -806,6 +830,42 @@ mod tests {
         assert!(file_rw.contains(AccessFs::WriteFile));
         assert!(file_rw.contains(AccessFs::Truncate));
         assert!(file_rw.contains(AccessFs::IoctlDev));
+    }
+
+    #[test]
+    fn runtime_device_rules_allow_existing_kvm_device_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let device_parent = dir.path().join("dev");
+        let kvm = device_parent.join("kvm");
+        let missing = device_parent.join("missing");
+        fs::create_dir_all(&device_parent).unwrap();
+        fs::write(&kvm, b"test-device").unwrap();
+
+        let rules =
+            runtime_device_rules_from(&[("kvm", kvm.clone()), ("missing", missing.clone())]);
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].path, kvm);
+        assert_eq!(rules[0].access, PathAccess::ReadWrite);
+        assert_eq!(
+            rules[0].category,
+            PathCategory::RuntimeDevice {
+                name: "kvm".to_owned()
+            }
+        );
+        assert!(!rules.iter().any(|rule| rule.path == device_parent));
+        assert!(!rules.iter().any(|rule| rule.path == missing));
+    }
+
+    #[test]
+    fn runtime_device_report_labels_are_explicit() {
+        assert_eq!(
+            PathCategory::RuntimeDevice {
+                name: "kvm".to_owned()
+            }
+            .as_report_label(),
+            "runtime-device:kvm"
+        );
     }
 
     #[test]
