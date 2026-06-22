@@ -2,42 +2,42 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.18.13";
-    srcHash = "sha256-1zQBKBspNl2UwXgc3lP8QphXAJD0ooRrPgbyd0JTO8A=";
-    npmDepsHash = "sha256-7l/wPoSWxQBVaF6VBdTSrmFHOzUJv1QVa27ptf8/52k=";
+    version = "0.18.14";
+    srcHash = "sha256-HbPffz5d8KCwGGWJlp+82QUGo98ds3BOhc3vIonPLN0=";
+    npmDepsHash = "sha256-oP80bAV9Umc3syfVuYf78+V71KOKQjHsrcGCmqf3xQQ=";
     nativeBinarySystems = {
       x86_64-linux = {
         omx-api = {
           asset = "omx-api-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-gSvbm36Rd/TfAyuUEqkhHb2fZEhltUBfXJlnGfj9/i0=";
+          hash = "sha256-b8LbJv4FENxgUGqRk3Yaylt3B7N9DWHFxy/3EG5YGs0=";
         };
         omx-runtime = {
           asset = "omx-runtime-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-Ni+5fEm+BJo4hTRtbclvPFAnGAOKzGGTmL4vYxNC4+w=";
+          hash = "sha256-jgyH+21aiDBA7NBxTyTTkR386GCCdRfSDzyLi77tLtw=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-i0WekQF4G0CgwTRAJy/RwBxQzRjl5z4ZZxo8QH3XXQo=";
+          hash = "sha256-FXiS4Ewlnv5nz7Q2YPzGwZVhG1qTWAZ1tNasGWeUz5U=";
         };
       };
       aarch64-linux = {
         omx-api = {
           asset = "omx-api-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-NwcHPUbWJELjxs/cgYZSlwKQmYlqiD//TMfGTq7O00k=";
+          hash = "sha256-W3nmZkAt76YmPraxA4oHjm88InFUh1FuG4Qq/yz0nNk=";
         };
         omx-runtime = {
           asset = "omx-runtime-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-3bkyVca9iQgtw88uffFjP/1AOkwtQMQQGRfpSxDOGQQ=";
+          hash = "sha256-ibZuop1NS7rHzpZZDkKejX34lSVEZ608R2Bonw1iadQ=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-xTBT1WDGYvvVEWZSkRvoAuPaG3P7FEiQ9eejQ/jgBPs=";
+          hash = "sha256-A1+tHeQ7YzqZZoT/Izy73YH4hDajVTKA15XNASj3N7Q=";
         };
       };
     };
