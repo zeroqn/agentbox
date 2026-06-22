@@ -89,6 +89,7 @@ pub(crate) enum PathCategory {
     Disk { id: String },
     GuestInitOverride,
     HostNixOverlay { role: HostNixOverlayRole },
+    ManagedSessionState,
     ProfileOutput,
     RuntimeDevice { name: String },
 }
@@ -212,6 +213,13 @@ impl EffectivePolicy {
         if let Some(overlay) = &config.host_nix_overlay {
             path_rules.extend(host_nix_overlay_rules(overlay));
         }
+        if config.managed_session.is_some() {
+            path_rules.push(PathRule::new(
+                PathCategory::ManagedSessionState,
+                task_state_dir.to_path_buf(),
+                PathAccess::ReadWrite,
+            ));
+        }
         if profile_enabled {
             path_rules.push(PathRule::new(
                 PathCategory::ProfileOutput,
@@ -306,6 +314,7 @@ impl PathCategory {
             Self::Disk { id } => format!("disk:{id}"),
             Self::GuestInitOverride => "guest-init-override".to_owned(),
             Self::HostNixOverlay { role } => format!("host-nix-overlay:{role:?}"),
+            Self::ManagedSessionState => "managed-session-state".to_owned(),
             Self::ProfileOutput => "profile-output".to_owned(),
             Self::RuntimeDevice { name } => format!("runtime-device:{name}"),
         }
@@ -788,6 +797,75 @@ mod tests {
     }
 
     #[test]
+    fn managed_sessions_allow_task_state_for_attach_socket_without_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_state = dir.path().join("task");
+        let rootfs = dir.path().join("rootfs");
+        fs::create_dir_all(&task_state).unwrap();
+        fs::create_dir_all(&rootfs).unwrap();
+        let mut config = test_config(&rootfs);
+        config.managed_session = Some(crate::runtime::launch::config::ManagedSessionConfig {
+            attach_socket: task_state.join("attach.sock"),
+            guest_port: 50_426,
+            protocol_version: 1,
+            attach_socket_uid: 1000,
+            attach_socket_gid: 1000,
+            cleanup_task_rootfs_on_exit: true,
+        });
+
+        let policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            &task_state,
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+
+        let state_rule = policy
+            .path_rules
+            .iter()
+            .find(|rule| rule.category == PathCategory::ManagedSessionState)
+            .expect("managed policy should allow per-task state");
+        assert_eq!(state_rule.path, task_state);
+        assert_eq!(state_rule.access, PathAccess::ReadWrite);
+        assert_eq!(
+            state_rule.read_only_guarantee,
+            ReadOnlyGuarantee::NotReadOnly
+        );
+    }
+
+    #[test]
+    fn unmanaged_policy_does_not_allow_task_state_without_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_state = dir.path().join("task");
+        let rootfs = dir.path().join("rootfs");
+        fs::create_dir_all(&task_state).unwrap();
+        fs::create_dir_all(&rootfs).unwrap();
+        let config = test_config(&rootfs);
+
+        let policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            &task_state,
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+
+        assert!(
+            !policy
+                .path_rules
+                .iter()
+                .any(|rule| rule.path == task_state && rule.access == PathAccess::ReadWrite)
+        );
+        assert!(
+            !policy
+                .path_rules
+                .iter()
+                .any(|rule| rule.category == PathCategory::ManagedSessionState)
+        );
+    }
+
+    #[test]
     fn bind_tcp_ports_include_simple_tcp_publish_and_ignore_connect_tcp() {
         let dir = tempfile::tempdir().unwrap();
         let mut config = test_config(dir.path());
@@ -865,6 +943,14 @@ mod tests {
             }
             .as_report_label(),
             "runtime-device:kvm"
+        );
+    }
+
+    #[test]
+    fn managed_session_state_report_label_is_explicit() {
+        assert_eq!(
+            PathCategory::ManagedSessionState.as_report_label(),
+            "managed-session-state"
         );
     }
 
