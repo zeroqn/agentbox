@@ -44,26 +44,26 @@
   };
 
   piCodingAgent = {
-    version = "0.79.9";
+    version = "0.79.10";
     owner = "earendil-works";
     repo = "pi";
-    rev = "v0.79.9";
-    srcHash = "sha256-+h1D51JM4F2iHCzTA57A5/uAzHQBKSlz/7x3/PtQhec=";
-    npmDepsHash = "sha256-RokkAJcaLu95r1TJ6VjZeFSUBO114sYCLls4mddRrr4=";
+    rev = "v0.79.10";
+    srcHash = "sha256-UMRkOzJpA1XcEHzRwHxgBg6idEmpVJzBKlrXZaVf4MQ=";
+    npmDepsHash = "sha256-aGCtCSPr69xeaclHS7r+cuWQh1LU3RPpLuDp9Mk4Vcs=";
   };
 
   ompPrebuiltRelease = {
     owner = "can1357";
     repo = "oh-my-pi";
-    tag = "v15.12.3";
+    tag = "v16.1.14";
     systems = {
       x86_64-linux = {
         asset = "omp-linux-x64";
-        hash = "sha256-UJS7H7fkBtiRNuSUSN6Yrp6cBf6xBmo5si00BgLTF90=";
+        hash = "sha256-EcYbyzWeze/X3gfdwRYsFow7ESFtRjfWKqUqn+ynJqY=";
       };
       aarch64-linux = {
         asset = "omp-linux-arm64";
-        hash = "sha256-BjXWjM1P7L4rF1E80wD7gv90qJ+c26WgM8iR9VMFus8=";
+        hash = "sha256-HF1pGM9NYJXS8rEhxrwPjU2RDT5drhWGM2K3d6H/510=";
       };
     };
   };

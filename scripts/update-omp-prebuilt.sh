@@ -59,10 +59,11 @@ fi
 
 release_json="$(curl -fsSL "https://api.github.com/repos/$owner/$repo/releases/tags/$release_tag")"
 
-python3 - "$pins_file" "$release_tag" <<'PY' <<<"$release_json"
+RELEASE_JSON="$release_json" python3 - "$pins_file" "$release_tag" <<'PY'
 import base64
 import hashlib
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -70,7 +71,7 @@ from pathlib import Path
 
 pins_path = Path(sys.argv[1])
 release_tag = sys.argv[2]
-release = json.loads(sys.stdin.read())
+release = json.loads(os.environ["RELEASE_JSON"])
 text = pins_path.read_text()
 
 assets_by_system = {
