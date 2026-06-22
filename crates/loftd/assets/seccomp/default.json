@@ -94,6 +94,9 @@
         "syscall": "fsync"
       },
       {
+        "syscall": "ftruncate"
+      },
+      {
         "syscall": "futex"
       },
       {
@@ -107,6 +110,9 @@
       },
       {
         "syscall": "getgid"
+      },
+      {
+        "syscall": "getpeername"
       },
       {
         "syscall": "getpid"
@@ -260,6 +266,9 @@
       },
       {
         "syscall": "statx"
+      },
+      {
+        "syscall": "symlinkat"
       },
       {
         "syscall": "sysinfo"
