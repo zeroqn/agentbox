@@ -116,17 +116,21 @@ impl Default for PtySize {
 
 struct TerminalState {
     parser: vt100::Parser,
+    output_normalizer: TerminalOutputNormalizer,
 }
 
 impl TerminalState {
     fn new(size: PtySize) -> Self {
         Self {
             parser: vt100::Parser::new(size.rows, size.cols, TERMINAL_SCROLLBACK_ROWS),
+            output_normalizer: TerminalOutputNormalizer::default(),
         }
     }
 
-    fn record_output(&mut self, bytes: &[u8]) {
-        self.parser.process(bytes);
+    fn record_output(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let normalized = self.output_normalizer.normalize(bytes);
+        self.parser.process(&normalized);
+        normalized
     }
 
     fn resize(&mut self, size: PtySize) {
@@ -152,6 +156,235 @@ impl TerminalState {
         restore.extend(screen.cursor_state_formatted());
         restore.extend(screen.attributes_formatted());
         restore
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharacterSet {
+    Ascii,
+    DecSpecialGraphics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GraphicSet {
+    G0,
+    G1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NormalizerState {
+    Ground,
+    Escape,
+    DesignateG0,
+    DesignateG1,
+    EscapePassthrough,
+    CsiPassthrough,
+    StringPassthrough,
+    StringPassthroughEscaped,
+}
+
+#[derive(Debug)]
+struct TerminalOutputNormalizer {
+    g0: CharacterSet,
+    g1: CharacterSet,
+    active: GraphicSet,
+    state: NormalizerState,
+}
+
+impl Default for TerminalOutputNormalizer {
+    fn default() -> Self {
+        Self {
+            g0: CharacterSet::Ascii,
+            g1: CharacterSet::Ascii,
+            active: GraphicSet::G0,
+            state: NormalizerState::Ground,
+        }
+    }
+}
+
+impl TerminalOutputNormalizer {
+    fn normalize(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(bytes.len());
+        for &byte in bytes {
+            self.process_byte(byte, &mut output);
+        }
+        output
+    }
+
+    fn process_byte(&mut self, byte: u8, output: &mut Vec<u8>) {
+        match self.state {
+            NormalizerState::Ground => self.process_ground_byte(byte, output),
+            NormalizerState::Escape => self.process_escape_byte(byte, output),
+            NormalizerState::DesignateG0 => {
+                self.process_designation_byte(byte, CharacterSetDesignator::G0, b'(', output)
+            }
+            NormalizerState::DesignateG1 => {
+                self.process_designation_byte(byte, CharacterSetDesignator::G1, b')', output)
+            }
+            NormalizerState::EscapePassthrough => {
+                output.push(byte);
+                if is_escape_final_byte(byte) {
+                    self.state = NormalizerState::Ground;
+                }
+            }
+            NormalizerState::CsiPassthrough => {
+                output.push(byte);
+                if is_csi_final_byte(byte) {
+                    self.state = NormalizerState::Ground;
+                }
+            }
+            NormalizerState::StringPassthrough => {
+                output.push(byte);
+                match byte {
+                    0x07 => self.state = NormalizerState::Ground,
+                    0x1b => self.state = NormalizerState::StringPassthroughEscaped,
+                    _ => {}
+                }
+            }
+            NormalizerState::StringPassthroughEscaped => {
+                output.push(byte);
+                self.state = if byte == b'\\' {
+                    NormalizerState::Ground
+                } else {
+                    NormalizerState::StringPassthrough
+                };
+            }
+        }
+    }
+
+    fn process_ground_byte(&mut self, byte: u8, output: &mut Vec<u8>) {
+        match byte {
+            0x0e => self.active = GraphicSet::G1,
+            0x0f => self.active = GraphicSet::G0,
+            0x1b => self.state = NormalizerState::Escape,
+            0x20..=0x7e if self.active_charset() == CharacterSet::DecSpecialGraphics => {
+                if let Some(mapped) = dec_special_graphics_utf8(byte) {
+                    output.extend_from_slice(mapped.as_bytes());
+                } else {
+                    output.push(byte);
+                }
+            }
+            _ => output.push(byte),
+        }
+    }
+
+    fn process_escape_byte(&mut self, byte: u8, output: &mut Vec<u8>) {
+        match byte {
+            b'(' => self.state = NormalizerState::DesignateG0,
+            b')' => self.state = NormalizerState::DesignateG1,
+            b'[' => {
+                output.extend_from_slice(b"\x1b[");
+                self.state = NormalizerState::CsiPassthrough;
+            }
+            b']' | b'P' | b'_' | b'^' | b'X' => {
+                output.extend_from_slice(&[0x1b, byte]);
+                self.state = NormalizerState::StringPassthrough;
+            }
+            b'c' => {
+                self.reset();
+                output.extend_from_slice(b"\x1bc");
+                self.state = NormalizerState::Ground;
+            }
+            0x20..=0x2f => {
+                output.extend_from_slice(&[0x1b, byte]);
+                self.state = NormalizerState::EscapePassthrough;
+            }
+            _ => {
+                output.extend_from_slice(&[0x1b, byte]);
+                self.state = NormalizerState::Ground;
+            }
+        }
+    }
+
+    fn process_designation_byte(
+        &mut self,
+        byte: u8,
+        designator: CharacterSetDesignator,
+        intermediate: u8,
+        output: &mut Vec<u8>,
+    ) {
+        match byte {
+            b'0' => self.set_charset(designator, CharacterSet::DecSpecialGraphics),
+            b'B' => self.set_charset(designator, CharacterSet::Ascii),
+            _ => output.extend_from_slice(&[0x1b, intermediate, byte]),
+        }
+        self.state = NormalizerState::Ground;
+    }
+
+    fn active_charset(&self) -> CharacterSet {
+        match self.active {
+            GraphicSet::G0 => self.g0,
+            GraphicSet::G1 => self.g1,
+        }
+    }
+
+    fn set_charset(&mut self, designator: CharacterSetDesignator, charset: CharacterSet) {
+        match designator {
+            CharacterSetDesignator::G0 => self.g0 = charset,
+            CharacterSetDesignator::G1 => self.g1 = charset,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.g0 = CharacterSet::Ascii;
+        self.g1 = CharacterSet::Ascii;
+        self.active = GraphicSet::G0;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharacterSetDesignator {
+    G0,
+    G1,
+}
+
+fn is_escape_final_byte(byte: u8) -> bool {
+    (0x30..=0x7e).contains(&byte)
+}
+
+fn is_csi_final_byte(byte: u8) -> bool {
+    (0x40..=0x7e).contains(&byte)
+}
+
+fn dec_special_graphics_utf8(byte: u8) -> Option<&'static str> {
+    match byte {
+        b'+' => Some("→"),
+        b',' => Some("←"),
+        b'-' => Some("↑"),
+        b'.' => Some("↓"),
+        b'0' => Some("▮"),
+        b'`' => Some("◆"),
+        b'a' => Some("▒"),
+        b'b' => Some("␉"),
+        b'c' => Some("␌"),
+        b'd' => Some("␍"),
+        b'e' => Some("␊"),
+        b'f' => Some("°"),
+        b'g' => Some("±"),
+        b'h' => Some("␤"),
+        b'i' => Some("␋"),
+        b'j' => Some("┘"),
+        b'k' => Some("┐"),
+        b'l' => Some("┌"),
+        b'm' => Some("└"),
+        b'n' => Some("┼"),
+        b'o' => Some("⎺"),
+        b'p' => Some("⎻"),
+        b'q' => Some("─"),
+        b'r' => Some("⎼"),
+        b's' => Some("⎽"),
+        b't' => Some("├"),
+        b'u' => Some("┤"),
+        b'v' => Some("┴"),
+        b'w' => Some("┬"),
+        b'x' => Some("│"),
+        b'y' => Some("≤"),
+        b'z' => Some("≥"),
+        b'{' => Some("π"),
+        b'|' => Some("≠"),
+        b'}' => Some("£"),
+        b'~' => Some("·"),
+        _ => None,
     }
 }
 
@@ -371,8 +604,8 @@ fn serve_attached_client(
             thread::sleep(Duration::from_millis(10));
             continue;
         }
-        terminal_state.record_output(&buf[..n]);
-        if write_frame(&mut client, &Frame::Data(buf[..n].to_vec())).is_err() {
+        let normalized = terminal_state.record_output(&buf[..n]);
+        if write_frame(&mut client, &Frame::Data(normalized)).is_err() {
             break;
         }
     }
@@ -792,6 +1025,16 @@ mod tests {
     }
 
     #[test]
+    fn terminal_state_returns_normalized_output_for_live_proxy() {
+        let mut terminal_state = TerminalState::new(PtySize::default());
+
+        let live_data = terminal_state.record_output(b"\x1b(0qx\x1b(B\n");
+
+        assert_eq!(live_data, "─│\n".as_bytes());
+        assert!(terminal_state.parser.screen().contents().contains("─│"));
+    }
+
+    #[test]
     fn terminal_restore_repaints_visible_screen_and_cursor_state() {
         let mut terminal_state = TerminalState::new(PtySize { rows: 10, cols: 40 });
         terminal_state.record_output(b"prompt> abc");
@@ -819,6 +1062,20 @@ mod tests {
         assert_eq!(first_row.trim_end(), "short");
         assert!(!first_row.contains("longer"));
         assert!(!restored.screen().contents().contains("stale lower row"));
+    }
+
+    #[test]
+    fn terminal_restore_renders_acs_borders_as_unicode() {
+        let mut terminal_state = TerminalState::new(PtySize { rows: 5, cols: 20 });
+        terminal_state.record_output(b"\x1b(0lqqk\r\nmqqj\x1b(B");
+
+        let restored = restored_screen(&terminal_state);
+        let contents = restored.screen().contents();
+
+        assert!(contents.contains("┌──┐"), "{contents:?}");
+        assert!(contents.contains("└──┘"), "{contents:?}");
+        assert!(!contents.contains("lqqk"), "{contents:?}");
+        assert!(!contents.contains("mqqj"), "{contents:?}");
     }
 
     #[test]
@@ -924,6 +1181,66 @@ mod tests {
         assert_eq!(server.join().unwrap().unwrap(), ClientResult::Detached);
         let mut status = 0;
         assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+    }
+
+    #[test]
+    fn normalizer_maps_full_tmux_base_acs_table() {
+        let mut normalizer = TerminalOutputNormalizer::default();
+        let input = b"\x1b(0+,-.0`abcdefghijklmnopqrstuvwxyz{|}~";
+
+        let normalized = normalizer.normalize(input);
+
+        assert_eq!(
+            String::from_utf8(normalized).unwrap(),
+            "→←↑↓▮◆▒␉␌␍␊°±␤␋┘┐┌└┼⎺⎻─⎼⎽├┤┴┬│≤≥π≠£·"
+        );
+    }
+
+    #[test]
+    fn normalizer_preserves_pending_designation_across_reads() {
+        let mut normalizer = TerminalOutputNormalizer::default();
+
+        assert!(normalizer.normalize(b"\x1b(").is_empty());
+        assert_eq!(normalizer.normalize(b"0q"), "─".as_bytes());
+        assert!(normalizer.normalize(b"\x1b)").is_empty());
+        assert!(normalizer.normalize(b"0").is_empty());
+        assert_eq!(normalizer.normalize(b"\x0ex"), "│".as_bytes());
+    }
+
+    #[test]
+    fn normalizer_tracks_g1_shift_in_and_shift_out() {
+        let mut normalizer = TerminalOutputNormalizer::default();
+
+        let normalized = normalizer.normalize(b"\x1b)0\x0ex\x0fx");
+
+        assert_eq!(normalized, "│x".as_bytes());
+    }
+
+    #[test]
+    fn normalizer_does_not_reset_charset_on_sgr() {
+        let mut normalizer = TerminalOutputNormalizer::default();
+
+        let normalized = normalizer.normalize(b"\x1b(0q\x1b[0mq\x1b(Bq");
+
+        assert_eq!(normalized, "\u{2500}\x1b[0m\u{2500}q".as_bytes());
+    }
+
+    #[test]
+    fn normalizer_passes_unrelated_escape_sequences_through() {
+        let mut normalizer = TerminalOutputNormalizer::default();
+
+        let normalized = normalizer.normalize(b"\x1b(0\x1b%Gq\x1b]0;x\x07q");
+
+        assert_eq!(normalized, "\x1b%G─\x1b]0;x\x07─".as_bytes());
+    }
+
+    #[test]
+    fn normalizer_passes_utf8_bytes_through() {
+        let mut normalizer = TerminalOutputNormalizer::default();
+
+        let normalized = normalizer.normalize("é\x1b(0qé".as_bytes());
+
+        assert_eq!(normalized, "é─é".as_bytes());
     }
 
     fn restored_screen(terminal_state: &TerminalState) -> vt100::Parser {
