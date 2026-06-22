@@ -294,6 +294,47 @@ fn launch_config_round_trips_seccomp_modes() {
 }
 
 #[test]
+fn launch_config_refuses_to_serialize_unresolved_default_gap_audit() {
+    let image_process_config = OciProcessConfig::default();
+    let mut config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build");
+    config.seccomp = SeccompMode::Audit(AuditMode::DefaultGap {
+        trace_path: Path::new("/tmp/loftd.denied.jsonl").to_path_buf(),
+    });
+
+    let panic = std::panic::catch_unwind(|| config.serialize())
+        .expect_err("unresolved default gap audit should not serialize");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or_default();
+    assert!(message.contains("unresolved default seccomp gap audit"));
+}
+
+#[test]
 fn launch_config_rejects_inconsistent_seccomp_fields() {
     let config = LaunchConfig::build_for_task(LaunchSpec {
         task_rootfs: Path::new("/state/task/rootfs"),

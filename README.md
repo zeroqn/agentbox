@@ -813,7 +813,9 @@ Run/help:
 ./result/bin/loftd --seccomp=audit:loftd-seccomp.trace.jsonl -- bash -lc 'echo ok'
 ./result/bin/loftd seccomp synthesize --input loftd-seccomp.trace.jsonl --output loftd-seccomp.policy.json
 ./result/bin/loftd --seccomp=audit:loftd-seccomp.policy.json:loftd-seccomp.denied.jsonl -- bash -lc 'echo ok'
+./result/bin/loftd --seccomp=audit-default:loftd-seccomp.denied.jsonl -- bash -lc 'echo ok'
 ./result/bin/loftd seccomp extend --policy loftd-seccomp.policy.json --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
+./result/bin/loftd seccomp extend --default-policy --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd --seccomp=enforce:loftd-seccomp.updated.json -- bash -lc 'echo ok'
 ./result/bin/loftd --passt -- bash -lc 'echo ok'
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
@@ -895,12 +897,20 @@ Seccomp behavior:
   `<denied-trace>` JSONL uses the same trace record shape as full audit.
   "Denied" here means "observed by strace but missing from the baseline policy";
   it does not mean a kernel seccomp denial occurred.
+- `--seccomp=audit-default:<denied-trace>` (also accepted as
+  `--seccomp=trace-default:<denied-trace>`) is the same gap audit against the
+  packaged default policy at `$out/share/loftd/seccomp/default.json`, without
+  spelling that policy path. This is also fail-closed: if the packaged default
+  policy is unavailable or invalid, loftd fails before launching the traced VM
+  worker instead of falling back to full audit.
 - `loftd seccomp extend --policy <baseline> --trace <denied-trace> --output
   <updated-policy>` additively appends missing syscall allow rules from a full
-  or gap audit trace to an existing policy. It preserves existing filter entries
-  and appends new syscall-only entries in deterministic syscall-name order. The
-  output is validated with `seccompiler` before loftd writes it; the baseline
-  policy file is not modified.
+  or gap audit trace to an existing policy. Use `--default-policy` instead of
+  `--policy <baseline>` to extend from the packaged default policy without
+  spelling its path; exactly one of `--policy` or `--default-policy` is required.
+  It preserves existing filter entries and appends new syscall-only entries in
+  deterministic syscall-name order. The output is validated with `seccompiler`
+  before loftd writes it; the baseline policy file is not modified.
 - `--seccomp=enforce:<policy>` loads that `seccompiler` JSON policy and
   installs it in the VM worker immediately before `krun_start_enter`. Passing an
   explicit enforce path overrides the packaged default policy for that run.

@@ -124,6 +124,9 @@ fn spawn_traced_vm_worker(
         } => Some(seccomp::strace_exclusion_filter_from_policy(
             baseline_policy_path,
         )?),
+        AuditMode::DefaultGap { .. } => {
+            bail!("unresolved default seccomp gap audit cannot reach the VM worker")
+        }
     };
     let spec = build_traced_vm_worker_command(
         &executable,

@@ -111,7 +111,7 @@ pub(crate) struct Cli {
         value_name = "MODE[:POLICY]:PATH",
         value_parser = parse_seccomp_arg,
         help = "Configure host-side loftd seccomp mode for this run",
-        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, audit:POLICY_JSON:MISSING_TRACE_JSONL, trace:POLICY_JSON:MISSING_TRACE_JSONL, and enforce:POLICY_JSON. If omitted for a normal task launch, loftd enforces the packaged default policy at $out/share/loftd/seccomp/default.json and fails closed if that policy cannot be loaded; pass --seccomp=off to opt out. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; gap audit records syscalls missing from the baseline policy by syscall name; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
+        long_help = "Configure host-side loftd seccomp mode for this run. Allowed values are off, audit:TRACE_JSONL, trace:TRACE_JSONL, audit:POLICY_JSON:MISSING_TRACE_JSONL, trace:POLICY_JSON:MISSING_TRACE_JSONL, audit-default:MISSING_TRACE_JSONL, trace-default:MISSING_TRACE_JSONL, and enforce:POLICY_JSON. If omitted for a normal task launch, loftd enforces the packaged default policy at $out/share/loftd/seccomp/default.json and fails closed if that policy cannot be loaded; pass --seccomp=off to opt out. Audit mode uses strace/ptrace on the VM worker only to write a tracer-owned record file; gap audit records syscalls missing from the baseline policy by syscall name; audit-default and trace-default use the packaged default policy as the baseline and fail closed if it cannot be loaded; enforce mode applies a seccompiler JSON policy in the VM worker immediately before krun_start_enter."
     )]
     seccomp: Option<SeccompMode>,
 
@@ -480,6 +480,11 @@ fn parse_seccomp_arg(value: &str) -> Result<SeccompMode, String> {
                 trace_path: PathBuf::from(trace_path),
             }))
         }
+        ["audit-default" | "trace-default", trace_path] if !trace_path.trim().is_empty() => {
+            Ok(SeccompMode::Audit(AuditMode::DefaultGap {
+                trace_path: PathBuf::from(trace_path),
+            }))
+        }
         ["audit" | "trace", baseline_policy_path, trace_path]
             if !baseline_policy_path.trim().is_empty() && !trace_path.trim().is_empty() =>
         {
@@ -495,8 +500,14 @@ fn parse_seccomp_arg(value: &str) -> Result<SeccompMode, String> {
             "seccomp audit mode must be audit:TRACE_JSONL or audit:POLICY_JSON:TRACE_JSONL"
                 .to_owned(),
         ),
+        ["audit-default" | "trace-default", ..] => {
+            Err("seccomp default gap audit mode must be audit-default:TRACE_JSONL or trace-default:TRACE_JSONL".to_owned())
+        }
         ["enforce", ..] => Err("seccomp enforce mode must be enforce:POLICY_JSON".to_owned()),
-        _ => Err("seccomp mode must be off, audit, trace, or enforce".to_owned()),
+        _ => Err(
+            "seccomp mode must be off, audit, trace, audit-default, trace-default, or enforce"
+                .to_owned(),
+        ),
     }
 }
 
@@ -683,6 +694,30 @@ mod tests {
             }))
         );
 
+        let default_gap_audit =
+            Cli::try_parse_from(["loftd", "--seccomp", "audit-default:/tmp/denied.jsonl"])
+                .expect("default gap audit seccomp should parse")
+                .into_runtime_options()
+                .seccomp;
+        assert_eq!(
+            default_gap_audit,
+            Some(SeccompMode::Audit(AuditMode::DefaultGap {
+                trace_path: "/tmp/denied.jsonl".into(),
+            }))
+        );
+
+        let default_trace_alias =
+            Cli::try_parse_from(["loftd", "--seccomp", "trace-default:/tmp/denied.jsonl"])
+                .expect("default trace alias should parse")
+                .into_runtime_options()
+                .seccomp;
+        assert_eq!(
+            default_trace_alias,
+            Some(SeccompMode::Audit(AuditMode::DefaultGap {
+                trace_path: "/tmp/denied.jsonl".into(),
+            }))
+        );
+
         let enforce = Cli::try_parse_from(["loftd", "--seccomp", "enforce:/tmp/policy.json"])
             .expect("enforce seccomp should parse")
             .into_runtime_options()
@@ -703,6 +738,13 @@ mod tests {
             ["loftd", "--seccomp", "audit::trace.jsonl"],
             ["loftd", "--seccomp", "audit:policy.json:"],
             ["loftd", "--seccomp", "audit:policy.json:trace.jsonl:extra"],
+            ["loftd", "--seccomp", "audit-default:"],
+            [
+                "loftd",
+                "--seccomp",
+                "audit-default:policy.json:trace.jsonl",
+            ],
+            ["loftd", "--seccomp", "trace-default:"],
             ["loftd", "--seccomp", "enforce:"],
             ["loftd", "--seccomp", "enforce:/tmp/policy.json:extra"],
             ["loftd", "--seccomp", "default"],
@@ -752,17 +794,86 @@ mod tests {
                 command:
                     SeccompCommand::Extend {
                         policy,
+                        default_policy,
                         trace,
                         output,
                     },
                 ..
             } => {
-                assert_eq!(policy, PathBuf::from("baseline.json"));
+                assert_eq!(policy, Some(PathBuf::from("baseline.json")));
+                assert!(!default_policy);
                 assert_eq!(trace, PathBuf::from("denied.jsonl"));
                 assert_eq!(output, PathBuf::from("updated.json"));
             }
             other => panic!("expected seccomp extend action, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_seccomp_extend_default_policy_subcommand() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "seccomp",
+            "extend",
+            "--default-policy",
+            "--trace",
+            "denied.jsonl",
+            "--output",
+            "updated.json",
+        ])
+        .expect("seccomp extend default policy command should parse");
+
+        match cli.into_action() {
+            crate::cli::CliAction::Seccomp {
+                command:
+                    SeccompCommand::Extend {
+                        policy,
+                        default_policy,
+                        trace,
+                        output,
+                    },
+                ..
+            } => {
+                assert_eq!(policy, None);
+                assert!(default_policy);
+                assert_eq!(trace, PathBuf::from("denied.jsonl"));
+                assert_eq!(output, PathBuf::from("updated.json"));
+            }
+            other => panic!("expected seccomp extend action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn seccomp_extend_requires_exactly_one_baseline_source() {
+        let missing = Cli::try_parse_from([
+            "loftd",
+            "seccomp",
+            "extend",
+            "--trace",
+            "denied.jsonl",
+            "--output",
+            "updated.json",
+        ])
+        .expect_err("extend without a baseline source should fail");
+        assert_eq!(
+            missing.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+
+        let conflict = Cli::try_parse_from([
+            "loftd",
+            "seccomp",
+            "extend",
+            "--policy",
+            "baseline.json",
+            "--default-policy",
+            "--trace",
+            "denied.jsonl",
+            "--output",
+            "updated.json",
+        ])
+        .expect_err("extend with both baseline sources should fail");
+        assert_eq!(conflict.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

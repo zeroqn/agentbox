@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use crate::runtime::launch::components::mounts;
 use crate::runtime::launch::config::{
     BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
 };
-use crate::runtime::seccomp::{self, SeccompMode};
+use crate::runtime::seccomp::{self, AuditMode, SeccompMode};
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -146,24 +146,28 @@ fn resolve_normal_launch_seccomp_with(
     seccomp: Option<SeccompMode>,
     default_policy_path: impl FnOnce() -> Option<PathBuf>,
 ) -> Result<SeccompMode> {
-    if let Some(seccomp) = seccomp {
-        return Ok(seccomp);
+    match seccomp {
+        Some(SeccompMode::Audit(AuditMode::DefaultGap { trace_path })) => {
+            let baseline_policy_path = seccomp::resolve_default_seccomp_policy_path(
+                default_policy_path,
+                "default seccomp gap audit",
+                "pass --seccomp=audit:POLICY_JSON:TRACE_JSONL explicitly",
+            )?;
+            Ok(SeccompMode::Audit(AuditMode::Gap {
+                baseline_policy_path,
+                trace_path,
+            }))
+        }
+        Some(seccomp) => Ok(seccomp),
+        None => {
+            let policy_path = seccomp::resolve_default_seccomp_policy_path(
+                default_policy_path,
+                "normal launch seccomp enforcement",
+                "pass --seccomp=off to disable host-side seccomp for this run",
+            )?;
+            Ok(SeccompMode::Enforce { policy_path })
+        }
     }
-
-    let policy_path = default_policy_path().ok_or_else(|| {
-        anyhow!(
-            "loftd default seccomp policy is unavailable for this executable; \
-             install loftd with share/loftd/seccomp/default.json or pass --seccomp=off to disable host-side seccomp for this run"
-        )
-    })?;
-    seccomp::validate_seccomp_policy_file(&policy_path, "default loftd seccomp policy")
-        .with_context(|| {
-            format!(
-                "failed to load default loftd seccomp policy '{}'; pass --seccomp=off to disable host-side seccomp for this run",
-                policy_path.display()
-            )
-        })?;
-    Ok(SeccompMode::Enforce { policy_path })
 }
 
 fn prepare_user_volume_mounts(
@@ -278,7 +282,7 @@ mod tests {
     use crate::runtime::launch::plan::{
         ImageSelection, LaunchPlan, resolve_normal_launch_seccomp_with,
     };
-    use crate::runtime::seccomp::SeccompMode;
+    use crate::runtime::seccomp::{AuditMode, SeccompMode};
     use crate::task_rootfs::TaskRootfsBackend;
     use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
 
@@ -351,6 +355,103 @@ mod tests {
             SeccompMode::Enforce {
                 policy_path: policy
             }
+        );
+    }
+
+    #[test]
+    fn default_gap_audit_resolves_to_valid_packaged_default_policy() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let policy = dir.path().join("default.json");
+        fs::write(
+            &policy,
+            include_bytes!("../../../assets/seccomp/default.json"),
+        )
+        .expect("default policy fixture should be written");
+        let trace_path = dir.path().join("missing.jsonl");
+
+        let seccomp = resolve_normal_launch_seccomp_with(
+            Some(SeccompMode::Audit(AuditMode::DefaultGap {
+                trace_path: trace_path.clone(),
+            })),
+            || Some(policy.clone()),
+        )
+        .expect("default gap audit should resolve");
+
+        assert_eq!(
+            seccomp,
+            SeccompMode::Audit(AuditMode::Gap {
+                baseline_policy_path: policy,
+                trace_path,
+            })
+        );
+    }
+
+    #[test]
+    fn default_gap_audit_fails_closed_without_default_policy() {
+        let err = resolve_normal_launch_seccomp_with(
+            Some(SeccompMode::Audit(AuditMode::DefaultGap {
+                trace_path: PathBuf::from("missing.jsonl"),
+            })),
+            || None,
+        )
+        .expect_err("missing default policy should fail closed");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("default seccomp gap audit"));
+        assert!(message.contains("audit:POLICY_JSON:TRACE_JSONL"));
+        assert!(!message.contains("--seccomp=off"));
+    }
+
+    #[test]
+    fn default_gap_audit_fails_closed_with_invalid_default_policy() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let policy = dir.path().join("invalid.json");
+        fs::write(&policy, b"not json").expect("invalid policy fixture should be written");
+
+        let err = resolve_normal_launch_seccomp_with(
+            Some(SeccompMode::Audit(AuditMode::DefaultGap {
+                trace_path: PathBuf::from("missing.jsonl"),
+            })),
+            || Some(policy),
+        )
+        .expect_err("invalid default policy should fail closed");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("failed to load default loftd seccomp policy"));
+        assert!(message.contains("default seccomp gap audit"));
+        assert!(message.contains("audit:POLICY_JSON:TRACE_JSONL"));
+    }
+
+    #[test]
+    fn explicit_audit_modes_bypass_default_policy_lookup() {
+        let full = resolve_normal_launch_seccomp_with(
+            Some(SeccompMode::Audit(AuditMode::Full {
+                trace_path: PathBuf::from("trace.jsonl"),
+            })),
+            || panic!("full audit must not resolve the packaged default policy"),
+        )
+        .expect("full audit should resolve");
+        assert_eq!(
+            full,
+            SeccompMode::Audit(AuditMode::Full {
+                trace_path: PathBuf::from("trace.jsonl"),
+            })
+        );
+
+        let gap = resolve_normal_launch_seccomp_with(
+            Some(SeccompMode::Audit(AuditMode::Gap {
+                baseline_policy_path: PathBuf::from("baseline.json"),
+                trace_path: PathBuf::from("missing.jsonl"),
+            })),
+            || panic!("explicit gap audit must not resolve the packaged default policy"),
+        )
+        .expect("explicit gap audit should resolve");
+        assert_eq!(
+            gap,
+            SeccompMode::Audit(AuditMode::Gap {
+                baseline_policy_path: PathBuf::from("baseline.json"),
+                trace_path: PathBuf::from("missing.jsonl"),
+            })
         );
     }
 

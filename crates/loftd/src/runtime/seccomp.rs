@@ -1,5 +1,6 @@
 //! Host-side seccomp audit, synthesis, and enforcement support.
 
+use crate::runtime::host_tools;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
@@ -27,12 +28,17 @@ pub(crate) enum AuditMode {
         baseline_policy_path: PathBuf,
         trace_path: PathBuf,
     },
+    DefaultGap {
+        trace_path: PathBuf,
+    },
 }
 
 impl AuditMode {
     pub(crate) fn trace_path(&self) -> &Path {
         match self {
-            Self::Full { trace_path } | Self::Gap { trace_path, .. } => trace_path,
+            Self::Full { trace_path }
+            | Self::Gap { trace_path, .. }
+            | Self::DefaultGap { trace_path } => trace_path,
         }
     }
 
@@ -43,6 +49,9 @@ impl AuditMode {
                 ..
             } => Some(baseline_policy_path),
             Self::Full { .. } => None,
+            Self::DefaultGap { .. } => {
+                panic!("unresolved default seccomp gap audit cannot be serialized")
+            }
         }
     }
 }
@@ -141,8 +150,15 @@ pub(crate) enum SeccompCommand {
         about = "Add missing audited syscalls to an existing seccompiler allowlist policy"
     )]
     Extend {
-        #[arg(long = "policy", value_name = "BASELINE_POLICY_JSON")]
-        policy: PathBuf,
+        #[arg(
+            long = "policy",
+            value_name = "BASELINE_POLICY_JSON",
+            required_unless_present = "default_policy",
+            conflicts_with = "default_policy"
+        )]
+        policy: Option<PathBuf>,
+        #[arg(long = "default-policy", conflicts_with = "policy")]
+        default_policy: bool,
         #[arg(long = "trace", value_name = "MISSING_TRACE_JSONL")]
         trace: PathBuf,
         #[arg(long = "output", value_name = "UPDATED_POLICY_JSON")]
@@ -151,6 +167,13 @@ pub(crate) enum SeccompCommand {
 }
 
 pub(crate) fn run_seccomp_command(command: SeccompCommand) -> Result<String> {
+    run_seccomp_command_with_default_policy_path(command, host_tools::default_seccomp_policy_path)
+}
+
+pub(crate) fn run_seccomp_command_with_default_policy_path(
+    command: SeccompCommand,
+    default_policy_path: impl FnOnce() -> Option<PathBuf>,
+) -> Result<String> {
     match command {
         SeccompCommand::Synthesize { input, output } => {
             synthesize_policy(&input, &output)?;
@@ -162,9 +185,12 @@ pub(crate) fn run_seccomp_command(command: SeccompCommand) -> Result<String> {
         }
         SeccompCommand::Extend {
             policy,
+            default_policy,
             trace,
             output,
         } => {
+            let policy =
+                resolve_extend_baseline_policy(policy, default_policy, default_policy_path)?;
             extend_policy(&policy, &trace, &output)?;
             Ok(format!(
                 "wrote extended seccomp policy '{}' from policy '{}' and trace '{}'\n",
@@ -172,6 +198,49 @@ pub(crate) fn run_seccomp_command(command: SeccompCommand) -> Result<String> {
                 policy.display(),
                 trace.display()
             ))
+        }
+    }
+}
+
+pub(crate) fn resolve_default_seccomp_policy_path(
+    default_policy_path: impl FnOnce() -> Option<PathBuf>,
+    usage: &str,
+    recovery_hint: &str,
+) -> Result<PathBuf> {
+    let policy_path = default_policy_path().ok_or_else(|| {
+        anyhow!(
+            "loftd default seccomp policy is unavailable for {usage}; \
+             install loftd with share/loftd/seccomp/default.json or {recovery_hint}"
+        )
+    })?;
+    validate_seccomp_policy_file(&policy_path, "default loftd seccomp policy").with_context(
+        || {
+            format!(
+                "failed to load default loftd seccomp policy '{}' for {usage}; {recovery_hint}",
+                policy_path.display()
+            )
+        },
+    )?;
+    Ok(policy_path)
+}
+
+fn resolve_extend_baseline_policy(
+    policy: Option<PathBuf>,
+    default_policy: bool,
+    default_policy_path: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf> {
+    match (policy, default_policy) {
+        (Some(policy), false) => Ok(policy),
+        (None, true) => resolve_default_seccomp_policy_path(
+            default_policy_path,
+            "seccomp extend --default-policy",
+            "pass --policy BASELINE_POLICY_JSON explicitly",
+        ),
+        (Some(_), true) => {
+            bail!("seccomp extend requires exactly one of --policy or --default-policy")
+        }
+        (None, false) => {
+            bail!("seccomp extend requires exactly one of --policy or --default-policy")
         }
     }
 }
@@ -841,6 +910,78 @@ mod tests {
         let arch = std::env::consts::ARCH.try_into().expect("supported arch");
         let filters = seccompiler::compile_from_json(file, arch).expect("policy should compile");
         assert!(filters.contains_key("main_thread"));
+    }
+
+    #[test]
+    fn extend_command_default_policy_resolves_and_extends_packaged_policy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("default.json");
+        let trace = dir.path().join("missing.jsonl");
+        let output = dir.path().join("updated.json");
+        fs::write(&policy, include_bytes!("../../assets/seccomp/default.json"))
+            .expect("write default policy");
+        fs::write(&trace, r#"read(0, "", 1) = 0\n"#).expect("write trace");
+
+        let message = run_seccomp_command_with_default_policy_path(
+            SeccompCommand::Extend {
+                policy: None,
+                default_policy: true,
+                trace: trace.clone(),
+                output: output.clone(),
+            },
+            || Some(policy.clone()),
+        )
+        .expect("default policy extend command should run");
+
+        assert!(message.contains(&policy.display().to_string()));
+        assert!(output.is_file());
+        validate_seccomp_policy_file(&output, "updated policy").expect("updated policy validates");
+    }
+
+    #[test]
+    fn extend_command_default_policy_fails_closed_before_extending_invalid_default() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("invalid.json");
+        let trace = dir.path().join("missing.jsonl");
+        let output = dir.path().join("updated.json");
+        fs::write(&policy, b"not json").expect("write invalid default policy");
+        fs::write(&trace, r#"read(0, "", 1) = 0\n"#).expect("write trace");
+
+        let err = run_seccomp_command_with_default_policy_path(
+            SeccompCommand::Extend {
+                policy: None,
+                default_policy: true,
+                trace,
+                output: output.clone(),
+            },
+            || Some(policy),
+        )
+        .expect_err("invalid default policy should fail closed");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("failed to load default loftd seccomp policy"));
+        assert!(message.contains("--policy BASELINE_POLICY_JSON"));
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn extend_command_rejects_ambiguous_internal_baseline_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("missing.jsonl");
+        let output = dir.path().join("updated.json");
+
+        let err = run_seccomp_command_with_default_policy_path(
+            SeccompCommand::Extend {
+                policy: Some(dir.path().join("baseline.json")),
+                default_policy: true,
+                trace,
+                output,
+            },
+            || panic!("ambiguous command should not resolve default policy"),
+        )
+        .expect_err("ambiguous internal extend command should fail");
+
+        assert!(format!("{err:#}").contains("exactly one of --policy or --default-policy"));
     }
 
     #[test]
