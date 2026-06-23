@@ -929,9 +929,12 @@ Seccomp behavior:
 - `--seccomp=audit:<trace>` (also accepted as `--seccomp=trace:<trace>`) runs
   the libkrun VM-worker entrypoint under `strace -f`, writes a tracer-owned raw
   log, and converts it to the requested JSONL trace when the helper observes
-  the VM worker exit. The keep-id helper setup, including `newuidmap` and
-  `newgidmap`, is not traced. Use the raw `.strace` sidecar only for debugging;
-  the JSONL trace path is the stable input for synthesis.
+  the VM worker exit. The raw `.strace` sidecar can include VM-worker setup
+  syscalls; the finalized JSONL starts after an internal marker emitted
+  immediately before `krun_start_enter`, so it is the stable input for
+  synthesis. Missing that marker fails trace finalization instead of publishing
+  an unscoped JSONL trace. The keep-id helper setup, including `newuidmap` and
+  `newgidmap`, is not traced. Use the raw `.strace` sidecar only for debugging.
 - `loftd seccomp synthesize --input <trace> --output <policy>` extracts syscall
   names from the trace and writes a deterministic `seccompiler` JSON policy with
   a `main_thread` allowlist.
@@ -940,7 +943,8 @@ Seccomp behavior:
   still runs without installing a seccomp filter, but asks `strace` to record
   only syscall names that are not already listed in
   `<policy>`'s `main_thread.filter[*].syscall` allowlist. The resulting
-  `<denied-trace>` JSONL uses the same trace record shape as full audit.
+  `<denied-trace>` JSONL uses the same marker-scoped trace record shape as full
+  audit.
   "Denied" here means "observed by strace but missing from the baseline policy";
   it does not mean a kernel seccomp denial occurred.
 - `--seccomp=audit-default:<denied-trace>` (also accepted as

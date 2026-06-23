@@ -4,8 +4,10 @@ use crate::runtime::launch::config::{
     LaunchSpec, ManagedSessionConfig, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
     SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
 };
+use crate::runtime::seccomp::{AuditMode, SeccompMode};
 use crate::runtime::vm::libkrun::launcher::{
     NET_FLAG_DHCP_CLIENT, PROFILE_KERNEL_CMDLINE_APPEND, guest_nofile_rlimit_entry,
+    with_audit_start_marker_hook_for_test,
 };
 use crate::runtime::vm::libkrun::{
     DirectLibkrunLauncher, LOFTD_LIBKRUN_COMPAT_NET_FEATURES, LibkrunApi,
@@ -15,6 +17,7 @@ use crate::runtime::vm::libkrun::{
 use anyhow::Result;
 use std::cell::RefCell;
 use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +40,8 @@ enum Call {
     SetRlimits(u32, Vec<String>),
     SetProfilePath(u32, String),
     SetKernelCmdlineAppend(u32, String),
+    PreEnterHook,
+    AuditStartMarker,
     StartEnter(u32),
 }
 
@@ -719,6 +724,75 @@ fn pre_enter_hook_runs_after_setup_and_before_start() {
         .position(|call| matches!(call, Call::StartEnter(..)))
         .expect("launch should start after hook");
     assert!(set_exec_index < start_index);
+}
+
+#[test]
+fn audit_start_marker_runs_after_pre_enter_and_immediately_before_start() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut config = config();
+    config.seccomp = SeccompMode::Audit(AuditMode::Full {
+        trace_path: PathBuf::from("/tmp/loftd-seccomp-audit.jsonl"),
+    });
+
+    let marker_calls = calls.clone();
+    with_audit_start_marker_hook_for_test(
+        move || {
+            marker_calls.borrow_mut().push(Call::AuditStartMarker);
+            Ok(())
+        },
+        || {
+            DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+                .start_enter_with_pre_enter_hook(&config, || {
+                    calls.borrow_mut().push(Call::PreEnterHook);
+                    Ok(())
+                })
+        },
+    )
+    .expect("launch should succeed");
+
+    let calls = calls.borrow();
+    let set_exec_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetExec(..)))
+        .expect("setup should configure exec");
+    let pre_enter_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::PreEnterHook))
+        .expect("pre-enter hook should run");
+    let marker_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::AuditStartMarker))
+        .expect("audit marker should run");
+    let start_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::StartEnter(..)))
+        .expect("launch should start");
+
+    assert!(set_exec_index < pre_enter_index);
+    assert!(pre_enter_index < marker_index);
+    assert_eq!(marker_index + 1, start_index);
+}
+
+#[test]
+fn audit_start_marker_is_not_emitted_outside_audit_mode() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let marker_calls = calls.clone();
+
+    with_audit_start_marker_hook_for_test(
+        move || {
+            marker_calls.borrow_mut().push(Call::AuditStartMarker);
+            Ok(())
+        },
+        || DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone())).start_enter(&config()),
+    )
+    .expect("launch should succeed");
+
+    assert!(
+        !calls
+            .borrow()
+            .iter()
+            .any(|call| matches!(call, Call::AuditStartMarker))
+    );
 }
 
 #[test]

@@ -9,6 +9,9 @@ use std::fs;
 use std::io::{BufRead, BufReader, Cursor, Write};
 use std::path::{Path, PathBuf};
 
+pub(crate) const AUDIT_START_MARKER_NAME: &str = "loftd-seccomp-audit-start";
+const AUDIT_START_MARKER_SYSCALL: &str = "memfd_create";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum SeccompMode {
     #[default]
@@ -282,6 +285,27 @@ pub(crate) fn prepare_audit_trace_target(trace_path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn emit_audit_start_marker() -> Result<()> {
+    let name = std::ffi::CString::new(AUDIT_START_MARKER_NAME)
+        .context("seccomp audit marker name contains an interior NUL")?;
+    // SAFETY: syscall is invoked with a valid NUL-terminated marker name and the
+    // close-on-exec flag. A successful marker fd is immediately closed below.
+    let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to emit seccomp audit start marker with memfd_create");
+    }
+
+    // SAFETY: fd came from a successful memfd_create call in this function.
+    let rc = unsafe { libc::close(fd as libc::c_int) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+            .context("failed to close seccomp audit start marker memfd")
+    }
+}
+
 pub(crate) fn finalize_audit_trace(trace_path: &Path) -> Result<()> {
     let raw_path = raw_strace_path(trace_path);
     if let Some(parent) = trace_path.parent() {
@@ -310,8 +334,22 @@ fn write_finalized_audit_trace(raw_path: &Path, output_path: &Path) -> Result<()
         .with_context(|| format!("failed to open raw strace log '{}'", raw_path.display()))?;
     let mut out = fs::File::create(output_path)
         .with_context(|| format!("failed to create seccomp trace '{}'", output_path.display()))?;
+    let mut marker_seen = false;
+    let mut marker_fd_to_skip_close = None;
     for line in BufReader::new(raw).lines() {
         let line = line.with_context(|| format!("failed to read '{}'", raw_path.display()))?;
+        if is_audit_start_marker_line(&line) {
+            marker_seen = true;
+            marker_fd_to_skip_close = audit_start_marker_fd(&line);
+            continue;
+        }
+        if !marker_seen {
+            continue;
+        }
+        if marker_fd_to_skip_close.is_some_and(|fd| is_close_of_fd_line(&line, fd)) {
+            marker_fd_to_skip_close = None;
+            continue;
+        }
         let Some(syscall) = syscall_from_strace_line(&line) else {
             continue;
         };
@@ -325,6 +363,13 @@ fn write_finalized_audit_trace(raw_path: &Path, output_path: &Path) -> Result<()
         .context("failed to flush seccomp audit trace records")?;
     out.sync_all()
         .context("failed to sync seccomp audit trace records")?;
+    if !marker_seen {
+        bail!(
+            "raw seccomp strace log '{}' did not contain audit start marker '{}'; refusing to publish unscoped JSONL trace",
+            raw_path.display(),
+            AUDIT_START_MARKER_NAME
+        );
+    }
     Ok(())
 }
 
@@ -368,18 +413,22 @@ pub(crate) fn synthesize_policy(input: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn strace_exclusion_filter_from_policy(policy_path: &Path) -> Result<String> {
-    let syscalls = allowed_syscalls_from_policy(policy_path)?;
+pub(crate) fn strace_exclusion_filter_from_policy(policy_path: &Path) -> Result<Option<String>> {
+    let mut syscalls = allowed_syscalls_from_policy(policy_path)?;
     if syscalls.is_empty() {
         bail!(
             "seccomp gap audit baseline policy '{}' has an empty main_thread.filter allowlist",
             policy_path.display()
         );
     }
-    Ok(format!(
+    syscalls.remove(AUDIT_START_MARKER_SYSCALL);
+    if syscalls.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
         "trace=!{}",
         syscalls.into_iter().collect::<Vec<_>>().join(",")
-    ))
+    )))
 }
 
 pub(crate) fn allowed_syscalls_from_policy(policy_path: &Path) -> Result<BTreeSet<String>> {
@@ -613,6 +662,30 @@ fn syscall_from_strace_line(line: &str) -> Option<String> {
     valid_syscall_name(syscall).then(|| syscall.to_owned())
 }
 
+fn is_audit_start_marker_line(line: &str) -> bool {
+    let line = strip_pid_prefix(line.trim());
+    line.starts_with(AUDIT_START_MARKER_SYSCALL)
+        && line.contains(AUDIT_START_MARKER_NAME)
+        && syscall_from_strace_line(line).as_deref() == Some(AUDIT_START_MARKER_SYSCALL)
+}
+
+fn audit_start_marker_fd(line: &str) -> Option<i32> {
+    if !is_audit_start_marker_line(line) {
+        return None;
+    }
+    let (_, result) = strip_pid_prefix(line.trim()).rsplit_once(" = ")?;
+    result.split_whitespace().next()?.parse().ok()
+}
+
+fn is_close_of_fd_line(line: &str, fd: i32) -> bool {
+    let line = strip_pid_prefix(line.trim());
+    let Some(rest) = line.strip_prefix("close(") else {
+        return false;
+    };
+    rest.strip_prefix(&fd.to_string())
+        .is_some_and(|rest| rest.starts_with(')'))
+}
+
 fn strip_pid_prefix(line: &str) -> &str {
     if let Some(rest) = line.strip_prefix("[pid ") {
         let Some((_, after)) = rest.split_once(']') else {
@@ -685,6 +758,22 @@ mod tests {
     }
 
     #[test]
+    fn detects_audit_start_marker_with_pid_prefix() {
+        assert!(is_audit_start_marker_line(
+            "[pid 123] memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 5"
+        ));
+        assert!(is_audit_start_marker_line(
+            "123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 5"
+        ));
+        assert!(!is_audit_start_marker_line(
+            "[pid 123] memfd_create(\"other\", MFD_CLOEXEC) = 5"
+        ));
+        assert!(!is_audit_start_marker_line(
+            "[pid 123] openat(AT_FDCWD, \"loftd-seccomp-audit-start\", O_RDONLY) = 5"
+        ));
+    }
+
+    #[test]
     fn prepares_audit_trace_and_raw_trace_parent_dirs() {
         let dir = tempfile::tempdir().expect("tempdir");
         let trace = dir.path().join("nested").join("trace.jsonl");
@@ -707,7 +796,11 @@ mod tests {
         let raw = raw_strace_path(&trace);
         fs::write(
             &raw,
-            "123 read(0, \"\", 1) = 0\n123 write(1, \"x\", 1) = 1\n",
+            "123 landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION) = 6\n\
+             123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\
+             123 close(7) = 0\n\
+             123 read(0, \"\", 1) = 0\n\
+             123 write(1, \"x\", 1) = 1\n",
         )
         .expect("write raw trace");
 
@@ -722,12 +815,34 @@ mod tests {
     }
 
     #[test]
+    fn finalization_fails_closed_when_marker_is_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("trace.jsonl");
+        let raw = raw_strace_path(&trace);
+        fs::write(&trace, "old finalized trace\n").expect("write old trace");
+        fs::write(&raw, "123 read(0, \"\", 1) = 0\n").expect("write raw trace");
+
+        let err = finalize_audit_trace(&trace).expect_err("missing marker should fail");
+
+        assert!(format!("{err:#}").contains("did not contain audit start marker"));
+        assert_eq!(
+            fs::read_to_string(&trace).expect("old trace should remain"),
+            "old finalized trace\n"
+        );
+        assert!(!finalized_trace_temp_path(&trace).exists());
+    }
+
+    #[test]
     fn finalization_failure_preserves_existing_trace() {
         let dir = tempfile::tempdir().expect("tempdir");
         let trace = dir.path().join("trace.jsonl");
         let raw = raw_strace_path(&trace);
         fs::write(&trace, "old finalized trace\n").expect("write old trace");
-        fs::write(&raw, b"123 read(0, \"\", 1) = 0\n\xff\n").expect("write bad raw trace");
+        fs::write(
+            &raw,
+            b"123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\xff\n",
+        )
+        .expect("write bad raw trace");
 
         let err = finalize_audit_trace(&trace).expect_err("bad raw trace should fail");
 
@@ -901,7 +1016,55 @@ mod tests {
 
         let filter = strace_exclusion_filter_from_policy(&policy).expect("gap filter");
 
-        assert_eq!(filter, "trace=!read,write");
+        assert_eq!(filter, Some("trace=!read,write".to_owned()));
+    }
+
+    #[test]
+    fn gap_audit_strace_filter_keeps_marker_syscall_visible() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("policy.json");
+        fs::write(
+            &policy,
+            r#"{
+              "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                  { "syscall": "write" },
+                  { "syscall": "memfd_create" },
+                  { "syscall": "read" }
+                ]
+              }
+            }"#,
+        )
+        .expect("write policy");
+
+        let filter = strace_exclusion_filter_from_policy(&policy).expect("gap filter");
+
+        assert_eq!(filter, Some("trace=!read,write".to_owned()));
+    }
+
+    #[test]
+    fn gap_audit_omits_filter_when_only_marker_syscall_was_allowed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = dir.path().join("policy.json");
+        fs::write(
+            &policy,
+            r#"{
+              "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                  { "syscall": "memfd_create" }
+                ]
+              }
+            }"#,
+        )
+        .expect("write policy");
+
+        let filter = strace_exclusion_filter_from_policy(&policy).expect("gap filter");
+
+        assert_eq!(filter, None);
     }
 
     #[test]

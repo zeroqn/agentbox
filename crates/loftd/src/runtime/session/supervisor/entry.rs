@@ -286,7 +286,12 @@ mod tests {
         let trace_path = temp.path().join("trace.jsonl");
         std::fs::write(
             raw_strace_path(&trace_path),
-            "[pid 123] openat(AT_FDCWD, \"/x\", O_RDONLY) = 3\n",
+            format!(
+                "[pid 123] memfd_create(\"{}\", MFD_CLOEXEC) = 5\n\
+                 [pid 123] close(5) = 0\n\
+                 [pid 123] openat(AT_FDCWD, \"/x\", O_RDONLY) = 3\n",
+                seccomp::AUDIT_START_MARKER_NAME
+            ),
         )
         .expect("raw trace");
         let seccomp = SeccompMode::Audit(AuditMode::Full {

@@ -1,10 +1,13 @@
 //! Direct libkrun launch sequencing from a prepared `LaunchConfig`.
 
 use anyhow::{Context, Result, anyhow, bail};
+#[cfg(test)]
+use std::cell::RefCell;
 use std::path::Path;
 
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::publish::tsi_port_map;
+use crate::runtime::seccomp::{self, SeccompMode};
 use crate::runtime::session::supervisor::rlimits::host_nofile_hard_limit;
 
 use crate::runtime::vm::libkrun::api::LibkrunApi;
@@ -12,6 +15,41 @@ use crate::runtime::vm::libkrun::api::LibkrunApi;
 pub(in crate::runtime::vm::libkrun) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
 pub(in crate::runtime::vm::libkrun) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+
+#[cfg(test)]
+type AuditStartMarkerHook = Box<dyn FnMut() -> Result<()>>;
+
+#[cfg(test)]
+thread_local! {
+    static AUDIT_START_MARKER_HOOK: RefCell<Option<AuditStartMarkerHook>> =
+        RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::runtime) fn with_audit_start_marker_hook_for_test<T>(
+    hook: impl FnMut() -> Result<()> + 'static,
+    action: impl FnOnce() -> T,
+) -> T {
+    struct MarkerHookGuard;
+
+    impl Drop for MarkerHookGuard {
+        fn drop(&mut self) {
+            AUDIT_START_MARKER_HOOK.with(|hook| {
+                *hook.borrow_mut() = None;
+            });
+        }
+    }
+
+    AUDIT_START_MARKER_HOOK.with(|slot| {
+        assert!(
+            slot.borrow().is_none(),
+            "nested seccomp audit marker hooks are not supported"
+        );
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+    let _guard = MarkerHookGuard;
+    action()
+}
 
 #[derive(Debug)]
 pub(in crate::runtime) struct DirectLibkrunLauncher<A> {
@@ -228,6 +266,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         tracing::debug!(ctx_id, "krun_set_rlimits: complete");
         before_start_enter()?;
         tracing::debug!(ctx_id, "krun_start_enter: begin");
+        emit_audit_start_marker_for_launch(config)?;
         let rc = self.api.start_enter(ctx_id)?;
         tracing::debug!(ctx_id, rc, "krun_start_enter: returned");
         check_start("krun_start_enter", rc)
@@ -268,6 +307,25 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         tracing::debug!(ctx_id, "krun_set_nested_virt: complete");
         Ok(())
     }
+}
+
+fn emit_audit_start_marker_for_launch(config: &LaunchConfig) -> Result<()> {
+    if !matches!(config.seccomp, SeccompMode::Audit(_)) {
+        return Ok(());
+    }
+
+    #[cfg(test)]
+    {
+        let hook_result = AUDIT_START_MARKER_HOOK.with(|slot| {
+            let mut hook = slot.borrow_mut();
+            hook.as_mut().map(|hook| hook())
+        });
+        if let Some(result) = hook_result {
+            return result;
+        }
+    }
+
+    seccomp::emit_audit_start_marker()
 }
 
 pub(in crate::runtime::vm::libkrun) fn guest_nofile_rlimit_entry(
