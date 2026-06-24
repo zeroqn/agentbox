@@ -117,7 +117,7 @@
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-10785304ea0b";
+    tag = "sha-386950b8efcf";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
@@ -132,11 +132,11 @@
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-10785304ea0b";
+    tag = "sha-386950b8efcf";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-yB3z3kwp6fg3xi4Uj+BpwlDqH6o+aHxtMzIKNgSXZFg=";
+        hash = "sha256-KanWBQ9Zss5SKSc94qlFBwHJL8rlI7uJZQI0Vn1ZmM8=";
       };
     };
   };
