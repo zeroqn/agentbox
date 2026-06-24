@@ -4,6 +4,21 @@
     "match_action": "allow",
     "filter": [
       {
+        "syscall": "accept"
+      },
+      {
+        "syscall": "access"
+      },
+      {
+        "syscall": "bind"
+      },
+      {
+        "syscall": "capget"
+      },
+      {
+        "syscall": "capset"
+      },
+      {
         "syscall": "clone3"
       },
       {
@@ -28,13 +43,46 @@
         "syscall": "eventfd2"
       },
       {
+        "syscall": "exit"
+      },
+      {
         "syscall": "exit_group"
+      },
+      {
+        "syscall": "fchmodat"
+      },
+      {
+        "syscall": "fchownat"
       },
       {
         "syscall": "fcntl"
       },
       {
+        "syscall": "fdatasync"
+      },
+      {
+        "syscall": "fgetxattr"
+      },
+      {
+        "syscall": "flistxattr"
+      },
+      {
+        "syscall": "fsetxattr"
+      },
+      {
+        "syscall": "fstatfs"
+      },
+      {
+        "syscall": "fsync"
+      },
+      {
+        "syscall": "ftruncate"
+      },
+      {
         "syscall": "futex"
+      },
+      {
+        "syscall": "getdents64"
       },
       {
         "syscall": "getpeername"
@@ -49,13 +97,37 @@
         "syscall": "ioctl"
       },
       {
+        "syscall": "linkat"
+      },
+      {
+        "syscall": "listen"
+      },
+      {
+        "syscall": "llistxattr"
+      },
+      {
+        "syscall": "lseek"
+      },
+      {
         "syscall": "madvise"
+      },
+      {
+        "syscall": "mkdirat"
+      },
+      {
+        "syscall": "mknodat"
       },
       {
         "syscall": "mmap"
       },
       {
+        "syscall": "newfstatat"
+      },
+      {
         "syscall": "openat"
+      },
+      {
+        "syscall": "poll"
       },
       {
         "syscall": "prctl"
@@ -64,10 +136,28 @@
         "syscall": "pread64"
       },
       {
+        "syscall": "preadv"
+      },
+      {
         "syscall": "pwrite64"
       },
       {
+        "syscall": "pwritev"
+      },
+      {
         "syscall": "read"
+      },
+      {
+        "syscall": "readlinkat"
+      },
+      {
+        "syscall": "recvfrom"
+      },
+      {
+        "syscall": "renameat2"
+      },
+      {
+        "syscall": "rseq"
       },
       {
         "syscall": "rt_sigaction"
@@ -76,10 +166,22 @@
         "syscall": "rt_sigprocmask"
       },
       {
+        "syscall": "rt_sigreturn"
+      },
+      {
         "syscall": "sched_yield"
       },
       {
         "syscall": "sendto"
+      },
+      {
+        "syscall": "set_robust_list"
+      },
+      {
+        "syscall": "setresgid"
+      },
+      {
+        "syscall": "setresuid"
       },
       {
         "syscall": "setsockopt"
@@ -94,7 +196,19 @@
         "syscall": "statx"
       },
       {
+        "syscall": "symlinkat"
+      },
+      {
         "syscall": "tgkill"
+      },
+      {
+        "syscall": "umask"
+      },
+      {
+        "syscall": "unlinkat"
+      },
+      {
+        "syscall": "utimensat"
       },
       {
         "syscall": "write"
