@@ -4,27 +4,6 @@
     "match_action": "allow",
     "filter": [
       {
-        "syscall": "accept"
-      },
-      {
-        "syscall": "access"
-      },
-      {
-        "syscall": "arch_prctl"
-      },
-      {
-        "syscall": "bind"
-      },
-      {
-        "syscall": "brk"
-      },
-      {
-        "syscall": "capget"
-      },
-      {
-        "syscall": "capset"
-      },
-      {
         "syscall": "clone3"
       },
       {
@@ -49,67 +28,13 @@
         "syscall": "eventfd2"
       },
       {
-        "syscall": "execve"
-      },
-      {
-        "syscall": "exit"
-      },
-      {
         "syscall": "exit_group"
-      },
-      {
-        "syscall": "fchmod"
-      },
-      {
-        "syscall": "fchmodat"
-      },
-      {
-        "syscall": "fchownat"
       },
       {
         "syscall": "fcntl"
       },
       {
-        "syscall": "fgetxattr"
-      },
-      {
-        "syscall": "fsconfig"
-      },
-      {
-        "syscall": "fsetxattr"
-      },
-      {
-        "syscall": "fsmount"
-      },
-      {
-        "syscall": "fsopen"
-      },
-      {
-        "syscall": "fstat"
-      },
-      {
-        "syscall": "fstatfs"
-      },
-      {
-        "syscall": "fsync"
-      },
-      {
-        "syscall": "ftruncate"
-      },
-      {
         "syscall": "futex"
-      },
-      {
-        "syscall": "getdents64"
-      },
-      {
-        "syscall": "getegid"
-      },
-      {
-        "syscall": "geteuid"
-      },
-      {
-        "syscall": "getgid"
       },
       {
         "syscall": "getpeername"
@@ -121,61 +46,16 @@
         "syscall": "getrandom"
       },
       {
-        "syscall": "gettid"
-      },
-      {
-        "syscall": "getuid"
-      },
-      {
-        "syscall": "getxattr"
-      },
-      {
         "syscall": "ioctl"
-      },
-      {
-        "syscall": "listen"
-      },
-      {
-        "syscall": "lseek"
       },
       {
         "syscall": "madvise"
       },
       {
-        "syscall": "mkdir"
-      },
-      {
-        "syscall": "mkdirat"
-      },
-      {
-        "syscall": "mknodat"
-      },
-      {
         "syscall": "mmap"
       },
       {
-        "syscall": "move_mount"
-      },
-      {
-        "syscall": "mprotect"
-      },
-      {
-        "syscall": "munmap"
-      },
-      {
-        "syscall": "newfstatat"
-      },
-      {
-        "syscall": "open"
-      },
-      {
-        "syscall": "open_tree"
-      },
-      {
         "syscall": "openat"
-      },
-      {
-        "syscall": "poll"
       },
       {
         "syscall": "prctl"
@@ -184,34 +64,10 @@
         "syscall": "pread64"
       },
       {
-        "syscall": "preadv"
-      },
-      {
-        "syscall": "prlimit64"
-      },
-      {
         "syscall": "pwrite64"
       },
       {
-        "syscall": "pwritev"
-      },
-      {
         "syscall": "read"
-      },
-      {
-        "syscall": "readlink"
-      },
-      {
-        "syscall": "readlinkat"
-      },
-      {
-        "syscall": "recvfrom"
-      },
-      {
-        "syscall": "renameat2"
-      },
-      {
-        "syscall": "rseq"
       },
       {
         "syscall": "rt_sigaction"
@@ -220,37 +76,10 @@
         "syscall": "rt_sigprocmask"
       },
       {
-        "syscall": "rt_sigreturn"
-      },
-      {
-        "syscall": "sched_getaffinity"
-      },
-      {
         "syscall": "sched_yield"
       },
       {
         "syscall": "sendto"
-      },
-      {
-        "syscall": "set_robust_list"
-      },
-      {
-        "syscall": "set_tid_address"
-      },
-      {
-        "syscall": "setfsgid"
-      },
-      {
-        "syscall": "setfsuid"
-      },
-      {
-        "syscall": "setns"
-      },
-      {
-        "syscall": "setresgid"
-      },
-      {
-        "syscall": "setresuid"
       },
       {
         "syscall": "setsockopt"
@@ -259,37 +88,13 @@
         "syscall": "shutdown"
       },
       {
-        "syscall": "sigaltstack"
-      },
-      {
         "syscall": "socket"
       },
       {
         "syscall": "statx"
       },
       {
-        "syscall": "symlinkat"
-      },
-      {
-        "syscall": "sysinfo"
-      },
-      {
         "syscall": "tgkill"
-      },
-      {
-        "syscall": "umask"
-      },
-      {
-        "syscall": "umount2"
-      },
-      {
-        "syscall": "unlinkat"
-      },
-      {
-        "syscall": "utimensat"
-      },
-      {
-        "syscall": "wait4"
       },
       {
         "syscall": "write"
