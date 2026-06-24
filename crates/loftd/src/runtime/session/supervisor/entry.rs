@@ -164,7 +164,11 @@ fn finalize_helper_seccomp_audit(run_result: Result<()>, seccomp_mode: &SeccompM
     let Some(trace_path) = seccomp_mode.audit_trace_path() else {
         return run_result;
     };
-    let trace_result = seccomp::finalize_audit_trace(trace_path).with_context(|| {
+    let trace_result = seccomp::finalize_audit_trace_with_baseline(
+        trace_path,
+        seccomp_mode.audit_baseline_policy_path(),
+    )
+    .with_context(|| {
         format!(
             "failed to finalize loftd seccomp audit trace '{}'",
             trace_path.display()
@@ -304,6 +308,48 @@ mod tests {
         assert!(format!("{err:#}").contains("readiness failed"));
         let trace = std::fs::read_to_string(trace_path).expect("finalized trace");
         assert!(trace.contains("\"syscall\":\"openat\""));
+    }
+
+    #[test]
+    fn gap_audit_finalization_threads_baseline_policy_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let trace_path = temp.path().join("denied.jsonl");
+        let policy_path = temp.path().join("policy.json");
+        std::fs::write(
+            &policy_path,
+            r#"{
+              "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                  { "syscall": "memfd_create" },
+                  { "syscall": "openat" }
+                ]
+              }
+            }"#,
+        )
+        .expect("policy");
+        std::fs::write(
+            raw_strace_path(&trace_path),
+            format!(
+                "[pid 123] memfd_create(\"{}\", MFD_CLOEXEC) = 5\n\
+                 [pid 123] close(5) = 0\n\
+                 [pid 123] openat(AT_FDCWD, \"/already-allowed\", O_RDONLY) = 3\n\
+                 [pid 123] ioctl(3, KVM_RUN, 0) = 0\n",
+                seccomp::AUDIT_START_MARKER_NAME
+            ),
+        )
+        .expect("raw trace");
+        let seccomp = SeccompMode::Audit(AuditMode::Gap {
+            baseline_policy_path: policy_path,
+            trace_path: trace_path.clone(),
+        });
+
+        finalize_helper_seccomp_audit(Ok(()), &seccomp).expect("finalize gap audit");
+
+        let trace = std::fs::read_to_string(trace_path).expect("finalized trace");
+        assert!(!trace.contains("\"syscall\":\"openat\""));
+        assert!(trace.contains("\"syscall\":\"ioctl\""));
     }
 
     #[test]

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const AUDIT_START_MARKER_NAME: &str = "loftd-seccomp-audit-start";
 const AUDIT_START_MARKER_SYSCALL: &str = "memfd_create";
+const LINEAGE_SYSCALLS: &[&str] = &["clone", "clone3", "fork", "vfork"];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum SeccompMode {
@@ -306,15 +307,21 @@ pub(crate) fn emit_audit_start_marker() -> Result<()> {
     }
 }
 
-pub(crate) fn finalize_audit_trace(trace_path: &Path) -> Result<()> {
+pub(crate) fn finalize_audit_trace_with_baseline(
+    trace_path: &Path,
+    baseline_policy_path: Option<&Path>,
+) -> Result<()> {
     let raw_path = raw_strace_path(trace_path);
     if let Some(parent) = trace_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!("failed to create seccomp trace dir '{}'", parent.display())
         })?;
     }
+    let baseline_syscalls = baseline_policy_path
+        .map(allowed_syscalls_from_policy)
+        .transpose()?;
     let temp_path = finalized_trace_temp_path(trace_path);
-    match write_finalized_audit_trace(&raw_path, &temp_path) {
+    match write_finalized_audit_trace(&raw_path, &temp_path, baseline_syscalls.as_ref()) {
         Ok(()) => fs::rename(&temp_path, trace_path).with_context(|| {
             format!(
                 "failed to publish finalized seccomp trace '{}' from '{}'",
@@ -329,17 +336,75 @@ pub(crate) fn finalize_audit_trace(trace_path: &Path) -> Result<()> {
     }
 }
 
-fn write_finalized_audit_trace(raw_path: &Path, output_path: &Path) -> Result<()> {
+#[derive(Debug, Clone)]
+struct AuditTraceScope {
+    marker_pid: u32,
+    marker_fd_to_skip_close: Option<i32>,
+    lineage_pids: BTreeSet<u32>,
+}
+
+fn write_finalized_audit_trace(
+    raw_path: &Path,
+    output_path: &Path,
+    baseline_syscalls: Option<&BTreeSet<String>>,
+) -> Result<()> {
+    let scope = audit_trace_scope(raw_path)?;
     let raw = fs::File::open(raw_path)
         .with_context(|| format!("failed to open raw strace log '{}'", raw_path.display()))?;
     let mut out = fs::File::create(output_path)
         .with_context(|| format!("failed to create seccomp trace '{}'", output_path.display()))?;
+    let mut marker_seen = false;
+    let mut marker_fd_to_skip_close = scope.marker_fd_to_skip_close;
+    for line in BufReader::new(raw).lines() {
+        let line = line.with_context(|| format!("failed to read '{}'", raw_path.display()))?;
+        if !marker_seen {
+            if is_audit_start_marker_line(&line) {
+                marker_seen = true;
+            }
+            continue;
+        }
+
+        let Some(line_pid) = strace_line_pid(&line) else {
+            continue;
+        };
+        if !scope.lineage_pids.contains(&line_pid) {
+            continue;
+        }
+        if line_pid == scope.marker_pid
+            && marker_fd_to_skip_close.is_some_and(|fd| is_close_of_fd_line(&line, fd))
+        {
+            marker_fd_to_skip_close = None;
+            continue;
+        }
+        let Some(syscall) = syscall_from_strace_line(&line) else {
+            continue;
+        };
+        if baseline_syscalls.is_some_and(|syscalls| syscalls.contains(&syscall)) {
+            continue;
+        }
+        let record = TraceRecord { syscall, raw: line };
+        serde_json::to_writer(&mut out, &record)
+            .context("failed to encode seccomp audit trace record")?;
+        out.write_all(b"\n")
+            .context("failed to write seccomp audit trace record")?;
+    }
+    out.flush()
+        .context("failed to flush seccomp audit trace records")?;
+    out.sync_all()
+        .context("failed to sync seccomp audit trace records")?;
+    Ok(())
+}
+
+fn audit_trace_scope(raw_path: &Path) -> Result<AuditTraceScope> {
+    let raw = fs::File::open(raw_path)
+        .with_context(|| format!("failed to open raw strace log '{}'", raw_path.display()))?;
     let mut marker_pid = None;
     let mut marker_fd_to_skip_close = None;
+    let mut lineage_edges = Vec::new();
     for line in BufReader::new(raw).lines() {
         let line = line.with_context(|| format!("failed to read '{}'", raw_path.display()))?;
         let line_pid = strace_line_pid(&line);
-        let Some(pid) = marker_pid else {
+        if marker_pid.is_none() {
             if is_audit_start_marker_line(&line) {
                 let pid = line_pid.ok_or_else(|| {
                     anyhow!(
@@ -352,36 +417,39 @@ fn write_finalized_audit_trace(raw_path: &Path, output_path: &Path) -> Result<()
                 marker_fd_to_skip_close = audit_start_marker_fd(&line);
             }
             continue;
-        };
+        }
 
-        if line_pid != Some(pid) {
-            continue;
-        }
-        if marker_fd_to_skip_close.is_some_and(|fd| is_close_of_fd_line(&line, fd)) {
-            marker_fd_to_skip_close = None;
-            continue;
-        }
-        let Some(syscall) = syscall_from_strace_line(&line) else {
+        let Some(parent_pid) = line_pid else {
             continue;
         };
-        let record = TraceRecord { syscall, raw: line };
-        serde_json::to_writer(&mut out, &record)
-            .context("failed to encode seccomp audit trace record")?;
-        out.write_all(b"\n")
-            .context("failed to write seccomp audit trace record")?;
+        if let Some(child_pid) = lineage_child_pid_from_strace_line(&line) {
+            lineage_edges.push((parent_pid, child_pid));
+        }
     }
-    out.flush()
-        .context("failed to flush seccomp audit trace records")?;
-    out.sync_all()
-        .context("failed to sync seccomp audit trace records")?;
-    if marker_pid.is_none() {
+    let Some(marker_pid) = marker_pid else {
         bail!(
             "raw seccomp strace log '{}' did not contain audit start marker '{}'; refusing to publish unscoped JSONL trace",
             raw_path.display(),
             AUDIT_START_MARKER_NAME
         );
+    };
+    let mut lineage_pids = BTreeSet::from([marker_pid]);
+    loop {
+        let mut added = false;
+        for (parent_pid, child_pid) in &lineage_edges {
+            if lineage_pids.contains(parent_pid) && lineage_pids.insert(*child_pid) {
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
     }
-    Ok(())
+    Ok(AuditTraceScope {
+        marker_pid,
+        marker_fd_to_skip_close,
+        lineage_pids,
+    })
 }
 
 fn finalized_trace_temp_path(trace_path: &Path) -> PathBuf {
@@ -433,6 +501,9 @@ pub(crate) fn strace_exclusion_filter_from_policy(policy_path: &Path) -> Result<
         );
     }
     syscalls.remove(AUDIT_START_MARKER_SYSCALL);
+    for syscall in LINEAGE_SYSCALLS {
+        syscalls.remove(*syscall);
+    }
     if syscalls.is_empty() {
         return Ok(None);
     }
@@ -673,6 +744,16 @@ fn syscall_from_strace_line(line: &str) -> Option<String> {
     valid_syscall_name(syscall).then(|| syscall.to_owned())
 }
 
+fn lineage_child_pid_from_strace_line(line: &str) -> Option<u32> {
+    let syscall = syscall_from_strace_line(line)?;
+    if !LINEAGE_SYSCALLS.contains(&syscall.as_str()) {
+        return None;
+    }
+    let (_, result) = strip_pid_prefix(line.trim()).rsplit_once(" = ")?;
+    let pid = result.split_whitespace().next()?.parse::<i64>().ok()?;
+    u32::try_from(pid).ok().filter(|pid| *pid > 0)
+}
+
 fn is_audit_start_marker_line(line: &str) -> bool {
     let line = strip_pid_prefix(line.trim());
     let marker_argument = format!("\"{AUDIT_START_MARKER_NAME}\"");
@@ -802,6 +883,40 @@ mod tests {
     }
 
     #[test]
+    fn parses_lineage_child_pid_from_strace_lines() {
+        assert_eq!(
+            lineage_child_pid_from_strace_line("4106 clone3({flags=CLONE_VM}, 88) = 4108"),
+            Some(4108)
+        );
+        assert_eq!(
+            lineage_child_pid_from_strace_line(
+                "4106 <... clone3 resumed>{flags=CLONE_VM}, 88) = 4109"
+            ),
+            Some(4109)
+        );
+        assert_eq!(
+            lineage_child_pid_from_strace_line("[pid 4108] clone(NULL) = 4136"),
+            Some(4136)
+        );
+        assert_eq!(
+            lineage_child_pid_from_strace_line("[pid 4108] fork() = 4137"),
+            Some(4137)
+        );
+        assert_eq!(
+            lineage_child_pid_from_strace_line("[pid 4108] vfork() = 4138"),
+            Some(4138)
+        );
+        assert_eq!(
+            lineage_child_pid_from_strace_line("4106 clone3({flags=CLONE_VM}, 88) = -1 EPERM"),
+            None
+        );
+        assert_eq!(
+            lineage_child_pid_from_strace_line("4106 read(0, \"\", 1) = 0"),
+            None
+        );
+    }
+
+    #[test]
     fn detects_audit_start_marker_with_pid_prefix() {
         assert!(is_audit_start_marker_line(
             "[pid 123] memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 5"
@@ -854,7 +969,7 @@ mod tests {
         )
         .expect("write raw trace");
 
-        finalize_audit_trace(&trace).expect("finalize trace");
+        finalize_audit_trace_with_baseline(&trace, None).expect("finalize trace");
 
         let syscalls = syscalls_from_trace(&trace).expect("read finalized trace");
         assert_eq!(
@@ -869,6 +984,130 @@ mod tests {
     }
 
     #[test]
+    fn finalizes_marker_descendant_lineage_syscalls() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("trace.jsonl");
+        let raw = raw_strace_path(&trace);
+        fs::write(
+            &raw,
+            "122 landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION) = 6\n\
+             123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\
+             123 close(7) = 0\n\
+             123 clone3({flags=CLONE_VM}, 88) = 124\n\
+             124 read(0, \"child\", 5) = 5\n\
+             124 clone(NULL) = 125\n\
+             125 write(1, \"grandchild\", 10) = 10\n\
+             126 openat(AT_FDCWD, \"/unrelated\", O_RDONLY) = 8\n\
+             122 umount2(\"/tmp/loftd/root\", 0) = 0\n",
+        )
+        .expect("write raw trace");
+
+        finalize_audit_trace_with_baseline(&trace, None).expect("finalize trace");
+
+        let syscalls = syscalls_from_trace(&trace).expect("read finalized trace");
+        assert_eq!(
+            syscalls,
+            BTreeSet::from([
+                "clone".to_owned(),
+                "clone3".to_owned(),
+                "read".to_owned(),
+                "write".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn finalizes_fork_vfork_lineage_and_excludes_non_lineage_process_creation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("trace.jsonl");
+        let raw = raw_strace_path(&trace);
+        fs::write(
+            &raw,
+            "123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\
+             123 close(7) = 0\n\
+             130 clone3({flags=CLONE_VM}, 88) = 131\n\
+             131 read(0, \"non-lineage clone child\", 23) = 23\n\
+             132 fork() = 133\n\
+             133 openat(AT_FDCWD, \"/non-lineage-fork-child\", O_RDONLY) = 8\n\
+             123 fork() = 124\n\
+             124 vfork() = 125\n\
+             125 write(1, \"lineage\", 7) = 7\n",
+        )
+        .expect("write raw trace");
+
+        finalize_audit_trace_with_baseline(&trace, None).expect("finalize trace");
+
+        let syscalls = syscalls_from_trace(&trace).expect("read finalized trace");
+        assert_eq!(
+            syscalls,
+            BTreeSet::from(["fork".to_owned(), "vfork".to_owned(), "write".to_owned()])
+        );
+        let trace_text = fs::read_to_string(&trace).expect("read finalized trace text");
+        assert!(!trace_text.contains("non-lineage"));
+    }
+
+    #[test]
+    fn finalization_includes_child_lines_seen_before_clone_return() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("trace.jsonl");
+        let raw = raw_strace_path(&trace);
+        fs::write(
+            &raw,
+            "123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\
+             124 ioctl(3, KVM_RUN, 0) = 0\n\
+             123 <... clone3 resumed>{flags=CLONE_VM}, 88) = 124\n\
+             122 openat(AT_FDCWD, \"/unrelated\", O_RDONLY) = 8\n",
+        )
+        .expect("write raw trace");
+
+        finalize_audit_trace_with_baseline(&trace, None).expect("finalize trace");
+
+        let syscalls = syscalls_from_trace(&trace).expect("read finalized trace");
+        assert_eq!(
+            syscalls,
+            BTreeSet::from(["clone3".to_owned(), "ioctl".to_owned()])
+        );
+    }
+
+    #[test]
+    fn gap_finalization_suppresses_baseline_lineage_syscalls_but_keeps_descendants() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("denied.jsonl");
+        let raw = raw_strace_path(&trace);
+        let policy = dir.path().join("policy.json");
+        fs::write(
+            &policy,
+            r#"{
+              "main_thread": {
+                "mismatch_action": "trap",
+                "match_action": "allow",
+                "filter": [
+                  { "syscall": "memfd_create" },
+                  { "syscall": "clone3" },
+                  { "syscall": "clone" }
+                ]
+              }
+            }"#,
+        )
+        .expect("write policy");
+        fs::write(
+            &raw,
+            "123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\
+             123 close(7) = 0\n\
+             123 clone3({flags=CLONE_VM}, 88) = 124\n\
+             124 clone(NULL) = 125\n\
+             125 ioctl(3, KVM_RUN, 0) = 0\n\
+             126 openat(AT_FDCWD, \"/unrelated\", O_RDONLY) = 8\n",
+        )
+        .expect("write raw trace");
+
+        finalize_audit_trace_with_baseline(&trace, Some(&policy)).expect("finalize gap trace");
+
+        let syscalls = syscalls_from_trace(&trace).expect("read finalized trace");
+        assert_eq!(syscalls, BTreeSet::from(["ioctl".to_owned()]));
+    }
+
+    #[test]
     fn finalization_fails_closed_when_start_marker_is_missing() {
         let dir = tempfile::tempdir().expect("tempdir");
         let trace = dir.path().join("trace.jsonl");
@@ -876,7 +1115,8 @@ mod tests {
         fs::write(&trace, "old finalized trace\n").expect("write old trace");
         fs::write(&raw, "123 read(0, \"\", 1) = 0\n").expect("write raw trace");
 
-        let err = finalize_audit_trace(&trace).expect_err("missing marker should fail");
+        let err = finalize_audit_trace_with_baseline(&trace, None)
+            .expect_err("missing marker should fail");
 
         assert!(format!("{err:#}").contains("did not contain audit start marker"));
         assert_eq!(
@@ -900,7 +1140,8 @@ mod tests {
         )
         .expect("write raw trace");
 
-        let err = finalize_audit_trace(&trace).expect_err("missing marker pid should fail");
+        let err = finalize_audit_trace_with_baseline(&trace, None)
+            .expect_err("missing marker pid should fail");
 
         assert!(format!("{err:#}").contains("did not contain traced PID"));
         assert_eq!(
@@ -922,7 +1163,8 @@ mod tests {
         )
         .expect("write bad raw trace");
 
-        let err = finalize_audit_trace(&trace).expect_err("bad raw trace should fail");
+        let err = finalize_audit_trace_with_baseline(&trace, None)
+            .expect_err("bad raw trace should fail");
 
         assert!(format!("{err:#}").contains("failed to read"));
         assert_eq!(
@@ -1110,6 +1352,10 @@ mod tests {
                 "filter": [
                   { "syscall": "write" },
                   { "syscall": "memfd_create" },
+                  { "syscall": "clone3" },
+                  { "syscall": "clone" },
+                  { "syscall": "fork" },
+                  { "syscall": "vfork" },
                   { "syscall": "read" }
                 ]
               }
@@ -1123,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn gap_audit_omits_filter_when_only_marker_syscall_was_allowed() {
+    fn gap_audit_omits_filter_when_only_marker_and_lineage_syscalls_were_allowed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let policy = dir.path().join("policy.json");
         fs::write(
@@ -1133,7 +1379,11 @@ mod tests {
                 "mismatch_action": "trap",
                 "match_action": "allow",
                 "filter": [
-                  { "syscall": "memfd_create" }
+                  { "syscall": "memfd_create" },
+                  { "syscall": "clone3" },
+                  { "syscall": "clone" },
+                  { "syscall": "fork" },
+                  { "syscall": "vfork" }
                 ]
               }
             }"#,
