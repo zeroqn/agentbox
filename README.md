@@ -930,11 +930,14 @@ Seccomp behavior:
   the libkrun VM-worker entrypoint under `strace -f`, writes a tracer-owned raw
   log, and converts it to the requested JSONL trace when the helper observes
   the VM worker exit. The raw `.strace` sidecar can include VM-worker setup
-  syscalls; the finalized JSONL starts after an internal marker emitted
-  immediately before `krun_start_enter`, so it is the stable input for
-  synthesis. Missing that marker fails trace finalization instead of publishing
-  an unscoped JSONL trace. The keep-id helper setup, including `newuidmap` and
-  `newgidmap`, is not traced. Use the raw `.strace` sidecar only for debugging.
+  and cleanup syscalls; the finalized JSONL starts after the internal start
+  marker emitted immediately before `krun_start_enter` and then keeps only
+  syscall lines from the traced PID that emitted that marker. This excludes
+  parent cleanup syscalls such as post-VM unmounts from policy synthesis input
+  while preserving the raw sidecar for diagnostics. Missing the start marker or
+  its traced PID fails trace finalization instead of publishing an unscoped
+  JSONL trace. The keep-id helper setup, including `newuidmap` and `newgidmap`,
+  is not traced. Use the raw `.strace` sidecar only for debugging.
 - `loftd seccomp synthesize --input <trace> --output <policy>` extracts syscall
   names from the trace and writes a deterministic `seccompiler` JSON policy with
   a `main_thread` allowlist.

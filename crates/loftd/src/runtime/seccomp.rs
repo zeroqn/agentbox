@@ -287,7 +287,7 @@ pub(crate) fn prepare_audit_trace_target(trace_path: &Path) -> Result<()> {
 
 pub(crate) fn emit_audit_start_marker() -> Result<()> {
     let name = std::ffi::CString::new(AUDIT_START_MARKER_NAME)
-        .context("seccomp audit marker name contains an interior NUL")?;
+        .context("seccomp audit start marker name contains an interior NUL")?;
     // SAFETY: syscall is invoked with a valid NUL-terminated marker name and the
     // close-on-exec flag. A successful marker fd is immediately closed below.
     let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), libc::MFD_CLOEXEC) };
@@ -334,16 +334,27 @@ fn write_finalized_audit_trace(raw_path: &Path, output_path: &Path) -> Result<()
         .with_context(|| format!("failed to open raw strace log '{}'", raw_path.display()))?;
     let mut out = fs::File::create(output_path)
         .with_context(|| format!("failed to create seccomp trace '{}'", output_path.display()))?;
-    let mut marker_seen = false;
+    let mut marker_pid = None;
     let mut marker_fd_to_skip_close = None;
     for line in BufReader::new(raw).lines() {
         let line = line.with_context(|| format!("failed to read '{}'", raw_path.display()))?;
-        if is_audit_start_marker_line(&line) {
-            marker_seen = true;
-            marker_fd_to_skip_close = audit_start_marker_fd(&line);
+        let line_pid = strace_line_pid(&line);
+        let Some(pid) = marker_pid else {
+            if is_audit_start_marker_line(&line) {
+                let pid = line_pid.ok_or_else(|| {
+                    anyhow!(
+                        "raw seccomp strace log '{}' start marker '{}' did not contain traced PID; refusing to publish unscoped JSONL trace",
+                        raw_path.display(),
+                        AUDIT_START_MARKER_NAME
+                    )
+                })?;
+                marker_pid = Some(pid);
+                marker_fd_to_skip_close = audit_start_marker_fd(&line);
+            }
             continue;
-        }
-        if !marker_seen {
+        };
+
+        if line_pid != Some(pid) {
             continue;
         }
         if marker_fd_to_skip_close.is_some_and(|fd| is_close_of_fd_line(&line, fd)) {
@@ -363,7 +374,7 @@ fn write_finalized_audit_trace(raw_path: &Path, output_path: &Path) -> Result<()
         .context("failed to flush seccomp audit trace records")?;
     out.sync_all()
         .context("failed to sync seccomp audit trace records")?;
-    if !marker_seen {
+    if marker_pid.is_none() {
         bail!(
             "raw seccomp strace log '{}' did not contain audit start marker '{}'; refusing to publish unscoped JSONL trace",
             raw_path.display(),
@@ -664,8 +675,9 @@ fn syscall_from_strace_line(line: &str) -> Option<String> {
 
 fn is_audit_start_marker_line(line: &str) -> bool {
     let line = strip_pid_prefix(line.trim());
+    let marker_argument = format!("\"{AUDIT_START_MARKER_NAME}\"");
     line.starts_with(AUDIT_START_MARKER_SYSCALL)
-        && line.contains(AUDIT_START_MARKER_NAME)
+        && line.contains(&marker_argument)
         && syscall_from_strace_line(line).as_deref() == Some(AUDIT_START_MARKER_SYSCALL)
 }
 
@@ -684,6 +696,21 @@ fn is_close_of_fd_line(line: &str, fd: i32) -> bool {
     };
     rest.strip_prefix(&fd.to_string())
         .is_some_and(|rest| rest.starts_with(')'))
+}
+
+fn strace_line_pid(line: &str) -> Option<u32> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("[pid ") {
+        let (pid, _) = rest.split_once(']')?;
+        return pid.trim().parse().ok();
+    }
+
+    let (pid, _) = line.split_once(char::is_whitespace)?;
+    if !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()) {
+        pid.parse().ok()
+    } else {
+        None
+    }
 }
 
 fn strip_pid_prefix(line: &str) -> &str {
@@ -758,6 +785,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_strace_pid_prefixes() {
+        assert_eq!(
+            strace_line_pid("[pid 123] openat(AT_FDCWD, \"/tmp\", O_RDONLY) = 3"),
+            Some(123)
+        );
+        assert_eq!(
+            strace_line_pid("40860 execve(\"/nix/store/bin/loftd\", [\"loftd\"], 0x1234) = 0"),
+            Some(40860)
+        );
+        assert_eq!(
+            strace_line_pid("openat(AT_FDCWD, \"/tmp\", O_RDONLY) = 3"),
+            None
+        );
+        assert_eq!(strace_line_pid("+++ exited with 0 +++"), None);
+    }
+
+    #[test]
     fn detects_audit_start_marker_with_pid_prefix() {
         assert!(is_audit_start_marker_line(
             "[pid 123] memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 5"
@@ -767,6 +811,9 @@ mod tests {
         ));
         assert!(!is_audit_start_marker_line(
             "[pid 123] memfd_create(\"other\", MFD_CLOEXEC) = 5"
+        ));
+        assert!(!is_audit_start_marker_line(
+            "[pid 123] memfd_create(\"loftd-seccomp-audit-start-extra\", MFD_CLOEXEC) = 5"
         ));
         assert!(!is_audit_start_marker_line(
             "[pid 123] openat(AT_FDCWD, \"loftd-seccomp-audit-start\", O_RDONLY) = 5"
@@ -796,11 +843,14 @@ mod tests {
         let raw = raw_strace_path(&trace);
         fs::write(
             &raw,
-            "123 landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION) = 6\n\
+            "122 landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION) = 6\n\
              123 memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\
              123 close(7) = 0\n\
+             124 read(0, \"other tid\", 9) = 9\n\
              123 read(0, \"\", 1) = 0\n\
-             123 write(1, \"x\", 1) = 1\n",
+             123 write(1, \"x\", 1) = 1\n\
+             122 umount2(\"/tmp/loftd/root\", 0) = 0\n\
+             123 exit_group(0) = ?\n",
         )
         .expect("write raw trace");
 
@@ -809,13 +859,17 @@ mod tests {
         let syscalls = syscalls_from_trace(&trace).expect("read finalized trace");
         assert_eq!(
             syscalls,
-            BTreeSet::from(["read".to_owned(), "write".to_owned()])
+            BTreeSet::from([
+                "exit_group".to_owned(),
+                "read".to_owned(),
+                "write".to_owned()
+            ])
         );
         assert!(!finalized_trace_temp_path(&trace).exists());
     }
 
     #[test]
-    fn finalization_fails_closed_when_marker_is_missing() {
+    fn finalization_fails_closed_when_start_marker_is_missing() {
         let dir = tempfile::tempdir().expect("tempdir");
         let trace = dir.path().join("trace.jsonl");
         let raw = raw_strace_path(&trace);
@@ -825,6 +879,30 @@ mod tests {
         let err = finalize_audit_trace(&trace).expect_err("missing marker should fail");
 
         assert!(format!("{err:#}").contains("did not contain audit start marker"));
+        assert_eq!(
+            fs::read_to_string(&trace).expect("old trace should remain"),
+            "old finalized trace\n"
+        );
+        assert!(!finalized_trace_temp_path(&trace).exists());
+    }
+
+    #[test]
+    fn finalization_fails_closed_when_start_marker_pid_is_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trace = dir.path().join("trace.jsonl");
+        let raw = raw_strace_path(&trace);
+        fs::write(&trace, "old finalized trace\n").expect("write old trace");
+        fs::write(
+            &raw,
+            "memfd_create(\"loftd-seccomp-audit-start\", MFD_CLOEXEC) = 7\n\
+             123 close(7) = 0\n\
+             123 read(0, \"\", 1) = 0\n",
+        )
+        .expect("write raw trace");
+
+        let err = finalize_audit_trace(&trace).expect_err("missing marker pid should fail");
+
+        assert!(format!("{err:#}").contains("did not contain traced PID"));
         assert_eq!(
             fs::read_to_string(&trace).expect("old trace should remain"),
             "old finalized trace\n"

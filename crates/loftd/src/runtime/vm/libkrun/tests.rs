@@ -727,7 +727,7 @@ fn pre_enter_hook_runs_after_setup_and_before_start() {
 }
 
 #[test]
-fn audit_start_marker_runs_after_pre_enter_and_immediately_before_start() {
+fn audit_start_marker_runs_immediately_before_start_enter() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut config = config();
     config.seccomp = SeccompMode::Audit(AuditMode::Full {
@@ -762,19 +762,18 @@ fn audit_start_marker_runs_after_pre_enter_and_immediately_before_start() {
     let marker_index = calls
         .iter()
         .position(|call| matches!(call, Call::AuditStartMarker))
-        .expect("audit marker should run");
+        .expect("audit start marker should run");
     let start_index = calls
         .iter()
         .position(|call| matches!(call, Call::StartEnter(..)))
         .expect("launch should start");
-
     assert!(set_exec_index < pre_enter_index);
     assert!(pre_enter_index < marker_index);
     assert_eq!(marker_index + 1, start_index);
 }
 
 #[test]
-fn audit_start_marker_is_not_emitted_outside_audit_mode() {
+fn audit_markers_are_not_emitted_outside_audit_mode() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let marker_calls = calls.clone();
 
@@ -971,4 +970,38 @@ fn start_failure_is_classified() {
 
     assert!(format!("{err:#}").contains("libkrun start failed"));
     assert!(calls.borrow().contains(&Call::StartEnter(7)));
+}
+
+#[test]
+fn audit_start_marker_runs_before_nonzero_start_result_is_classified() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut config = config();
+    config.seccomp = SeccompMode::Audit(AuditMode::Full {
+        trace_path: PathBuf::from("/tmp/loftd-seccomp-audit.jsonl"),
+    });
+
+    let marker_calls = calls.clone();
+    let err = with_audit_start_marker_hook_for_test(
+        move || {
+            marker_calls.borrow_mut().push(Call::AuditStartMarker);
+            Ok(())
+        },
+        || {
+            DirectLibkrunLauncher::new(FakeLibkrunApi::failing(calls.clone(), "krun_start_enter"))
+                .start_enter(&config)
+        },
+    )
+    .expect_err("nonzero start rc should fail after start marker");
+
+    assert!(format!("{err:#}").contains("libkrun start failed"));
+    let calls = calls.borrow();
+    let start_marker_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::AuditStartMarker))
+        .expect("audit start marker should run");
+    let start_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::StartEnter(..)))
+        .expect("launch should start");
+    assert_eq!(start_marker_index + 1, start_index);
 }

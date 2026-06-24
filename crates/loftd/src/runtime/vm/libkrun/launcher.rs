@@ -268,7 +268,11 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
         tracing::debug!(ctx_id, "krun_start_enter: begin");
         emit_audit_start_marker_for_launch(config)?;
         let rc = self.api.start_enter(ctx_id)?;
-        tracing::debug!(ctx_id, rc, "krun_start_enter: returned");
+        tracing::debug!(
+            ctx_id,
+            rc,
+            "krun_start_enter returned before successful VM takeover"
+        );
         check_start("krun_start_enter", rc)
     }
 
