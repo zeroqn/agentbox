@@ -942,14 +942,14 @@ mod tests {
     }
 
     #[test]
-    fn packaged_default_seccomp_policy_allows_post_vm_cleanup_syscalls() {
+    fn packaged_default_seccomp_policy_excludes_post_vm_cleanup_syscalls() {
         let policy: serde_json::Value =
             serde_json::from_slice(include_bytes!("../../assets/seccomp/default.json"))
                 .expect("default seccomp policy should parse");
         let syscalls =
             allowed_syscalls_from_policy_value(&policy).expect("default policy should inspect");
 
-        assert!(syscalls.contains("umount2"));
+        assert!(!syscalls.contains("umount2"));
     }
 
     #[test]
