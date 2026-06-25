@@ -37,6 +37,7 @@ impl ContainerStoreBackend {
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
     after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
   loftd --daemon
+  loftd --landlock=all -- bash -lc 'echo ok'
   loftd --landlock=best-effort -- bash -lc 'echo ok'
   loftd --seccomp=off -- bash -lc 'echo ok'
   loftd images list
@@ -121,7 +122,7 @@ pub(crate) struct Cli {
         value_enum,
         value_name = "MODE",
         help = "Configure host-side loftd Landlock mode for this run",
-        long_help = "Configure host-side loftd Landlock mode for this run. Allowed values are enforce, best-effort, and off. If omitted for a normal task launch, loftd uses enforce and fails closed unless filesystem, device ioctl, IPC scope, TCP BindTcp, and audit-flag Landlock coverage is fully enforced. best-effort applies the supported subset and reports degraded coverage; off disables this host VM-worker Landlock layer. Landlock is applied to the VM worker before seccomp and before krun_start_enter; it does not confine the guest kernel, guest Podman, or helper/network-manager/passt processes started before the VM worker."
+        long_help = "Configure host-side loftd Landlock mode for this run. Allowed values are all, relax, best-effort, and off. If omitted for a normal task launch, loftd uses relax: filesystem, device ioctl, IPC scope, and audit-flag Landlock coverage remain fail-closed, but TCP BindTcp is not handled so guest-local listeners can bind without publishing a host port. all preserves the stricter BindTcp policy and allows only simple TCP --publish-derived host ports. best-effort uses the relax policy shape but applies the supported subset and reports degraded coverage when the current kernel lacks target Landlock features. off disables this host VM-worker Landlock layer. Landlock is applied to the VM worker before seccomp and before krun_start_enter; it does not confine the guest kernel, guest Podman, or helper/network-manager/passt processes started before the VM worker."
     )]
     landlock: Option<LandlockMode>,
 
@@ -655,7 +656,8 @@ mod tests {
     #[test]
     fn parses_landlock_runtime_modes() {
         for (value, expected) in [
-            ("enforce", LandlockMode::Enforce),
+            ("all", LandlockMode::All),
+            ("relax", LandlockMode::Relax),
             ("best-effort", LandlockMode::BestEffort),
             ("off", LandlockMode::Off),
         ] {
@@ -669,7 +671,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_landlock_runtime_modes() {
-        for value in ["", "audit", "default", "best_effort"] {
+        for value in ["", "audit", "default", "best_effort", "enforce"] {
             let err = Cli::try_parse_from(["loftd", "--landlock", value])
                 .expect_err("bad landlock mode should fail");
             assert!(matches!(

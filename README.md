@@ -72,8 +72,9 @@ managed sidecar.
   default TSI and `--passt` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
 - Linux Landlock enabled in the host kernel for default `loftd` task launches.
-  Ordinary launches now use host-side Landlock `enforce` mode by default; use
-  `--landlock=best-effort` on older/degraded kernels or `--landlock=off` as an
+  Ordinary launches now use host-side Landlock `relax` mode by default; use
+  `--landlock=all` for stricter TCP bind handling,
+  `--landlock=best-effort` on older/degraded kernels, or `--landlock=off` as an
   explicit debugging escape hatch.
 - The packaged loftd default seccomp policy at
   `$out/share/loftd/seccomp/default.json` for ordinary `loftd` task launches
@@ -813,6 +814,7 @@ Run/help:
 ./result/bin/loftd --pull-latest
 ./result/bin/loftd --image ghcr.io/example/loftd:dev
 ./result/bin/loftd --daemon
+./result/bin/loftd --landlock=all -- bash -lc 'echo ok'
 ./result/bin/loftd --landlock=best-effort -- bash -lc 'echo ok'
 ./result/bin/loftd --landlock=off -- bash -lc 'echo ok'
 ./result/bin/loftd --seccomp=off -- bash -lc 'echo ok'
@@ -884,11 +886,17 @@ Landlock behavior:
   `krun_start_enter`. It is applied before seccomp so the Landlock syscalls are
   not blocked by the seccomp filter.
 - For ordinary task launches, omitting `--landlock` is equivalent to
-  `--landlock=enforce`. Enforce mode is strict and fail-closed: loftd requires
-  the first-cut Landlock feature families to be fully enforced, including
-  filesystem access rules, device ioctl access handling, IPC scopes for abstract
-  UNIX sockets and signals, TCP `BindTcp` handling, and audit-flag support.
-- `--landlock=best-effort` applies the supported subset and logs the effective
+  `--landlock=relax`. Relax mode is fail-closed for the non-network Landlock
+  feature families loftd handles, including filesystem access rules, device
+  ioctl access handling, IPC scopes for abstract UNIX sockets and signals, and
+  audit-flag support. It intentionally does not handle TCP `BindTcp`, so
+  guest-local listeners such as websocket or dev-server ports can bind inside
+  the guest without disabling the rest of loftd's host-side Landlock layer.
+- `--landlock=all` preserves the stricter TCP bind behavior: loftd additionally
+  handles TCP `BindTcp` and constrains it to simple published TCP host ports when
+  they are known.
+- `--landlock=best-effort` uses the `relax` policy shape, including unrestricted
+  TCP `BindTcp`, but applies only the supported subset and logs the effective
   policy plus any non-fully-enforced status. This is the explicit compatibility
   path for older kernels or hosts with partial Landlock support.
 - `--landlock=off` disables only this host-side Landlock layer. It does not
@@ -907,14 +915,20 @@ Landlock behavior:
 - TCP `ConnectTcp` is intentionally unrestricted by this first cut to preserve
   existing guest/network behavior. Landlock's connect rules are per remote TCP
   port, and loftd does not yet have an outbound allowlist. TCP `BindTcp` is
-  handled and constrained to simple published TCP host ports when they are known.
-- Before restriction, loftd inventories retained file descriptors. Strict mode
-  fails on unexpected retained regular files because descriptors opened before
-  Landlock can retain access outside the filesystem rules.
+  unrestricted in `relax` and `best-effort`; it is handled and constrained to
+  simple published TCP host ports only in `all`.
+- Guest-local binds do not expose host ports by themselves. Host inbound
+  exposure remains controlled by repeatable `-p, --publish SPEC`; without a
+  publish rule, a process may bind inside the guest VM but incoming host
+  connections are not forwarded to it.
+- Before restriction, loftd inventories retained file descriptors. Fail-closed
+  modes (`relax` and `all`) fail on unexpected retained regular files because
+  descriptors opened before Landlock can retain access outside the filesystem
+  rules.
 - The effective-policy report is emitted in debug logs and includes mode, path
-  categories/access classes, BindTcp ports, the explicit `ConnectTcp`
-  unrestricted-by-design marker, IPC scopes, audit flags, and retained-FD
-  classifications.
+  categories/access classes, whether BindTcp is unrestricted or restricted to
+  published ports, the explicit `ConnectTcp` unrestricted-by-design marker, IPC
+  scopes, audit flags, and retained-FD classifications.
 
 Seccomp behavior:
 

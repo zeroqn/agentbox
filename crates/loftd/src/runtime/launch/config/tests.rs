@@ -17,6 +17,23 @@ fn test_mounts() -> Vec<BindMount> {
     ]
 }
 
+fn replace_field_value(text: &mut String, key: &str, value: &str) {
+    let mut replacement = String::new();
+    push_field(&mut replacement, key, value);
+    *text = text
+        .lines()
+        .map(|line| {
+            if line.starts_with(&format!("{key}=")) {
+                replacement.trim_end()
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    text.push('\n');
+}
+
 #[test]
 fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     let image_process_config = OciProcessConfig::default();
@@ -321,7 +338,8 @@ fn launch_config_round_trips_landlock_modes() {
     .expect("launch config should build");
 
     for mode in [
-        crate::runtime::landlock::LandlockMode::Enforce,
+        crate::runtime::landlock::LandlockMode::All,
+        crate::runtime::landlock::LandlockMode::Relax,
         crate::runtime::landlock::LandlockMode::BestEffort,
         crate::runtime::landlock::LandlockMode::Off,
     ] {
@@ -333,7 +351,7 @@ fn launch_config_round_trips_landlock_modes() {
 }
 
 #[test]
-fn launch_config_legacy_missing_landlock_mode_defaults_to_enforce() {
+fn launch_config_legacy_missing_landlock_mode_defaults_to_relax() {
     let mut config = LaunchConfig::build_for_task(LaunchSpec {
         task_rootfs: Path::new("/state/task/rootfs"),
         hostname: "loftd-workspace",
@@ -370,8 +388,42 @@ fn launch_config_legacy_missing_landlock_mode_defaults_to_enforce() {
 
     assert_eq!(
         parsed.landlock,
-        crate::runtime::landlock::LandlockMode::Enforce
+        crate::runtime::landlock::LandlockMode::Relax
     );
+}
+
+#[test]
+fn launch_config_rejects_legacy_enforce_landlock_mode() {
+    let mut config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &OciProcessConfig::default(),
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build")
+    .serialize();
+    replace_field_value(&mut config, "landlock.mode", "enforce");
+
+    let err = LaunchConfig::parse(&config).expect_err("legacy enforce should be rejected");
+
+    assert!(format!("{err:#}").contains("landlock.mode is invalid"));
 }
 
 #[test]

@@ -25,8 +25,9 @@ const LIBKRUN_KVM_DEVICE: &str = "/dev/kvm";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 pub(crate) enum LandlockMode {
+    All,
     #[default]
-    Enforce,
+    Relax,
     BestEffort,
     Off,
 }
@@ -34,15 +35,17 @@ pub(crate) enum LandlockMode {
 impl LandlockMode {
     pub(crate) fn as_config_value(self) -> &'static str {
         match self {
-            Self::Enforce => "enforce",
+            Self::All => "all",
+            Self::Relax => "relax",
             Self::BestEffort => "best-effort",
             Self::Off => "off",
         }
     }
 
     pub(crate) fn parse_config_value(mode: Option<&str>) -> Result<Self> {
-        match mode.unwrap_or("enforce") {
-            "enforce" => Ok(Self::Enforce),
+        match mode.unwrap_or("relax") {
+            "all" => Ok(Self::All),
+            "relax" => Ok(Self::Relax),
             "best-effort" => Ok(Self::BestEffort),
             "off" => Ok(Self::Off),
             _ => bail!("loftd launch config landlock.mode is invalid"),
@@ -51,9 +54,21 @@ impl LandlockMode {
 
     fn compatibility(self) -> CompatLevel {
         match self {
-            Self::Enforce => CompatLevel::HardRequirement,
+            Self::All | Self::Relax => CompatLevel::HardRequirement,
             Self::BestEffort | Self::Off => CompatLevel::BestEffort,
         }
+    }
+
+    fn is_enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    fn handles_bind_tcp(self) -> bool {
+        self == Self::All
+    }
+
+    fn requires_full_enforcement(self) -> bool {
+        matches!(self, Self::All | Self::Relax)
     }
 }
 
@@ -61,7 +76,7 @@ impl LandlockMode {
 pub(crate) struct EffectivePolicy {
     pub(crate) mode: LandlockMode,
     pub(crate) path_rules: Vec<PathRule>,
-    pub(crate) bind_tcp_ports: Vec<u16>,
+    pub(crate) bind_tcp: BindTcpPolicy,
     pub(crate) connect_tcp: ConnectTcpPolicy,
     pub(crate) ipc_scopes: Vec<IpcScope>,
     pub(crate) audit: AuditPolicy,
@@ -114,6 +129,36 @@ pub(crate) enum ConnectTcpPolicy {
     UnrestrictedByDesign,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BindTcpPolicy {
+    Unrestricted,
+    RestrictedPorts(Vec<u16>),
+}
+
+impl BindTcpPolicy {
+    fn for_mode(mode: LandlockMode, config: &LaunchConfig) -> Result<Self> {
+        if mode.handles_bind_tcp() {
+            Ok(Self::RestrictedPorts(bind_tcp_ports(config)?))
+        } else {
+            Ok(Self::Unrestricted)
+        }
+    }
+
+    fn report_value(&self) -> String {
+        match self {
+            Self::Unrestricted => "unrestricted".to_owned(),
+            Self::RestrictedPorts(ports) => {
+                let ports = ports
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("restricted:[{ports}]")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IpcScope {
     AbstractUnixSocket,
@@ -154,7 +199,7 @@ pub(crate) fn apply(
     task_state_dir: &Path,
     profile_enabled: bool,
 ) -> Result<()> {
-    if config.landlock == LandlockMode::Off {
+    if !config.landlock.is_enabled() {
         tracing::debug!(landlock = "off", "loftd internal: Landlock disabled");
         return Ok(());
     }
@@ -232,11 +277,10 @@ impl EffectivePolicy {
         normalize_path_rules(&mut path_rules);
         compute_read_only_guarantees(&mut path_rules);
 
-        let bind_tcp_ports = bind_tcp_ports(config)?;
         Ok(Self {
             mode: config.landlock,
             path_rules,
-            bind_tcp_ports,
+            bind_tcp: BindTcpPolicy::for_mode(config.landlock, config)?,
             connect_tcp: ConnectTcpPolicy::UnrestrictedByDesign,
             ipc_scopes: vec![IpcScope::AbstractUnixSocket, IpcScope::Signal],
             audit: AuditPolicy {
@@ -263,12 +307,6 @@ impl EffectivePolicy {
             })
             .collect::<Vec<_>>()
             .join(",");
-        let ports = self
-            .bind_tcp_ports
-            .iter()
-            .map(u16::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
         let fds = self
             .fd_report
             .entries
@@ -278,10 +316,10 @@ impl EffectivePolicy {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "mode={} fs_rules={} bind_tcp=[{}] connect_tcp={:?} ipc_scopes={:?} audit={{same_exec:{},new_exec:{},subdomains:{}}} retained_fds=[{}]",
+            "mode={} fs_rules={} bind_tcp={} connect_tcp={:?} ipc_scopes={:?} audit={{same_exec:{},new_exec:{},subdomains:{}}} retained_fds=[{}]",
             self.mode.as_config_value(),
             path_summary,
-            ports,
+            self.bind_tcp.report_value(),
             self.connect_tcp,
             self.ipc_scopes,
             self.audit.log_same_exec,
@@ -514,9 +552,10 @@ fn retained_fd_report(mode: LandlockMode, passt_fd: Option<i32>) -> Result<Retai
                 target,
                 classification: RetainedFdClass::Unexpected,
             };
-            if mode == LandlockMode::Enforce {
+            if mode.requires_full_enforcement() {
                 bail!(
-                    "loftd Landlock strict mode refuses unexpected retained fd {} -> {}; close or categorize the descriptor before krun_start_enter",
+                    "loftd Landlock {} mode refuses unexpected retained fd {} -> {}; close or categorize the descriptor before krun_start_enter",
+                    mode.as_config_value(),
                     retained.fd,
                     retained.target,
                 );
@@ -557,16 +596,25 @@ fn classify_fd(fd: i32, target: &str, passt_fds: &HashSet<i32>) -> Option<Retain
 fn apply_policy(policy: &EffectivePolicy) -> Result<()> {
     let compat = policy.mode.compatibility();
     let fs_access = AccessFs::from_all(ABI::V5);
-    let net_access = make_bitflags!(AccessNet::{BindTcp});
     let scopes = make_bitflags!(Scope::{AbstractUnixSocket | Signal});
 
-    let mut ruleset = Ruleset::default()
-        .set_compatibility(compat)
-        .handle_access(fs_access)?
-        .handle_access(net_access)?
-        .scope(scopes)?
-        .create()?
-        .set_compatibility(compat);
+    let mut ruleset = if policy.mode.handles_bind_tcp() {
+        let net_access = make_bitflags!(AccessNet::{BindTcp});
+        Ruleset::default()
+            .set_compatibility(compat)
+            .handle_access(fs_access)?
+            .handle_access(net_access)?
+            .scope(scopes)?
+            .create()?
+            .set_compatibility(compat)
+    } else {
+        Ruleset::default()
+            .set_compatibility(compat)
+            .handle_access(fs_access)?
+            .scope(scopes)?
+            .create()?
+            .set_compatibility(compat)
+    };
 
     for rule in &policy.path_rules {
         let path_fd = PathFd::new(&rule.path).with_context(|| {
@@ -583,9 +631,11 @@ fn apply_policy(policy: &EffectivePolicy) -> Result<()> {
                 .set_compatibility(compat),
         )?;
     }
-    for port in &policy.bind_tcp_ports {
-        ruleset =
-            ruleset.add_rule(NetPort::new(*port, AccessNet::BindTcp).set_compatibility(compat))?;
+    if let BindTcpPolicy::RestrictedPorts(ports) = &policy.bind_tcp {
+        for port in ports {
+            ruleset = ruleset
+                .add_rule(NetPort::new(*port, AccessNet::BindTcp).set_compatibility(compat))?;
+        }
     }
 
     let status = ruleset
@@ -629,10 +679,13 @@ fn file_access_rights() -> landlock::BitFlags<AccessFs> {
 }
 
 fn ensure_status(mode: LandlockMode, status: RestrictionStatus) -> Result<()> {
-    if mode == LandlockMode::Enforce
+    if mode.requires_full_enforcement()
         && (status.ruleset != RulesetStatus::FullyEnforced || !status.no_new_privs)
     {
-        bail!("loftd Landlock enforce mode was not fully enforced: {status:?}");
+        bail!(
+            "loftd Landlock {} mode was not fully enforced: {status:?}",
+            mode.as_config_value()
+        );
     }
     tracing::debug!(?status, "loftd internal: Landlock restriction status");
     Ok(())
@@ -643,8 +696,11 @@ pub(crate) fn ensure_fully_enforced_for_test(
     mode: LandlockMode,
     fully_enforced: bool,
 ) -> Result<()> {
-    if mode == LandlockMode::Enforce && !fully_enforced {
-        bail!("loftd Landlock enforce mode was not fully enforced");
+    if mode.requires_full_enforcement() && !fully_enforced {
+        bail!(
+            "loftd Landlock {} mode was not fully enforced",
+            mode.as_config_value()
+        );
     }
     Ok(())
 }
@@ -677,19 +733,23 @@ mod tests {
             passt_fd: None,
             managed_session: None,
             seccomp: SeccompMode::Off,
-            landlock: LandlockMode::Enforce,
+            landlock: LandlockMode::Relax,
         }
     }
 
     #[test]
-    fn parses_config_modes_with_enforce_default() {
+    fn parses_config_modes_with_relax_default_and_rejects_enforce() {
         assert_eq!(
             LandlockMode::parse_config_value(None).unwrap(),
-            LandlockMode::Enforce
+            LandlockMode::Relax
         );
         assert_eq!(
-            LandlockMode::parse_config_value(Some("enforce")).unwrap(),
-            LandlockMode::Enforce
+            LandlockMode::parse_config_value(Some("all")).unwrap(),
+            LandlockMode::All
+        );
+        assert_eq!(
+            LandlockMode::parse_config_value(Some("relax")).unwrap(),
+            LandlockMode::Relax
         );
         assert_eq!(
             LandlockMode::parse_config_value(Some("best-effort")).unwrap(),
@@ -699,6 +759,7 @@ mod tests {
             LandlockMode::parse_config_value(Some("off")).unwrap(),
             LandlockMode::Off
         );
+        assert!(LandlockMode::parse_config_value(Some("enforce")).is_err());
         assert!(LandlockMode::parse_config_value(Some("audit")).is_err());
     }
 
@@ -884,15 +945,51 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(policy.bind_tcp_ports, vec![8080, 8443]);
+        assert_eq!(bind_tcp_ports(&config).unwrap(), vec![8080, 8443]);
         assert_eq!(policy.connect_tcp, ConnectTcpPolicy::UnrestrictedByDesign);
     }
 
     #[test]
+    fn bind_tcp_policy_is_restricted_only_in_all_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(dir.path());
+        config.publish = vec!["8080:80".to_owned(), "tcp:8443:443".to_owned()];
+
+        config.landlock = LandlockMode::All;
+        let policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            dir.path(),
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            policy.bind_tcp,
+            BindTcpPolicy::RestrictedPorts(vec![8080, 8443])
+        );
+        assert!(policy.report().contains("bind_tcp=restricted:[8080,8443]"));
+
+        for mode in [LandlockMode::Relax, LandlockMode::BestEffort] {
+            config.landlock = mode;
+            let policy = EffectivePolicy::build_with_fd_report(
+                &config,
+                dir.path(),
+                false,
+                RetainedFdReport::default(),
+            )
+            .unwrap();
+            assert_eq!(policy.bind_tcp, BindTcpPolicy::Unrestricted);
+            assert!(policy.report().contains("bind_tcp=unrestricted"));
+        }
+    }
+
+    #[test]
     fn strict_status_helper_fails_when_not_fully_enforced() {
-        assert!(ensure_fully_enforced_for_test(LandlockMode::Enforce, false).is_err());
+        assert!(ensure_fully_enforced_for_test(LandlockMode::All, false).is_err());
+        assert!(ensure_fully_enforced_for_test(LandlockMode::Relax, false).is_err());
         assert!(ensure_fully_enforced_for_test(LandlockMode::BestEffort, false).is_ok());
-        assert!(ensure_fully_enforced_for_test(LandlockMode::Enforce, true).is_ok());
+        assert!(ensure_fully_enforced_for_test(LandlockMode::All, true).is_ok());
+        assert!(ensure_fully_enforced_for_test(LandlockMode::Relax, true).is_ok());
     }
 
     #[test]

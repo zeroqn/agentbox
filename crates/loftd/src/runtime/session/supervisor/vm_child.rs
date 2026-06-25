@@ -709,7 +709,7 @@ mod tests {
             seccomp: SeccompMode::Enforce {
                 policy_path: Path::new("/policy.json").to_path_buf(),
             },
-            landlock: crate::runtime::landlock::LandlockMode::Enforce,
+            landlock: crate::runtime::landlock::LandlockMode::All,
         };
 
         assert_eq!(

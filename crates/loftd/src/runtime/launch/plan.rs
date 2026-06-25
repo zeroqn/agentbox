@@ -175,7 +175,7 @@ fn resolve_normal_launch_seccomp_with(
 }
 
 fn resolve_normal_launch_landlock(landlock: Option<LandlockMode>) -> LandlockMode {
-    landlock.unwrap_or(LandlockMode::Enforce)
+    landlock.unwrap_or(LandlockMode::Relax)
 }
 
 fn prepare_user_volume_mounts(
@@ -344,15 +344,23 @@ mod tests {
         assert_eq!(plan.task_rootfs_backend, TaskRootfsBackend::BtrfsSnapshot);
         assert_eq!(plan.container_store_backend, ContainerStoreBackend::RawDisk);
         assert_eq!(plan.log_level, LogLevel::Off);
-        assert_eq!(plan.landlock, LandlockMode::Enforce);
+        assert_eq!(plan.landlock, LandlockMode::Relax);
         assert!(!plan.debug);
         assert!(!plan.daemon);
         assert!(!plan.config_diagnostics.config_loaded);
     }
 
     #[test]
-    fn normal_launch_landlock_defaults_to_enforce_and_carries_explicit_modes() {
-        assert_eq!(resolve_normal_launch_landlock(None), LandlockMode::Enforce);
+    fn normal_launch_landlock_defaults_to_relax_and_carries_explicit_modes() {
+        assert_eq!(resolve_normal_launch_landlock(None), LandlockMode::Relax);
+        assert_eq!(
+            resolve_normal_launch_landlock(Some(LandlockMode::All)),
+            LandlockMode::All
+        );
+        assert_eq!(
+            resolve_normal_launch_landlock(Some(LandlockMode::Relax)),
+            LandlockMode::Relax
+        );
         assert_eq!(
             resolve_normal_launch_landlock(Some(LandlockMode::BestEffort)),
             LandlockMode::BestEffort
