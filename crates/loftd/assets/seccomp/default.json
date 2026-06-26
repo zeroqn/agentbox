@@ -28,6 +28,9 @@
         "syscall": "connect"
       },
       {
+        "syscall": "copy_file_range"
+      },
+      {
         "syscall": "dup"
       },
       {
