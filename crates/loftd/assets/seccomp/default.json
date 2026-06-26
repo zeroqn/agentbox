@@ -121,6 +121,12 @@
         "syscall": "mmap"
       },
       {
+        "syscall": "mprotect"
+      },
+      {
+        "syscall": "munmap"
+      },
+      {
         "syscall": "newfstatat"
       },
       {
