@@ -71,15 +71,15 @@
   rmuxPrebuiltRelease = {
     owner = "Helvesec";
     repo = "rmux";
-    tag = "v0.7.0";
+    tag = "v0.7.1";
     systems = {
       x86_64-linux = {
-        asset = "rmux-0.7.0-linux-x86_64.tar.gz";
-        hash = "sha256-QuNdPNCllLuu3qor/7rkLjWhaM3Nyl+PqElmhY32lIE=";
+        asset = "rmux-0.7.1-linux-x86_64.tar.gz";
+        hash = "sha256-shGtBzhT0cF3sXBomCpQwaeGsgmavjuwspFajTKrgVY=";
       };
       aarch64-linux = {
-        asset = "rmux-0.7.0-linux-aarch64.tar.gz";
-        hash = "sha256-tIpMMwcCPqFfLwnX64G+GOTqXLq0HSia3WEVpgkNhxw=";
+        asset = "rmux-0.7.1-linux-aarch64.tar.gz";
+        hash = "sha256-Sc7gOUqoxIiIZ0ETVrogQ3vBiy57TVnO2GoUG6cRFp0=";
       };
     };
   };
