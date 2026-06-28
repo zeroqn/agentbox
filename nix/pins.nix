@@ -2,42 +2,42 @@
   agentboxVersion = "0.1.0";
 
   ohMyCodex = {
-    version = "0.18.14";
-    srcHash = "sha256-HbPffz5d8KCwGGWJlp+82QUGo98ds3BOhc3vIonPLN0=";
-    npmDepsHash = "sha256-oP80bAV9Umc3syfVuYf78+V71KOKQjHsrcGCmqf3xQQ=";
+    version = "0.18.16";
+    srcHash = "sha256-r6DdkY4vb/41NAe38bS1YnL9P02/RGf9lOEzzMmtKQY=";
+    npmDepsHash = "sha256-b2qJvMi1SwBn6UEtYQEZ95WGjeGu+eSzVxOUHfWzNiU=";
     nativeBinarySystems = {
       x86_64-linux = {
         omx-api = {
           asset = "omx-api-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-b8LbJv4FENxgUGqRk3Yaylt3B7N9DWHFxy/3EG5YGs0=";
+          hash = "sha256-cmcxVGVDso/HAjHitmtwUQKeLY1AjeTCOMJ7jsPuPd0=";
         };
         omx-runtime = {
           asset = "omx-runtime-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-jgyH+21aiDBA7NBxTyTTkR386GCCdRfSDzyLi77tLtw=";
+          hash = "sha256-4DpeoUhGuV7TwJ/gKJq4VT5cfZK85gxllx6CmWRO4nU=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-x86_64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-FXiS4Ewlnv5nz7Q2YPzGwZVhG1qTWAZ1tNasGWeUz5U=";
+          hash = "sha256-y+chnUThnUDImwlRNyY133WvxvkTXgK4EbwNIvovF7c=";
         };
       };
       aarch64-linux = {
         omx-api = {
           asset = "omx-api-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-api";
-          hash = "sha256-W3nmZkAt76YmPraxA4oHjm88InFUh1FuG4Qq/yz0nNk=";
+          hash = "sha256-kwUErDALzSY4RSc5zIfeFl8FtkFs6alDFTZUR9am5IM=";
         };
         omx-runtime = {
           asset = "omx-runtime-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-runtime";
-          hash = "sha256-ibZuop1NS7rHzpZZDkKejX34lSVEZ608R2Bonw1iadQ=";
+          hash = "sha256-rwmI+WrfvFiYVMuXO2J4xGhpGTUu1SVaSu7by+isXjY=";
         };
         omx-sparkshell = {
           asset = "omx-sparkshell-aarch64-unknown-linux-musl.tar.xz";
           binary = "omx-sparkshell";
-          hash = "sha256-A1+tHeQ7YzqZZoT/Izy73YH4hDajVTKA15XNASj3N7Q=";
+          hash = "sha256-+tDFdfCHVVx8zoZUzT8CzxCUGSbrhOq9glFw8O5AeB8=";
         };
       };
     };
@@ -133,11 +133,11 @@
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-d510764fa463";
+    tag = "sha-4655b4082318";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
-        hash = "sha256-geeTBiIPYxDvUe6bCTJEKbhvhQrIfnV5RpRIectmVUA=";
+        hash = "sha256-li432turqOMWNHEWtYr3RM6SWbt0yi8AiV6qkxX14SU=";
       };
     };
   };
@@ -148,11 +148,11 @@
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-d510764fa463";
+    tag = "sha-4655b4082318";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-7BndypVfgKEXThT4IRjIj3M4Y3BDjVvF7MSBJ3ceyqI=";
+        hash = "sha256-7RIPfw2EqfepoktzQVt4mfKSwtaYtgjCTEQ/OpNq08U=";
       };
     };
   };
