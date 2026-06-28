@@ -1579,7 +1579,9 @@ The container provides:
   `/bin/python`, and `/bin/python3`; `/bin/python` resolves to Python 3
   (not broad FHS compatibility)
 - common tools (`curl`, `jq`, `openssl`, `rmux`, etc.); `rmux` replaces
-  Nixpkgs `tmux` in both the agentbox and loftd images
+  Nixpkgs `tmux` in both the agentbox and loftd images, with `tmux` kept as
+  a compatibility symlink to `rmux` and `/etc/rmux.conf` as the image-level
+  config path
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
 setting `RUSTFLAGS`, so existing Cargo config can still layer on top normally.

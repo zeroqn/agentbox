@@ -102,6 +102,8 @@ let
       ${nixConfig}
       EOF_NIX_CONF
       chmod 0644 ./etc/nix/nix.conf
+      touch ./etc/rmux.conf
+      chmod 0644 ./etc/rmux.conf
       if ! grep -q '^nixbld:' ./etc/group; then
         printf 'nixbld:x:${toString layers.nixBuilderGroupId}:${layers.nixBuilderGroupMembers}\n' >> ./etc/group
       fi

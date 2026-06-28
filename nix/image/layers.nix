@@ -200,6 +200,10 @@ let
   podmanCommandCompat = commandCompat.podman;
   dockerCommandCompat = commandCompat.docker;
   dockerComposeCommandCompat = commandCompat.dockerCompose;
+  rmuxTmuxCommandCompat = pkgs.runCommand "rmux-tmux-command-compat" { } ''
+    mkdir -p "$out/bin"
+    ln -s ${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"
+  '';
 
   nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs imageVariant; };
 
@@ -419,6 +423,7 @@ let
     pkgs.diffutils
     pkgs.nss_wrapper
     rmuxPrebuilt
+    rmuxTmuxCommandCompat
     pkgs.util-linux
     pkgs.which
   ];
@@ -607,6 +612,7 @@ in
     dockerCommandCompat
     dockerComposeCommandCompat
     loftdAsDevCommandCompat
+    rmuxTmuxCommandCompat
     rustcCommandCompat
     rustAnalyzerCommandCompat
     grapheneHardenedMalloc

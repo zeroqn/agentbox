@@ -140,10 +140,15 @@ let
   '';
   terminalMultiplexerContracts = ''
     grep -F 'rmuxPrebuilt' ${layersSourceFile}
+    grep -F 'rmuxTmuxCommandCompat' ${layersSourceFile}
+    grep -F 'ln -s ${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"' ${layersSourceFile}
     grep -F 'rmuxPrebuilt' ${containerSourceFile}
+    grep -F './etc/rmux.conf' ${containerSourceFile}
     ! grep -F 'pkgs.tmux' ${layersSourceFile}
     ! grep -F './etc/tmux.conf' ${containerSourceFile}
     test -x ${rmuxPrebuilt}/bin/rmux
+    test -L ${layers.rmuxTmuxCommandCompat}/bin/tmux
+    test "$(readlink ${layers.rmuxTmuxCommandCompat}/bin/tmux)" = "${rmuxPrebuilt}/bin/rmux"
     ${rmuxPrebuilt}/bin/rmux -V
   '';
 

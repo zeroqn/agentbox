@@ -686,9 +686,12 @@ fn image_uses_pinned_rmux_instead_of_tmux() {
         "rmuxPrebuilt = import ./nix/pkgs/rmux-prebuilt.nix",
         "rmux-prebuilt = rmuxPrebuilt;",
         "rmuxPrebuilt",
+        "rmuxTmuxCommandCompat",
+        r#"ln -s ${rmuxPrebuilt}/bin/rmux "$out/bin/tmux""#,
         "rmuxPrebuiltRelease = {",
         r#"owner = "Helvesec";"#,
         r#"repo = "rmux";"#,
+        "./etc/rmux.conf",
     ] {
         assert!(
             FLAKE_NIX.contains(required)
