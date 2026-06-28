@@ -3,6 +3,7 @@
   ohMyCodex,
   piCodingAgent,
   ompPrebuilt,
+  rmuxPrebuilt,
   rtkPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
@@ -417,7 +418,7 @@ let
     nixStoreDbCheck
     pkgs.diffutils
     pkgs.nss_wrapper
-    pkgs.tmux
+    rmuxPrebuilt
     pkgs.util-linux
     pkgs.which
   ];

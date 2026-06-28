@@ -3,6 +3,7 @@
   ohMyCodex,
   piCodingAgent,
   ompPrebuilt,
+  rmuxPrebuilt,
   rtkPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
@@ -20,6 +21,7 @@ let
       ohMyCodex
       piCodingAgent
       ompPrebuilt
+      rmuxPrebuilt
       rtkPrebuilt
       containerLibPolicySeccompJson
       libkrun
@@ -47,6 +49,7 @@ let
       ohMyCodex
       piCodingAgent
       ompPrebuilt
+      rmuxPrebuilt
       rtkPrebuilt
       containerLibPolicySeccompJson
       libkrun
@@ -95,16 +98,6 @@ let
       seccomp_profile = "${containerLibPolicySeccompJson}/share/containers/seccomp.json"
       EOF_CONTAINERS_CONF
       chmod 0644 ./etc/containers/containers.conf
-      cat > ./etc/tmux.conf <<'EOF_TMUX'
-      set-option -g mouse off
-      bind-key | split-window -h
-      bind-key - split-window -v
-      bind-key h select-pane -L
-      bind-key l select-pane -R
-      bind-key j select-pane -D
-      bind-key k select-pane -U
-      EOF_TMUX
-      chmod 0644 ./etc/tmux.conf
       cat > ./etc/nix/nix.conf <<'EOF_NIX_CONF'
       ${nixConfig}
       EOF_NIX_CONF

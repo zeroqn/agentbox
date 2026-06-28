@@ -681,20 +681,26 @@ fn image_retains_graphene_hardened_malloc_for_hardened_mode() {
 }
 
 #[test]
-fn image_materializes_system_tmux_defaults() {
+fn image_uses_pinned_rmux_instead_of_tmux() {
     for required in [
-        "cat > ./etc/tmux.conf <<'EOF_TMUX'",
-        "set-option -g mouse off",
-        "bind-key | split-window -h",
-        "bind-key - split-window -v",
-        "bind-key h select-pane -L",
-        "bind-key l select-pane -R",
-        "bind-key j select-pane -D",
-        "bind-key k select-pane -U",
-        "chmod 0644 ./etc/tmux.conf",
+        "rmuxPrebuilt = import ./nix/pkgs/rmux-prebuilt.nix",
+        "rmux-prebuilt = rmuxPrebuilt;",
+        "rmuxPrebuilt",
+        "rmuxPrebuiltRelease = {",
+        r#"owner = "Helvesec";"#,
+        r#"repo = "rmux";"#,
     ] {
-        assert!(CONTAINER_NIX.contains(required), "missing {required}");
+        assert!(
+            FLAKE_NIX.contains(required)
+                || LAYERS.contains(required)
+                || CONTAINER_NIX.contains(required)
+                || IMAGE_CHECKS_NIX.contains(required)
+                || PINS_NIX.contains(required),
+            "missing {required}"
+        );
     }
+    assert!(!LAYERS.contains("pkgs.tmux"));
+    assert!(!CONTAINER_NIX.contains("./etc/tmux.conf"));
 }
 
 #[test]

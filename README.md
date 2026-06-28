@@ -164,6 +164,7 @@ nix build ./nix/dev#loftd-dev
 nix build .#agentbox-prebuilt
 nix build .#loftd-prebuilt
 nix build .#agentbox-musl
+nix build .#rmux-prebuilt
 nix build .#rtk-prebuilt
 nix build .#libkrunfw
 nix build .#libkrun
@@ -223,6 +224,9 @@ CI publishes release artifacts on every push to `main` and on every git tag
   build or expose `bin/loftd`; the host `loftd` binary is always dynamically
   linked so it can load `libkrun.so`/`libkrunfw.so` from the package or dev
   shell runtime library path.
+- `.#rmux-prebuilt`: install the pinned published Helvesec/rmux Linux release
+  tarball for the current system. The agentbox and loftd images include this
+  package as their terminal multiplexer instead of Nixpkgs `tmux`.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
@@ -1574,9 +1578,8 @@ The container provides:
 - narrow hardcoded-interpreter compatibility for `/bin/sh`, `/bin/bash`,
   `/bin/python`, and `/bin/python3`; `/bin/python` resolves to Python 3
   (not broad FHS compatibility)
-- common tools (`curl`, `jq`, `openssl`, `tmux`, etc.); tmux disables mouse support and
-  includes system-wide pane split bindings for `Ctrl-b |` and `Ctrl-b -` plus
-  Vim-style pane focus movement on `Ctrl-b h/j/k/l`
+- common tools (`curl`, `jq`, `openssl`, `rmux`, etc.); `rmux` replaces
+  Nixpkgs `tmux` in both the agentbox and loftd images
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
 setting `RUSTFLAGS`, so existing Cargo config can still layer on top normally.
@@ -1658,6 +1661,12 @@ Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-rtk-prebuilt.sh
+```
+
+Refresh pinned Helvesec/rmux prebuilt release metadata in `nix/pins.nix`:
+
+```bash
+nix develop --command ./scripts/update-rmux-prebuilt.sh
 ```
 
 Refresh pinned `zeroqn/libkrun` prebuilt release metadata in `nix/pins.nix`

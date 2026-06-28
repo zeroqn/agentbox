@@ -3,6 +3,7 @@
   ohMyCodex,
   piCodingAgent,
   ompPrebuilt,
+  rmuxPrebuilt,
   rtkPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
@@ -20,6 +21,7 @@ let
       ohMyCodex
       piCodingAgent
       ompPrebuilt
+      rmuxPrebuilt
       rtkPrebuilt
       containerLibPolicySeccompJson
       libkrun
@@ -136,6 +138,14 @@ let
     grep -F 'LOFTD_MIMALLOC_LIB=' ${configSourceFile}
     ! grep -F 'LD_PRELOAD=' ${containerSourceFile}
   '';
+  terminalMultiplexerContracts = ''
+    grep -F 'rmuxPrebuilt' ${layersSourceFile}
+    grep -F 'rmuxPrebuilt' ${containerSourceFile}
+    ! grep -F 'pkgs.tmux' ${layersSourceFile}
+    ! grep -F './etc/tmux.conf' ${containerSourceFile}
+    test -x ${rmuxPrebuilt}/bin/rmux
+    ${rmuxPrebuilt}/bin/rmux -V
+  '';
 
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
@@ -146,6 +156,7 @@ let
         set -euo pipefail
 
         ${allocatorContracts}
+        ${terminalMultiplexerContracts}
 
         ${
           if imageVariant == "loftd" then
@@ -199,6 +210,7 @@ in
         set -euo pipefail
 
         ${allocatorContracts}
+        ${terminalMultiplexerContracts}
 
         cp ${imageConfigRefsFile} image-config-refs
         cp ${imageNixDbStorePathsFile} image-nix-db-valid-paths

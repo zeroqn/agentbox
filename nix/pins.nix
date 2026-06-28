@@ -68,6 +68,22 @@
     };
   };
 
+  rmuxPrebuiltRelease = {
+    owner = "Helvesec";
+    repo = "rmux";
+    tag = "v0.7.0";
+    systems = {
+      x86_64-linux = {
+        asset = "rmux-0.7.0-linux-x86_64.tar.gz";
+        hash = "sha256-QuNdPNCllLuu3qor/7rkLjWhaM3Nyl+PqElmhY32lIE=";
+      };
+      aarch64-linux = {
+        asset = "rmux-0.7.0-linux-aarch64.tar.gz";
+        hash = "sha256-tIpMMwcCPqFfLwnX64G+GOTqXLq0HSia3WEVpgkNhxw=";
+      };
+    };
+  };
+
   containerLibPolicySeccompJson = {
     owner = "containers";
     repo = "container-libs";
