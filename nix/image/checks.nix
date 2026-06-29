@@ -144,6 +144,12 @@ let
     grep -F 'ln -s ''${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"' ${layersSourceFile}
     grep -F 'rmuxPrebuilt' ${containerSourceFile}
     grep -F './etc/rmux.conf' ${containerSourceFile}
+    grep -F 'bind | split-window -h' ${containerSourceFile}
+    grep -F 'bind - split-window -v' ${containerSourceFile}
+    grep -F 'bind h select-pane -L' ${containerSourceFile}
+    grep -F 'bind j select-pane -D' ${containerSourceFile}
+    grep -F 'bind k select-pane -U' ${containerSourceFile}
+    grep -F 'bind l select-pane -R' ${containerSourceFile}
     ! grep -F 'pkgs.tmux' ${layersSourceFile}
     ! grep -F './etc/tmux.conf' ${containerSourceFile}
     test -x ${rmuxPrebuilt}/bin/rmux

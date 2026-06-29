@@ -102,7 +102,14 @@ let
       ${nixConfig}
       EOF_NIX_CONF
       chmod 0644 ./etc/nix/nix.conf
-      touch ./etc/rmux.conf
+      cat > ./etc/rmux.conf <<'EOF_RMUX_CONF'
+      bind | split-window -h
+      bind - split-window -v
+      bind h select-pane -L
+      bind j select-pane -D
+      bind k select-pane -U
+      bind l select-pane -R
+      EOF_RMUX_CONF
       chmod 0644 ./etc/rmux.conf
       if ! grep -q '^nixbld:' ./etc/group; then
         printf 'nixbld:x:${toString layers.nixBuilderGroupId}:${layers.nixBuilderGroupMembers}\n' >> ./etc/group

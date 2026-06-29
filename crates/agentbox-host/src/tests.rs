@@ -707,6 +707,12 @@ fn image_uses_pinned_rmux_instead_of_tmux() {
         r#"owner = "Helvesec";"#,
         r#"repo = "rmux";"#,
         "./etc/rmux.conf",
+        "bind | split-window -h",
+        "bind - split-window -v",
+        "bind h select-pane -L",
+        "bind j select-pane -D",
+        "bind k select-pane -U",
+        "bind l select-pane -R",
     ] {
         assert!(
             FLAKE_NIX.contains(required)

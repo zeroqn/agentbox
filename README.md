@@ -1581,7 +1581,9 @@ The container provides:
 - common tools (`curl`, `jq`, `openssl`, `rmux`, etc.); `rmux` replaces
   Nixpkgs `tmux` in both the agentbox and loftd images, with `tmux` kept as
   a compatibility symlink to `rmux` and `/etc/rmux.conf` as the image-level
-  config path
+  config path. The default `rmux` config includes tmux-compatible bindings for
+  horizontal/vertical splits (`|`, `-`) and pane selection with `h`, `j`, `k`,
+  and `l`
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
 setting `RUSTFLAGS`, so existing Cargo config can still layer on top normally.
