@@ -262,6 +262,97 @@ fn launch_config_round_trips_managed_session_contract() {
 }
 
 #[test]
+fn managed_session_extra_env_terminal_vars_are_guest_visible() {
+    let image_process_config = OciProcessConfig::default();
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: vec![
+            ("TERM".to_owned(), "xterm-kitty".to_owned()),
+            ("COLORTERM".to_owned(), "truecolor".to_owned()),
+            ("TERM_PROGRAM".to_owned(), "ghostty".to_owned()),
+            ("TERM_PROGRAM_VERSION".to_owned(), "1.2.3".to_owned()),
+        ],
+        host_nix_overlay: None,
+        managed_session: Some(ManagedSessionConfig {
+            attach_socket: Path::new("/state/task/attach.sock").to_path_buf(),
+            guest_port: 50_426,
+            protocol_version: 1,
+            attach_socket_uid: 1000,
+            attach_socket_gid: 1001,
+            cleanup_task_rootfs_on_exit: true,
+        }),
+    })
+    .expect("launch config should build");
+
+    assert!(config.guest_config_env_contains("TERM", "xterm-kitty"));
+    assert!(config.guest_config_env_contains("COLORTERM", "truecolor"));
+    assert!(config.guest_config_env_contains("TERM_PROGRAM", "ghostty"));
+    assert!(config.guest_config_env_contains("TERM_PROGRAM_VERSION", "1.2.3"));
+}
+
+#[test]
+fn non_managed_launch_does_not_allow_terminal_identity_from_image_env() {
+    let image_process_config = OciProcessConfig {
+        env: vec![
+            "PATH=/bin".to_owned(),
+            "TERM=xterm-kitty".to_owned(),
+            "COLORTERM=truecolor".to_owned(),
+            "TERM_PROGRAM=ghostty".to_owned(),
+            "TERM_PROGRAM_VERSION=1.2.3".to_owned(),
+            "TERM_PROGGRAM_VERSION=typo".to_owned(),
+        ],
+        ..OciProcessConfig::default()
+    };
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        publish: &[],
+        profile: false,
+        root: false,
+        hardened: false,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build");
+
+    assert!(config.guest_config_env_contains("PATH", "/bin"));
+    assert!(config.guest_config_env.iter().all(|(key, _)| !matches!(
+        key.as_str(),
+        "TERM" | "COLORTERM" | "TERM_PROGRAM" | "TERM_PROGRAM_VERSION" | "TERM_PROGGRAM_VERSION"
+    )));
+}
+
+#[test]
 fn launch_config_round_trips_seccomp_modes() {
     let mut config = LaunchConfig::build_for_task(LaunchSpec {
         task_rootfs: Path::new("/state/task/rootfs"),

@@ -847,7 +847,11 @@ Detach/attach behavior:
 - A normal foreground `loftd` run starts a managed guest PTY session and then
   attaches the host terminal to it. The foreground experience is still an
   interactive shell or command, but the guest process is not tied to the host
-  terminal lifetime.
+  terminal lifetime. Managed guest PTY sessions preserve the launching host
+  terminal identity by passing non-empty UTF-8 `TERM`, `COLORTERM`,
+  `TERM_PROGRAM`, and `TERM_PROGRAM_VERSION` values into the guest; this is
+  limited to the managed attach path and does not enable broad host environment
+  passthrough.
 - Press `Ctrl-\` twice to detach from the current terminal
   session. loftd recognizes both raw `Ctrl-\` bytes and CSI-u/Kitty-encoded
   `Ctrl-\` events from terminals or multiplexers. The host-side filter

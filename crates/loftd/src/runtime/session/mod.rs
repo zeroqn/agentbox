@@ -15,6 +15,7 @@ mod profile;
 pub(crate) mod rootfs;
 pub(crate) mod supervisor;
 pub(crate) mod task_control;
+mod terminal_env;
 
 use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec, ManagedSessionConfig};
@@ -204,7 +205,11 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                 host_gid: current_gid(),
                                 vcpus: config::resolve_cpu_count()?,
                                 disks: disks.attachments(),
-                                extra_env: disks.env_pairs(),
+                                extra_env: {
+                                    let mut env = disks.env_pairs();
+                                    env.extend(terminal_env::host_terminal_env_pairs());
+                                    env
+                                },
                                 host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
                                 managed_session: Some(managed_session.clone()),
                             })
