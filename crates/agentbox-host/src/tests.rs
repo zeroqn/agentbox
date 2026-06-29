@@ -668,6 +668,20 @@ fn image_materializes_mimalloc_default_and_hardened_allocator_metadata() {
 }
 
 #[test]
+fn image_nix_db_roots_include_libclang_config_reference() {
+    for required in [
+        r#"LIBCLANG_PATH=${pkgs.libclang.lib}/lib"#,
+        "pkgs.libclang.lib",
+        "cToolchainImagePackages = cToolchainPathPackages ++ [",
+    ] {
+        assert!(
+            LAYERS.contains(required) || IMAGE_CONFIG_NIX.contains(required),
+            "missing {required}"
+        );
+    }
+}
+
+#[test]
 fn image_retains_graphene_hardened_malloc_for_hardened_mode() {
     for required in [
         "grapheneHardenedMalloc = pkgs.graphene-hardened-malloc.overrideAttrs",
@@ -688,6 +702,7 @@ fn image_uses_pinned_rmux_instead_of_tmux() {
         "rmuxPrebuilt",
         "rmuxTmuxCommandCompat",
         r#"ln -s ${rmuxPrebuilt}/bin/rmux "$out/bin/tmux""#,
+        r#"grep -F 'ln -s ''${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"'"#,
         "rmuxPrebuiltRelease = {",
         r#"owner = "Helvesec";"#,
         r#"repo = "rmux";"#,

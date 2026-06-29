@@ -141,7 +141,7 @@ let
   terminalMultiplexerContracts = ''
     grep -F 'rmuxPrebuilt' ${layersSourceFile}
     grep -F 'rmuxTmuxCommandCompat' ${layersSourceFile}
-    grep -F 'ln -s ${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"' ${layersSourceFile}
+    grep -F 'ln -s ''${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"' ${layersSourceFile}
     grep -F 'rmuxPrebuilt' ${containerSourceFile}
     grep -F './etc/rmux.conf' ${containerSourceFile}
     ! grep -F 'pkgs.tmux' ${layersSourceFile}

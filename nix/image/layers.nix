@@ -318,6 +318,7 @@ let
   ];
 
   cToolchainImagePackages = cToolchainPathPackages ++ [
+    pkgs.libclang.lib
     pkgs.musl
   ];
 
