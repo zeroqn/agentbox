@@ -160,6 +160,7 @@ let
     ${pkgs.tmux}/bin/tmux -V
   '';
   ghosttyTerminfoContracts = ''
+    ! grep -F 'pkgs.ghostty' ${layersSourceFile}
     grep -F './home/dev/.terminfo/x' ${containerSourceFile}
     grep -F 'pkgs.ghostty.terminfo' ${containerSourceFile}
     grep -F 'xterm-ghostty' ${containerSourceFile}
