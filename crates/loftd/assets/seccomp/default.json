@@ -13,6 +13,9 @@
         "syscall": "bind"
       },
       {
+        "syscall": "brk"
+      },
+      {
         "syscall": "capget"
       },
       {
@@ -182,6 +185,9 @@
       },
       {
         "syscall": "rt_sigreturn"
+      },
+      {
+        "syscall": "sched_getaffinity"
       },
       {
         "syscall": "sched_yield"
