@@ -50,6 +50,7 @@ impl ContainerStoreBackend {
   loftd container-store reset --force
   loftd ps
   loftd attach <task-id-or-handle-selector>
+  loftd a <task-id-or-handle-selector>
   loftd kill <task-id-or-handle-selector>
   loftd seccomp synthesize --input trace.jsonl --output policy.json"
 )]
@@ -242,7 +243,11 @@ pub(crate) enum CliCommand {
     #[command(name = "ps", about = "List active loftd task VMs across workspaces")]
     Ps,
 
-    #[command(name = "attach", about = "Attach to an active loftd task VM session")]
+    #[command(
+        name = "attach",
+        visible_alias = "a",
+        about = "Attach to an active loftd task VM session"
+    )]
     Attach {
         #[arg(value_name = "TASK_ID_OR_HANDLE_SELECTOR")]
         task_id: String,
@@ -626,9 +631,15 @@ mod tests {
     fn parses_attach_subcommand() {
         let cli =
             Cli::try_parse_from(["loftd", "attach", "workspace-123"]).expect("attach should parse");
+        let alias =
+            Cli::try_parse_from(["loftd", "a", "workspace-123"]).expect("a alias should parse");
 
         assert!(matches!(
             cli.into_action(),
+            crate::cli::CliAction::Attach { task_id, .. } if task_id == "workspace-123"
+        ));
+        assert!(matches!(
+            alias.into_action(),
             crate::cli::CliAction::Attach { task_id, .. } if task_id == "workspace-123"
         ));
     }

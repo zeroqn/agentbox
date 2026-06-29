@@ -835,6 +835,7 @@ Run/help:
 ./result/bin/loftd -- bash -lc 'echo ok'
 ./result/bin/loftd ps
 ./result/bin/loftd attach <task-id-or-handle-selector>
+./result/bin/loftd a <task-id-or-handle-selector>
 ./result/bin/loftd kill <task-id-or-handle-selector>
 ./result/bin/loftd container-store resize --size 128G
 ./result/bin/loftd container-store reset --force
@@ -861,13 +862,15 @@ Detach/attach behavior:
   followed by a short idle window. The heuristic is generic and does not parse
   shell prompts. This mode is TTY-only; if stdin or stdout is not a terminal,
   loftd fails before sending the attach frame that starts the target program.
-  Use `loftd attach <task-id-or-handle-selector>` to reconnect and
+  Use `loftd attach <task-id-or-handle-selector>` (or
+  `loftd a <task-id-or-handle-selector>`) to reconnect and
   `loftd kill <task-id-or-handle-selector>` to terminate the detached task.
-- Reconnect with `loftd attach <task-id-or-handle-selector>`. Selectors follow
-  the same task-id/handle matching rules as `loftd kill`; use `loftd ps` to list
-  running task IDs and handles. Reattach repaints the current visible terminal
-  screen from bounded in-memory guest PTY state before forwarding new output, so
-  a detached shell or TUI should be usable without pressing `Enter` just to
+- Reconnect with `loftd attach <task-id-or-handle-selector>` or its `loftd a`
+  shortcut. Selectors follow the same task-id/handle matching rules as
+  `loftd kill`; use `loftd ps` to list running task IDs and handles. Reattach
+  repaints the current visible terminal screen from bounded in-memory guest PTY
+  state before forwarding new output, so a detached shell or TUI should be
+  usable without pressing `Enter` just to
   redraw. This restore state is not persisted across helper or VM restart.
 - Only one attach client is supported at a time. A second attach attempt receives
   a busy error instead of sharing the PTY.
