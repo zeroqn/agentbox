@@ -52,6 +52,14 @@
     npmDepsHash = "sha256-ZFf9IUI3XPBDOlTqvRkoDvF2EqooMq9Q31YE8iaZkI8=";
   };
 
+  dirge = {
+    version = "0.13.9";
+    owner = "dirge-code";
+    repo = "dirge";
+    rev = "v0.13.9";
+    srcHash = "sha256-w4do4h+4vtrlpeWJlF1X0lH+AhzBTkZpxjRvPmUszPs=";
+  };
+
   ompPrebuiltRelease = {
     owner = "can1357";
     repo = "oh-my-pi";

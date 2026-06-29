@@ -2,6 +2,7 @@
   pkgs,
   ohMyCodex,
   piCodingAgent,
+  dirge,
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
@@ -364,6 +365,7 @@ let
     pkgs.codex
     pkgs.bubblewrap
     piCodingAgent
+    dirge
     ompPrebuilt
     ohMyCodex
   ];

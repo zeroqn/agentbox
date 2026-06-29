@@ -28,6 +28,9 @@
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
+          dirge = import ./nix/pkgs/dirge.nix {
+            inherit pkgs pins;
+          };
           ompPrebuilt = import ./nix/pkgs/omp-prebuilt.nix {
             inherit pkgs pins;
           };
@@ -83,6 +86,7 @@
 
                 ohMyCodex
                 piCodingAgent
+                dirge
                 ompPrebuilt
                 rmuxPrebuilt
                 rtkPrebuilt
@@ -101,6 +105,7 @@
           default = rustPackages.rustPackage;
           oh-my-codex = ohMyCodex;
           pi-coding-agent = piCodingAgent;
+          dirge = dirge;
           omp-prebuilt = ompPrebuilt;
           rmux-prebuilt = rmuxPrebuilt;
           symposium = symposium;
@@ -137,6 +142,7 @@
               inherit pkgs imageVariant;
               ohMyCodex = packages.oh-my-codex;
               piCodingAgent = packages.pi-coding-agent;
+              dirge = packages.dirge;
               ompPrebuilt = packages.omp-prebuilt;
               rmuxPrebuilt = packages.rmux-prebuilt;
               rtkPrebuilt = packages.rtk-prebuilt or null;

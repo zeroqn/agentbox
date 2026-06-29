@@ -2,6 +2,7 @@
   pkgs,
   ohMyCodex,
   piCodingAgent,
+  dirge,
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
@@ -20,6 +21,7 @@ let
       pkgs
       ohMyCodex
       piCodingAgent
+      dirge
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
@@ -48,6 +50,7 @@ let
       pkgs
       ohMyCodex
       piCodingAgent
+      dirge
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
