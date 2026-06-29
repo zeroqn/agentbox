@@ -49,21 +49,21 @@
     repo = "pi";
     rev = "v0.79.10";
     srcHash = "sha256-UMRkOzJpA1XcEHzRwHxgBg6idEmpVJzBKlrXZaVf4MQ=";
-    npmDepsHash = "sha256-aGCtCSPr69xeaclHS7r+cuWQh1LU3RPpLuDp9Mk4Vcs=";
+    npmDepsHash = "sha256-ZFf9IUI3XPBDOlTqvRkoDvF2EqooMq9Q31YE8iaZkI8=";
   };
 
   ompPrebuiltRelease = {
     owner = "can1357";
     repo = "oh-my-pi";
-    tag = "v16.1.14";
+    tag = "v16.2.4";
     systems = {
       x86_64-linux = {
         asset = "omp-linux-x64";
-        hash = "sha256-EcYbyzWeze/X3gfdwRYsFow7ESFtRjfWKqUqn+ynJqY=";
+        hash = "sha256-iwDDrVmv156UpuyNKzAFmLJl10LmovjeHQhcD36K1xc=";
       };
       aarch64-linux = {
         asset = "omp-linux-arm64";
-        hash = "sha256-HF1pGM9NYJXS8rEhxrwPjU2RDT5drhWGM2K3d6H/510=";
+        hash = "sha256-jr7Jv/zC4jSOCvW+zqg6WVWhgxWXhoVnpazWpPIFEME=";
       };
     };
   };
@@ -133,7 +133,7 @@
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-4655b4082318";
+    tag = "sha-34c20b4bac0e";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
@@ -148,7 +148,7 @@
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-4655b4082318";
+    tag = "sha-34c20b4bac0e";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
@@ -160,12 +160,12 @@
   rtkPrebuiltRelease = {
     owner = "rtk-ai";
     repo = "rtk";
-    tag = "v0.42.4";
+    tag = "v0.43.0";
     systems = {
       x86_64-linux = {
         asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
         binary = "rtk";
-        hash = "sha256-NJdRFtoR4J5QJQHa91gUPgsi7TpCoQ62f7aTpicNnjY=";
+        hash = "sha256-/4oed2ZJbhdSkaha7KHcl8n/bfM+UeWJPR+8eP6ipgk=";
       };
     };
   };
