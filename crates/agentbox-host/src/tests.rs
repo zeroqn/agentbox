@@ -695,14 +695,13 @@ fn image_retains_graphene_hardened_malloc_for_hardened_mode() {
 }
 
 #[test]
-fn image_uses_pinned_rmux_instead_of_tmux() {
+fn image_includes_real_tmux_and_keeps_rmux() {
     for required in [
         "rmuxPrebuilt = import ./nix/pkgs/rmux-prebuilt.nix",
         "rmux-prebuilt = rmuxPrebuilt;",
         "rmuxPrebuilt",
-        "rmuxTmuxCommandCompat",
-        r#"ln -s ${rmuxPrebuilt}/bin/rmux "$out/bin/tmux""#,
-        r#"grep -F 'ln -s ''${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"'"#,
+        "pkgs.tmux",
+        "test -x ${pkgs.tmux}/bin/tmux",
         "rmuxPrebuiltRelease = {",
         r#"owner = "Helvesec";"#,
         r#"repo = "rmux";"#,
@@ -723,7 +722,8 @@ fn image_uses_pinned_rmux_instead_of_tmux() {
             "missing {required}"
         );
     }
-    assert!(!LAYERS.contains("pkgs.tmux"));
+    assert!(!LAYERS.contains("rmuxTmuxCommandCompat"));
+    assert!(!LAYERS.contains("rmux-tmux-command-compat"));
     assert!(!CONTAINER_NIX.contains("./etc/tmux.conf"));
 }
 

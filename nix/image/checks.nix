@@ -140,8 +140,7 @@ let
   '';
   terminalMultiplexerContracts = ''
     grep -F 'rmuxPrebuilt' ${layersSourceFile}
-    grep -F 'rmuxTmuxCommandCompat' ${layersSourceFile}
-    grep -F 'ln -s ''${rmuxPrebuilt}/bin/rmux "$out/bin/tmux"' ${layersSourceFile}
+    grep -F 'pkgs.tmux' ${layersSourceFile}
     grep -F 'rmuxPrebuilt' ${containerSourceFile}
     grep -F './etc/rmux.conf' ${containerSourceFile}
     grep -F 'bind | split-window -h' ${containerSourceFile}
@@ -150,12 +149,13 @@ let
     grep -F 'bind j select-pane -D' ${containerSourceFile}
     grep -F 'bind k select-pane -U' ${containerSourceFile}
     grep -F 'bind l select-pane -R' ${containerSourceFile}
-    ! grep -F 'pkgs.tmux' ${layersSourceFile}
+    ! grep -F 'rmuxTmuxCommandCompat' ${layersSourceFile}
+    ! grep -F 'rmux-tmux-command-compat' ${layersSourceFile}
     ! grep -F './etc/tmux.conf' ${containerSourceFile}
     test -x ${rmuxPrebuilt}/bin/rmux
-    test -L ${layers.rmuxTmuxCommandCompat}/bin/tmux
-    test "$(readlink ${layers.rmuxTmuxCommandCompat}/bin/tmux)" = "${rmuxPrebuilt}/bin/rmux"
+    test -x ${pkgs.tmux}/bin/tmux
     ${rmuxPrebuilt}/bin/rmux -V
+    ${pkgs.tmux}/bin/tmux -V
   '';
 
   wrapperContracts =

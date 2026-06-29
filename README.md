@@ -226,7 +226,7 @@ CI publishes release artifacts on every push to `main` and on every git tag
   shell runtime library path.
 - `.#rmux-prebuilt`: install the pinned published Helvesec/rmux Linux release
   tarball for the current system. The agentbox and loftd images include this
-  package as their terminal multiplexer instead of Nixpkgs `tmux`.
+  package as `rmux` alongside Nixpkgs `tmux`.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
@@ -1581,12 +1581,12 @@ The container provides:
 - narrow hardcoded-interpreter compatibility for `/bin/sh`, `/bin/bash`,
   `/bin/python`, and `/bin/python3`; `/bin/python` resolves to Python 3
   (not broad FHS compatibility)
-- common tools (`curl`, `jq`, `openssl`, `rmux`, etc.); `rmux` replaces
-  Nixpkgs `tmux` in both the agentbox and loftd images, with `tmux` kept as
-  a compatibility symlink to `rmux` and `/etc/rmux.conf` as the image-level
-  config path. The default `rmux` config includes tmux-compatible bindings for
-  horizontal/vertical splits (`|`, `-`) and pane selection with `h`, `j`, `k`,
-  and `l`
+- common tools (`curl`, `jq`, `openssl`, `tmux`, `rmux`, etc.); `tmux` comes
+  from Nixpkgs in both the agentbox and loftd images, and the pinned `rmux`
+  release remains available separately as `rmux`. `/etc/rmux.conf` is the
+  image-level rmux config path. The default `rmux` config includes
+  tmux-compatible bindings for horizontal/vertical splits (`|`, `-`) and pane
+  selection with `h`, `j`, `k`, and `l`
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
 setting `RUSTFLAGS`, so existing Cargo config can still layer on top normally.
