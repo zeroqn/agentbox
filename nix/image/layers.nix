@@ -398,6 +398,7 @@ let
     pkgs.fd
     pkgs.file
     pkgs.fish
+    pkgs.ghostty
     pkgs.ripgrep
     pkgs.socat
     sidecarProxyWrapper
