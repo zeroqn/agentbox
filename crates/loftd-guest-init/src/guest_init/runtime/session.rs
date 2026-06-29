@@ -1012,10 +1012,10 @@ mod tests {
             )
         });
 
-        match read_frame(&mut client).unwrap() {
-            Some(Frame::Data(data)) => assert_eq!(data, b"primary-da-visible\r\n"),
-            frame => panic!("expected initial PTY data, got {frame:?}"),
-        }
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_data_frames_eq(&mut client, b"primary-da-visible\r\n");
         write_frame(&mut client, &Frame::Detach).unwrap();
         assert_eq!(server.join().unwrap().unwrap(), ClientResult::Detached);
         let mut status = 0;
@@ -1241,6 +1241,20 @@ mod tests {
         let normalized = normalizer.normalize("é\x1b(0qé".as_bytes());
 
         assert_eq!(normalized, "é─é".as_bytes());
+    }
+
+    fn assert_data_frames_eq<T>(client: &mut T, expected: &[u8])
+    where
+        T: Read,
+    {
+        let mut received = Vec::new();
+        while received.len() < expected.len() {
+            match read_frame(client).unwrap() {
+                Some(Frame::Data(data)) => received.extend(data),
+                frame => panic!("expected PTY data frame, got {frame:?}"),
+            }
+        }
+        assert_eq!(received, expected);
     }
 
     fn restored_screen(terminal_state: &TerminalState) -> vt100::Parser {
