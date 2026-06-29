@@ -76,6 +76,7 @@ let
         ./etc/nix \
         ./home/dev/.cache \
         ./home/dev/.codex \
+        ./home/dev/.terminfo/x \
         ./root \
         ./tmp \
         ./var/empty \
@@ -123,6 +124,8 @@ let
       bind-key k select-pane -U
       EOF_TMUX_CONF
       chmod 0644 ./etc/tmux.conf
+      cp ${pkgs.ghostty.terminfo}/share/terminfo/x/xterm-ghostty ./home/dev/.terminfo/x/xterm-ghostty
+      chmod 0644 ./home/dev/.terminfo/x/xterm-ghostty
       if ! grep -q '^nixbld:' ./etc/group; then
         printf 'nixbld:x:${toString layers.nixBuilderGroupId}:${layers.nixBuilderGroupMembers}\n' >> ./etc/group
       fi

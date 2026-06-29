@@ -159,6 +159,12 @@ let
     ${rmuxPrebuilt}/bin/rmux -V
     ${pkgs.tmux}/bin/tmux -V
   '';
+  ghosttyTerminfoContracts = ''
+    grep -F './home/dev/.terminfo/x' ${containerSourceFile}
+    grep -F 'pkgs.ghostty.terminfo' ${containerSourceFile}
+    grep -F 'xterm-ghostty' ${containerSourceFile}
+    test -f ${pkgs.ghostty.terminfo}/share/terminfo/x/xterm-ghostty
+  '';
 
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
@@ -170,6 +176,7 @@ let
 
         ${allocatorContracts}
         ${terminalMultiplexerContracts}
+        ${ghosttyTerminfoContracts}
 
         ${
           if imageVariant == "loftd" then
@@ -224,6 +231,7 @@ in
 
         ${allocatorContracts}
         ${terminalMultiplexerContracts}
+        ${ghosttyTerminfoContracts}
 
         cp ${imageConfigRefsFile} image-config-refs
         cp ${imageNixDbStorePathsFile} image-nix-db-valid-paths
