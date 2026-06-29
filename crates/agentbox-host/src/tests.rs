@@ -712,6 +712,13 @@ fn image_includes_real_tmux_and_keeps_rmux() {
         "bind j select-pane -D",
         "bind k select-pane -U",
         "bind l select-pane -R",
+        "./etc/tmux.conf",
+        "bind-key | split-window -h",
+        "bind-key - split-window -v",
+        "bind-key h select-pane -L",
+        "bind-key l select-pane -R",
+        "bind-key j select-pane -D",
+        "bind-key k select-pane -U",
     ] {
         assert!(
             FLAKE_NIX.contains(required)
@@ -724,7 +731,6 @@ fn image_includes_real_tmux_and_keeps_rmux() {
     }
     assert!(!LAYERS.contains("rmuxTmuxCommandCompat"));
     assert!(!LAYERS.contains("rmux-tmux-command-compat"));
-    assert!(!CONTAINER_NIX.contains("./etc/tmux.conf"));
 }
 
 #[test]
