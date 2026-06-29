@@ -52,6 +52,9 @@
         "syscall": "exit_group"
       },
       {
+        "syscall": "fallocate"
+      },
+      {
         "syscall": "fchmodat"
       },
       {
