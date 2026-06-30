@@ -5,6 +5,9 @@ use crate::guest_init::components::env::DEV_USER;
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::rootless::idmap::WRAPPER_BIN_DIR;
 
+const UTF8_LOCALE_DEFAULT: &str = "C.UTF-8";
+const UTF8_LOCALE_ENV_NAMES: [&str; 2] = ["LANG", "LC_CTYPE"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct ShellEnvironment {
     pub(in crate::guest_init) vars: Vec<(String, String)>,
@@ -45,10 +48,26 @@ pub(in crate::guest_init) fn derive(
         let path = env::var("PATH").unwrap_or_default();
         vars.push(("PATH".to_owned(), format!("{WRAPPER_BIN_DIR}:{path}")));
     }
+    append_utf8_locale_defaults(&mut vars, |key| env::var_os(key));
     ShellEnvironment {
         vars,
         tmpdir,
         runtime_dir,
+    }
+}
+
+fn append_utf8_locale_defaults<F>(vars: &mut Vec<(String, String)>, lookup: F)
+where
+    F: Fn(&str) -> Option<std::ffi::OsString>,
+{
+    for key in UTF8_LOCALE_ENV_NAMES {
+        let should_default = match lookup(key) {
+            Some(value) => value.is_empty(),
+            None => true,
+        };
+        if should_default {
+            vars.push((key.to_owned(), UTF8_LOCALE_DEFAULT.to_owned()));
+        }
     }
 }
 

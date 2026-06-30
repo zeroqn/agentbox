@@ -1,5 +1,6 @@
+use super::{UTF8_LOCALE_DEFAULT, append_utf8_locale_defaults, derive};
 use crate::guest_init::components::home::identity::DevIdentity;
-use crate::guest_init::components::shell::env::derive;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 #[test]
@@ -51,4 +52,43 @@ fn internal_shell_environment_omits_docker_host_without_container_storage() {
             .iter()
             .any(|(key, _)| key == "XDG_RUNTIME_DIR")
     );
+}
+
+#[test]
+fn internal_shell_environment_defaults_missing_utf8_locale_vars() {
+    let mut vars = Vec::new();
+
+    append_utf8_locale_defaults(&mut vars, |_| None);
+
+    assert!(vars.contains(&("LANG".to_owned(), UTF8_LOCALE_DEFAULT.to_owned())));
+    assert!(vars.contains(&("LC_CTYPE".to_owned(), UTF8_LOCALE_DEFAULT.to_owned())));
+    assert!(!vars.iter().any(|(key, _)| key == "LC_ALL"));
+}
+
+#[test]
+fn internal_shell_environment_defaults_empty_utf8_locale_vars() {
+    let mut vars = Vec::new();
+
+    append_utf8_locale_defaults(&mut vars, |key| match key {
+        "LANG" | "LC_CTYPE" => Some(OsString::new()),
+        _ => None,
+    });
+
+    assert!(vars.contains(&("LANG".to_owned(), UTF8_LOCALE_DEFAULT.to_owned())));
+    assert!(vars.contains(&("LC_CTYPE".to_owned(), UTF8_LOCALE_DEFAULT.to_owned())));
+    assert!(!vars.iter().any(|(key, _)| key == "LC_ALL"));
+}
+
+#[test]
+fn internal_shell_environment_preserves_explicit_locale_vars() {
+    let mut vars = Vec::new();
+
+    append_utf8_locale_defaults(&mut vars, |key| match key {
+        "LANG" => Some(OsString::from("ja_JP.UTF-8")),
+        "LC_CTYPE" => Some(OsString::from("en_US.UTF-8")),
+        "LC_ALL" => Some(OsString::from("C")),
+        _ => None,
+    });
+
+    assert!(vars.is_empty());
 }

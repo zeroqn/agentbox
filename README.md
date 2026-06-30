@@ -851,7 +851,11 @@ Detach/attach behavior:
   terminal identity by passing non-empty UTF-8 `TERM`, `COLORTERM`,
   `TERM_PROGRAM`, and `TERM_PROGRAM_VERSION` values into the guest; this is
   limited to the managed attach path and does not enable broad host environment
-  passthrough.
+  passthrough. The guest init also defaults missing or empty `LANG` and
+  `LC_CTYPE` to `C.UTF-8` so locale-sensitive terminal programs such as `tmux`
+  can use UTF-8 character widths, including CJK text. Explicit locale values
+  are preserved, `LC_ALL` is not set, and this does not broaden host
+  environment passthrough.
 - Press `Ctrl-\` twice to detach from the current terminal
   session. loftd recognizes both raw `Ctrl-\` bytes and CSI-u/Kitty-encoded
   `Ctrl-\` events from terminals or multiplexers. The host-side filter
