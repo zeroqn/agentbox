@@ -1147,9 +1147,13 @@ and lifecycle phases. When enabled at launch time, loftd propagates the flag to
 to stderr on detach or exit. The host summary includes frame-read, payload size,
 stdout write, and stdout flush timings; the guest summary includes PTY readable
 events, PTY read sizes, full-buffer read count, terminal normalize/parser time,
-and guest frame-write time. Attaching to an already-running managed task profiles
-the host attach path immediately, but guest-side attach metrics are available
-only if that task was originally launched with `LOFTD_ATTACH_PROFILE=1`.
+and guest frame-write time. Guest summaries keep the compatibility
+`normalize_parse_total_us` and `normalize_parse_max_us` fields as exact per-read
+combined terminal-processing timings, and also include split `normalize_*` and
+`parser_*` fields for new latency analysis. Attaching to an already-running
+managed task profiles the host attach path immediately, but guest-side attach
+metrics are available only if that task was originally launched with
+`LOFTD_ATTACH_PROFILE=1`.
 
 Loftd troubleshooting FAQ:
 

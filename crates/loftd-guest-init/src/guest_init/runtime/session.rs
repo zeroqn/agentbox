@@ -145,9 +145,17 @@ impl TerminalState {
         }
     }
 
+    fn normalize_output(&mut self, bytes: &[u8]) -> Vec<u8> {
+        self.output_normalizer.normalize(bytes)
+    }
+
+    fn record_normalized_output(&mut self, normalized: &[u8]) {
+        self.parser.process(normalized);
+    }
+
     fn record_output(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let normalized = self.output_normalizer.normalize(bytes);
-        self.parser.process(&normalized);
+        let normalized = self.normalize_output(bytes);
+        self.record_normalized_output(&normalized);
         normalized
     }
 
@@ -644,21 +652,69 @@ fn serve_attached_client(
             thread::sleep(Duration::from_millis(10));
             continue;
         }
-        let normalize_started = Instant::now();
-        let normalized = terminal_state.record_output(&buf[..n]);
-        profiler.record_normalize_parse(normalize_started.elapsed());
-        let frame_bytes = normalized.len();
-        let frame_write_started = Instant::now();
-        if write_frame(&mut client, &Frame::Data(normalized)).is_err() {
-            profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
+        if !forward_and_record_pty_output(&buf[..n], &mut client, terminal_state, &mut profiler) {
             break;
         }
-        profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
     }
     apply_pending_resizes(&resize_rx, terminal_state);
     let _ = profiler.report_to(&mut std::io::stderr().lock());
     stop_client_input(&active, client.as_raw_fd(), input_thread);
     Ok(ClientResult::Detached)
+}
+
+struct ForwardedPtyOutput {
+    normalized: Vec<u8>,
+    write_succeeded: bool,
+    normalize_elapsed: Duration,
+}
+
+fn forward_and_record_pty_output(
+    bytes: &[u8],
+    client: &mut impl Write,
+    terminal_state: &mut TerminalState,
+    profiler: &mut GuestAttachProfiler,
+) -> bool {
+    let forwarded = normalize_and_write_pty_output(bytes, client, terminal_state, profiler);
+    let write_succeeded = forwarded.write_succeeded;
+    record_forwarded_pty_output(&forwarded, terminal_state, profiler);
+    write_succeeded
+}
+
+fn normalize_and_write_pty_output(
+    bytes: &[u8],
+    client: &mut impl Write,
+    terminal_state: &mut TerminalState,
+    profiler: &mut GuestAttachProfiler,
+) -> ForwardedPtyOutput {
+    let normalize_started = Instant::now();
+    let normalized = terminal_state.normalize_output(bytes);
+    let normalize_elapsed = normalize_started.elapsed();
+    let frame_bytes = normalized.len();
+    let frame = Frame::Data(normalized);
+
+    let frame_write_started = Instant::now();
+    let write_succeeded = write_frame(client, &frame).is_ok();
+    profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
+
+    let Frame::Data(normalized) = frame else {
+        unreachable!("live PTY output frame must be data");
+    };
+    ForwardedPtyOutput {
+        normalized,
+        write_succeeded,
+        normalize_elapsed,
+    }
+}
+
+fn record_forwarded_pty_output(
+    forwarded: &ForwardedPtyOutput,
+    terminal_state: &mut TerminalState,
+    profiler: &mut GuestAttachProfiler,
+) {
+    let parser_started = Instant::now();
+    terminal_state.record_normalized_output(&forwarded.normalized);
+    let parser_elapsed = parser_started.elapsed();
+    profiler.record_terminal_processing(forwarded.normalize_elapsed, parser_elapsed);
 }
 
 fn apply_pending_resizes(resize_rx: &mpsc::Receiver<PtySize>, terminal_state: &mut TerminalState) {
@@ -1076,6 +1132,75 @@ mod tests {
     }
 
     #[test]
+    fn terminal_state_can_normalize_before_parser_record() {
+        let mut terminal_state = TerminalState::new(PtySize::default());
+
+        let normalized = terminal_state.normalize_output(b"\x1b(0qx\x1b(B\n");
+
+        assert_eq!(normalized, "─│\n".as_bytes());
+        assert!(!terminal_state.parser.screen().contents().contains("─│"));
+        terminal_state.record_normalized_output(&normalized);
+        assert!(terminal_state.parser.screen().contents().contains("─│"));
+    }
+
+    #[test]
+    fn terminal_state_record_output_preserves_combined_behavior() {
+        let mut terminal_state = TerminalState::new(PtySize::default());
+
+        let live_data = terminal_state.record_output(b"\x1b(0qx\x1b(B\n");
+
+        assert_eq!(live_data, "─│\n".as_bytes());
+        assert!(terminal_state.parser.screen().contents().contains("─│"));
+    }
+
+    #[test]
+    fn attached_output_is_written_before_parser_record_on_success() {
+        let mut terminal_state = TerminalState::new(PtySize::default());
+        let mut profiler = GuestAttachProfiler::new(true);
+        let mut writer = Vec::new();
+
+        let forwarded = normalize_and_write_pty_output(
+            b"\x1b(0qx\x1b(B\n",
+            &mut writer,
+            &mut terminal_state,
+            &mut profiler,
+        );
+
+        assert!(forwarded.write_succeeded);
+        assert_eq!(forwarded.normalized.len(), "─│\n".len());
+        assert!(!terminal_state.parser.screen().contents().contains("─│"));
+        let mut cursor = std::io::Cursor::new(writer);
+        assert_eq!(
+            read_frame(&mut cursor).unwrap(),
+            Some(Frame::Data("─│\n".as_bytes().to_vec()))
+        );
+
+        record_forwarded_pty_output(&forwarded, &mut terminal_state, &mut profiler);
+        assert!(terminal_state.parser.screen().contents().contains("─│"));
+    }
+
+    #[test]
+    fn attached_output_records_parser_state_after_write_failure() {
+        let mut terminal_state = TerminalState::new(PtySize::default());
+        let mut profiler = GuestAttachProfiler::new(true);
+        let mut writer = FailAfterSuccessfulWrites::new(1);
+
+        let forwarded = normalize_and_write_pty_output(
+            b"\x1b(0qx\x1b(B\n",
+            &mut writer,
+            &mut terminal_state,
+            &mut profiler,
+        );
+
+        assert!(!forwarded.write_succeeded);
+        assert!(!terminal_state.parser.screen().contents().contains("─│"));
+        assert_eq!(writer.successful_writes(), 1);
+
+        record_forwarded_pty_output(&forwarded, &mut terminal_state, &mut profiler);
+        assert!(terminal_state.parser.screen().contents().contains("─│"));
+    }
+
+    #[test]
     fn terminal_state_returns_normalized_output_for_live_proxy() {
         let mut terminal_state = TerminalState::new(PtySize::default());
 
@@ -1293,6 +1418,41 @@ mod tests {
         let normalized = normalizer.normalize("é\x1b(0qé".as_bytes());
 
         assert_eq!(normalized, "é─é".as_bytes());
+    }
+
+    struct FailAfterSuccessfulWrites {
+        successful_writes_before_failure: usize,
+        successful_writes: usize,
+    }
+
+    impl FailAfterSuccessfulWrites {
+        fn new(successful_writes_before_failure: usize) -> Self {
+            Self {
+                successful_writes_before_failure,
+                successful_writes: 0,
+            }
+        }
+
+        fn successful_writes(&self) -> usize {
+            self.successful_writes
+        }
+    }
+
+    impl Write for FailAfterSuccessfulWrites {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.successful_writes >= self.successful_writes_before_failure {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "intentional test write failure",
+                ));
+            }
+            self.successful_writes += 1;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     fn assert_data_frames_eq<T>(client: &mut T, expected: &[u8])

@@ -29,6 +29,10 @@ pub(in crate::guest_init::runtime) struct GuestAttachProfiler {
     pty_read_max: Duration,
     normalize_parse_total: Duration,
     normalize_parse_max: Duration,
+    normalize_total: Duration,
+    normalize_max: Duration,
+    parser_total: Duration,
+    parser_max: Duration,
     frame_write_total: Duration,
     frame_write_max: Duration,
     frame_bytes: u64,
@@ -69,12 +73,21 @@ impl GuestAttachProfiler {
         self.pty_read_max = self.pty_read_max.max(duration);
     }
 
-    pub(in crate::guest_init::runtime) fn record_normalize_parse(&mut self, duration: Duration) {
+    pub(in crate::guest_init::runtime) fn record_terminal_processing(
+        &mut self,
+        normalize_duration: Duration,
+        parser_duration: Duration,
+    ) {
         if !self.enabled {
             return;
         }
-        self.normalize_parse_total += duration;
-        self.normalize_parse_max = self.normalize_parse_max.max(duration);
+        let combined_duration = normalize_duration + parser_duration;
+        self.normalize_parse_total += combined_duration;
+        self.normalize_parse_max = self.normalize_parse_max.max(combined_duration);
+        self.normalize_total += normalize_duration;
+        self.normalize_max = self.normalize_max.max(normalize_duration);
+        self.parser_total += parser_duration;
+        self.parser_max = self.parser_max.max(parser_duration);
     }
 
     pub(in crate::guest_init::runtime) fn record_frame_write(
@@ -106,7 +119,7 @@ impl GuestAttachProfiler {
 
     fn summary_line(&self) -> String {
         format!(
-            "loftd attach profile role=guest pty_readable={} pty_reads={} pty_bytes={} pty_read_max_bytes={} pty_read_avg_bytes={} pty_read_saturated_count={} pty_read_total_us={} pty_read_max_us={} normalize_parse_total_us={} normalize_parse_max_us={} frame_write_total_us={} frame_write_max_us={} frame_bytes={} frame_max_bytes={} frame_avg_bytes={} frames={}",
+            "loftd attach profile role=guest pty_readable={} pty_reads={} pty_bytes={} pty_read_max_bytes={} pty_read_avg_bytes={} pty_read_saturated_count={} pty_read_total_us={} pty_read_max_us={} normalize_parse_total_us={} normalize_parse_max_us={} normalize_total_us={} normalize_max_us={} parser_total_us={} parser_max_us={} frame_write_total_us={} frame_write_max_us={} frame_bytes={} frame_max_bytes={} frame_avg_bytes={} frames={}",
             self.pty_readable,
             self.pty_reads,
             self.pty_bytes,
@@ -117,6 +130,10 @@ impl GuestAttachProfiler {
             duration_micros(self.pty_read_max),
             duration_micros(self.normalize_parse_total),
             duration_micros(self.normalize_parse_max),
+            duration_micros(self.normalize_total),
+            duration_micros(self.normalize_max),
+            duration_micros(self.parser_total),
+            duration_micros(self.parser_max),
             duration_micros(self.frame_write_total),
             duration_micros(self.frame_write_max),
             self.frame_bytes,
@@ -154,8 +171,9 @@ mod tests {
         let mut profiler = GuestAttachProfiler::new(true);
         profiler.record_pty_readable();
         profiler.record_pty_read(16, Duration::from_micros(3), 16);
-        profiler.record_normalize_parse(Duration::from_micros(5));
-        profiler.record_frame_write(12, Duration::from_micros(7));
+        profiler.record_terminal_processing(Duration::from_micros(2), Duration::from_micros(3));
+        profiler.record_terminal_processing(Duration::from_micros(7), Duration::from_micros(11));
+        profiler.record_frame_write(12, Duration::from_micros(13));
         let mut output = Vec::new();
 
         profiler.report_to(&mut output).unwrap();
@@ -167,8 +185,13 @@ mod tests {
         assert!(output.contains("pty_read_max_bytes=16"));
         assert!(output.contains("pty_read_avg_bytes=16"));
         assert!(output.contains("pty_read_saturated_count=1"));
-        assert!(output.contains("normalize_parse_total_us=5"));
-        assert!(output.contains("frame_write_total_us=7"));
+        assert!(output.contains("normalize_parse_total_us=23"));
+        assert!(output.contains("normalize_parse_max_us=18"));
+        assert!(output.contains("normalize_total_us=9"));
+        assert!(output.contains("normalize_max_us=7"));
+        assert!(output.contains("parser_total_us=14"));
+        assert!(output.contains("parser_max_us=11"));
+        assert!(output.contains("frame_write_total_us=13"));
         assert!(output.contains("frame_max_bytes=12"));
         assert!(output.contains("frame_avg_bytes=12"));
         assert!(output.contains("frames=1"));
