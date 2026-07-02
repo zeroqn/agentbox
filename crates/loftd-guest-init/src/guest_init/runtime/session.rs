@@ -9,7 +9,9 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use super::attach_profile::GuestAttachProfiler;
 
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::process;
@@ -29,6 +31,7 @@ const CLEAR_VISIBLE_SCREEN: &[u8] = b"\x1b[m\x1b[H\x1b[J";
 pub(in crate::guest_init) struct ManagedSessionConfig {
     pub(in crate::guest_init) port: u32,
     pub(in crate::guest_init) protocol_version: u16,
+    pub(in crate::guest_init) attach_profile: bool,
 }
 
 pub(in crate::guest_init) fn run(
@@ -44,7 +47,14 @@ pub(in crate::guest_init) fn run(
         );
     }
     let listener = VsockListener::bind(config.port)?;
-    run_pre_start_event_loop(command, identity, drop_to_identity, listener)
+    super::attach_profile::clear_process_env();
+    run_pre_start_event_loop(
+        command,
+        identity,
+        drop_to_identity,
+        listener,
+        config.attach_profile,
+    )
 }
 
 fn run_pre_start_event_loop(
@@ -52,6 +62,7 @@ fn run_pre_start_event_loop(
     identity: &DevIdentity,
     drop_to_identity: bool,
     listener: VsockListener,
+    attach_profile: bool,
 ) -> Result<()> {
     loop {
         let client = listener.accept()?;
@@ -88,9 +99,16 @@ fn run_pre_start_event_loop(
                     client,
                     &listener,
                     &mut terminal_state,
+                    attach_profile,
                 )? {
                     ClientResult::Detached => {
-                        return run_event_loop(pty.master, child, listener, terminal_state);
+                        return run_event_loop(
+                            pty.master,
+                            child,
+                            listener,
+                            terminal_state,
+                            attach_profile,
+                        );
                     }
                     ClientResult::ChildExited(code) => std::process::exit(code),
                 }
@@ -435,6 +453,7 @@ fn run_event_loop(
     child: libc::pid_t,
     listener: VsockListener,
     mut terminal_state: TerminalState,
+    attach_profile: bool,
 ) -> Result<()> {
     loop {
         if let Some(code) = reap_child(child)? {
@@ -466,7 +485,14 @@ fn run_event_loop(
         }
         if fds[0].revents & libc::POLLIN != 0 {
             let client = listener.accept()?;
-            match serve_client(&master, child, client, &listener, &mut terminal_state)? {
+            match serve_client(
+                &master,
+                child,
+                client,
+                &listener,
+                &mut terminal_state,
+                attach_profile,
+            )? {
                 ClientResult::Detached => continue,
                 ClientResult::ChildExited(code) => std::process::exit(code),
             }
@@ -486,6 +512,7 @@ fn serve_client(
     mut client: File,
     listener: &VsockListener,
     terminal_state: &mut TerminalState,
+    attach_profile: bool,
 ) -> Result<ClientResult> {
     write_frame(
         &mut client,
@@ -501,7 +528,14 @@ fn serve_client(
     if !restore.is_empty() {
         write_frame(&mut client, &Frame::Data(restore))?;
     }
-    serve_attached_client(master, child, client, listener, terminal_state)
+    serve_attached_client(
+        master,
+        child,
+        client,
+        listener,
+        terminal_state,
+        attach_profile,
+    )
 }
 
 fn read_post_start_attach_request<T>(
@@ -538,7 +572,9 @@ fn serve_attached_client(
     mut client: File,
     listener: &VsockListener,
     terminal_state: &mut TerminalState,
+    attach_profile: bool,
 ) -> Result<ClientResult> {
+    let mut profiler = GuestAttachProfiler::new(attach_profile);
     let active = Arc::new(AtomicBool::new(true));
     let reader_active = active.clone();
     let (resize_tx, resize_rx) = mpsc::channel();
@@ -567,6 +603,7 @@ fn serve_attached_client(
         apply_pending_resizes(&resize_rx, terminal_state);
         if let Some(code) = reap_child(child)? {
             let _ = write_frame(&mut client, &Frame::Exit { code });
+            let _ = profiler.report_to(&mut std::io::stderr().lock());
             stop_client_input(&active, client.as_raw_fd(), input_thread);
             return Ok(ClientResult::ChildExited(code));
         }
@@ -599,17 +636,27 @@ fn serve_attached_client(
         if fds[0].revents & libc::POLLIN == 0 {
             continue;
         }
+        profiler.record_pty_readable();
+        let read_started = Instant::now();
         let n = pty_reader.read(&mut buf)?;
+        profiler.record_pty_read(n, read_started.elapsed(), IO_BUF_SIZE);
         if n == 0 {
             thread::sleep(Duration::from_millis(10));
             continue;
         }
+        let normalize_started = Instant::now();
         let normalized = terminal_state.record_output(&buf[..n]);
+        profiler.record_normalize_parse(normalize_started.elapsed());
+        let frame_bytes = normalized.len();
+        let frame_write_started = Instant::now();
         if write_frame(&mut client, &Frame::Data(normalized)).is_err() {
+            profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
             break;
         }
+        profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
     }
     apply_pending_resizes(&resize_rx, terminal_state);
+    let _ = profiler.report_to(&mut std::io::stderr().lock());
     stop_client_input(&active, client.as_raw_fd(), input_thread);
     Ok(ClientResult::Detached)
 }
@@ -861,6 +908,7 @@ fn set_nonblocking(fd: RawFd, enabled: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::guest_init::runtime::attach_profile;
     use std::os::fd::IntoRawFd;
     use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -870,10 +918,12 @@ mod tests {
             ManagedSessionConfig {
                 port: 1,
                 protocol_version: PROTOCOL_VERSION + 1,
+                attach_profile: false,
             },
             ManagedSessionConfig {
                 port: 1,
                 protocol_version: PROTOCOL_VERSION,
+                attach_profile: false,
             }
         );
     }
@@ -1009,6 +1059,7 @@ mod tests {
                 server_file,
                 &listener,
                 &mut terminal_state,
+                false,
             )
         });
 
@@ -1157,6 +1208,7 @@ mod tests {
                 server_file,
                 &listener,
                 &mut terminal_state,
+                false,
             )
         });
 
@@ -1273,5 +1325,36 @@ mod tests {
         slave.flush()?;
         thread::sleep(Duration::from_millis(200));
         Ok(())
+    }
+
+    #[test]
+    fn managed_session_config_carries_attach_profile_flag() {
+        assert_ne!(
+            ManagedSessionConfig {
+                port: 1,
+                protocol_version: PROTOCOL_VERSION,
+                attach_profile: true,
+            },
+            ManagedSessionConfig {
+                port: 1,
+                protocol_version: PROTOCOL_VERSION,
+                attach_profile: false,
+            }
+        );
+    }
+
+    #[test]
+    fn attach_profile_env_cleanup_removes_child_leak_flag() {
+        // SAFETY: this test mutates one process environment key and restores the
+        // disabled state before returning.
+        unsafe { std::env::set_var(attach_profile::ATTACH_PROFILE_ENV, "1") };
+        assert_eq!(
+            std::env::var(attach_profile::ATTACH_PROFILE_ENV).as_deref(),
+            Ok("1")
+        );
+
+        attach_profile::clear_process_env();
+
+        assert!(std::env::var(attach_profile::ATTACH_PROFILE_ENV).is_err());
     }
 }

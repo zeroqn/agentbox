@@ -1,0 +1,186 @@
+use std::io::{self, Write};
+use std::time::Duration;
+
+pub(in crate::guest_init::runtime) const ATTACH_PROFILE_ENV: &str = "LOFTD_ATTACH_PROFILE";
+
+pub(in crate::guest_init::runtime) fn clear_process_env() {
+    // SAFETY: guest-init consumes attach profiling during single-threaded
+    // managed-session setup before forking the user shell, so child commands do
+    // not inherit this diagnostic flag.
+    unsafe { std::env::remove_var(ATTACH_PROFILE_ENV) };
+}
+
+pub(in crate::guest_init::runtime) fn env_value_enabled(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "summary"
+    )
+}
+
+#[derive(Debug, Default)]
+pub(in crate::guest_init::runtime) struct GuestAttachProfiler {
+    enabled: bool,
+    pty_readable: u64,
+    pty_reads: u64,
+    pty_bytes: u64,
+    pty_read_max_bytes: usize,
+    pty_read_saturated_count: u64,
+    pty_read_total: Duration,
+    pty_read_max: Duration,
+    normalize_parse_total: Duration,
+    normalize_parse_max: Duration,
+    frame_write_total: Duration,
+    frame_write_max: Duration,
+    frame_bytes: u64,
+    frame_max_bytes: usize,
+    frames: u64,
+}
+
+impl GuestAttachProfiler {
+    pub(in crate::guest_init::runtime) fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            ..Self::default()
+        }
+    }
+
+    pub(in crate::guest_init::runtime) fn record_pty_readable(&mut self) {
+        if self.enabled {
+            self.pty_readable += 1;
+        }
+    }
+
+    pub(in crate::guest_init::runtime) fn record_pty_read(
+        &mut self,
+        bytes: usize,
+        duration: Duration,
+        buffer_size: usize,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        self.pty_reads += 1;
+        self.pty_bytes = self.pty_bytes.saturating_add(bytes as u64);
+        self.pty_read_max_bytes = self.pty_read_max_bytes.max(bytes);
+        if bytes == buffer_size {
+            self.pty_read_saturated_count += 1;
+        }
+        self.pty_read_total += duration;
+        self.pty_read_max = self.pty_read_max.max(duration);
+    }
+
+    pub(in crate::guest_init::runtime) fn record_normalize_parse(&mut self, duration: Duration) {
+        if !self.enabled {
+            return;
+        }
+        self.normalize_parse_total += duration;
+        self.normalize_parse_max = self.normalize_parse_max.max(duration);
+    }
+
+    pub(in crate::guest_init::runtime) fn record_frame_write(
+        &mut self,
+        bytes: usize,
+        duration: Duration,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        self.frames += 1;
+        self.frame_bytes = self.frame_bytes.saturating_add(bytes as u64);
+        self.frame_max_bytes = self.frame_max_bytes.max(bytes);
+        self.frame_write_total += duration;
+        self.frame_write_max = self.frame_write_max.max(duration);
+    }
+
+    pub(in crate::guest_init::runtime) fn report_to(
+        &self,
+        writer: &mut impl Write,
+    ) -> io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        writer.write_all(self.summary_line().as_bytes())?;
+        writer.write_all(b"\n")?;
+        writer.flush()
+    }
+
+    fn summary_line(&self) -> String {
+        format!(
+            "loftd attach profile role=guest pty_readable={} pty_reads={} pty_bytes={} pty_read_max_bytes={} pty_read_avg_bytes={} pty_read_saturated_count={} pty_read_total_us={} pty_read_max_us={} normalize_parse_total_us={} normalize_parse_max_us={} frame_write_total_us={} frame_write_max_us={} frame_bytes={} frame_max_bytes={} frame_avg_bytes={} frames={}",
+            self.pty_readable,
+            self.pty_reads,
+            self.pty_bytes,
+            self.pty_read_max_bytes,
+            average(self.pty_bytes, self.pty_reads),
+            self.pty_read_saturated_count,
+            duration_micros(self.pty_read_total),
+            duration_micros(self.pty_read_max),
+            duration_micros(self.normalize_parse_total),
+            duration_micros(self.normalize_parse_max),
+            duration_micros(self.frame_write_total),
+            duration_micros(self.frame_write_max),
+            self.frame_bytes,
+            self.frame_max_bytes,
+            average(self.frame_bytes, self.frames),
+            self.frames,
+        )
+    }
+}
+
+fn average(total: u64, count: u64) -> u64 {
+    total.checked_div(count).unwrap_or(0)
+}
+
+fn duration_micros(duration: Duration) -> u128 {
+    duration.as_micros()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attach_profile_env_accepts_only_truthy_values() {
+        assert!(!env_value_enabled(""));
+        assert!(!env_value_enabled("0"));
+        assert!(!env_value_enabled("false"));
+        assert!(env_value_enabled("1"));
+        assert!(env_value_enabled("true"));
+        assert!(env_value_enabled("summary"));
+    }
+
+    #[test]
+    fn guest_attach_profile_summary_has_required_fields() {
+        let mut profiler = GuestAttachProfiler::new(true);
+        profiler.record_pty_readable();
+        profiler.record_pty_read(16, Duration::from_micros(3), 16);
+        profiler.record_normalize_parse(Duration::from_micros(5));
+        profiler.record_frame_write(12, Duration::from_micros(7));
+        let mut output = Vec::new();
+
+        profiler.report_to(&mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.starts_with("loftd attach profile role=guest "));
+        assert!(output.contains("pty_readable=1"));
+        assert!(output.contains("pty_reads=1"));
+        assert!(output.contains("pty_read_max_bytes=16"));
+        assert!(output.contains("pty_read_avg_bytes=16"));
+        assert!(output.contains("pty_read_saturated_count=1"));
+        assert!(output.contains("normalize_parse_total_us=5"));
+        assert!(output.contains("frame_write_total_us=7"));
+        assert!(output.contains("frame_max_bytes=12"));
+        assert!(output.contains("frame_avg_bytes=12"));
+        assert!(output.contains("frames=1"));
+    }
+
+    #[test]
+    fn disabled_guest_attach_profile_is_quiet() {
+        let profiler = GuestAttachProfiler::new(false);
+        let mut output = Vec::new();
+
+        profiler.report_to(&mut output).unwrap();
+
+        assert!(output.is_empty());
+    }
+}

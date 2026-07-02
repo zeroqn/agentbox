@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::attach_profile::HostAttachProfiler;
+
 use crate::runtime::session::task_control::{
     ActiveTaskStatus, ProcessInspector, list_records, resolve_task_selector,
 };
@@ -364,11 +366,66 @@ fn size_changed(
 
 fn proxy_remote(mut stream: UnixStream) -> Result<AttachOutcome> {
     let mut stdout = std::io::stdout().lock();
+    let mut stderr = std::io::stderr().lock();
+    proxy_remote_with_profile(
+        &mut stream,
+        &mut stdout,
+        &mut stderr,
+        HostAttachProfiler::from_process_env(),
+    )
+}
+
+fn proxy_remote_with_profile<R, W, E>(
+    stream: &mut R,
+    stdout: &mut W,
+    stderr: &mut E,
+    mut profiler: HostAttachProfiler,
+) -> Result<AttachOutcome>
+where
+    R: Read,
+    W: Write,
+    E: Write,
+{
+    let result = proxy_remote_loop(stream, stdout, &mut profiler);
+    let report = profiler.report_to(stderr);
+    if let Err(err) = report {
+        return Err(err).context("failed to write loftd attach profile report");
+    }
+    result
+}
+
+fn proxy_remote_loop<R, W>(
+    stream: &mut R,
+    stdout: &mut W,
+    profiler: &mut HostAttachProfiler,
+) -> Result<AttachOutcome>
+where
+    R: Read,
+    W: Write,
+{
     loop {
-        match read_frame(&mut stream)? {
+        let frame = if profiler.is_enabled() {
+            let started = Instant::now();
+            let frame = read_frame(stream);
+            profiler.record_frame_read(started.elapsed());
+            frame?
+        } else {
+            read_frame(stream)?
+        };
+        match frame {
             Some(Frame::Data(data)) => {
-                stdout.write_all(&data)?;
-                stdout.flush()?;
+                profiler.record_data_frame(data.len());
+                if profiler.is_enabled() {
+                    let started = Instant::now();
+                    stdout.write_all(&data)?;
+                    profiler.record_stdout_write(started.elapsed());
+                    let started = Instant::now();
+                    stdout.flush()?;
+                    profiler.record_stdout_flush(started.elapsed());
+                } else {
+                    stdout.write_all(&data)?;
+                    stdout.flush()?;
+                }
             }
             Some(Frame::Exit { code }) => return Ok(AttachOutcome::Exited(code)),
             Some(Frame::Detach) | None => return Ok(AttachOutcome::Detached),
@@ -385,6 +442,50 @@ fn proxy_remote_until_daemon_idle<W: Write>(
     stdout: &mut W,
     startup_timeout: Duration,
     idle_timeout: Duration,
+) -> Result<AttachOutcome> {
+    let mut stderr = std::io::stderr().lock();
+    proxy_remote_until_daemon_idle_with_profile(
+        stream,
+        writer,
+        stdout,
+        &mut stderr,
+        startup_timeout,
+        idle_timeout,
+        HostAttachProfiler::from_process_env(),
+    )
+}
+
+fn proxy_remote_until_daemon_idle_with_profile<W: Write, E: Write>(
+    stream: &mut UnixStream,
+    writer: &Arc<Mutex<UnixStream>>,
+    stdout: &mut W,
+    stderr: &mut E,
+    startup_timeout: Duration,
+    idle_timeout: Duration,
+    mut profiler: HostAttachProfiler,
+) -> Result<AttachOutcome> {
+    let result = proxy_remote_until_daemon_idle_loop(
+        stream,
+        writer,
+        stdout,
+        startup_timeout,
+        idle_timeout,
+        &mut profiler,
+    );
+    let report = profiler.report_to(stderr);
+    if let Err(err) = report {
+        return Err(err).context("failed to write loftd attach profile report");
+    }
+    result
+}
+
+fn proxy_remote_until_daemon_idle_loop<W: Write>(
+    stream: &mut UnixStream,
+    writer: &Arc<Mutex<UnixStream>>,
+    stdout: &mut W,
+    startup_timeout: Duration,
+    idle_timeout: Duration,
+    profiler: &mut HostAttachProfiler,
 ) -> Result<AttachOutcome> {
     let startup_deadline = Instant::now() + startup_timeout;
     let mut saw_output = false;
@@ -408,10 +509,28 @@ fn proxy_remote_until_daemon_idle<W: Write>(
             }
             RemoteReadiness::Readable => {}
         }
-        match read_frame(stream)? {
+        let frame = if profiler.is_enabled() {
+            let started = Instant::now();
+            let frame = read_frame(stream);
+            profiler.record_frame_read(started.elapsed());
+            frame?
+        } else {
+            read_frame(stream)?
+        };
+        match frame {
             Some(Frame::Data(data)) => {
-                stdout.write_all(&data)?;
-                stdout.flush()?;
+                profiler.record_data_frame(data.len());
+                if profiler.is_enabled() {
+                    let started = Instant::now();
+                    stdout.write_all(&data)?;
+                    profiler.record_stdout_write(started.elapsed());
+                    let started = Instant::now();
+                    stdout.flush()?;
+                    profiler.record_stdout_flush(started.elapsed());
+                } else {
+                    stdout.write_all(&data)?;
+                    stdout.flush()?;
+                }
                 saw_output = true;
             }
             Some(Frame::Exit { code }) => return Ok(AttachOutcome::Exited(code)),
@@ -749,5 +868,86 @@ mod tests {
 
         assert_eq!(outcome, AttachOutcome::Exited(0));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn attach_profile_proxy_preserves_stdout_and_reports_to_stderr() {
+        let mut stream = Vec::new();
+        write_frame(&mut stream, &Frame::Data(b"hello".to_vec())).unwrap();
+        write_frame(&mut stream, &Frame::Detach).unwrap();
+        let mut stream = std::io::Cursor::new(stream);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_with_profile(
+            &mut stream,
+            &mut stdout,
+            &mut stderr,
+            HostAttachProfiler::new(true),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(stdout, b"hello");
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(stderr.starts_with("loftd attach profile role=host "));
+        assert!(stderr.contains("frames=1"));
+        assert!(stderr.contains("bytes=5"));
+        assert!(stderr.contains("frame_max_bytes=5"));
+        assert!(stderr.contains("frame_avg_bytes=5"));
+        assert!(stderr.contains("stdout_write_total_us="));
+        assert!(stderr.contains("stdout_flush_total_us="));
+    }
+
+    #[test]
+    fn attach_profile_proxy_is_quiet_when_disabled() {
+        let mut stream = Vec::new();
+        write_frame(&mut stream, &Frame::Data(b"hello".to_vec())).unwrap();
+        write_frame(&mut stream, &Frame::Detach).unwrap();
+        let mut stream = std::io::Cursor::new(stream);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_with_profile(
+            &mut stream,
+            &mut stdout,
+            &mut stderr,
+            HostAttachProfiler::new(false),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(stdout, b"hello");
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn daemon_attach_profile_reports_output_path() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let writer = Arc::new(Mutex::new(client.try_clone().unwrap()));
+        let server_thread = thread::spawn(move || {
+            write_frame(&mut server, &Frame::Data(b"ready".to_vec())).unwrap();
+            assert_eq!(read_frame(&mut server).unwrap(), Some(Frame::Detach));
+        });
+        let mut output = Vec::new();
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_until_daemon_idle_with_profile(
+            &mut client,
+            &writer,
+            &mut output,
+            &mut stderr,
+            Duration::from_secs(1),
+            Duration::from_millis(20),
+            HostAttachProfiler::new(true),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(output, b"ready");
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(stderr.contains("role=host"));
+        assert!(stderr.contains("frame_max_bytes=5"));
+        server_thread.join().unwrap();
     }
 }

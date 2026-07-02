@@ -21,6 +21,7 @@ const LEGACY_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST";
 const SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
 const ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
+const ATTACH_PROFILE_ENV: &str = "LOFTD_ATTACH_PROFILE";
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -207,6 +208,10 @@ fn managed_session_from_env(env: &impl EnvSource) -> Result<Option<ManagedSessio
     Ok(Some(ManagedSessionConfig {
         port: parse_required_u32(env, ATTACH_PORT_ENV)?,
         protocol_version: parse_required_u16(env, ATTACH_PROTOCOL_VERSION_ENV)?,
+        attach_profile: env
+            .var(ATTACH_PROFILE_ENV)
+            .as_deref()
+            .is_some_and(super::attach_profile::env_value_enabled),
     }))
 }
 

@@ -5,6 +5,7 @@ use crate::guest_init::cli::{
 };
 
 pub(in crate::guest_init) mod as_dev;
+mod attach_profile;
 pub(in crate::guest_init) mod loftd;
 mod session;
 

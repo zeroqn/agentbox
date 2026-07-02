@@ -10,6 +10,7 @@ use crate::runtime::session::task_control::TaskControlCommand;
 use crate::task_rootfs::TaskRootfsBackend;
 
 pub(crate) mod attach;
+mod attach_profile;
 mod managed_attach_socket;
 pub(crate) mod nix_overlay;
 mod profile;
@@ -214,6 +215,11 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                 extra_env: {
                                     let mut env = disks.env_pairs();
                                     env.extend(terminal_env::host_terminal_env_pairs());
+                                    if let Some(pair) =
+                                        attach_profile::guest_env_pair_from_process_env()
+                                    {
+                                        env.push(pair);
+                                    }
                                     env
                                 },
                                 host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
@@ -421,6 +427,19 @@ mod tests {
         assert!(!host_profile_enabled(&runtime_options(true, false)));
         assert!(host_profile_enabled(&runtime_options(false, true)));
         assert!(host_profile_enabled(&runtime_options(true, true)));
+    }
+
+    #[test]
+    fn attach_profile_guest_env_is_host_opt_in_only() {
+        assert_eq!(attach_profile::guest_env_pair_from_value(None), None);
+        assert_eq!(attach_profile::guest_env_pair_from_value(Some("0")), None);
+        assert_eq!(
+            attach_profile::guest_env_pair_from_value(Some("1")),
+            Some((
+                attach_profile::ATTACH_PROFILE_ENV.to_owned(),
+                "1".to_owned()
+            ))
+        );
     }
 
     #[test]

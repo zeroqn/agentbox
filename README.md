@@ -1139,6 +1139,18 @@ use `--log-level debug`, `--log-level trace`, or the compatibility form
 `--debug` separately when verbose diagnostic logs are needed. Stdout remains
 reserved for guest command output.
 
+For managed PTY attach-loop latency diagnostics, set
+`LOFTD_ATTACH_PROFILE=1` when launching `loftd`. This is separate from
+`--profile`: it records interactive attach hot-path counters rather than startup
+and lifecycle phases. When enabled at launch time, loftd propagates the flag to
+`loftd-guest-init` and both sides emit one `loftd attach profile` summary line
+to stderr on detach or exit. The host summary includes frame-read, payload size,
+stdout write, and stdout flush timings; the guest summary includes PTY readable
+events, PTY read sizes, full-buffer read count, terminal normalize/parser time,
+and guest frame-write time. Attaching to an already-running managed task profiles
+the host attach path immediately, but guest-side attach metrics are available
+only if that task was originally launched with `LOFTD_ATTACH_PROFILE=1`.
+
 Loftd troubleshooting FAQ:
 
 - If the interactive shell appears to hang during startup, check the host
