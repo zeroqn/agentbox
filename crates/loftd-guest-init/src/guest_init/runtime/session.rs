@@ -18,6 +18,10 @@ use crate::guest_init::process;
 
 const IO_BUF_SIZE: usize = 16 * 1024;
 const POLL_TIMEOUT_MS: i32 = 100;
+const PTY_INPUT_WRITE_POLL_TIMEOUT_MS: i32 = 10;
+const ATTACHED_PTY_DRAIN_MAX_READS: usize = 4;
+const ATTACHED_PTY_DRAIN_MAX_BYTES: usize = 64 * 1024;
+const ATTACHED_PTY_DRAIN_MAX_ELAPSED: Duration = Duration::from_millis(1);
 const DEFAULT_TERMINAL_ROWS: u16 = 24;
 const DEFAULT_TERMINAL_COLS: u16 = 80;
 const TERMINAL_SCROLLBACK_ROWS: usize = 2_000;
@@ -591,7 +595,7 @@ fn serve_attached_client(
     let input_thread = thread::spawn(move || -> Result<()> {
         while reader_active.load(Ordering::SeqCst) {
             match read_frame(&mut client_reader)? {
-                Some(Frame::Data(data)) => pty_writer.write_all(&data)?,
+                Some(Frame::Data(data)) => write_all_retrying_would_block(&mut pty_writer, &data)?,
                 Some(Frame::Resize { rows, cols }) => {
                     set_winsize(pty_writer.as_raw_fd(), rows, cols)?;
                     let _ = resize_tx.send(PtySize { rows, cols });
@@ -607,6 +611,7 @@ fn serve_attached_client(
 
     let mut pty_reader = duplicate_file(master)?;
     let mut buf = [0u8; IO_BUF_SIZE];
+    let drain_limits = AttachedPtyDrainLimits::default();
     while active.load(Ordering::SeqCst) {
         apply_pending_resizes(&resize_rx, terminal_state);
         if let Some(code) = reap_child(child)? {
@@ -645,14 +650,20 @@ fn serve_attached_client(
             continue;
         }
         profiler.record_pty_readable();
-        let read_started = Instant::now();
-        let n = pty_reader.read(&mut buf)?;
-        profiler.record_pty_read(n, read_started.elapsed(), IO_BUF_SIZE);
-        if n == 0 {
-            thread::sleep(Duration::from_millis(10));
+        let burst = read_attached_pty_burst_with_restored_blocking(
+            &mut pty_reader,
+            &mut buf,
+            &mut profiler,
+            drain_limits,
+        )?;
+        if burst.bytes.is_empty() {
+            if burst.stop_reason == AttachedPtyDrainStop::Eof {
+                thread::sleep(Duration::from_millis(10));
+            }
             continue;
         }
-        if !forward_and_record_pty_output(&buf[..n], &mut client, terminal_state, &mut profiler) {
+        if !forward_and_record_pty_output(&burst.bytes, &mut client, terminal_state, &mut profiler)
+        {
             break;
         }
     }
@@ -660,6 +671,120 @@ fn serve_attached_client(
     let _ = profiler.report_to(&mut std::io::stderr().lock());
     stop_client_input(&active, client.as_raw_fd(), input_thread);
     Ok(ClientResult::Detached)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AttachedPtyDrainLimits {
+    max_reads: usize,
+    max_bytes: usize,
+    max_elapsed: Duration,
+}
+
+impl Default for AttachedPtyDrainLimits {
+    fn default() -> Self {
+        Self {
+            max_reads: ATTACHED_PTY_DRAIN_MAX_READS,
+            max_bytes: ATTACHED_PTY_DRAIN_MAX_BYTES,
+            max_elapsed: ATTACHED_PTY_DRAIN_MAX_ELAPSED,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachedPtyDrainStop {
+    WouldBlock,
+    ReadBound,
+    ByteBound,
+    ElapsedBound,
+    Eof,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AttachedPtyBurst {
+    bytes: Vec<u8>,
+    reads: usize,
+    stop_reason: AttachedPtyDrainStop,
+}
+
+fn read_attached_pty_burst_with_restored_blocking(
+    reader: &mut File,
+    buf: &mut [u8; IO_BUF_SIZE],
+    profiler: &mut GuestAttachProfiler,
+    limits: AttachedPtyDrainLimits,
+) -> Result<AttachedPtyBurst> {
+    set_nonblocking(reader.as_raw_fd(), true)?;
+    let drain_result = read_attached_pty_burst(reader, buf, profiler, limits);
+    let restore_result = set_nonblocking(reader.as_raw_fd(), false);
+    match (drain_result, restore_result) {
+        (Ok(burst), Ok(())) => Ok(burst),
+        (Err(err), Ok(())) => Err(err),
+        (Ok(_), Err(err)) => Err(err).context("failed to restore attached PTY blocking mode"),
+        (Err(drain_err), Err(restore_err)) => Err(drain_err).with_context(|| {
+            format!("also failed to restore attached PTY blocking mode: {restore_err:#}")
+        }),
+    }
+}
+
+fn read_attached_pty_burst<R>(
+    reader: &mut R,
+    buf: &mut [u8; IO_BUF_SIZE],
+    profiler: &mut GuestAttachProfiler,
+    limits: AttachedPtyDrainLimits,
+) -> Result<AttachedPtyBurst>
+where
+    R: Read,
+{
+    let started = Instant::now();
+    let mut bytes = Vec::new();
+    let mut reads = 0;
+    let stop_reason = loop {
+        if reads >= limits.max_reads {
+            break AttachedPtyDrainStop::ReadBound;
+        }
+        if bytes.len() >= limits.max_bytes {
+            break AttachedPtyDrainStop::ByteBound;
+        }
+        let remaining = limits.max_bytes - bytes.len();
+        let read_len = buf.len().min(remaining);
+        let read_started = Instant::now();
+        match reader.read(&mut buf[..read_len]) {
+            Ok(0) => break AttachedPtyDrainStop::Eof,
+            Ok(n) => {
+                profiler.record_pty_read(n, read_started.elapsed(), IO_BUF_SIZE);
+                reads += 1;
+                bytes.extend_from_slice(&buf[..n]);
+                if reads >= limits.max_reads {
+                    break AttachedPtyDrainStop::ReadBound;
+                }
+                if bytes.len() >= limits.max_bytes {
+                    break AttachedPtyDrainStop::ByteBound;
+                }
+                if started.elapsed() >= limits.max_elapsed {
+                    break AttachedPtyDrainStop::ElapsedBound;
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                break AttachedPtyDrainStop::WouldBlock;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err).context("failed to drain attached PTY output"),
+        }
+    };
+    profiler.record_pty_drain(
+        reads,
+        stop_reason == AttachedPtyDrainStop::WouldBlock,
+        matches!(
+            stop_reason,
+            AttachedPtyDrainStop::ReadBound
+                | AttachedPtyDrainStop::ByteBound
+                | AttachedPtyDrainStop::ElapsedBound
+        ),
+    );
+    Ok(AttachedPtyBurst {
+        bytes,
+        reads,
+        stop_reason,
+    })
 }
 
 struct ForwardedPtyOutput {
@@ -733,6 +858,26 @@ fn stop_client_input(
     let _ = input_thread.join();
 }
 
+fn write_all_retrying_would_block(file: &mut File, mut data: &[u8]) -> Result<()> {
+    while !data.is_empty() {
+        match file.write(data) {
+            Ok(0) => bail!("failed to write PTY input: zero-length write"),
+            Ok(n) => data = &data[n..],
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                poll_fd(
+                    file.as_raw_fd(),
+                    libc::POLLOUT,
+                    PTY_INPUT_WRITE_POLL_TIMEOUT_MS,
+                )
+                .context("failed waiting for managed PTY input to become writable")?;
+            }
+            Err(err) => return Err(err).context("failed to write PTY input"),
+        }
+    }
+    Ok(())
+}
+
 fn drain_detached_pty_output(master_fd: RawFd, terminal_state: &mut TerminalState) -> Result<()> {
     let mut file = duplicate_fd(master_fd)?;
     set_nonblocking(file.as_raw_fd(), true)?;
@@ -751,6 +896,39 @@ fn drain_nonblocking(file: &mut File, terminal_state: &mut TerminalState) -> Res
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
             Err(err) => return Err(err).context("failed to drain detached PTY output"),
+        }
+    }
+}
+
+fn poll_fd(fd: RawFd, events: i16, timeout_ms: i32) -> Result<()> {
+    loop {
+        let mut pollfd = libc::pollfd {
+            fd,
+            events,
+            revents: 0,
+        };
+        let rc = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if rc < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err).context("poll failed");
+        }
+        if rc == 0 {
+            continue;
+        }
+        if pollfd.revents & libc::POLLNVAL != 0 {
+            bail!("polled invalid fd");
+        }
+        if pollfd.revents & libc::POLLERR != 0 {
+            bail!("polled fd reported error");
+        }
+        if pollfd.revents & libc::POLLHUP != 0 && pollfd.revents & events == 0 {
+            bail!("polled fd hung up");
+        }
+        if pollfd.revents & events != 0 {
+            return Ok(());
         }
     }
 }
@@ -1201,6 +1379,191 @@ mod tests {
     }
 
     #[test]
+    fn attached_pty_burst_coalesces_ordered_chunks() {
+        let mut reader = ScriptedReader::new([
+            ReadStep::Data(b"\x1b("),
+            ReadStep::Data(b"0q"),
+            ReadStep::WouldBlock,
+        ]);
+        let mut buf = [0u8; IO_BUF_SIZE];
+        let mut profiler = GuestAttachProfiler::new(true);
+
+        let burst = read_attached_pty_burst(
+            &mut reader,
+            &mut buf,
+            &mut profiler,
+            AttachedPtyDrainLimits {
+                max_reads: 4,
+                max_bytes: 64,
+                max_elapsed: Duration::from_secs(1),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            burst,
+            AttachedPtyBurst {
+                bytes: b"\x1b(0q".to_vec(),
+                reads: 2,
+                stop_reason: AttachedPtyDrainStop::WouldBlock,
+            }
+        );
+
+        let mut terminal_state = TerminalState::new(PtySize::default());
+        let mut writer = Vec::new();
+        assert!(forward_and_record_pty_output(
+            &burst.bytes,
+            &mut writer,
+            &mut terminal_state,
+            &mut profiler,
+        ));
+        let mut cursor = std::io::Cursor::new(writer);
+        assert_eq!(
+            read_frame(&mut cursor).unwrap(),
+            Some(Frame::Data("─".as_bytes().to_vec()))
+        );
+        assert!(terminal_state.parser.screen().contents().contains("─"));
+
+        let mut profile_output = Vec::new();
+        profiler.report_to(&mut profile_output).unwrap();
+        let profile_output = String::from_utf8(profile_output).unwrap();
+        assert!(profile_output.contains("pty_drain_events=1"));
+        assert!(profile_output.contains("pty_drain_would_block_count=1"));
+        assert!(profile_output.contains("pty_drain_coalesced_events=1"));
+        assert!(profile_output.contains("pty_drain_coalesced_reads=1"));
+        assert!(profile_output.contains("frames=1"));
+    }
+
+    #[test]
+    fn attached_pty_burst_first_would_block_is_empty_success() {
+        let mut reader = ScriptedReader::new([ReadStep::WouldBlock]);
+        let mut buf = [0u8; IO_BUF_SIZE];
+        let mut profiler = GuestAttachProfiler::new(true);
+
+        let burst = read_attached_pty_burst(
+            &mut reader,
+            &mut buf,
+            &mut profiler,
+            AttachedPtyDrainLimits {
+                max_reads: 4,
+                max_bytes: 64,
+                max_elapsed: Duration::from_secs(1),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            burst,
+            AttachedPtyBurst {
+                bytes: Vec::new(),
+                reads: 0,
+                stop_reason: AttachedPtyDrainStop::WouldBlock,
+            }
+        );
+    }
+
+    #[test]
+    fn attached_pty_burst_stops_at_read_bound() {
+        let mut reader = ScriptedReader::new([
+            ReadStep::Data(b"a"),
+            ReadStep::Data(b"b"),
+            ReadStep::Data(b"c"),
+        ]);
+        let mut buf = [0u8; IO_BUF_SIZE];
+        let mut profiler = GuestAttachProfiler::new(true);
+
+        let burst = read_attached_pty_burst(
+            &mut reader,
+            &mut buf,
+            &mut profiler,
+            AttachedPtyDrainLimits {
+                max_reads: 2,
+                max_bytes: 64,
+                max_elapsed: Duration::from_secs(1),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            burst,
+            AttachedPtyBurst {
+                bytes: b"ab".to_vec(),
+                reads: 2,
+                stop_reason: AttachedPtyDrainStop::ReadBound,
+            }
+        );
+        let mut profile_output = Vec::new();
+        profiler.report_to(&mut profile_output).unwrap();
+        let profile_output = String::from_utf8(profile_output).unwrap();
+        assert!(profile_output.contains("pty_drain_bound_hit_count=1"));
+        assert!(profile_output.contains("pty_drain_reads_max=2"));
+    }
+
+    #[test]
+    fn attached_pty_burst_stops_at_byte_bound() {
+        let mut reader = ScriptedReader::new([
+            ReadStep::Data(b"ab"),
+            ReadStep::Data(b"cd"),
+            ReadStep::WouldBlock,
+        ]);
+        let mut buf = [0u8; IO_BUF_SIZE];
+        let mut profiler = GuestAttachProfiler::new(false);
+
+        let burst = read_attached_pty_burst(
+            &mut reader,
+            &mut buf,
+            &mut profiler,
+            AttachedPtyDrainLimits {
+                max_reads: 4,
+                max_bytes: 3,
+                max_elapsed: Duration::from_secs(1),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            burst,
+            AttachedPtyBurst {
+                bytes: b"abc".to_vec(),
+                reads: 2,
+                stop_reason: AttachedPtyDrainStop::ByteBound,
+            }
+        );
+    }
+
+    #[test]
+    fn pty_input_write_retries_transient_would_block() {
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let read_fd = fds[0];
+        let write_fd = fds[1];
+        set_nonblocking(write_fd, true).unwrap();
+        let mut write_file = unsafe { File::from_raw_fd(write_fd) };
+        let mut read_file = unsafe { File::from_raw_fd(read_fd) };
+        let fill = [0u8; 4096];
+        loop {
+            match write_file.write(&fill) {
+                Ok(0) => panic!("pipe write returned zero while filling"),
+                Ok(_) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(err) => panic!("failed to fill pipe: {err}"),
+            }
+        }
+
+        let reader = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            let mut drained = [0u8; 8192];
+            let n = read_file.read(&mut drained).unwrap();
+            thread::sleep(Duration::from_millis(100));
+            n
+        });
+
+        write_all_retrying_would_block(&mut write_file, b"x").unwrap();
+
+        assert!(reader.join().unwrap() > 0);
+    }
+
+    #[test]
     fn terminal_state_returns_normalized_output_for_live_proxy() {
         let mut terminal_state = TerminalState::new(PtySize::default());
 
@@ -1452,6 +1815,43 @@ mod tests {
 
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum ReadStep {
+        Data(&'static [u8]),
+        WouldBlock,
+    }
+
+    struct ScriptedReader {
+        steps: std::collections::VecDeque<ReadStep>,
+    }
+
+    impl ScriptedReader {
+        fn new<const N: usize>(steps: [ReadStep; N]) -> Self {
+            Self {
+                steps: steps.into(),
+            }
+        }
+    }
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.steps.pop_front() {
+                Some(ReadStep::Data(data)) => {
+                    let n = data.len().min(buf.len());
+                    buf[..n].copy_from_slice(&data[..n]);
+                    if n < data.len() {
+                        self.steps.push_front(ReadStep::Data(&data[n..]));
+                    }
+                    Ok(n)
+                }
+                Some(ReadStep::WouldBlock) | None => Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "scripted would block",
+                )),
+            }
         }
     }
 

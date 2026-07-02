@@ -25,6 +25,12 @@ pub(in crate::guest_init::runtime) struct GuestAttachProfiler {
     pty_bytes: u64,
     pty_read_max_bytes: usize,
     pty_read_saturated_count: u64,
+    pty_drain_events: u64,
+    pty_drain_would_block_count: u64,
+    pty_drain_bound_hit_count: u64,
+    pty_drain_reads_max: usize,
+    pty_drain_coalesced_events: u64,
+    pty_drain_coalesced_reads: u64,
     pty_read_total: Duration,
     pty_read_max: Duration,
     normalize_parse_total: Duration,
@@ -73,6 +79,31 @@ impl GuestAttachProfiler {
         self.pty_read_max = self.pty_read_max.max(duration);
     }
 
+    pub(in crate::guest_init::runtime) fn record_pty_drain(
+        &mut self,
+        reads: usize,
+        stopped_on_would_block: bool,
+        stopped_on_bound: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        self.pty_drain_events += 1;
+        if stopped_on_would_block {
+            self.pty_drain_would_block_count += 1;
+        }
+        if stopped_on_bound {
+            self.pty_drain_bound_hit_count += 1;
+        }
+        self.pty_drain_reads_max = self.pty_drain_reads_max.max(reads);
+        if reads > 1 {
+            self.pty_drain_coalesced_events += 1;
+            self.pty_drain_coalesced_reads = self
+                .pty_drain_coalesced_reads
+                .saturating_add((reads - 1) as u64);
+        }
+    }
+
     pub(in crate::guest_init::runtime) fn record_terminal_processing(
         &mut self,
         normalize_duration: Duration,
@@ -119,13 +150,19 @@ impl GuestAttachProfiler {
 
     fn summary_line(&self) -> String {
         format!(
-            "loftd attach profile role=guest pty_readable={} pty_reads={} pty_bytes={} pty_read_max_bytes={} pty_read_avg_bytes={} pty_read_saturated_count={} pty_read_total_us={} pty_read_max_us={} normalize_parse_total_us={} normalize_parse_max_us={} normalize_total_us={} normalize_max_us={} parser_total_us={} parser_max_us={} frame_write_total_us={} frame_write_max_us={} frame_bytes={} frame_max_bytes={} frame_avg_bytes={} frames={}",
+            "loftd attach profile role=guest pty_readable={} pty_reads={} pty_bytes={} pty_read_max_bytes={} pty_read_avg_bytes={} pty_read_saturated_count={} pty_drain_events={} pty_drain_would_block_count={} pty_drain_bound_hit_count={} pty_drain_reads_max={} pty_drain_coalesced_events={} pty_drain_coalesced_reads={} pty_read_total_us={} pty_read_max_us={} normalize_parse_total_us={} normalize_parse_max_us={} normalize_total_us={} normalize_max_us={} parser_total_us={} parser_max_us={} frame_write_total_us={} frame_write_max_us={} frame_bytes={} frame_max_bytes={} frame_avg_bytes={} frames={}",
             self.pty_readable,
             self.pty_reads,
             self.pty_bytes,
             self.pty_read_max_bytes,
             average(self.pty_bytes, self.pty_reads),
             self.pty_read_saturated_count,
+            self.pty_drain_events,
+            self.pty_drain_would_block_count,
+            self.pty_drain_bound_hit_count,
+            self.pty_drain_reads_max,
+            self.pty_drain_coalesced_events,
+            self.pty_drain_coalesced_reads,
             duration_micros(self.pty_read_total),
             duration_micros(self.pty_read_max),
             duration_micros(self.normalize_parse_total),
@@ -171,6 +208,8 @@ mod tests {
         let mut profiler = GuestAttachProfiler::new(true);
         profiler.record_pty_readable();
         profiler.record_pty_read(16, Duration::from_micros(3), 16);
+        profiler.record_pty_drain(3, true, false);
+        profiler.record_pty_drain(2, false, true);
         profiler.record_terminal_processing(Duration::from_micros(2), Duration::from_micros(3));
         profiler.record_terminal_processing(Duration::from_micros(7), Duration::from_micros(11));
         profiler.record_frame_write(12, Duration::from_micros(13));
@@ -185,6 +224,12 @@ mod tests {
         assert!(output.contains("pty_read_max_bytes=16"));
         assert!(output.contains("pty_read_avg_bytes=16"));
         assert!(output.contains("pty_read_saturated_count=1"));
+        assert!(output.contains("pty_drain_events=2"));
+        assert!(output.contains("pty_drain_would_block_count=1"));
+        assert!(output.contains("pty_drain_bound_hit_count=1"));
+        assert!(output.contains("pty_drain_reads_max=3"));
+        assert!(output.contains("pty_drain_coalesced_events=2"));
+        assert!(output.contains("pty_drain_coalesced_reads=3"));
         assert!(output.contains("normalize_parse_total_us=23"));
         assert!(output.contains("normalize_parse_max_us=18"));
         assert!(output.contains("normalize_total_us=9"));

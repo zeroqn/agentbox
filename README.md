@@ -1146,11 +1146,17 @@ and lifecycle phases. When enabled at launch time, loftd propagates the flag to
 `loftd-guest-init` and both sides emit one `loftd attach profile` summary line
 to stderr on detach or exit. The host summary includes frame-read, payload size,
 stdout write, and stdout flush timings; the guest summary includes PTY readable
-events, PTY read sizes, full-buffer read count, terminal normalize/parser time,
-and guest frame-write time. Guest summaries keep the compatibility
-`normalize_parse_total_us` and `normalize_parse_max_us` fields as exact per-read
-combined terminal-processing timings, and also include split `normalize_*` and
-`parser_*` fields for new latency analysis. Attaching to an already-running
+events, PTY read sizes, full-buffer read count, attached-drain/coalescing
+counters, terminal normalize/parser time, and guest frame-write time. Guest
+summaries keep the compatibility `normalize_parse_total_us` and
+`normalize_parse_max_us` fields as combined terminal-processing timings for each
+forwarded burst. After attached-drain coalescing, one forwarded burst can contain
+multiple PTY reads, so these fields are no longer necessarily one original PTY
+read. Split `normalize_*` and `parser_*` fields use the same forwarded-burst
+basis for latency analysis. Nonzero `pty_drain_coalesced_*` counters show that
+immediately available PTY reads were combined before forwarding; `WouldBlock` is
+the expected normal attached-drain exit, and `pty_drain_bound_hit_count` shows
+when the conservative drain caps stopped a burst. Attaching to an already-running
 managed task profiles the host attach path immediately, but guest-side attach
 metrics are available only if that task was originally launched with
 `LOFTD_ATTACH_PROFILE=1`.
