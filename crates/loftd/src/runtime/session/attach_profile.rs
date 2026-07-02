@@ -37,10 +37,16 @@ pub(in crate::runtime::session) struct HostAttachProfiler {
     frame_max_bytes: usize,
     frame_read_total: Duration,
     frame_read_max: Duration,
+    stdout_batches: u64,
+    stdout_batch_frames_max: usize,
+    stdout_batch_bytes_max: usize,
+    stdout_batch_frames_total: u64,
     stdout_write_total: Duration,
     stdout_write_max: Duration,
+    stdout_write_count: u64,
     stdout_flush_total: Duration,
     stdout_flush_max: Duration,
+    stdout_flush_count: u64,
 }
 
 impl HostAttachProfiler {
@@ -80,6 +86,7 @@ impl HostAttachProfiler {
         if !self.enabled {
             return;
         }
+        self.stdout_write_count += 1;
         self.stdout_write_total += duration;
         self.stdout_write_max = self.stdout_write_max.max(duration);
     }
@@ -88,8 +95,25 @@ impl HostAttachProfiler {
         if !self.enabled {
             return;
         }
+        self.stdout_flush_count += 1;
         self.stdout_flush_total += duration;
         self.stdout_flush_max = self.stdout_flush_max.max(duration);
+    }
+
+    pub(in crate::runtime::session) fn record_stdout_batch(
+        &mut self,
+        frame_count: usize,
+        byte_count: usize,
+    ) {
+        if !self.enabled || frame_count == 0 {
+            return;
+        }
+        self.stdout_batches += 1;
+        self.stdout_batch_frames_total = self
+            .stdout_batch_frames_total
+            .saturating_add(frame_count as u64);
+        self.stdout_batch_frames_max = self.stdout_batch_frames_max.max(frame_count);
+        self.stdout_batch_bytes_max = self.stdout_batch_bytes_max.max(byte_count);
     }
 
     pub(in crate::runtime::session) fn report_to(&self, writer: &mut impl Write) -> io::Result<()> {
@@ -103,15 +127,21 @@ impl HostAttachProfiler {
 
     fn summary_line(&self) -> String {
         format!(
-            "loftd attach profile role=host frames={} bytes={} frame_max_bytes={} frame_avg_bytes={} frame_read_total_us={} frame_read_max_us={} stdout_write_total_us={} stdout_write_max_us={} stdout_flush_total_us={} stdout_flush_max_us={}",
+            "loftd attach profile role=host frames={} bytes={} frame_max_bytes={} frame_avg_bytes={} frame_read_total_us={} frame_read_max_us={} stdout_batches={} stdout_batch_frames_max={} stdout_batch_bytes_max={} stdout_batch_frames_avg={} stdout_write_count={} stdout_write_total_us={} stdout_write_max_us={} stdout_flush_count={} stdout_flush_total_us={} stdout_flush_max_us={}",
             self.frames,
             self.bytes,
             self.frame_max_bytes,
             average(self.bytes, self.frames),
             duration_micros(self.frame_read_total),
             duration_micros(self.frame_read_max),
+            self.stdout_batches,
+            self.stdout_batch_frames_max,
+            self.stdout_batch_bytes_max,
+            average(self.stdout_batch_frames_total, self.stdout_batches),
+            self.stdout_write_count,
             duration_micros(self.stdout_write_total),
             duration_micros(self.stdout_write_max),
+            self.stdout_flush_count,
             duration_micros(self.stdout_flush_total),
             duration_micros(self.stdout_flush_max),
         )
@@ -147,6 +177,7 @@ mod tests {
         let mut profiler = HostAttachProfiler::new(true);
         profiler.record_frame_read(Duration::from_micros(7));
         profiler.record_data_frame(4);
+        profiler.record_stdout_batch(1, 4);
         profiler.record_stdout_write(Duration::from_micros(11));
         profiler.record_stdout_flush(Duration::from_micros(13));
         let mut output = Vec::new();
@@ -160,7 +191,13 @@ mod tests {
         assert!(output.contains("frame_max_bytes=4"));
         assert!(output.contains("frame_avg_bytes=4"));
         assert!(output.contains("frame_read_total_us=7"));
+        assert!(output.contains("stdout_batches=1"));
+        assert!(output.contains("stdout_batch_frames_max=1"));
+        assert!(output.contains("stdout_batch_bytes_max=4"));
+        assert!(output.contains("stdout_batch_frames_avg=1"));
+        assert!(output.contains("stdout_write_count=1"));
         assert!(output.contains("stdout_write_total_us=11"));
+        assert!(output.contains("stdout_flush_count=1"));
         assert!(output.contains("stdout_flush_total_us=13"));
     }
 

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use loftd_attach_protocol::{DetachFilter, Frame, PROTOCOL_VERSION, read_frame, write_frame};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -23,6 +23,10 @@ const IO_BUF_SIZE: usize = 16 * 1024;
 const ATTACH_IO_POLL_MS: i32 = 100;
 const DAEMON_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(10);
 const DAEMON_OUTPUT_IDLE_TIMEOUT: Duration = Duration::from_millis(300);
+const FRAME_HEADER_LEN: usize = 5;
+const MAX_ATTACH_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
+const HOST_OUTPUT_BATCH_MAX_FRAMES: usize = 16;
+const HOST_OUTPUT_BATCH_MAX_BYTES: usize = IO_BUF_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttachOutcome {
@@ -367,7 +371,7 @@ fn size_changed(
 fn proxy_remote(mut stream: UnixStream) -> Result<AttachOutcome> {
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
-    proxy_remote_with_profile(
+    proxy_remote_unix_with_profile(
         &mut stream,
         &mut stdout,
         &mut stderr,
@@ -375,6 +379,26 @@ fn proxy_remote(mut stream: UnixStream) -> Result<AttachOutcome> {
     )
 }
 
+fn proxy_remote_unix_with_profile<W, E>(
+    stream: &mut UnixStream,
+    stdout: &mut W,
+    stderr: &mut E,
+    mut profiler: HostAttachProfiler,
+) -> Result<AttachOutcome>
+where
+    W: Write,
+    E: Write,
+{
+    let mut source = UnixRemoteFrameReader::new(stream);
+    let result = proxy_remote_loop(&mut source, stdout, &mut profiler);
+    let report = profiler.report_to(stderr);
+    if let Err(err) = report {
+        return Err(err).context("failed to write loftd attach profile report");
+    }
+    result
+}
+
+#[cfg(test)]
 fn proxy_remote_with_profile<R, W, E>(
     stream: &mut R,
     stdout: &mut W,
@@ -386,7 +410,8 @@ where
     W: Write,
     E: Write,
 {
-    let result = proxy_remote_loop(stream, stdout, &mut profiler);
+    let mut source = BlockingRemoteFrameReader::new(stream);
+    let result = proxy_remote_loop(&mut source, stdout, &mut profiler);
     let report = profiler.report_to(stderr);
     if let Err(err) = report {
         return Err(err).context("failed to write loftd attach profile report");
@@ -394,45 +419,284 @@ where
     result
 }
 
-fn proxy_remote_loop<R, W>(
-    stream: &mut R,
+fn proxy_remote_loop<S, W>(
+    source: &mut S,
     stdout: &mut W,
     profiler: &mut HostAttachProfiler,
 ) -> Result<AttachOutcome>
 where
-    R: Read,
+    S: RemoteFrameSource,
     W: Write,
 {
     loop {
-        let frame = if profiler.is_enabled() {
-            let started = Instant::now();
-            let frame = read_frame(stream);
-            profiler.record_frame_read(started.elapsed());
-            frame?
-        } else {
-            read_frame(stream)?
-        };
+        let frame = source.read_frame(profiler)?;
         match frame {
             Some(Frame::Data(data)) => {
-                profiler.record_data_frame(data.len());
-                if profiler.is_enabled() {
-                    let started = Instant::now();
-                    stdout.write_all(&data)?;
-                    profiler.record_stdout_write(started.elapsed());
-                    let started = Instant::now();
-                    stdout.flush()?;
-                    profiler.record_stdout_flush(started.elapsed());
-                } else {
-                    stdout.write_all(&data)?;
-                    stdout.flush()?;
+                let mut batch = StdoutBatch::new();
+                batch.push_data(data, profiler);
+                loop {
+                    if batch.is_full() {
+                        batch.flush_to(stdout, profiler)?;
+                        break;
+                    }
+                    match source.try_read_frame(profiler)? {
+                        TryRemoteFrame::Frame(Frame::Data(data)) => {
+                            if !batch.can_accept(data.len()) {
+                                batch.flush_to(stdout, profiler)?;
+                            }
+                            batch.push_data(data, profiler);
+                        }
+                        TryRemoteFrame::Frame(frame) => {
+                            batch.flush_to(stdout, profiler)?;
+                            return handle_remote_control_frame(frame);
+                        }
+                        TryRemoteFrame::NotReady => {
+                            batch.flush_to(stdout, profiler)?;
+                            break;
+                        }
+                        TryRemoteFrame::Eof => {
+                            batch.flush_to(stdout, profiler)?;
+                            return Ok(AttachOutcome::Detached);
+                        }
+                    }
                 }
             }
-            Some(Frame::Exit { code }) => return Ok(AttachOutcome::Exited(code)),
-            Some(Frame::Detach) | None => return Ok(AttachOutcome::Detached),
-            Some(Frame::Busy) => bail!("loftd task already has an attached client"),
-            Some(Frame::Error(message)) => bail!("loftd attach failed: {message}"),
-            Some(frame) => bail!("unexpected loftd attach frame from guest: {frame:?}"),
+            Some(frame) => return handle_remote_control_frame(frame),
+            None => return Ok(AttachOutcome::Detached),
         }
+    }
+}
+
+trait RemoteFrameSource {
+    fn read_frame(&mut self, profiler: &mut HostAttachProfiler) -> Result<Option<Frame>>;
+    fn try_read_frame(&mut self, profiler: &mut HostAttachProfiler) -> Result<TryRemoteFrame>;
+}
+
+enum TryRemoteFrame {
+    Frame(Frame),
+    NotReady,
+    Eof,
+}
+
+#[cfg(test)]
+struct BlockingRemoteFrameReader<'a, R> {
+    stream: &'a mut R,
+}
+
+#[cfg(test)]
+impl<'a, R> BlockingRemoteFrameReader<'a, R> {
+    fn new(stream: &'a mut R) -> Self {
+        Self { stream }
+    }
+}
+
+#[cfg(test)]
+impl<R: Read> RemoteFrameSource for BlockingRemoteFrameReader<'_, R> {
+    fn read_frame(&mut self, profiler: &mut HostAttachProfiler) -> Result<Option<Frame>> {
+        read_profiled_frame(self.stream, profiler)
+    }
+
+    fn try_read_frame(&mut self, _profiler: &mut HostAttachProfiler) -> Result<TryRemoteFrame> {
+        Ok(TryRemoteFrame::NotReady)
+    }
+}
+
+struct UnixRemoteFrameReader<'a> {
+    stream: &'a mut UnixStream,
+    buffer: Vec<u8>,
+}
+
+impl<'a> UnixRemoteFrameReader<'a> {
+    fn new(stream: &'a mut UnixStream) -> Self {
+        Self {
+            stream,
+            buffer: Vec::new(),
+        }
+    }
+
+    fn read_frame_blocking(&mut self) -> Result<Option<Frame>> {
+        let mut scratch = [0u8; IO_BUF_SIZE];
+        loop {
+            if let Some(frame) = self.decode_buffered_frame()? {
+                return Ok(Some(frame));
+            }
+            match self.stream.read(&mut scratch) {
+                Ok(0) if self.buffer.is_empty() => return Ok(None),
+                Ok(0) => bail!("truncated loftd attach protocol frame"),
+                Ok(n) => self.buffer.extend_from_slice(&scratch[..n]),
+                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err).context("failed to read loftd attach stream"),
+            }
+        }
+    }
+
+    fn try_read_frame_now(&mut self) -> Result<TryRemoteFrame> {
+        let mut scratch = [0u8; IO_BUF_SIZE];
+        loop {
+            if let Some(frame) = self.decode_buffered_frame()? {
+                return Ok(TryRemoteFrame::Frame(frame));
+            }
+            let rc = unsafe {
+                libc::recv(
+                    self.stream.as_raw_fd(),
+                    scratch.as_mut_ptr().cast(),
+                    scratch.len(),
+                    libc::MSG_DONTWAIT,
+                )
+            };
+            if rc > 0 {
+                let n = usize::try_from(rc).expect("positive recv result fits usize");
+                self.buffer.extend_from_slice(&scratch[..n]);
+                continue;
+            }
+            if rc == 0 {
+                if self.buffer.is_empty() {
+                    return Ok(TryRemoteFrame::Eof);
+                }
+                bail!("truncated loftd attach protocol frame");
+            }
+            let err = std::io::Error::last_os_error();
+            match err.kind() {
+                ErrorKind::WouldBlock => return Ok(TryRemoteFrame::NotReady),
+                ErrorKind::Interrupted => continue,
+                _ => return Err(err).context("failed to drain loftd attach stream"),
+            }
+        }
+    }
+
+    fn decode_buffered_frame(&mut self) -> Result<Option<Frame>> {
+        if self.buffer.len() < FRAME_HEADER_LEN {
+            return Ok(None);
+        }
+        let payload_len = u32::from_be_bytes([
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+            self.buffer[4],
+        ]) as usize;
+        if payload_len > MAX_ATTACH_PAYLOAD_LEN {
+            bail!("loftd attach protocol frame payload exceeds maximum length");
+        }
+        let frame_len = FRAME_HEADER_LEN + payload_len;
+        if self.buffer.len() < frame_len {
+            return Ok(None);
+        }
+        let frame_bytes: Vec<u8> = self.buffer.drain(..frame_len).collect();
+        let mut cursor = std::io::Cursor::new(frame_bytes);
+        let frame = read_frame(&mut cursor)?
+            .ok_or_else(|| anyhow!("buffered frame decoded as clean EOF"))?;
+        Ok(Some(frame))
+    }
+}
+
+impl RemoteFrameSource for UnixRemoteFrameReader<'_> {
+    fn read_frame(&mut self, profiler: &mut HostAttachProfiler) -> Result<Option<Frame>> {
+        if profiler.is_enabled() {
+            let started = Instant::now();
+            let frame = self.read_frame_blocking();
+            profiler.record_frame_read(started.elapsed());
+            frame
+        } else {
+            self.read_frame_blocking()
+        }
+    }
+
+    fn try_read_frame(&mut self, profiler: &mut HostAttachProfiler) -> Result<TryRemoteFrame> {
+        if profiler.is_enabled() {
+            let started = Instant::now();
+            let frame = self.try_read_frame_now();
+            if matches!(
+                frame,
+                Ok(TryRemoteFrame::Frame(_)) | Ok(TryRemoteFrame::Eof)
+            ) {
+                profiler.record_frame_read(started.elapsed());
+            }
+            frame
+        } else {
+            self.try_read_frame_now()
+        }
+    }
+}
+
+fn read_profiled_frame<R: Read>(
+    stream: &mut R,
+    profiler: &mut HostAttachProfiler,
+) -> Result<Option<Frame>> {
+    if profiler.is_enabled() {
+        let started = Instant::now();
+        let frame = read_frame(stream);
+        profiler.record_frame_read(started.elapsed());
+        frame
+    } else {
+        read_frame(stream)
+    }
+}
+
+struct StdoutBatch {
+    bytes: Vec<u8>,
+    frames: usize,
+}
+
+impl StdoutBatch {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            frames: 0,
+        }
+    }
+
+    fn can_accept(&self, byte_count: usize) -> bool {
+        self.frames == 0
+            || (self.frames < HOST_OUTPUT_BATCH_MAX_FRAMES
+                && self.bytes.len().saturating_add(byte_count) <= HOST_OUTPUT_BATCH_MAX_BYTES)
+    }
+
+    fn is_full(&self) -> bool {
+        self.frames >= HOST_OUTPUT_BATCH_MAX_FRAMES
+            || self.bytes.len() >= HOST_OUTPUT_BATCH_MAX_BYTES
+    }
+
+    fn push_data(&mut self, data: Vec<u8>, profiler: &mut HostAttachProfiler) {
+        profiler.record_data_frame(data.len());
+        self.frames += 1;
+        self.bytes.extend(data);
+    }
+
+    fn flush_to<W: Write>(
+        &mut self,
+        stdout: &mut W,
+        profiler: &mut HostAttachProfiler,
+    ) -> Result<()> {
+        if self.bytes.is_empty() {
+            return Ok(());
+        }
+        let byte_count = self.bytes.len();
+        let frame_count = self.frames;
+        if profiler.is_enabled() {
+            let started = Instant::now();
+            stdout.write_all(&self.bytes)?;
+            profiler.record_stdout_write(started.elapsed());
+            let started = Instant::now();
+            stdout.flush()?;
+            profiler.record_stdout_flush(started.elapsed());
+        } else {
+            stdout.write_all(&self.bytes)?;
+            stdout.flush()?;
+        }
+        profiler.record_stdout_batch(frame_count, byte_count);
+        self.bytes.clear();
+        self.frames = 0;
+        Ok(())
+    }
+}
+
+fn handle_remote_control_frame(frame: Frame) -> Result<AttachOutcome> {
+    match frame {
+        Frame::Exit { code } => Ok(AttachOutcome::Exited(code)),
+        Frame::Detach => Ok(AttachOutcome::Detached),
+        Frame::Busy => bail!("loftd task already has an attached client"),
+        Frame::Error(message) => bail!("loftd attach failed: {message}"),
+        frame => bail!("unexpected loftd attach frame from guest: {frame:?}"),
     }
 }
 
@@ -509,28 +773,12 @@ fn proxy_remote_until_daemon_idle_loop<W: Write>(
             }
             RemoteReadiness::Readable => {}
         }
-        let frame = if profiler.is_enabled() {
-            let started = Instant::now();
-            let frame = read_frame(stream);
-            profiler.record_frame_read(started.elapsed());
-            frame?
-        } else {
-            read_frame(stream)?
-        };
+        let frame = read_profiled_frame(stream, profiler)?;
         match frame {
             Some(Frame::Data(data)) => {
-                profiler.record_data_frame(data.len());
-                if profiler.is_enabled() {
-                    let started = Instant::now();
-                    stdout.write_all(&data)?;
-                    profiler.record_stdout_write(started.elapsed());
-                    let started = Instant::now();
-                    stdout.flush()?;
-                    profiler.record_stdout_flush(started.elapsed());
-                } else {
-                    stdout.write_all(&data)?;
-                    stdout.flush()?;
-                }
+                let mut batch = StdoutBatch::new();
+                batch.push_data(data, profiler);
+                batch.flush_to(stdout, profiler)?;
                 saw_output = true;
             }
             Some(Frame::Exit { code }) => return Ok(AttachOutcome::Exited(code)),
@@ -637,6 +885,7 @@ mod tests {
     use super::*;
     use loftd_attach_protocol::{DETACH_PREFIX_BYTE, DETACH_SUFFIX_BYTE};
     use std::os::unix::net::UnixListener;
+    use std::sync::mpsc;
 
     #[test]
     fn attach_outcome_messages_are_user_visible() {
@@ -895,8 +1144,200 @@ mod tests {
         assert!(stderr.contains("bytes=5"));
         assert!(stderr.contains("frame_max_bytes=5"));
         assert!(stderr.contains("frame_avg_bytes=5"));
+        assert!(stderr.contains("stdout_batches=1"));
+        assert!(stderr.contains("stdout_batch_frames_max=1"));
+        assert!(stderr.contains("stdout_batch_bytes_max=5"));
+        assert!(stderr.contains("stdout_batch_frames_avg=1"));
+        assert!(stderr.contains("stdout_write_count=1"));
         assert!(stderr.contains("stdout_write_total_us="));
+        assert!(stderr.contains("stdout_flush_count=1"));
         assert!(stderr.contains("stdout_flush_total_us="));
+    }
+
+    #[derive(Default)]
+    struct CountingWriter {
+        bytes: Vec<u8>,
+        writes: usize,
+        flushes: usize,
+    }
+
+    impl Write for CountingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    fn encoded_frame(frame: &Frame) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, frame).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn unix_remote_proxy_batches_consecutive_ready_data_frames() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        write_frame(&mut server, &Frame::Data(b"ab".to_vec())).unwrap();
+        write_frame(&mut server, &Frame::Data(b"cd".to_vec())).unwrap();
+        write_frame(&mut server, &Frame::Data(b"ef".to_vec())).unwrap();
+        write_frame(&mut server, &Frame::Detach).unwrap();
+        let mut stdout = CountingWriter::default();
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_unix_with_profile(
+            &mut client,
+            &mut stdout,
+            &mut stderr,
+            HostAttachProfiler::new(true),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(stdout.bytes, b"abcdef");
+        assert_eq!(stdout.writes, 1);
+        assert_eq!(stdout.flushes, 1);
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(stderr.contains("frames=3"));
+        assert!(stderr.contains("bytes=6"));
+        assert!(stderr.contains("stdout_batches=1"));
+        assert!(stderr.contains("stdout_batch_frames_max=3"));
+        assert!(stderr.contains("stdout_batch_bytes_max=6"));
+        assert!(stderr.contains("stdout_batch_frames_avg=3"));
+        assert!(stderr.contains("stdout_write_count=1"));
+        assert!(stderr.contains("stdout_flush_count=1"));
+    }
+
+    struct NotifyingWriter {
+        bytes: Vec<u8>,
+        first_flush: Option<mpsc::Sender<()>>,
+    }
+
+    impl NotifyingWriter {
+        fn new(first_flush: mpsc::Sender<()>) -> Self {
+            Self {
+                bytes: Vec::new(),
+                first_flush: Some(first_flush),
+            }
+        }
+    }
+
+    impl Write for NotifyingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.bytes == b"first"
+                && let Some(tx) = self.first_flush.take()
+            {
+                tx.send(()).unwrap();
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn unix_remote_proxy_flushes_before_waiting_for_partial_next_frame() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let first = encoded_frame(&Frame::Data(b"first".to_vec()));
+        let second = encoded_frame(&Frame::Data(b"second".to_vec()));
+        let detach = encoded_frame(&Frame::Detach);
+        let (flushed_tx, flushed_rx) = mpsc::channel();
+        let server_thread = thread::spawn(move || {
+            server.write_all(&first).unwrap();
+            server.write_all(&second[..3]).unwrap();
+            flushed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("first frame should flush before partial second frame completes");
+            server.write_all(&second[3..]).unwrap();
+            server.write_all(&detach).unwrap();
+        });
+        let mut stdout = NotifyingWriter::new(flushed_tx);
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_unix_with_profile(
+            &mut client,
+            &mut stdout,
+            &mut stderr,
+            HostAttachProfiler::new(true),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(stdout.bytes, b"firstsecond");
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(stderr.contains("frames=2"));
+        assert!(stderr.contains("stdout_batches=2"));
+        server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn unix_remote_proxy_does_not_set_nonblocking_on_shared_socket() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let mut stdin_writer_clone = client.try_clone().unwrap();
+        assert!(!fd_is_nonblocking(client.as_raw_fd()));
+        assert!(!fd_is_nonblocking(stdin_writer_clone.as_raw_fd()));
+        let server_thread = thread::spawn(move || {
+            write_frame(&mut server, &Frame::Data(b"ready".to_vec())).unwrap();
+            write_frame(&mut server, &Frame::Detach).unwrap();
+            assert_eq!(read_frame(&mut server).unwrap(), Some(Frame::Detach));
+        });
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_unix_with_profile(
+            &mut client,
+            &mut stdout,
+            &mut stderr,
+            HostAttachProfiler::new(true),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(stdout, b"ready");
+        assert!(!fd_is_nonblocking(client.as_raw_fd()));
+        assert!(!fd_is_nonblocking(stdin_writer_clone.as_raw_fd()));
+        write_frame(&mut stdin_writer_clone, &Frame::Detach).unwrap();
+        server_thread.join().unwrap();
+    }
+
+    fn fd_is_nonblocking(fd: i32) -> bool {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert!(flags >= 0, "F_GETFL failed");
+        flags & libc::O_NONBLOCK != 0
+    }
+
+    #[test]
+    fn unix_remote_proxy_flushes_data_before_exit() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        write_frame(&mut server, &Frame::Data(b"booting".to_vec())).unwrap();
+        write_frame(&mut server, &Frame::Exit { code: 17 }).unwrap();
+        let mut stdout = CountingWriter::default();
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_unix_with_profile(
+            &mut client,
+            &mut stdout,
+            &mut stderr,
+            HostAttachProfiler::new(true),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Exited(17));
+        assert_eq!(stdout.bytes, b"booting");
+        assert_eq!(stdout.writes, 1);
+        assert_eq!(stdout.flushes, 1);
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(stderr.contains("stdout_batches=1"));
+        assert!(stderr.contains("stdout_write_count=1"));
+        assert!(stderr.contains("stdout_flush_count=1"));
     }
 
     #[test]
@@ -948,6 +1389,9 @@ mod tests {
         let stderr = String::from_utf8(stderr).unwrap();
         assert!(stderr.contains("role=host"));
         assert!(stderr.contains("frame_max_bytes=5"));
+        assert!(stderr.contains("stdout_batches=1"));
+        assert!(stderr.contains("stdout_write_count=1"));
+        assert!(stderr.contains("stdout_flush_count=1"));
         server_thread.join().unwrap();
     }
 }
