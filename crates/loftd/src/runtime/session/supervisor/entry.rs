@@ -233,6 +233,7 @@ mod tests {
     use crate::runtime::seccomp::{AuditMode, raw_strace_path};
     use anyhow::anyhow;
     use std::cell::RefCell;
+    use std::os::unix::net::UnixListener;
 
     #[test]
     fn managed_cleanup_runs_prepared_root_fallback_before_task_dir_removal() {
@@ -282,6 +283,34 @@ mod tests {
         .expect("managed cleanup should succeed");
 
         assert!(calls.into_inner().is_empty());
+    }
+
+    #[test]
+    fn managed_cleanup_removes_only_external_attach_socket() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let task_dir = temp.path().join("task");
+        let runtime_dir = temp.path().join("runtime");
+        std::fs::create_dir_all(&task_dir).expect("task dir");
+        std::fs::create_dir_all(&runtime_dir).expect("runtime dir");
+        let attach_socket = runtime_dir.join("attach.sock");
+        let unrelated_socket = runtime_dir.join("unrelated.sock");
+        let attach_listener = UnixListener::bind(&attach_socket).expect("attach socket");
+        let unrelated_listener = UnixListener::bind(&unrelated_socket).expect("unrelated socket");
+        let mut config = managed_config(&task_dir, false);
+        config.managed_session.as_mut().unwrap().attach_socket = attach_socket.clone();
+
+        cleanup_managed_task_after_vm_exit_with(
+            &config,
+            &task_dir,
+            || panic!("prepared-root cleanup should be skipped"),
+            || panic!("task rootfs cleanup should be skipped"),
+        )
+        .expect("managed cleanup should succeed");
+
+        drop(attach_listener);
+        assert!(!attach_socket.exists());
+        assert!(unrelated_socket.exists());
+        drop(unrelated_listener);
     }
 
     #[test]

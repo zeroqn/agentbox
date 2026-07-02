@@ -806,8 +806,11 @@ Interactive loftd runs are managed by a guest-side PTY session manager, so the
 host terminal is an attach client rather than the lifetime owner of the guest
 shell or terminal command. The helper owns final cleanup for managed sessions;
 `loftd kill` remains the recovery path for detached tasks, and
-`--preserve-debug` keeps task state for manual inspection. The explicit
-`fuse-overlay` backend is still a future slice.
+`--preserve-debug` keeps task state for manual inspection. Managed attach
+sockets are runtime-only host sockets under `/tmp/loftd-<uid>/`; the active-task
+record stores the exact socket path for `loftd attach`, and helper cleanup
+removes only the current task's socket. The explicit `fuse-overlay` backend is
+still a future slice.
 
 Run/help:
 

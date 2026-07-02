@@ -10,6 +10,7 @@ use crate::runtime::session::task_control::TaskControlCommand;
 use crate::task_rootfs::TaskRootfsBackend;
 
 pub(crate) mod attach;
+mod managed_attach_socket;
 pub(crate) mod nix_overlay;
 mod profile;
 pub(crate) mod rootfs;
@@ -177,8 +178,13 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                     )
                 }) {
                     Ok(guest_init) => {
+                        let attach_socket = managed_attach_socket::allocate(
+                            lease.handle().task_id(),
+                            lease.handle().task_dir(),
+                        )
+                        .context("failed to allocate loftd managed attach socket")?;
                         let managed_session = ManagedSessionConfig {
-                            attach_socket: lease.handle().task_dir().join("attach.sock"),
+                            attach_socket,
                             guest_port: DEFAULT_ATTACH_PORT,
                             protocol_version: PROTOCOL_VERSION,
                             attach_socket_uid: current_uid(),

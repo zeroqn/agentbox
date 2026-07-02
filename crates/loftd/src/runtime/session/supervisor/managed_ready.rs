@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::runtime::launch::config::ManagedSessionConfig;
+use crate::runtime::session::managed_attach_socket::LINUX_UNIX_SOCKET_PATH_LIMIT;
 use crate::runtime::session::supervisor::identity::{
     FilesystemIdentityScope, RealFilesystemIdentityScope,
 };
@@ -117,29 +118,57 @@ where
     F: FnMut() -> Result<Option<i32>>,
 {
     let deadline = Instant::now() + options.timeout;
+    let mut last_state: ReadyProbeState;
     loop {
         if let Some(status) = poll_worker()? {
             let status = status_description(status);
-            bail!("vm-worker-exited-before-ready: {status}");
+            bail!(
+                "vm-worker-exited-before-ready while waiting for libkrun attach socket '{}' (path bytes: {}, Linux Unix socket pathname limit: {}): {status}",
+                managed.attach_socket.display(),
+                socket_path_bytes(&managed.attach_socket),
+                LINUX_UNIX_SOCKET_PATH_LIMIT
+            );
         }
         match prepare_attach_socket(managed, ops, identity_scope) {
             Ok(()) => {
                 match handshake_probe.probe(&managed.attach_socket, HANDSHAKE_PROBE_READ_TIMEOUT) {
                     Ok(HandshakeProbeOutcome::Ready) => return Ok(()),
-                    Ok(HandshakeProbeOutcome::NotReady) => {}
+                    Ok(HandshakeProbeOutcome::NotReady) => {
+                        last_state = ReadyProbeState::HandshakeNotReady;
+                    }
                     Err(err) => return Err(err),
                 }
             }
-            Err(ReadyProbeError::Missing) => {}
+            Err(ReadyProbeError::Missing) => {
+                last_state = ReadyProbeState::MissingSocket;
+            }
             Err(ReadyProbeError::Fatal(err)) => return Err(err),
         }
         if Instant::now() >= deadline {
             bail!(
-                "timed out waiting for libkrun attach socket handshake at '{}'",
-                managed.attach_socket.display()
+                "timed out waiting for libkrun attach socket handshake at '{}' (last state: {}; path bytes: {}; Linux Unix socket pathname limit: {})",
+                managed.attach_socket.display(),
+                last_state.as_str(),
+                socket_path_bytes(&managed.attach_socket),
+                LINUX_UNIX_SOCKET_PATH_LIMIT
             );
         }
         thread::sleep(options.poll);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReadyProbeState {
+    MissingSocket,
+    HandshakeNotReady,
+}
+
+impl ReadyProbeState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingSocket => "missing socket",
+            Self::HandshakeNotReady => "handshake not ready",
+        }
     }
 }
 
@@ -344,6 +373,10 @@ fn status_description(status: i32) -> String {
     }
 }
 
+fn socket_path_bytes(path: &Path) -> usize {
+    path.as_os_str().as_bytes().len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,7 +453,34 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(format!("{err:#}").contains("timed out waiting for libkrun attach socket"));
+        let message = format!("{err:#}");
+        assert!(message.contains("timed out waiting for libkrun attach socket"));
+        assert!(message.contains("last state: missing socket"));
+        assert!(message.contains("path bytes:"));
+        assert!(message.contains("Linux Unix socket pathname limit: 107"));
+    }
+
+    #[test]
+    fn timeout_distinguishes_handshake_not_ready_from_missing_socket() {
+        let temp = tempdir().unwrap();
+        let socket_path = temp.path().join("attach.sock");
+        let _listener = UnixListener::bind(&socket_path).unwrap();
+        let managed = managed_config(&socket_path);
+
+        let err = wait_for_managed_attach_socket_with(
+            &managed,
+            ReadyOptions {
+                timeout: Duration::from_millis(1),
+                poll: Duration::from_millis(1),
+            },
+            &RealSocketOps,
+            &NoopIdentityScope,
+            &NotReadyHandshakeProbe,
+            || Ok(None),
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("last state: handshake not ready"));
     }
 
     #[test]
@@ -545,6 +605,14 @@ mod tests {
     impl HandshakeProbe for ReadyHandshakeProbe {
         fn probe(&self, _path: &Path, _read_timeout: Duration) -> Result<HandshakeProbeOutcome> {
             Ok(HandshakeProbeOutcome::Ready)
+        }
+    }
+
+    struct NotReadyHandshakeProbe;
+
+    impl HandshakeProbe for NotReadyHandshakeProbe {
+        fn probe(&self, _path: &Path, _read_timeout: Duration) -> Result<HandshakeProbeOutcome> {
+            Ok(HandshakeProbeOutcome::NotReady)
         }
     }
 

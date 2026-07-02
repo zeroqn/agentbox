@@ -1023,6 +1023,23 @@ mod tests {
     }
 
     #[test]
+    fn active_record_round_trips_external_managed_attach_socket() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let task_dir = dir.path().join("workspace-a/tasks/task-a");
+        let mut original = record("task-a", task_dir.clone());
+        original.managed = Some(ManagedTaskRecord {
+            attach_socket: PathBuf::from("/tmp/loftd-1000/a-0123456789abcdef.sock"),
+            guest_port: 1025,
+            protocol_version: 1,
+        });
+
+        write_active_task_record(&original).expect("write record");
+        let decoded = read_active_task_record(&active_record_path(&task_dir)).expect("read record");
+
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
     fn list_records_scans_workspace_tasks_and_skips_app_support_dirs() {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_dir = dir.path().join("loftd");
