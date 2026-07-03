@@ -104,6 +104,7 @@ pub(crate) enum PathCategory {
     Disk { id: String },
     GuestInitOverride,
     HostNixOverlay { role: HostNixOverlayRole },
+    ManagedAttachSocket,
     ManagedSessionState,
     ProfileOutput,
     RuntimeDevice { name: String },
@@ -258,12 +259,13 @@ impl EffectivePolicy {
         if let Some(overlay) = &config.host_nix_overlay {
             path_rules.extend(host_nix_overlay_rules(overlay));
         }
-        if config.managed_session.is_some() {
+        if let Some(managed_session) = &config.managed_session {
             path_rules.push(PathRule::new(
                 PathCategory::ManagedSessionState,
                 task_state_dir.to_path_buf(),
                 PathAccess::ReadWrite,
             ));
+            path_rules.push(managed_attach_socket_rule(&managed_session.attach_socket)?);
         }
         if profile_enabled {
             path_rules.push(PathRule::new(
@@ -284,9 +286,9 @@ impl EffectivePolicy {
             connect_tcp: ConnectTcpPolicy::UnrestrictedByDesign,
             ipc_scopes: vec![IpcScope::AbstractUnixSocket, IpcScope::Signal],
             audit: AuditPolicy {
-                log_same_exec: false,
-                log_new_exec: true,
-                log_subdomains: false,
+                log_same_exec: true,
+                log_new_exec: false,
+                log_subdomains: true,
             },
             fd_report,
         })
@@ -352,6 +354,7 @@ impl PathCategory {
             Self::Disk { id } => format!("disk:{id}"),
             Self::GuestInitOverride => "guest-init-override".to_owned(),
             Self::HostNixOverlay { role } => format!("host-nix-overlay:{role:?}"),
+            Self::ManagedAttachSocket => "managed-attach-socket".to_owned(),
             Self::ManagedSessionState => "managed-session-state".to_owned(),
             Self::ProfileOutput => "profile-output".to_owned(),
             Self::RuntimeDevice { name } => format!("runtime-device:{name}"),
@@ -418,6 +421,23 @@ fn host_nix_overlay_rules(overlay: &HostNixOverlay) -> Vec<PathRule> {
             PathAccess::ReadOnly,
         ),
     ]
+}
+
+fn managed_attach_socket_rule(attach_socket: &Path) -> Result<PathRule> {
+    let parent = attach_socket
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .with_context(|| {
+            format!(
+                "managed attach socket path '{}' has no parent directory",
+                attach_socket.display()
+            )
+        })?;
+    Ok(PathRule::new(
+        PathCategory::ManagedAttachSocket,
+        parent.to_path_buf(),
+        PathAccess::ReadWrite,
+    ))
 }
 
 fn libkrun_runtime_device_rules() -> Vec<PathRule> {
@@ -709,6 +729,7 @@ pub(crate) fn ensure_fully_enforced_for_test(
 mod tests {
     use super::*;
     use crate::logging::LogLevel;
+    use crate::runtime::launch::config::ManagedSessionConfig;
     use crate::runtime::launch::config::{BindMountSourceKind, NetworkMode};
     use crate::runtime::seccomp::SeccompMode;
 
@@ -734,6 +755,17 @@ mod tests {
             managed_session: None,
             seccomp: SeccompMode::Off,
             landlock: LandlockMode::Relax,
+        }
+    }
+
+    fn managed_session_config(attach_socket: PathBuf) -> ManagedSessionConfig {
+        ManagedSessionConfig {
+            attach_socket,
+            guest_port: 50_426,
+            protocol_version: 1,
+            attach_socket_uid: 1000,
+            attach_socket_gid: 1000,
+            cleanup_task_rootfs_on_exit: true,
         }
     }
 
@@ -777,6 +809,34 @@ mod tests {
         .unwrap();
 
         assert_eq!(policy.connect_tcp, ConnectTcpPolicy::UnrestrictedByDesign);
+    }
+
+    #[test]
+    fn effective_policy_uses_kernel_default_audit_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path());
+
+        let policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            dir.path(),
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            policy.audit,
+            AuditPolicy {
+                log_same_exec: true,
+                log_new_exec: false,
+                log_subdomains: true,
+            }
+        );
+        assert!(
+            policy
+                .report()
+                .contains("audit={same_exec:true,new_exec:false,subdomains:true}")
+        );
     }
 
     #[test]
@@ -865,14 +925,7 @@ mod tests {
         fs::create_dir_all(&task_state).unwrap();
         fs::create_dir_all(&rootfs).unwrap();
         let mut config = test_config(&rootfs);
-        config.managed_session = Some(crate::runtime::launch::config::ManagedSessionConfig {
-            attach_socket: task_state.join("attach.sock"),
-            guest_port: 50_426,
-            protocol_version: 1,
-            attach_socket_uid: 1000,
-            attach_socket_gid: 1000,
-            cleanup_task_rootfs_on_exit: true,
-        });
+        config.managed_session = Some(managed_session_config(task_state.join("attach.sock")));
 
         let policy = EffectivePolicy::build_with_fd_report(
             &config,
@@ -896,12 +949,59 @@ mod tests {
     }
 
     #[test]
+    fn managed_sessions_allow_configured_attach_socket_parent_outside_task_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_state = dir.path().join("task");
+        let rootfs = dir.path().join("rootfs");
+        let tmp = dir.path().join("tmp");
+        let socket_parent = tmp.join("loftd-1000");
+        fs::create_dir_all(&task_state).unwrap();
+        fs::create_dir_all(&rootfs).unwrap();
+        fs::create_dir_all(&socket_parent).unwrap();
+        let mut config = test_config(&rootfs);
+        config.managed_session = Some(managed_session_config(socket_parent.join("attach.sock")));
+
+        let policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            &task_state,
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+
+        let attach_rule = policy
+            .path_rules
+            .iter()
+            .find(|rule| rule.category == PathCategory::ManagedAttachSocket)
+            .expect("managed policy should allow the attach socket parent");
+        assert_eq!(attach_rule.path, socket_parent);
+        assert_eq!(attach_rule.access, PathAccess::ReadWrite);
+        assert_eq!(
+            attach_rule.read_only_guarantee,
+            ReadOnlyGuarantee::NotReadOnly
+        );
+        assert!(
+            !policy
+                .path_rules
+                .iter()
+                .any(|rule| rule.path == tmp && rule.access == PathAccess::ReadWrite),
+            "managed attach socket rule must not grant broad tmp access"
+        );
+        assert!(
+            policy.report().contains("managed-attach-socket"),
+            "policy report should identify the attach socket rule"
+        );
+    }
+
+    #[test]
     fn unmanaged_policy_does_not_allow_task_state_without_profile() {
         let dir = tempfile::tempdir().unwrap();
         let task_state = dir.path().join("task");
         let rootfs = dir.path().join("rootfs");
+        let socket_parent = dir.path().join("tmp").join("loftd-1000");
         fs::create_dir_all(&task_state).unwrap();
         fs::create_dir_all(&rootfs).unwrap();
+        fs::create_dir_all(&socket_parent).unwrap();
         let config = test_config(&rootfs);
 
         let policy = EffectivePolicy::build_with_fd_report(
@@ -923,6 +1023,42 @@ mod tests {
                 .path_rules
                 .iter()
                 .any(|rule| rule.category == PathCategory::ManagedSessionState)
+        );
+        assert!(
+            !policy
+                .path_rules
+                .iter()
+                .any(|rule| rule.path == socket_parent && rule.access == PathAccess::ReadWrite)
+        );
+        assert!(
+            !policy
+                .path_rules
+                .iter()
+                .any(|rule| rule.category == PathCategory::ManagedAttachSocket)
+        );
+    }
+
+    #[test]
+    fn managed_attach_socket_requires_parent_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_state = dir.path().join("task");
+        let rootfs = dir.path().join("rootfs");
+        fs::create_dir_all(&task_state).unwrap();
+        fs::create_dir_all(&rootfs).unwrap();
+        let mut config = test_config(&rootfs);
+        config.managed_session = Some(managed_session_config(PathBuf::from("attach.sock")));
+
+        let err = EffectivePolicy::build_with_fd_report(
+            &config,
+            &task_state,
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("has no parent directory"),
+            "unexpected error: {err:#}"
         );
     }
 
@@ -1048,6 +1184,14 @@ mod tests {
         assert_eq!(
             PathCategory::ManagedSessionState.as_report_label(),
             "managed-session-state"
+        );
+    }
+
+    #[test]
+    fn managed_attach_socket_report_label_is_explicit() {
+        assert_eq!(
+            PathCategory::ManagedAttachSocket.as_report_label(),
+            "managed-attach-socket"
         );
     }
 

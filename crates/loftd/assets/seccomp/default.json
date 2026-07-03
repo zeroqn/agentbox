@@ -25,6 +25,9 @@
         "syscall": "clone3"
       },
       {
+        "syscall": "clock_gettime"
+      },
+      {
         "syscall": "close"
       },
       {
