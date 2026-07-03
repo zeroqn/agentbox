@@ -1200,9 +1200,14 @@ The optimized live benchmark requires the host attach profile; the guest profile
 is recorded when the guest/libkrun console is visible. For a strict guest-profile
 diagnostic run, add `--loftd-arg --log-level --loftd-arg debug` and
 `--require-guest-profile`, but do not treat that debug-logging run as the clean
-performance baseline. Optional `--rmux` and `--tmux` hooks record structured skip
-reasons unless a safe finite comparison command is available, and `/mnt/rmux` is
-treated as read-only.
+performance baseline. Optional `--rmux` records a non-nested rmux attach-drain
+comparison when an executable rmux is available: the runner creates an isolated
+detached rmux session, attaches through a child PTY, drains a finite redraw
+workload, and adds `optional-rmux` elapsed stats plus
+`profiles.rmux_attach_drain` read-gap/byte metrics to `summary.json`. The rmux
+comparison is still optional and threshold-free; absent or unusable rmux records
+a structured skip/failure without editing `/mnt/rmux`. The `--tmux` hook still
+records a structured skip until an isolated finite tmux comparison is added.
 
 Loftd troubleshooting FAQ:
 

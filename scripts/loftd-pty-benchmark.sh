@@ -280,6 +280,247 @@ with open(path, "a", encoding="utf-8") as metrics:
 PY
 }
 
+
+run_optional_rmux_attach_drain() {
+  python3 - "$metrics_path" "$rmux_bin" "$out_dir" "$iterations" "$warmup" <<'PY'
+import fcntl
+import json
+import os
+import pathlib
+import pty
+import selectors
+import signal
+import struct
+import subprocess
+import sys
+import termios
+import time
+
+metrics_path = sys.argv[1]
+rmux_bin = sys.argv[2]
+out_dir = pathlib.Path(sys.argv[3])
+iterations = int(sys.argv[4])
+warmup = int(sys.argv[5])
+logs_dir = out_dir / "logs"
+logs_dir.mkdir(parents=True, exist_ok=True)
+scenario = "optional-rmux"
+mode = "rmux_attach_drain"
+read_timeout_seconds = 10.0
+
+
+def write_record(record):
+    with open(metrics_path, "a", encoding="utf-8") as metrics:
+        metrics.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def base_record(iteration, stdout_path=None, stderr_path=None):
+    return {
+        "schema_version": 1,
+        "scenario": scenario,
+        "mode": mode,
+        "iteration": max(iteration, 0),
+        "elapsed_us": 0,
+        "bytes_in": 0,
+        "bytes_out": 0,
+        "artifact_stdout": str(stdout_path) if stdout_path else None,
+        "artifact_stderr": str(stderr_path) if stderr_path else None,
+        "profile_role": "rmux_attach_drain",
+        "profile": {},
+        "skip_reason": None,
+        "error": None,
+    }
+
+
+def rmux(label, *args, timeout=5.0, check=False):
+    result = subprocess.run(
+        [rmux_bin, "-L", label, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        stderr = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
+        raise RuntimeError(stderr)
+    return result
+
+
+def cleanup(label):
+    kill = rmux(label, "kill-server", timeout=5.0, check=False)
+    probe = rmux(label, "list-sessions", timeout=2.0, check=False)
+    return kill.returncode == 0 or probe.returncode != 0
+
+
+def attach_child(label, session):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execlp(rmux_bin, rmux_bin, "-L", label, "attach-session", "-t", session)
+    try:
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+    except OSError:
+        pass
+    return pid, fd
+
+
+def stop_child(pid, fd):
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+
+
+def run_sample(ordinal, measured_iteration):
+    measured = measured_iteration >= 0
+    label = f"loftd-pty-bench-{os.getpid()}-{ordinal}-{time.time_ns()}"
+    session = "bench"
+    done_token = f"RMUX_ATTACH_DRAIN_DONE_{os.getpid()}_{ordinal}".encode()
+    stdout_path = logs_dir / f"optional-rmux-attach-drain-{measured_iteration}.stdout" if measured else None
+    stderr_path = logs_dir / f"optional-rmux-attach-drain-{measured_iteration}.stderr" if measured else None
+    output = bytearray()
+    stderr_lines = []
+    read_times = []
+    attach_pid = None
+    attach_fd = None
+    elapsed_us = 0
+    error = None
+    setup_complete = False
+    cleanup_ok = False
+    started_ns = time.perf_counter_ns()
+
+    workload = (
+        "i=0; "
+        "while [ $i -lt 160 ]; do "
+        "printf '\\033[2K\\rrmux-attach-drain-%03d cursor-snap-probe' \"$i\"; "
+        "i=$((i + 1)); "
+        "done; "
+        f"printf '\\n{done_token.decode()}\\n'"
+    )
+
+    try:
+        cleanup(label)
+        rmux(label, "new-session", "-d", "-s", session, "-x", "120", "-y", "30", "/bin/sh", timeout=5.0, check=True)
+        setup_complete = True
+        started_ns = time.perf_counter_ns()
+        attach_pid, attach_fd = attach_child(label, session)
+        selector = selectors.DefaultSelector()
+        selector.register(attach_fd, selectors.EVENT_READ)
+        # Let the attached client subscribe before timing the finite payload drain.
+        time.sleep(0.10)
+        started_ns = time.perf_counter_ns()
+        sent = rmux(
+            label,
+            "send-keys",
+            "-t",
+            session,
+            workload,
+            "Enter",
+            timeout=5.0,
+            check=False,
+        )
+        if sent.returncode != 0:
+            raise RuntimeError(sent.stderr.strip() or sent.stdout.strip() or f"send-keys exit status {sent.returncode}")
+        deadline = time.monotonic() + read_timeout_seconds
+        saw_done = False
+        while time.monotonic() < deadline:
+            events = selector.select(max(0.0, min(0.05, deadline - time.monotonic())))
+            if not events:
+                child, _status = os.waitpid(attach_pid, os.WNOHANG)
+                if child == attach_pid:
+                    attach_pid = None
+                    break
+                continue
+            for _key, _mask in events:
+                try:
+                    data = os.read(attach_fd, 65536)
+                except OSError:
+                    data = b""
+                if not data:
+                    continue
+                output.extend(data)
+                read_times.append(time.perf_counter_ns())
+                if done_token in output:
+                    saw_done = True
+                    break
+            if saw_done:
+                break
+        elapsed_us = (time.perf_counter_ns() - started_ns) // 1000
+        if not saw_done:
+            error = f"timed out waiting for {done_token.decode()}"
+    except Exception as exc:
+        elapsed_us = (time.perf_counter_ns() - started_ns) // 1000
+        error = str(exc)
+        stderr_lines.append(str(exc))
+    finally:
+        if attach_pid is not None and attach_fd is not None:
+            stop_child(attach_pid, attach_fd)
+        elif attach_fd is not None:
+            try:
+                os.close(attach_fd)
+            except OSError:
+                pass
+        try:
+            cleanup_ok = cleanup(label)
+        except Exception as exc:
+            cleanup_ok = False
+            stderr_lines.append(f"cleanup failed: {exc}")
+
+    if stdout_path:
+        stdout_path.write_bytes(bytes(output))
+    if stderr_path:
+        stderr_text = "\n".join(line for line in stderr_lines if line)
+        stderr_path.write_text(
+            stderr_text + ("\n" if stderr_text else ""),
+            encoding="utf-8",
+        )
+
+    if not measured:
+        return
+
+    gaps_us = [
+        (read_times[i] - read_times[i - 1]) // 1000
+        for i in range(1, len(read_times))
+    ]
+    gap_avg_us = int(sum(gaps_us) / len(gaps_us)) if gaps_us else 0
+    gap_max_us = max(gaps_us) if gaps_us else 0
+    status = "ok" if error is None and cleanup_ok else "failed"
+    if error is None and not cleanup_ok:
+        error = "rmux cleanup verification failed"
+    record = base_record(measured_iteration, stdout_path, stderr_path)
+    record.update({
+        "status": status,
+        "elapsed_us": elapsed_us,
+        "bytes_in": len(workload.encode()),
+        "bytes_out": len(output),
+        "error": error,
+        "profile": {
+            "rmux_binary": rmux_bin,
+            "socket_name": label,
+            "session_name": session,
+            "setup_complete": setup_complete,
+            "attach_bytes_drained": len(output),
+            "attach_read_count": len(read_times),
+            "attach_read_gap_avg_us": gap_avg_us,
+            "attach_read_gap_max_us": gap_max_us,
+            "cleanup_ok": cleanup_ok,
+        },
+    })
+    write_record(record)
+
+
+for ordinal in range(warmup + iterations):
+    run_sample(ordinal, ordinal - warmup)
+PY
+}
+
 run_live_loftd() {
   local stdout_path="$out_dir/logs/live-loftd-shell.stdout"
   local stderr_path="$out_dir/logs/live-loftd-shell.stderr"
@@ -477,12 +718,15 @@ else
 fi
 
 if [ -n "$rmux_bin" ] && [ -x "$rmux_bin" ]; then
-  append_skip "optional-rmux" "rmux" "rmux comparison hook detected $rmux_bin, but no non-nested finite rmux benchmark command is defined yet"
+  run_optional_rmux_attach_drain
 else
   append_skip "optional-rmux" "rmux" "rmux binary not found or not executable; /mnt/rmux left read-only"
 fi
 if [ -n "$tmux_bin" ] && [ -x "$tmux_bin" ]; then
-  append_skip "optional-tmux" "tmux" "tmux comparison hook detected $tmux_bin; isolated tmux workload intentionally skipped in initial benchmark runner"
+  append_skip \
+    "optional-tmux" \
+    "tmux" \
+    "tmux comparison hook detected $tmux_bin; isolated tmux workload intentionally skipped in initial benchmark runner"
 else
   append_skip "optional-tmux" "tmux" "tmux binary not found or not executable"
 fi
@@ -502,10 +746,22 @@ fi
 summary_state_home="$(default_live_state_home || true)"
 python3 - "$metrics_path" "$summary_path" "$out_dir" "$loftd_summary_display" "$skip_live" "$iterations" "$warmup" "$summary_state_home" "$require_guest_profile" <<'PY'
 import json, pathlib, statistics, sys
-metrics_path, summary_path, out_dir, loftd_display, skip_live, iterations, warmup, state_home, require_guest_profile = sys.argv[1:10]
+(
+    metrics_path,
+    summary_path,
+    out_dir,
+    loftd_display,
+    skip_live,
+    iterations,
+    warmup,
+    state_home,
+    require_guest_profile,
+) = sys.argv[1:10]
 require_guest_profile = require_guest_profile == "1"
 records = [json.loads(line) for line in open(metrics_path, encoding="utf-8") if line.strip()]
-by_scenario, profiles, skips, failures = {}, {"host": [], "guest": []}, [], []
+by_scenario = {}
+profiles = {"host": [], "guest": [], "rmux_attach_drain": []}
+skips, failures = [], []
 for record in records:
     by_scenario.setdefault(record["scenario"], []).append(record)
     if record.get("profile_role") in profiles:
@@ -516,19 +772,30 @@ for record in records:
         failures.append({"scenario": record["scenario"], "error": record.get("error")})
 scenarios = {}
 for scenario, items in by_scenario.items():
-    elapsed = [item["elapsed_us"] for item in items if item.get("status") == "ok" and item.get("elapsed_us") is not None]
+    elapsed = [
+        item["elapsed_us"]
+        for item in items
+        if item.get("status") == "ok" and item.get("elapsed_us") is not None
+    ]
     if not elapsed:
         scenarios[scenario] = {"count": 0}
         continue
     sorted_elapsed = sorted(elapsed)
     scenarios[scenario] = {
-        "count": len(elapsed), "min_elapsed_us": min(elapsed), "avg_elapsed_us": int(statistics.fmean(elapsed)),
+        "count": len(elapsed),
+        "min_elapsed_us": min(elapsed),
+        "avg_elapsed_us": int(statistics.fmean(elapsed)),
         "max_elapsed_us": max(elapsed), "p50_elapsed_us": int(statistics.median(sorted_elapsed)),
         "p95_elapsed_us": sorted_elapsed[min(len(sorted_elapsed) - 1, int(len(sorted_elapsed) * 0.95))],
     }
 summary = {
-    "schema_version": 1, "out_dir": out_dir, "metrics_path": metrics_path, "loftd_command": loftd_display,
-    "live_required": skip_live != "1", "iterations": int(iterations), "warmup": int(warmup),
+    "schema_version": 1,
+    "out_dir": out_dir,
+    "metrics_path": metrics_path,
+    "loftd_command": loftd_display,
+    "live_required": skip_live != "1",
+    "iterations": int(iterations),
+    "warmup": int(warmup),
     "live_env": {"LOFTD_ATTACH_PROFILE": "1", "XDG_STATE_HOME": state_home or None},
     "profile_requirements": {"host": skip_live != "1", "guest": require_guest_profile},
     "profile_warnings": [],
@@ -538,19 +805,53 @@ if skip_live != "1" and profiles["host"] and not profiles["guest"]:
     summary["profile_warnings"].append(
         "guest profile not captured; guest summaries currently require visible guest/libkrun console output"
     )
-pathlib.Path(summary_path).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+pathlib.Path(summary_path).write_text(
+    json.dumps(summary, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
 print(f"loftd PTY benchmark artifacts: {out_dir}")
 for scenario, stats in sorted(scenarios.items()):
     if stats.get("count"):
-        print(f"{scenario}: count={stats['count']} min={stats['min_elapsed_us']}us avg={stats['avg_elapsed_us']}us p50={stats['p50_elapsed_us']}us p95={stats['p95_elapsed_us']}us max={stats['max_elapsed_us']}us")
+        print(
+            f"{scenario}: count={stats['count']} "
+            f"min={stats['min_elapsed_us']}us "
+            f"avg={stats['avg_elapsed_us']}us "
+            f"p50={stats['p50_elapsed_us']}us "
+            f"p95={stats['p95_elapsed_us']}us "
+            f"max={stats['max_elapsed_us']}us"
+        )
     else:
         print(f"{scenario}: no successful measured runs")
 if profiles["host"]:
     host = profiles["host"][-1]
-    print(f"host profile: frames={host.get('frames')} stdout_batches={host.get('stdout_batches')} stdout_write_count={host.get('stdout_write_count')} stdout_flush_count={host.get('stdout_flush_count')}")
+    print(
+        f"host profile: frames={host.get('frames')} "
+        f"stdout_batches={host.get('stdout_batches')} "
+        f"stdout_write_count={host.get('stdout_write_count')} "
+        f"stdout_flush_count={host.get('stdout_flush_count')}"
+    )
 if profiles["guest"]:
     guest = profiles["guest"][-1]
-    print(f"guest profile: pty_reads={guest.get('pty_reads')} pty_drain_events={guest.get('pty_drain_events')} parser_total_us={guest.get('parser_total_us')} frame_write_total_us={guest.get('frame_write_total_us')}")
+    print(
+        f"guest profile: pty_reads={guest.get('pty_reads')} "
+        f"pty_drain_events={guest.get('pty_drain_events')} "
+        f"parser_total_us={guest.get('parser_total_us')} "
+        f"frame_write_total_us={guest.get('frame_write_total_us')}"
+    )
+if profiles["rmux_attach_drain"]:
+    rmux_profiles = profiles["rmux_attach_drain"]
+    bytes_total = sum(profile.get("attach_bytes_drained") or 0 for profile in rmux_profiles)
+    reads_total = sum(profile.get("attach_read_count") or 0 for profile in rmux_profiles)
+    max_gap = max(
+        (profile.get("attach_read_gap_max_us") or 0 for profile in rmux_profiles),
+        default=0,
+    )
+    cleanup_ok = all(bool(profile.get("cleanup_ok")) for profile in rmux_profiles)
+    print(
+        f"rmux attach-drain profile: samples={len(rmux_profiles)} "
+        f"read_count={reads_total} bytes={bytes_total} "
+        f"max_gap={max_gap}us cleanup_ok={cleanup_ok}"
+    )
 for warning in summary["profile_warnings"]:
     print(f"warning: {warning}", file=sys.stderr)
 for skip in skips:
