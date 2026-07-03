@@ -1166,6 +1166,44 @@ drain caps stopped a burst. Attaching to an already-running managed task
 profiles the host attach path immediately, but guest-side attach metrics are
 available only if that task was originally launched with `LOFTD_ATTACH_PROFILE=1`.
 
+To collect repeatable PTY benchmark artifacts, run the repo-local benchmark
+script. It records synthetic PTY baselines, launches a finite live loftd command
+with `LOFTD_ATTACH_PROFILE=1`, parses host attach summaries plus guest summaries
+when visible, and writes machine-readable reports under
+`.omx/benchmarks/loftd-pty/` by default:
+
+```bash
+scripts/loftd-pty-benchmark.sh --iterations 3
+```
+
+Use `--loftd <path>` or `LOFTD_BIN=/path/to/loftd` when testing a specific
+binary; `--loftd-cargo-run` is available as an explicit opt-in for source-tree
+runs. Repeat `--loftd-arg <arg>` for environment-specific launch flags, for
+example `--loftd-arg --rootfs-backend --loftd-arg btrfs-snapshot`. The
+generated `metrics.jsonl` contains per-run records, `summary.json` contains
+aggregate synthetic timings plus parsed host/guest profile objects, and
+`logs/` preserves raw captured output for failed live runs; the live PTY path
+records the combined PTY stream in stdout and may leave stderr empty.
+`--skip-live` is only for local synthetic smoke checks; PTY optimization
+evidence should use the live run so a missing host profile fails visibly. The
+benchmark uses
+`--mem 2` for the live run by default to avoid measuring huge-memory VM boot
+delay instead of PTY latency; pass `--no-default-live-mem` to test loftd's
+default memory behavior, or repeat `--loftd-arg --mem --loftd-arg <GiB>` to
+choose another size. The live run uses a btrfs-backed state directory under
+`/home/dev/.local/share/containers` when available, even if the parent shell has
+a non-btrfs `XDG_STATE_HOME`; override that with `--state-home <path>`. When
+`result/bin/loftd-guest-init` exists, the runner also passes it as the live
+guest init by default so the host and guest benchmark artifacts match; use
+`--guest-init <path>` or `--no-default-guest-init` to override that behavior.
+The optimized live benchmark requires the host attach profile; the guest profile
+is recorded when the guest/libkrun console is visible. For a strict guest-profile
+diagnostic run, add `--loftd-arg --log-level --loftd-arg debug` and
+`--require-guest-profile`, but do not treat that debug-logging run as the clean
+performance baseline. Optional `--rmux` and `--tmux` hooks record structured skip
+reasons unless a safe finite comparison command is available, and `/mnt/rmux` is
+treated as read-only.
+
 Loftd troubleshooting FAQ:
 
 - If the interactive shell appears to hang during startup, check the host

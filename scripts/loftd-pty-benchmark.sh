@@ -1,0 +1,564 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+iterations=3
+warmup=1
+out_dir=""
+loftd_bin="${LOFTD_BIN:-$repo_root/result/bin/loftd}"
+use_cargo_run=0
+skip_live=0
+live_failed=0
+rmux_bin="${RMUX_BIN:-}"
+tmux_bin="${TMUX_BIN:-}"
+timeout_seconds=180
+loftd_extra_args=()
+default_live_mem_gib=2
+live_state_home="${LOFTD_BENCH_XDG_STATE_HOME:-}"
+live_guest_init="${LOFTD_BENCH_GUEST_INIT:-}"
+default_live_guest_init=1
+require_guest_profile=0
+
+usage() {
+  cat <<'USAGE'
+Usage: loftd-pty-benchmark.sh [OPTIONS]
+
+Run reproducible PTY benchmark diagnostics for loftd attach-loop latency. The
+runner records synthetic PTY baselines, a required live loftd run with
+LOFTD_ATTACH_PROFILE=1, and optional rmux/tmux comparison hooks when available.
+
+Options:
+      --loftd <path>          loftd binary to run (default: $LOFTD_BIN or ./result/bin/loftd)
+      --loftd-cargo-run       run loftd as: cargo run -p loftd -- (explicit opt-in)
+      --out-dir <path>        output directory (default: .omx/benchmarks/loftd-pty/<timestamp>)
+      --iterations <n>        measured iterations per workload (default: 3)
+      --warmup <n>            warmup iterations per synthetic workload (default: 1)
+      --rmux <path>           optional rmux binary for comparison hook
+      --tmux <path>           optional tmux binary for isolated comparison hook
+      --skip-live             skip required live loftd run (for synthetic development smoke only)
+      --timeout <seconds>     live command timeout (default: 180)
+      --loftd-arg <arg>       repeatable extra argument passed before the guest command
+      --no-default-live-mem  do not add the benchmark default --mem 2 live-run arg
+      --state-home <path>    XDG_STATE_HOME for live loftd (default: btrfs containers disk when needed)
+      --guest-init <path>    guest init path for live loftd (default: ./result/bin/loftd-guest-init if present)
+      --no-default-guest-init
+                              do not auto-add the default guest init override
+      --require-guest-profile
+                              fail unless the live run captures a guest profile line
+  -h, --help                  show this help
+
+Artifacts:
+  metrics.jsonl               per-run machine-readable records
+  summary.json                aggregate summary and live profile objects
+  logs/*.stdout, *.stderr     raw captured command output
+
+Completion evidence for loftd PTY work should not use --skip-live: live runs
+must capture the host "loftd attach profile" summary. Guest summaries are
+captured when the guest/libkrun console is visible; use --require-guest-profile
+for strict guest-profile diagnostics.
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --loftd) loftd_bin="${2:?missing value for --loftd}"; use_cargo_run=0; shift 2 ;;
+    --loftd-cargo-run) use_cargo_run=1; shift ;;
+    --out-dir) out_dir="${2:?missing value for --out-dir}"; shift 2 ;;
+    --iterations) iterations="${2:?missing value for --iterations}"; shift 2 ;;
+    --warmup) warmup="${2:?missing value for --warmup}"; shift 2 ;;
+    --rmux) rmux_bin="${2:?missing value for --rmux}"; shift 2 ;;
+    --tmux) tmux_bin="${2:?missing value for --tmux}"; shift 2 ;;
+    --skip-live) skip_live=1; shift ;;
+    --timeout) timeout_seconds="${2:?missing value for --timeout}"; shift 2 ;;
+    --loftd-arg) loftd_extra_args+=("${2:?missing value for --loftd-arg}"); shift 2 ;;
+    --no-default-live-mem) default_live_mem_gib=""; shift ;;
+    --state-home) live_state_home="${2:?missing value for --state-home}"; shift 2 ;;
+    --guest-init) live_guest_init="${2:?missing value for --guest-init}"; shift 2 ;;
+    --no-default-guest-init) default_live_guest_init=0; shift ;;
+    --require-guest-profile) require_guest_profile=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+for value_name in iterations warmup timeout_seconds; do
+  value="${!value_name}"
+  case "$value" in ''|*[!0-9]*) echo "--${value_name/_/-} must be a non-negative integer" >&2; exit 1 ;; esac
+done
+if [ "$timeout_seconds" -eq 0 ]; then
+  echo "--timeout must be greater than zero" >&2
+  exit 1
+fi
+
+if [ -z "$out_dir" ]; then
+  out_dir="$repo_root/.omx/benchmarks/loftd-pty/$(date -u +%Y%m%dT%H%M%SZ)"
+fi
+mkdir -p "$out_dir/logs"
+metrics_path="$out_dir/metrics.jsonl"
+summary_path="$out_dir/summary.json"
+: > "$metrics_path"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "missing required command: python3" >&2
+  exit 1
+fi
+
+if [ -z "$rmux_bin" ]; then
+  if command -v rmux >/dev/null 2>&1; then
+    rmux_bin="$(command -v rmux)"
+  elif [ -x /mnt/rmux/target/release/rmux ]; then
+    rmux_bin="/mnt/rmux/target/release/rmux"
+  elif [ -x /mnt/rmux/target/debug/rmux ]; then
+    rmux_bin="/mnt/rmux/target/debug/rmux"
+  fi
+fi
+if [ -z "$tmux_bin" ] && command -v tmux >/dev/null 2>&1; then
+  tmux_bin="$(command -v tmux)"
+fi
+
+if [ "$use_cargo_run" -eq 1 ]; then
+  command -v cargo >/dev/null 2>&1 || { echo "--loftd-cargo-run requires cargo" >&2; exit 1; }
+  loftd_display="cargo run -p loftd --"
+elif [ -x "$loftd_bin" ]; then
+  loftd_display="$loftd_bin"
+else
+  echo "loftd binary is not executable: $loftd_bin" >&2
+  echo "pass --loftd <path>, set LOFTD_BIN, or use --loftd-cargo-run" >&2
+  exit 1
+fi
+
+python3 - "$metrics_path" "$iterations" "$warmup" <<'PY'
+import json, os, pty, selectors, signal, subprocess, sys, termios, time
+metrics_path, iterations, warmup = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+
+def set_raw(fd):
+    attrs = termios.tcgetattr(fd)
+    attrs[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP | termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
+    attrs[1] &= ~termios.OPOST
+    attrs[2] |= termios.CS8
+    attrs[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG | termios.IEXTEN)
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+
+def run_pty_command(command, payload, expect_bytes, timeout=5.0):
+    master, slave = pty.openpty()
+    set_raw(slave)
+    proc = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave, close_fds=True, start_new_session=True)
+    os.close(slave)
+    selector = selectors.DefaultSelector()
+    selector.register(master, selectors.EVENT_READ)
+    started = time.perf_counter_ns()
+    bytes_out = 0
+    error = None
+    try:
+        os.write(master, payload)
+        deadline = time.monotonic() + timeout
+        while bytes_out < expect_bytes and time.monotonic() < deadline:
+            events = selector.select(max(0.0, min(0.05, deadline - time.monotonic())))
+            for _key, _mask in events:
+                try:
+                    data = os.read(master, 65536)
+                except OSError as exc:
+                    error = str(exc)
+                    data = b""
+                if data:
+                    bytes_out += len(data)
+    finally:
+        elapsed_us = (time.perf_counter_ns() - started) // 1000
+        try: os.close(master)
+        except OSError: pass
+        if proc.poll() is None:
+            try: os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError: pass
+            try: proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try: os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError: pass
+                proc.wait(timeout=1)
+        else:
+            proc.wait(timeout=1)
+    return ("ok" if error is None and bytes_out >= expect_bytes else "failed"), elapsed_us, bytes_out, error
+
+def cat_payload():
+    return b"loftd-pty-benchmark-cat-echo-0123456789abcdef\n" * 128
+
+def redraw_payload():
+    return b"".join(f"\x1b[2K\rloftd redraw frame {i:03d} cursor-snap probe".encode() for i in range(160)) + b"\n"
+
+with open(metrics_path, "a", encoding="utf-8") as metrics:
+    for scenario, command, payload in [
+        ("synthetic-cat-echo", ["cat"], cat_payload()),
+        ("synthetic-redraw-burst", ["cat"], redraw_payload()),
+    ]:
+        for ordinal in range(warmup + iterations):
+            iteration = ordinal - warmup
+            status, elapsed_us, bytes_out, error = run_pty_command(command, payload, len(payload))
+            if iteration < 0:
+                continue
+            metrics.write(json.dumps({
+                "schema_version": 1, "scenario": scenario, "mode": "synthetic", "iteration": iteration,
+                "status": status, "elapsed_us": elapsed_us, "bytes_in": len(payload), "bytes_out": bytes_out,
+                "artifact_stdout": None, "artifact_stderr": None, "profile_role": None, "profile": {},
+                "skip_reason": None, "error": error,
+            }, sort_keys=True) + "\n")
+PY
+
+default_live_state_home() {
+  if [ -n "$live_state_home" ]; then
+    printf '%s\n' "$live_state_home"
+    return 0
+  fi
+  local containers_root="/home/dev/.local/share/containers"
+  if [ -d "$containers_root" ] && [ -w "$containers_root" ]; then
+    local slug
+    slug="$(basename "$out_dir" | tr -c 'A-Za-z0-9_.-' '-')"
+    printf '%s\n' "$containers_root/loftd-pty-benchmark-state/$slug"
+    return 0
+  fi
+  if [ -n "${XDG_STATE_HOME:-}" ]; then
+    printf '%s\n' "$XDG_STATE_HOME"
+    return 0
+  fi
+  return 1
+}
+
+loftd_args_contain_mem() {
+  local arg
+  for arg in "${loftd_extra_args[@]}"; do
+    case "$arg" in
+      --mem|--mem=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+loftd_args_contain_guest_init() {
+  local arg
+  for arg in "${loftd_extra_args[@]}"; do
+    case "$arg" in
+      --guest-init|--guest-init=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+default_live_guest_init_path() {
+  if [ -n "$live_guest_init" ]; then
+    printf '%s\n' "$live_guest_init"
+    return 0
+  fi
+  if [ "$default_live_guest_init" -eq 1 ] && [ -x "$repo_root/result/bin/loftd-guest-init" ]; then
+    printf '%s\n' "$repo_root/result/bin/loftd-guest-init"
+    return 0
+  fi
+  return 1
+}
+
+append_default_live_args() {
+  if [ -n "$default_live_mem_gib" ] && ! loftd_args_contain_mem; then
+    printf '%s\0%s\0' --mem "$default_live_mem_gib"
+  fi
+  if ! loftd_args_contain_guest_init; then
+    local guest_init_path
+    guest_init_path="$(default_live_guest_init_path || true)"
+    if [ -n "$guest_init_path" ]; then
+      printf '%s\0%s\0' --guest-init "$guest_init_path"
+    fi
+  fi
+}
+
+append_skip() {
+  python3 - "$metrics_path" "$1" "$2" "$3" <<'PY'
+import json, sys
+path, scenario, mode, reason = sys.argv[1:5]
+record = {
+    "schema_version": 1, "scenario": scenario, "mode": mode, "iteration": 0, "status": "skipped",
+    "elapsed_us": 0, "bytes_in": 0, "bytes_out": 0, "artifact_stdout": None, "artifact_stderr": None,
+    "profile_role": None, "profile": {}, "skip_reason": reason, "error": None,
+}
+with open(path, "a", encoding="utf-8") as metrics:
+    metrics.write(json.dumps(record, sort_keys=True) + "\n")
+PY
+}
+
+run_live_loftd() {
+  local stdout_path="$out_dir/logs/live-loftd-shell.stdout"
+  local stderr_path="$out_dir/logs/live-loftd-shell.stderr"
+  local status_path="$out_dir/logs/live-loftd-shell.status"
+  local -a command_prefix
+  local -a effective_loftd_args
+  local -a default_args
+  effective_loftd_args=("${loftd_extra_args[@]}")
+  mapfile -d '' -t default_args < <(append_default_live_args)
+  if [ "${#default_args[@]}" -gt 0 ]; then
+    effective_loftd_args=("${default_args[@]}" "${effective_loftd_args[@]}")
+  fi
+  if [ "$use_cargo_run" -eq 1 ]; then
+    command_prefix=(cargo run -p loftd --)
+  else
+    command_prefix=("$loftd_bin")
+  fi
+  local workload_host_path="$out_dir/live-workload.sh"
+  cat > "$workload_host_path" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+i=0
+while [ "$i" -lt 160 ]; do
+  printf '\033[2K\rloftd-live-pty-benchmark-%03d cursor-snap-probe' "$i"
+  i=$((i + 1))
+done
+printf '\n'
+SH
+  chmod +x "$workload_host_path"
+
+  local workload_host_abs
+  workload_host_abs="$(cd "$(dirname "$workload_host_path")" && pwd)/$(basename "$workload_host_path")"
+  local workload_guest_path
+  case "$workload_host_abs" in
+    "$repo_root"/*)
+      workload_guest_path="/workspace/${workload_host_abs#"$repo_root"/}"
+      ;;
+    *)
+      echo "live workload path must be under repo root for the guest to see it: $workload_host_abs" >&2
+      return 1
+      ;;
+  esac
+
+  local -a full_command=("${command_prefix[@]}" "${effective_loftd_args[@]}" -- bash "$workload_guest_path")
+  local loftd_effective_display="$loftd_display"
+  if [ "${#effective_loftd_args[@]}" -gt 0 ]; then
+    printf -v loftd_effective_display '%q ' "$loftd_display" "${effective_loftd_args[@]}"
+    loftd_effective_display="${loftd_effective_display% }"
+  fi
+
+  local effective_state_home
+  effective_state_home="$(default_live_state_home || true)"
+  if [ -n "$effective_state_home" ]; then
+    mkdir -p "$effective_state_home"
+  fi
+
+  python3 - "$metrics_path" "$stdout_path" "$stderr_path" "$status_path" "$timeout_seconds" "$loftd_effective_display" "$effective_state_home" "$require_guest_profile" -- "${full_command[@]}" <<'PY'
+import fcntl, json, os, pathlib, pty, re, selectors, signal, struct, sys, termios, time
+metrics_path, stdout_path, stderr_path, status_path, timeout_seconds, loftd_display, state_home, require_guest_profile = sys.argv[1:9]
+command = sys.argv[10:]
+timeout_seconds = int(timeout_seconds)
+require_guest_profile = require_guest_profile == "1"
+stdout_file, stderr_file, status_file = map(pathlib.Path, (stdout_path, stderr_path, status_path))
+env = os.environ.copy()
+env["LOFTD_ATTACH_PROFILE"] = "1"
+if state_home:
+    env["XDG_STATE_HOME"] = state_home
+
+pid, master = pty.fork()
+if pid == 0:
+    try:
+        os.execvpe(command[0], command, env)
+    except Exception as exc:
+        os.write(2, f"failed to exec {command[0]}: {exc}\n".encode())
+        os._exit(127)
+try:
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+except OSError:
+    pass
+
+selector = selectors.DefaultSelector()
+selector.register(master, selectors.EVENT_READ)
+started = time.perf_counter_ns()
+chunks = []
+timed_out = False
+wait_status = None
+try:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        waited_pid, status = os.waitpid(pid, os.WNOHANG)
+        if waited_pid == pid:
+            wait_status = status
+            quiet_deadline = time.monotonic() + 0.25
+            hard_drain_deadline = time.monotonic() + 2.0
+            while time.monotonic() < hard_drain_deadline:
+                events = selector.select(0.05)
+                if not events:
+                    if time.monotonic() >= quiet_deadline:
+                        break
+                    continue
+                quiet_deadline = time.monotonic() + 0.25
+                for _key, _mask in events:
+                    try: data = os.read(master, 65536)
+                    except OSError:
+                        data = b""
+                    if data:
+                        chunks.append(data)
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            try: os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                try: os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+            try: _, wait_status = os.waitpid(pid, 0)
+            except ChildProcessError: wait_status = None
+            break
+        for _key, _mask in selector.select(0.05):
+            try: data = os.read(master, 65536)
+            except OSError: data = b""
+            if data: chunks.append(data)
+finally:
+    elapsed_us = (time.perf_counter_ns() - started) // 1000
+    try: os.close(master)
+    except OSError: pass
+
+if wait_status is None:
+    exit_status = -signal.SIGTERM
+elif os.WIFEXITED(wait_status):
+    exit_status = os.WEXITSTATUS(wait_status)
+elif os.WIFSIGNALED(wait_status):
+    exit_status = -os.WTERMSIG(wait_status)
+else:
+    exit_status = 1
+
+combined_bytes = b"".join(chunks)
+combined = combined_bytes.decode(errors="replace")
+stdout_file.write_text(combined, encoding="utf-8", errors="replace")
+stderr_file.write_text("", encoding="utf-8")
+status_file.write_text(str(exit_status) + "\n", encoding="utf-8")
+roles = []
+for match in re.finditer(r"loftd attach profile role=(host|guest)([^\r\n]*)", combined):
+    role = match.group(1)
+    profile = {"role": role}
+    for token in match.group(2).split():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=[^\s]+", token):
+            break
+        key, value = token.split("=", 1)
+        value = value.rstrip(",;")
+        if re.fullmatch(r"-?\d+", value): parsed = int(value)
+        elif re.fullmatch(r"-?\d+\.\d+", value): parsed = float(value)
+        else: parsed = value
+        profile[key] = parsed
+    roles.append((role, profile))
+
+with open(metrics_path, "a", encoding="utf-8") as metrics:
+    base = {
+        "schema_version": 1, "scenario": "live-loftd-shell", "mode": "live_loftd", "iteration": 0,
+        "elapsed_us": elapsed_us, "bytes_in": 0, "bytes_out": len(combined_bytes),
+        "artifact_stdout": stdout_path, "artifact_stderr": stderr_path, "skip_reason": None,
+        "loftd_command": loftd_display,
+        "env": {"LOFTD_ATTACH_PROFILE": "1", "XDG_STATE_HOME": state_home or env.get("XDG_STATE_HOME")},
+    }
+    if roles:
+        for role, profile in roles:
+            record = dict(base)
+            record.update({"status": "ok" if exit_status == 0 else "failed", "profile_role": role, "profile": profile, "error": None if exit_status == 0 else f"loftd exited with status {exit_status}"})
+            metrics.write(json.dumps(record, sort_keys=True) + "\n")
+    else:
+        reason = "timed out" if timed_out else "missing loftd attach profile summaries"
+        record = dict(base)
+        record.update({"status": "failed", "profile_role": None, "profile": {}, "error": f"{reason}; loftd exit status {exit_status}"})
+        metrics.write(json.dumps(record, sort_keys=True) + "\n")
+required_roles = {"host"}
+if require_guest_profile:
+    required_roles.add("guest")
+missing = required_roles - {role for role, _ in roles}
+if exit_status != 0:
+    raise SystemExit(f"live loftd failed with status {exit_status}; see {stdout_path}")
+if missing:
+    raise SystemExit(f"missing live loftd profile role(s): {', '.join(sorted(missing))}; see {stdout_path}")
+if not require_guest_profile and "guest" not in {role for role, _ in roles}:
+    print(
+        "warning: live run did not capture a guest profile; pass --loftd-arg --log-level "
+        "--loftd-arg debug plus --require-guest-profile for strict guest diagnostics",
+        file=sys.stderr,
+    )
+PY
+}
+
+if [ "$skip_live" -eq 1 ]; then
+  append_skip "live-loftd-shell" "skip" "--skip-live was passed; live loftd evidence not collected"
+else
+  run_live_loftd || live_failed=$?
+fi
+
+if [ -n "$rmux_bin" ] && [ -x "$rmux_bin" ]; then
+  append_skip "optional-rmux" "rmux" "rmux comparison hook detected $rmux_bin, but no non-nested finite rmux benchmark command is defined yet"
+else
+  append_skip "optional-rmux" "rmux" "rmux binary not found or not executable; /mnt/rmux left read-only"
+fi
+if [ -n "$tmux_bin" ] && [ -x "$tmux_bin" ]; then
+  append_skip "optional-tmux" "tmux" "tmux comparison hook detected $tmux_bin; isolated tmux workload intentionally skipped in initial benchmark runner"
+else
+  append_skip "optional-tmux" "tmux" "tmux binary not found or not executable"
+fi
+
+loftd_summary_display="$loftd_display"
+summary_effective_loftd_args=("${loftd_extra_args[@]}")
+summary_default_loftd_args=()
+mapfile -d '' -t summary_default_loftd_args < <(append_default_live_args)
+if [ "${#summary_default_loftd_args[@]}" -gt 0 ]; then
+  summary_effective_loftd_args=("${summary_default_loftd_args[@]}" "${summary_effective_loftd_args[@]}")
+fi
+if [ "${#summary_effective_loftd_args[@]}" -gt 0 ]; then
+  printf -v loftd_summary_display '%q ' "$loftd_display" "${summary_effective_loftd_args[@]}"
+  loftd_summary_display="${loftd_summary_display% }"
+fi
+
+summary_state_home="$(default_live_state_home || true)"
+python3 - "$metrics_path" "$summary_path" "$out_dir" "$loftd_summary_display" "$skip_live" "$iterations" "$warmup" "$summary_state_home" "$require_guest_profile" <<'PY'
+import json, pathlib, statistics, sys
+metrics_path, summary_path, out_dir, loftd_display, skip_live, iterations, warmup, state_home, require_guest_profile = sys.argv[1:10]
+require_guest_profile = require_guest_profile == "1"
+records = [json.loads(line) for line in open(metrics_path, encoding="utf-8") if line.strip()]
+by_scenario, profiles, skips, failures = {}, {"host": [], "guest": []}, [], []
+for record in records:
+    by_scenario.setdefault(record["scenario"], []).append(record)
+    if record.get("profile_role") in profiles:
+        profiles[record["profile_role"]].append(record.get("profile", {}))
+    if record.get("status") == "skipped":
+        skips.append({"scenario": record["scenario"], "reason": record.get("skip_reason")})
+    if record.get("status") == "failed":
+        failures.append({"scenario": record["scenario"], "error": record.get("error")})
+scenarios = {}
+for scenario, items in by_scenario.items():
+    elapsed = [item["elapsed_us"] for item in items if item.get("status") == "ok" and item.get("elapsed_us") is not None]
+    if not elapsed:
+        scenarios[scenario] = {"count": 0}
+        continue
+    sorted_elapsed = sorted(elapsed)
+    scenarios[scenario] = {
+        "count": len(elapsed), "min_elapsed_us": min(elapsed), "avg_elapsed_us": int(statistics.fmean(elapsed)),
+        "max_elapsed_us": max(elapsed), "p50_elapsed_us": int(statistics.median(sorted_elapsed)),
+        "p95_elapsed_us": sorted_elapsed[min(len(sorted_elapsed) - 1, int(len(sorted_elapsed) * 0.95))],
+    }
+summary = {
+    "schema_version": 1, "out_dir": out_dir, "metrics_path": metrics_path, "loftd_command": loftd_display,
+    "live_required": skip_live != "1", "iterations": int(iterations), "warmup": int(warmup),
+    "live_env": {"LOFTD_ATTACH_PROFILE": "1", "XDG_STATE_HOME": state_home or None},
+    "profile_requirements": {"host": skip_live != "1", "guest": require_guest_profile},
+    "profile_warnings": [],
+    "scenarios": scenarios, "profiles": profiles, "skips": skips, "failures": failures,
+}
+if skip_live != "1" and profiles["host"] and not profiles["guest"]:
+    summary["profile_warnings"].append(
+        "guest profile not captured; guest summaries currently require visible guest/libkrun console output"
+    )
+pathlib.Path(summary_path).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(f"loftd PTY benchmark artifacts: {out_dir}")
+for scenario, stats in sorted(scenarios.items()):
+    if stats.get("count"):
+        print(f"{scenario}: count={stats['count']} min={stats['min_elapsed_us']}us avg={stats['avg_elapsed_us']}us p50={stats['p50_elapsed_us']}us p95={stats['p95_elapsed_us']}us max={stats['max_elapsed_us']}us")
+    else:
+        print(f"{scenario}: no successful measured runs")
+if profiles["host"]:
+    host = profiles["host"][-1]
+    print(f"host profile: frames={host.get('frames')} stdout_batches={host.get('stdout_batches')} stdout_write_count={host.get('stdout_write_count')} stdout_flush_count={host.get('stdout_flush_count')}")
+if profiles["guest"]:
+    guest = profiles["guest"][-1]
+    print(f"guest profile: pty_reads={guest.get('pty_reads')} pty_drain_events={guest.get('pty_drain_events')} parser_total_us={guest.get('parser_total_us')} frame_write_total_us={guest.get('frame_write_total_us')}")
+for warning in summary["profile_warnings"]:
+    print(f"warning: {warning}", file=sys.stderr)
+for skip in skips:
+    print(f"skipped {skip['scenario']}: {skip['reason']}")
+for failure in failures:
+    print(f"failed {failure['scenario']}: {failure['error']}", file=sys.stderr)
+PY
+
+if [ "$live_failed" -ne 0 ]; then
+  exit "$live_failed"
+fi
