@@ -1186,14 +1186,36 @@ aggregate synthetic timings plus parsed host/guest profile objects, and
 records the combined PTY stream in stdout and may leave stderr empty.
 `--skip-live` is only for local synthetic smoke checks; PTY optimization
 evidence should use the live run so a missing host profile fails visibly. The
-default live run is the `live-loftd-shell` smoke/profile scenario. To opt into
-the interactive live stress scenario, pass `--live-iterations <n>` and
-optionally `--live-warmup <n>`; this adds `live-loftd-redraw-typing` records
-where the host drives stdin marker lines through the PTY while the guest emits
-redraw bursts and distinct output markers. Those records keep total lifecycle
-time but also add hot-window elapsed time, per-marker latency stats, read-gap
-stats, and bytes-drained evidence under `profile`, with aggregate values under
-`summary.json`'s `scenario_profiles.live-loftd-redraw-typing`. The benchmark uses
+default live run is the `live-loftd-shell` smoke/profile scenario. To add
+interactive live PTY samples, pass `--live-iterations <n>` and optionally
+`--live-warmup <n>`; this adds `live-loftd-redraw-typing` records where the host
+drives stdin marker lines through the PTY while the guest emits redraw bursts
+and distinct output markers. These samples use one persistent live loftd session
+by default, so larger runs measure the interactive PTY hot path without
+repeating VM/libkrun/guest startup for every sample. Each persistent record is
+tagged with `measurement_model: "persistent-session"`,
+`persistent_session: true`, a shared `persistent_session_id`, the child process
+pid, sample ordinal/count, and `session_lifecycle_elapsed_us`. Hot-window
+elapsed time, per-marker latency stats, read-gap stats, and bytes-drained
+evidence remain under `profile`, with aggregate values and `measurement_models`
+under `summary.json`'s `scenario_profiles.live-loftd-redraw-typing`. Pass
+`--live-per-sample-vm` to request the legacy VM/process-per-sample model; those
+records are tagged `measurement_model: "per-sample-vm"` and are useful for
+startup+lifecycle diagnostics rather than persistent-session hot-path
+comparison. For a higher-sample comparison, prefer n=100, for example:
+
+```bash
+scripts/loftd-pty-benchmark.sh \
+  --loftd .omx/builds/loftd-main/bin/loftd \
+  --guest-init .omx/builds/loftd-main/bin/loftd-guest-init \
+  --iterations 3 \
+  --warmup 1 \
+  --live-iterations 100 \
+  --live-warmup 5 \
+  --timeout 240
+```
+
+The benchmark uses
 `--mem 2` for the live run by default to avoid measuring huge-memory VM boot
 delay instead of PTY latency; pass `--no-default-live-mem` to test loftd's
 default memory behavior, or repeat `--loftd-arg --mem --loftd-arg <GiB>` to

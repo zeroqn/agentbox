@@ -6,6 +6,7 @@ iterations=3
 warmup=1
 live_iterations=0
 live_warmup=0
+live_per_sample_vm=0
 out_dir=""
 loftd_bin="${LOFTD_BIN:-$repo_root/result/bin/loftd}"
 use_cargo_run=0
@@ -37,6 +38,7 @@ Options:
       --warmup <n>            warmup iterations per synthetic workload (default: 1)
       --live-iterations <n>   measured iterations for opt-in live redraw+typing scenario (default: 0)
       --live-warmup <n>       warmup iterations for opt-in live redraw+typing scenario (default: 0)
+      --live-per-sample-vm    use legacy VM/process-per-sample live redraw+typing mode
       --rmux <path>           optional rmux binary for comparison hook
       --tmux <path>           optional tmux binary for isolated comparison hook
       --skip-live             skip required live loftd run (for synthetic development smoke only)
@@ -62,9 +64,11 @@ captured when the guest/libkrun console is visible; use --require-guest-profile
 for strict guest-profile diagnostics.
 
 The default live run remains the single live-loftd-shell smoke/profile capture.
-Pass --live-iterations <n> to add the live-loftd-redraw-typing scenario, which
-drives stdin markers through loftd while the guest emits redraw bursts and
-output markers; records include hot-window and marker-latency evidence.
+Pass --live-iterations <n> to add the live-loftd-redraw-typing scenario. By
+default those measured samples are driven through one persistent live loftd
+session so hot-path evidence is not dominated by repeated VM startup. Pass
+--live-per-sample-vm to use the legacy process-per-sample model instead.
+Records include hot-window, marker-latency, and measurement_model evidence.
 USAGE
 }
 
@@ -77,6 +81,7 @@ while [ "$#" -gt 0 ]; do
     --warmup) warmup="${2:?missing value for --warmup}"; shift 2 ;;
     --live-iterations) live_iterations="${2:?missing value for --live-iterations}"; shift 2 ;;
     --live-warmup) live_warmup="${2:?missing value for --live-warmup}"; shift 2 ;;
+    --live-per-sample-vm) live_per_sample_vm=1; shift ;;
     --rmux) rmux_bin="${2:?missing value for --rmux}"; shift 2 ;;
     --tmux) tmux_bin="${2:?missing value for --tmux}"; shift 2 ;;
     --skip-live) skip_live=1; shift ;;
@@ -747,30 +752,36 @@ run_live_loftd_redraw_typing() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-sample="${1:?missing sample}"
-marker_count="${2:?missing marker count}"
-redraw_frames_per_marker="${3:?missing redraw frames per marker}"
+session_id="${1:?missing session id}"
+sample_count="${2:?missing sample count}"
+marker_count="${3:?missing marker count}"
+redraw_frames_per_marker="${4:?missing redraw frames per marker}"
 
-printf 'LOFTD_PTY_READY_%s\n' "$sample"
-i=0
-while [ "$i" -lt "$marker_count" ]; do
-  if ! IFS= read -r line; then
-    break
-  fi
-  expected="LOFTD_PTY_INPUT_${sample}_${i}"
-  if [ "$line" != "$expected" ]; then
-    printf 'LOFTD_PTY_UNEXPECTED_%s_%d\n' "$sample" "$i"
-    continue
-  fi
-  frame=0
-  while [ "$frame" -lt "$redraw_frames_per_marker" ]; do
-    printf '\033[2K\rloftd-live-redraw-typing-%s-%02d-%03d cursor-snap-probe' "$sample" "$i" "$frame"
-    frame=$((frame + 1))
+sample_index=0
+while [ "$sample_index" -lt "$sample_count" ]; do
+  sample="${session_id}_${sample_index}"
+  printf 'LOFTD_PTY_READY_%s\n' "$sample"
+  i=0
+  while [ "$i" -lt "$marker_count" ]; do
+    if ! IFS= read -r line; then
+      break
+    fi
+    expected="LOFTD_PTY_INPUT_${sample}_${i}"
+    if [ "$line" != "$expected" ]; then
+      printf 'LOFTD_PTY_UNEXPECTED_%s_%d\n' "$sample" "$i"
+      continue
+    fi
+    frame=0
+    while [ "$frame" -lt "$redraw_frames_per_marker" ]; do
+      printf '\033[2K\rloftd-live-redraw-typing-%s-%02d-%03d cursor-snap-probe' "$sample" "$i" "$frame"
+      frame=$((frame + 1))
+    done
+    printf '\nLOFTD_PTY_OUTPUT_%s_%d\n' "$sample" "$i"
+    i=$((i + 1))
   done
-  printf '\nLOFTD_PTY_OUTPUT_%s_%d\n' "$sample" "$i"
-  i=$((i + 1))
+  printf 'LOFTD_PTY_DONE_%s\n' "$sample"
+  sample_index=$((sample_index + 1))
 done
-printf 'LOFTD_PTY_DONE_%s\n' "$sample"
 SH
   chmod +x "$workload_host_path"
 
@@ -802,7 +813,7 @@ SH
   local marker_count=8
   local redraw_frames_per_marker=20
   local -a full_command_base=("${command_prefix[@]}" "${effective_loftd_args[@]}" -- bash "$workload_guest_path")
-  python3 - "$metrics_path" "$out_dir" "$timeout_seconds" "$loftd_effective_display" "$effective_state_home" "$require_guest_profile" "$live_iterations" "$live_warmup" "$marker_count" "$redraw_frames_per_marker" -- "${full_command_base[@]}" <<'PY'
+  python3 - "$metrics_path" "$out_dir" "$timeout_seconds" "$loftd_effective_display" "$effective_state_home" "$require_guest_profile" "$live_iterations" "$live_warmup" "$marker_count" "$redraw_frames_per_marker" "$live_per_sample_vm" -- "${full_command_base[@]}" <<'PY'
 import json
 import os
 import pathlib
@@ -828,8 +839,9 @@ import fcntl
     live_warmup,
     marker_count,
     redraw_frames_per_marker,
-) = sys.argv[1:11]
-command_base = sys.argv[12:]
+    live_per_sample_vm,
+) = sys.argv[1:12]
+command_base = sys.argv[13:]
 out_dir = pathlib.Path(out_dir)
 logs_dir = out_dir / "logs"
 timeout_seconds = int(timeout_seconds)
@@ -838,6 +850,7 @@ live_iterations = int(live_iterations)
 live_warmup = int(live_warmup)
 marker_count = int(marker_count)
 redraw_frames_per_marker = int(redraw_frames_per_marker)
+live_per_sample_vm = live_per_sample_vm == "1"
 
 
 def percentile(values, q):
@@ -893,22 +906,63 @@ def stop_child(pid):
             pass
 
 
-def run_sample(ordinal, measured_iteration):
-    measured = measured_iteration >= 0
-    sample = f"{os.getpid()}_{ordinal}_{time.time_ns()}"
-    stdout_path = logs_dir / f"live-loftd-redraw-typing-{measured_iteration}.stdout" if measured else None
-    stderr_path = logs_dir / f"live-loftd-redraw-typing-{measured_iteration}.stderr" if measured else None
-    status_path = logs_dir / f"live-loftd-redraw-typing-{measured_iteration}.status" if measured else None
-    command = command_base + [sample, str(marker_count), str(redraw_frames_per_marker)]
+def build_sample_state(session_id, internal_ordinal, measured_iteration):
+    sample = f"{session_id}_{internal_ordinal}"
+    return {
+        "internal_ordinal": internal_ordinal,
+        "measured_iteration": measured_iteration,
+        "sample": sample,
+        "ready_token": f"LOFTD_PTY_READY_{sample}",
+        "done_token": f"LOFTD_PTY_DONE_{sample}",
+        "output_tokens": [f"LOFTD_PTY_OUTPUT_{sample}_{idx}" for idx in range(marker_count)],
+        "input_tokens": [f"LOFTD_PTY_INPUT_{sample}_{idx}" for idx in range(marker_count)],
+        "hot_started_ns": None,
+        "hot_finished_ns": None,
+        "marker_send_ns": {},
+        "marker_seen_ns": {},
+        "next_to_send": 0,
+        "read_times": [],
+        "bytes_drained": 0,
+    }
+
+
+def send_next_marker(master, state):
+    idx = state["next_to_send"]
+    if idx >= marker_count:
+        return
+    os.write(master, (state["input_tokens"][idx] + "\n").encode())
+    state["marker_send_ns"][idx] = time.perf_counter_ns()
+    state["next_to_send"] += 1
+
+
+def drive_session(session_id, total_samples, measured_iteration_for_internal, measurement_model):
+    command = command_base + [session_id, str(total_samples), str(marker_count), str(redraw_frames_per_marker)]
     env = os.environ.copy()
     env["LOFTD_ATTACH_PROFILE"] = "1"
     if state_home:
         env["XDG_STATE_HOME"] = state_home
 
-    ready_token = f"LOFTD_PTY_READY_{sample}"
-    done_token = f"LOFTD_PTY_DONE_{sample}"
-    output_tokens = [f"LOFTD_PTY_OUTPUT_{sample}_{idx}" for idx in range(marker_count)]
-    input_tokens = [f"LOFTD_PTY_INPUT_{sample}_{idx}" for idx in range(marker_count)]
+    states = [
+        build_sample_state(session_id, internal_ordinal, measured_iteration_for_internal(internal_ordinal))
+        for internal_ordinal in range(total_samples)
+    ]
+    persistent_session = measurement_model == "persistent-session"
+    stdout_path = logs_dir / (
+        f"live-loftd-redraw-typing-persistent-{session_id}.stdout"
+        if persistent_session
+        else f"live-loftd-redraw-typing-{states[0]['measured_iteration']}.stdout"
+    )
+    stderr_path = logs_dir / (
+        f"live-loftd-redraw-typing-persistent-{session_id}.stderr"
+        if persistent_session
+        else f"live-loftd-redraw-typing-{states[0]['measured_iteration']}.stderr"
+    )
+    status_path = logs_dir / (
+        f"live-loftd-redraw-typing-persistent-{session_id}.status"
+        if persistent_session
+        else f"live-loftd-redraw-typing-{states[0]['measured_iteration']}.status"
+    )
+
     pid, master = pty.fork()
     if pid == 0:
         try:
@@ -924,16 +978,11 @@ def run_sample(ordinal, measured_iteration):
     selector = selectors.DefaultSelector()
     selector.register(master, selectors.EVENT_READ)
     started_ns = time.perf_counter_ns()
-    hot_started_ns = None
-    hot_finished_ns = None
     chunks = []
-    read_times = []
-    marker_send_ns = {}
-    marker_seen_ns = {}
-    next_to_send = 0
-    timed_out = False
+    all_read_times = []
     wait_status = None
-    error = None
+    process_error = None
+    active_internal_ordinal = None
     try:
         deadline = time.monotonic() + timeout_seconds
         while True:
@@ -955,12 +1004,15 @@ def run_sample(ordinal, measured_iteration):
                         except OSError:
                             data = b""
                         if data:
+                            now_ns = time.perf_counter_ns()
                             chunks.append(data)
-                            read_times.append(time.perf_counter_ns())
+                            all_read_times.append(now_ns)
+                            if active_internal_ordinal is not None:
+                                states[active_internal_ordinal]["read_times"].append(now_ns)
+                                states[active_internal_ordinal]["bytes_drained"] += len(data)
                 break
             if time.monotonic() >= deadline:
-                timed_out = True
-                error = "timed out waiting for live redraw+typing workload completion"
+                process_error = "timed out waiting for live redraw+typing workload completion"
                 stop_child(pid)
                 try:
                     _, wait_status = os.waitpid(pid, 0)
@@ -979,24 +1031,29 @@ def run_sample(ordinal, measured_iteration):
                     continue
                 now_ns = time.perf_counter_ns()
                 chunks.append(data)
-                read_times.append(now_ns)
+                all_read_times.append(now_ns)
+                if active_internal_ordinal is not None:
+                    states[active_internal_ordinal]["read_times"].append(now_ns)
+                    states[active_internal_ordinal]["bytes_drained"] += len(data)
                 text = b"".join(chunks).decode(errors="replace")
-                if hot_started_ns is None and ready_token in text:
-                    hot_started_ns = now_ns
-                    os.write(master, (input_tokens[next_to_send] + "\n").encode())
-                    marker_send_ns[next_to_send] = time.perf_counter_ns()
-                    next_to_send += 1
-                for idx, token in enumerate(output_tokens):
-                    if idx not in marker_seen_ns and token in text:
-                        marker_seen_ns[idx] = now_ns
-                        if next_to_send < marker_count:
-                            os.write(master, (input_tokens[next_to_send] + "\n").encode())
-                            marker_send_ns[next_to_send] = time.perf_counter_ns()
-                            next_to_send += 1
-                if done_token in text and hot_finished_ns is None:
-                    hot_finished_ns = now_ns
+                for state in states:
+                    if state["hot_started_ns"] is None and state["ready_token"] in text:
+                        state["hot_started_ns"] = now_ns
+                        active_internal_ordinal = state["internal_ordinal"]
+                        state["read_times"].append(now_ns)
+                        send_next_marker(master, state)
+                    for idx, token in enumerate(state["output_tokens"]):
+                        if idx not in state["marker_seen_ns"] and token in text:
+                            state["marker_seen_ns"][idx] = now_ns
+                            if active_internal_ordinal is None:
+                                active_internal_ordinal = state["internal_ordinal"]
+                            send_next_marker(master, state)
+                    if state["hot_finished_ns"] is None and state["done_token"] in text:
+                        state["hot_finished_ns"] = now_ns
+                        if active_internal_ordinal == state["internal_ordinal"]:
+                            active_internal_ordinal = None
     finally:
-        total_elapsed_us = (time.perf_counter_ns() - started_ns) // 1000
+        session_lifecycle_elapsed_us = (time.perf_counter_ns() - started_ns) // 1000
         try:
             os.close(master)
         except OSError:
@@ -1004,80 +1061,69 @@ def run_sample(ordinal, measured_iteration):
 
     combined_bytes = b"".join(chunks)
     combined = combined_bytes.decode(errors="replace")
-    final_observed_ns = read_times[-1] if read_times else started_ns
-    if hot_started_ns is None and ready_token in combined:
-        hot_started_ns = final_observed_ns
-    for idx, token in enumerate(output_tokens):
-        if idx not in marker_seen_ns and idx in marker_send_ns and token in combined:
-            marker_seen_ns[idx] = final_observed_ns
-    if hot_finished_ns is None and done_token in combined:
-        hot_finished_ns = final_observed_ns
+    stdout_path.write_text(combined, encoding="utf-8", errors="replace")
+    stderr_path.write_text("", encoding="utf-8")
     exit_status = exit_status_from_wait(wait_status)
+    status_path.write_text(str(exit_status) + "\n", encoding="utf-8")
+
+    final_observed_ns = all_read_times[-1] if all_read_times else started_ns
     roles = parse_profiles(combined)
     role_profiles = {}
     for role, profile in roles:
         role_profiles.setdefault(role, []).append(profile)
-    saw_ready = hot_started_ns is not None or ready_token in combined
-    saw_done = hot_finished_ns is not None or done_token in combined
-    if hot_finished_ns is None and saw_done and read_times:
-        hot_finished_ns = read_times[-1]
-    marker_latencies_us = [
-        (marker_seen_ns[idx] - marker_send_ns[idx]) // 1000
-        for idx in range(marker_count)
-        if idx in marker_seen_ns and idx in marker_send_ns
-    ]
-    gaps_us = [
-        (read_times[idx] - read_times[idx - 1]) // 1000
-        for idx in range(1, len(read_times))
-    ]
-    hot_window_elapsed_us = (
-        (hot_finished_ns - hot_started_ns) // 1000
-        if hot_started_ns is not None and hot_finished_ns is not None and hot_finished_ns >= hot_started_ns
-        else None
-    )
-    if error is None and exit_status != 0:
-        error = f"loftd exited with status {exit_status}"
-    if error is None and not saw_ready:
-        error = f"missing ready token {ready_token}"
-    if error is None and not saw_done:
-        error = f"missing done token {done_token}"
-    if error is None and len(marker_seen_ns) != marker_count:
-        error = f"observed {len(marker_seen_ns)} of {marker_count} output markers"
-    if error is None and "host" not in role_profiles:
-        error = "missing loftd attach profile role(s): host"
-    if error is None and require_guest_profile and "guest" not in role_profiles:
-        error = "missing loftd attach profile role(s): guest"
 
-    if stdout_path:
-        stdout_path.write_text(combined, encoding="utf-8", errors="replace")
-    if stderr_path:
-        stderr_path.write_text("", encoding="utf-8")
-    if status_path:
-        status_path.write_text(str(exit_status) + "\n", encoding="utf-8")
-    if not measured:
-        return
+    records = []
+    for state in states:
+        if state["hot_started_ns"] is None and state["ready_token"] in combined:
+            state["hot_started_ns"] = final_observed_ns
+        for idx, token in enumerate(state["output_tokens"]):
+            if idx not in state["marker_seen_ns"] and idx in state["marker_send_ns"] and token in combined:
+                state["marker_seen_ns"][idx] = final_observed_ns
+        if state["hot_finished_ns"] is None and state["done_token"] in combined:
+            state["hot_finished_ns"] = final_observed_ns
+        measured_iteration = state["measured_iteration"]
+        if measured_iteration < 0:
+            continue
+        saw_ready = state["hot_started_ns"] is not None or state["ready_token"] in combined
+        saw_done = state["hot_finished_ns"] is not None or state["done_token"] in combined
+        if state["hot_finished_ns"] is None and saw_done:
+            state["hot_finished_ns"] = final_observed_ns
+        marker_latencies_us = [
+            (state["marker_seen_ns"][idx] - state["marker_send_ns"][idx]) // 1000
+            for idx in range(marker_count)
+            if idx in state["marker_seen_ns"] and idx in state["marker_send_ns"]
+        ]
+        read_times = state["read_times"]
+        gaps_us = [
+            (read_times[idx] - read_times[idx - 1]) // 1000
+            for idx in range(1, len(read_times))
+        ]
+        hot_window_elapsed_us = (
+            (state["hot_finished_ns"] - state["hot_started_ns"]) // 1000
+            if state["hot_started_ns"] is not None
+            and state["hot_finished_ns"] is not None
+            and state["hot_finished_ns"] >= state["hot_started_ns"]
+            else None
+        )
+        error = process_error
+        if error is None and exit_status != 0:
+            error = f"loftd exited with status {exit_status}"
+        if error is None and not saw_ready:
+            error = f"missing ready token {state['ready_token']}"
+        if error is None and not saw_done:
+            error = f"missing done token {state['done_token']}"
+        if error is None and len(state["marker_seen_ns"]) != marker_count:
+            error = f"observed {len(state['marker_seen_ns'])} of {marker_count} output markers"
+        if error is None and "host" not in role_profiles:
+            error = "missing loftd attach profile role(s): host"
+        if error is None and require_guest_profile and "guest" not in role_profiles:
+            error = "missing loftd attach profile role(s): guest"
 
-    record = {
-        "schema_version": 1,
-        "scenario": "live-loftd-redraw-typing",
-        "mode": "live_loftd_redraw_typing",
-        "iteration": measured_iteration,
-        "status": "ok" if error is None else "failed",
-        "elapsed_us": total_elapsed_us,
-        "bytes_in": sum(len(token) + 1 for token in input_tokens[:next_to_send]),
-        "bytes_out": len(combined_bytes),
-        "artifact_stdout": str(stdout_path),
-        "artifact_stderr": str(stderr_path),
-        "profile_role": "live_redraw_typing",
-        "skip_reason": None,
-        "error": error,
-        "loftd_command": loftd_display,
-        "env": {"LOFTD_ATTACH_PROFILE": "1", "XDG_STATE_HOME": state_home or env.get("XDG_STATE_HOME")},
-        "profile": {
-            "total_elapsed_us": total_elapsed_us,
+        profile = {
+            "total_elapsed_us": session_lifecycle_elapsed_us,
             "hot_window_elapsed_us": hot_window_elapsed_us,
             "marker_count": marker_count,
-            "markers_seen": len(marker_seen_ns),
+            "markers_seen": len(state["marker_seen_ns"]),
             "marker_latencies_us": marker_latencies_us,
             "marker_latency_min_us": min(marker_latencies_us) if marker_latencies_us else 0,
             "marker_latency_avg_us": int(statistics.fmean(marker_latencies_us)) if marker_latencies_us else 0,
@@ -1088,17 +1134,64 @@ def run_sample(ordinal, measured_iteration):
             "read_gap_avg_us": int(statistics.fmean(gaps_us)) if gaps_us else 0,
             "read_gap_max_us": max(gaps_us) if gaps_us else 0,
             "redraw_frames_per_marker": redraw_frames_per_marker,
-            "bytes_drained": len(combined_bytes),
+            "bytes_drained": state["bytes_drained"] or len(combined_bytes),
             "saw_ready": saw_ready,
             "saw_done": saw_done,
             "attach_profiles": role_profiles,
-        },
-    }
-    write_record(record)
+            "measurement_model": measurement_model,
+            "persistent_session": persistent_session,
+        }
+        if persistent_session:
+            profile.update({
+                "persistent_session_id": session_id,
+                "persistent_process_pid": pid,
+                "sample_ordinal": measured_iteration,
+                "sample_count_in_session": live_iterations,
+                "session_lifecycle_elapsed_us": session_lifecycle_elapsed_us,
+            })
+        record_elapsed_us = (
+            hot_window_elapsed_us
+            if persistent_session and hot_window_elapsed_us is not None
+            else session_lifecycle_elapsed_us
+        )
+        record = {
+            "schema_version": 1,
+            "scenario": "live-loftd-redraw-typing",
+            "mode": "live_loftd_redraw_typing",
+            "iteration": measured_iteration,
+            "status": "ok" if error is None else "failed",
+            "elapsed_us": record_elapsed_us,
+            "bytes_in": sum(len(token) + 1 for token in state["input_tokens"][: state["next_to_send"]]),
+            "bytes_out": profile["bytes_drained"],
+            "artifact_stdout": str(stdout_path),
+            "artifact_stderr": str(stderr_path),
+            "profile_role": "live_redraw_typing",
+            "skip_reason": None,
+            "error": error,
+            "loftd_command": loftd_display,
+            "env": {"LOFTD_ATTACH_PROFILE": "1", "XDG_STATE_HOME": state_home or env.get("XDG_STATE_HOME")},
+            "measurement_model": measurement_model,
+            "persistent_session": persistent_session,
+            "profile": profile,
+        }
+        records.append(record)
+    for record in records:
+        write_record(record)
 
 
-for ordinal in range(live_warmup + live_iterations):
-    run_sample(ordinal, ordinal - live_warmup)
+if live_per_sample_vm:
+    for ordinal in range(live_warmup + live_iterations):
+        measured_iteration = ordinal - live_warmup
+        session_id = f"{os.getpid()}_{ordinal}_{time.time_ns()}"
+        drive_session(session_id, 1, lambda _internal, m=measured_iteration: m, "per-sample-vm")
+else:
+    session_id = f"persistent_{os.getpid()}_{time.time_ns()}"
+    drive_session(
+        session_id,
+        live_warmup + live_iterations,
+        lambda internal: internal - live_warmup,
+        "persistent-session",
+    )
 PY
 }
 
@@ -1141,7 +1234,7 @@ if [ "${#summary_effective_loftd_args[@]}" -gt 0 ]; then
 fi
 
 summary_state_home="$(default_live_state_home || true)"
-python3 - "$metrics_path" "$summary_path" "$out_dir" "$loftd_summary_display" "$skip_live" "$iterations" "$warmup" "$live_iterations" "$live_warmup" "$summary_state_home" "$require_guest_profile" <<'PY'
+python3 - "$metrics_path" "$summary_path" "$out_dir" "$loftd_summary_display" "$skip_live" "$iterations" "$warmup" "$live_iterations" "$live_warmup" "$summary_state_home" "$require_guest_profile" "$live_per_sample_vm" <<'PY'
 import json, pathlib, statistics, sys
 (
     metrics_path,
@@ -1155,8 +1248,10 @@ import json, pathlib, statistics, sys
     live_warmup,
     state_home,
     require_guest_profile,
-) = sys.argv[1:12]
+    live_per_sample_vm,
+) = sys.argv[1:13]
 require_guest_profile = require_guest_profile == "1"
+live_per_sample_vm = live_per_sample_vm == "1"
 records = [json.loads(line) for line in open(metrics_path, encoding="utf-8") if line.strip()]
 by_scenario = {}
 profiles = {"host": [], "guest": [], "rmux_attach_drain": []}
@@ -1213,8 +1308,29 @@ if redraw_typing_profiles:
     ]
     read_counts = [profile.get("read_count") or 0 for profile in redraw_typing_profiles]
     read_gap_avgs = [profile.get("read_gap_avg_us") or 0 for profile in redraw_typing_profiles]
+    measurement_models = sorted({
+        profile.get("measurement_model")
+        for profile in redraw_typing_profiles
+        if profile.get("measurement_model")
+    })
+    persistent_session_ids = sorted({
+        profile.get("persistent_session_id")
+        for profile in redraw_typing_profiles
+        if profile.get("persistent_session_id")
+    })
+    lifecycle_values = [
+        profile.get("session_lifecycle_elapsed_us") or 0
+        for profile in redraw_typing_profiles
+        if profile.get("session_lifecycle_elapsed_us") is not None
+    ]
     scenario_profiles["live-loftd-redraw-typing"] = {
         "sample_count": len(redraw_typing_profiles),
+        "measurement_models": measurement_models,
+        "persistent_session_count": len(persistent_session_ids),
+        "persistent_session_ids": persistent_session_ids,
+        "session_lifecycle_min_us": min(lifecycle_values) if lifecycle_values else 0,
+        "session_lifecycle_avg_us": int(statistics.fmean(lifecycle_values)) if lifecycle_values else 0,
+        "session_lifecycle_max_us": max(lifecycle_values) if lifecycle_values else 0,
         "marker_count_total": sum(profile.get("marker_count") or 0 for profile in redraw_typing_profiles),
         "markers_seen_total": sum(profile.get("markers_seen") or 0 for profile in redraw_typing_profiles),
         "hot_window_min_us": min(hot_windows) if hot_windows else 0,
@@ -1243,6 +1359,7 @@ summary = {
     "warmup": int(warmup),
     "live_iterations": int(live_iterations),
     "live_warmup": int(live_warmup),
+    "live_measurement_default": "per-sample-vm" if live_per_sample_vm else "persistent-session",
     "live_env": {"LOFTD_ATTACH_PROFILE": "1", "XDG_STATE_HOME": state_home or None},
     "profile_requirements": {"host": skip_live != "1", "guest": require_guest_profile},
     "profile_warnings": [],
@@ -1304,6 +1421,8 @@ if scenario_profiles.get("live-loftd-redraw-typing"):
     live_profile = scenario_profiles["live-loftd-redraw-typing"]
     print(
         f"live redraw-typing profile: samples={live_profile['sample_count']} "
+        f"models={','.join(live_profile.get('measurement_models') or []) or 'unknown'} "
+        f"sessions={live_profile.get('persistent_session_count', 0)} "
         f"markers={live_profile['markers_seen_total']}/{live_profile['marker_count_total']} "
         f"hot_avg={live_profile['hot_window_avg_us']}us "
         f"marker_p95={live_profile['marker_latency_p95_us']}us "
