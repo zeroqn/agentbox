@@ -1,5 +1,9 @@
 use anyhow::{Context, Result, bail};
-use loftd_attach_protocol::{Frame, PROTOCOL_VERSION, read_frame, write_frame};
+use loftd_attach_protocol::{
+    Frame, PROTOCOL_VERSION, read_frame,
+    terminal_trace::{trace_data_from_env, trace_event_from_env},
+    write_frame,
+};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
@@ -11,7 +15,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::attach_profile::GuestAttachProfiler;
+use crate::guest_init::runtime::attach_profile::{self, GuestAttachProfiler};
 
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::process;
@@ -51,7 +55,7 @@ pub(in crate::guest_init) fn run(
         );
     }
     let listener = VsockListener::bind(config.port)?;
-    super::attach_profile::clear_process_env();
+    attach_profile::clear_process_env();
     run_pre_start_event_loop(
         command,
         identity,
@@ -442,12 +446,18 @@ where
     loop {
         match read_frame(&mut client)? {
             Some(Frame::Attach) => {
+                trace_event_from_env("guest", "attach", "direction=host-to-guest-pre-start");
                 return Ok(PreStartClientResult::Start {
                     client,
                     initial_size,
                 });
             }
             Some(Frame::Resize { rows, cols }) => {
+                trace_event_from_env(
+                    "guest",
+                    "resize",
+                    &format!("direction=host-to-guest-pre-start rows={rows} cols={cols}"),
+                );
                 initial_size = Some(PtySize { rows, cols });
             }
             Some(Frame::Detach) | None => return Ok(PreStartClientResult::Wait),
@@ -540,6 +550,7 @@ fn serve_client(
     drain_detached_pty_output(master.as_raw_fd(), terminal_state)?;
     let restore = terminal_state.render_restore();
     if !restore.is_empty() {
+        trace_data_from_env("guest", "restore-to-host-output", &restore);
         write_frame(&mut client, &Frame::Data(restore))?;
     }
     serve_attached_client(
@@ -562,8 +573,16 @@ where
 {
     loop {
         match read_frame(client)? {
-            Some(Frame::Attach) => return Ok(true),
+            Some(Frame::Attach) => {
+                trace_event_from_env("guest", "attach", "direction=host-to-guest-post-start");
+                return Ok(true);
+            }
             Some(Frame::Resize { rows, cols }) => {
+                trace_event_from_env(
+                    "guest",
+                    "resize",
+                    &format!("direction=host-to-guest-post-start rows={rows} cols={cols}"),
+                );
                 let size = PtySize { rows, cols };
                 set_winsize(master.as_raw_fd(), rows, cols)?;
                 terminal_state.resize(size);
@@ -597,13 +616,26 @@ fn serve_attached_client(
     let input_thread = thread::spawn(move || -> Result<()> {
         while reader_active.load(Ordering::SeqCst) {
             match read_frame(&mut client_reader)? {
-                Some(Frame::Data(data)) => write_all_retrying_would_block(&mut pty_writer, &data)?,
+                Some(Frame::Data(data)) => {
+                    trace_data_from_env("guest", "host-to-guest-pty-input", &data);
+                    write_all_retrying_would_block(&mut pty_writer, &data)?;
+                }
                 Some(Frame::Resize { rows, cols }) => {
+                    trace_event_from_env(
+                        "guest",
+                        "resize",
+                        &format!("direction=host-to-guest-attached rows={rows} cols={cols}"),
+                    );
                     set_winsize(pty_writer.as_raw_fd(), rows, cols)?;
                     let _ = resize_tx.send(PtySize { rows, cols });
                 }
-                Some(Frame::Detach) | None => break,
-                Some(Frame::Attach) => {}
+                Some(Frame::Detach) | None => {
+                    trace_event_from_env("guest", "detach", "direction=host-to-guest");
+                    break;
+                }
+                Some(Frame::Attach) => {
+                    trace_event_from_env("guest", "attach", "direction=host-to-guest-attached");
+                }
                 Some(frame) => bail!("unexpected attach client frame: {frame:?}"),
             }
         }
@@ -659,11 +691,30 @@ fn serve_attached_client(
             drain_limits,
         )?;
         if burst.bytes.is_empty() {
+            trace_event_from_env(
+                "guest",
+                "pty_burst",
+                &format!(
+                    "direction=pty-to-guest-init bytes=0 reads={} stop={}",
+                    burst.reads,
+                    burst.stop_reason.as_trace_value()
+                ),
+            );
             if burst.stop_reason == AttachedPtyDrainStop::Eof {
                 thread::sleep(Duration::from_millis(10));
             }
             continue;
         }
+        trace_event_from_env(
+            "guest",
+            "pty_burst",
+            &format!(
+                "direction=pty-to-guest-init bytes={} reads={} stop={}",
+                burst.bytes.len(),
+                burst.reads,
+                burst.stop_reason.as_trace_value()
+            ),
+        );
         if !forward_and_record_pty_output(&burst.bytes, &mut client, terminal_state, &mut profiler)
         {
             break;
@@ -699,6 +750,18 @@ enum AttachedPtyDrainStop {
     ByteBound,
     ElapsedBound,
     Eof,
+}
+
+impl AttachedPtyDrainStop {
+    fn as_trace_value(self) -> &'static str {
+        match self {
+            Self::WouldBlock => "would_block",
+            Self::ReadBound => "read_bound",
+            Self::ByteBound => "byte_bound",
+            Self::ElapsedBound => "elapsed_bound",
+            Self::Eof => "eof",
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -816,6 +879,7 @@ fn normalize_and_write_pty_output(
     let normalize_started = Instant::now();
     let normalized = terminal_state.normalize_output(bytes);
     let normalize_elapsed = normalize_started.elapsed();
+    trace_data_from_env("guest", "pty-to-host-normalized-output", &normalized);
     let frame_bytes = normalized.len();
     let frame = Frame::Data(normalized);
 
@@ -846,6 +910,14 @@ fn record_forwarded_pty_output(
 
 fn apply_pending_resizes(resize_rx: &mpsc::Receiver<PtySize>, terminal_state: &mut TerminalState) {
     while let Ok(size) = resize_rx.try_recv() {
+        trace_event_from_env(
+            "guest",
+            "resize",
+            &format!(
+                "direction=applied-to-terminal-state rows={} cols={}",
+                size.rows, size.cols
+            ),
+        );
         terminal_state.resize(size);
     }
 }
@@ -894,6 +966,7 @@ fn drain_nonblocking(file: &mut File, terminal_state: &mut TerminalState) -> Res
         match file.read(&mut buf) {
             Ok(0) => return Ok(()),
             Ok(n) => {
+                trace_data_from_env("guest", "pty-to-detached-state", &buf[..n]);
                 terminal_state.record_output(&buf[..n]);
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),

@@ -1,5 +1,9 @@
 use anyhow::{Context, Result, anyhow, bail};
-use loftd_attach_protocol::{DetachFilter, Frame, PROTOCOL_VERSION, read_frame, write_frame};
+use loftd_attach_protocol::{
+    DetachFilter, Frame, PROTOCOL_VERSION, read_frame,
+    terminal_trace::{trace_data_from_env, trace_event_from_env},
+    write_frame,
+};
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -9,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::attach_profile::HostAttachProfiler;
+use crate::runtime::session::attach_profile::HostAttachProfiler;
 
 use crate::runtime::session::task_control::{
     ActiveTaskStatus, ProcessInspector, list_records, resolve_task_selector,
@@ -253,6 +257,14 @@ where
     W: Write,
 {
     if let Some(size) = initial_size {
+        trace_event_from_env(
+            "host",
+            "resize",
+            &format!(
+                "direction=host-to-guest-initial rows={} cols={}",
+                size.rows, size.cols
+            ),
+        );
         write_frame(
             writer,
             &Frame::Resize {
@@ -261,6 +273,7 @@ where
             },
         )?;
     }
+    trace_event_from_env("host", "attach", "direction=host-to-guest");
     write_frame(writer, &Frame::Attach)
 }
 
@@ -271,6 +284,14 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
     let mut last_size = terminal_size(libc::STDIN_FILENO);
     while active.load(Ordering::Acquire) {
         if let Some(size) = terminal_size_changed(&mut last_size) {
+            trace_event_from_env(
+                "host",
+                "resize",
+                &format!(
+                    "direction=host-to-guest-live rows={} cols={}",
+                    size.rows, size.cols
+                ),
+            );
             write_to_guest(
                 &writer,
                 &Frame::Resize {
@@ -284,6 +305,7 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
                 let mut output = Vec::new();
                 filter.flush_incomplete_escape_sequence(&mut output);
                 if !output.is_empty() {
+                    trace_data_from_env("host", "host-to-guest-stdin-flush", &output);
                     write_to_guest(&writer, &Frame::Data(output))?;
                 }
                 continue;
@@ -295,8 +317,10 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
                 let mut output = Vec::new();
                 filter.flush_pending(&mut output);
                 if !output.is_empty() {
+                    trace_data_from_env("host", "host-to-guest-stdin-eof", &output);
                     let _ = write_to_guest(&writer, &Frame::Data(output));
                 }
+                trace_event_from_env("host", "detach", "direction=host-to-guest reason=stdin-eof");
                 let _ = write_to_guest(&writer, &Frame::Detach);
                 return Ok(());
             }
@@ -306,12 +330,19 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
         let mut output = Vec::with_capacity(n);
         if filter.push(&buf[..n], &mut output) {
             if !output.is_empty() {
+                trace_data_from_env("host", "host-to-guest-stdin-detach", &output);
                 write_to_guest(&writer, &Frame::Data(output))?;
             }
+            trace_event_from_env(
+                "host",
+                "detach",
+                "direction=host-to-guest reason=detach-key",
+            );
             write_to_guest(&writer, &Frame::Detach)?;
             return Ok(());
         }
         if !output.is_empty() {
+            trace_data_from_env("host", "host-to-guest-stdin", &output);
             write_to_guest(&writer, &Frame::Data(output))?;
         }
     }
@@ -432,6 +463,7 @@ where
         let frame = source.read_frame(profiler)?;
         match frame {
             Some(Frame::Data(data)) => {
+                trace_data_from_env("host", "guest-to-host-stdout", &data);
                 let mut batch = StdoutBatch::new();
                 batch.push_data(data, profiler);
                 loop {
@@ -441,6 +473,7 @@ where
                     }
                     match source.try_read_frame(profiler)? {
                         TryRemoteFrame::Frame(Frame::Data(data)) => {
+                            trace_data_from_env("host", "guest-to-host-stdout", &data);
                             if !batch.can_accept(data.len()) {
                                 batch.flush_to(stdout, profiler)?;
                             }
@@ -776,6 +809,7 @@ fn proxy_remote_until_daemon_idle_loop<W: Write>(
         let frame = read_profiled_frame(stream, profiler)?;
         match frame {
             Some(Frame::Data(data)) => {
+                trace_data_from_env("host", "guest-to-host-stdout", &data);
                 let mut batch = StdoutBatch::new();
                 batch.push_data(data, profiler);
                 batch.flush_to(stdout, profiler)?;

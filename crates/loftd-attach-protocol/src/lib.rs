@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::io::{Read, Write};
 
+pub mod terminal_trace;
+
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const DEFAULT_ATTACH_PORT: u32 = 50_426;
 pub const DETACH_PREFIX_BYTE: u8 = 0x1c; // Ctrl-\\

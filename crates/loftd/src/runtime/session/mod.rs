@@ -22,7 +22,9 @@ mod terminal_env;
 use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec, ManagedSessionConfig};
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
-use loftd_attach_protocol::{DEFAULT_ATTACH_PORT, PROTOCOL_VERSION};
+use loftd_attach_protocol::{
+    DEFAULT_ATTACH_PORT, PROTOCOL_VERSION, terminal_trace::terminal_trace_env_pair_from_process_env,
+};
 use profile::LoftdHostProfiler;
 use rootfs::task::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
 use supervisor::{HostSupervisor, Supervisor};
@@ -218,6 +220,9 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                     if let Some(pair) =
                                         attach_profile::guest_env_pair_from_process_env()
                                     {
+                                        env.push(pair);
+                                    }
+                                    if let Some(pair) = terminal_trace_env_pair_from_process_env() {
                                         env.push(pair);
                                     }
                                     env
