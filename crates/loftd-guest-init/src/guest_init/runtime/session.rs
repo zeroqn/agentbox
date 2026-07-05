@@ -83,12 +83,14 @@ fn run_pre_start_event_loop(
                         return Err(err);
                     }
                 };
-                if let Some(size) = initial_size
-                    && let Err(err) = set_winsize(pty.master.as_raw_fd(), size.rows, size.cols)
-                {
-                    let _ = write_frame(&mut client, &Frame::Error(format!("{err:#}")));
-                    return Err(err);
-                }
+                let effective_size =
+                    match apply_initial_winsize(pty.master.as_raw_fd(), initial_size) {
+                        Ok(size) => size,
+                        Err(err) => {
+                            let _ = write_frame(&mut client, &Frame::Error(format!("{err:#}")));
+                            return Err(err);
+                        }
+                    };
                 let child = match spawn_pty_child(&pty, command, identity, drop_to_identity) {
                     Ok(child) => child,
                     Err(err) => {
@@ -96,7 +98,7 @@ fn run_pre_start_event_loop(
                         return Err(err);
                     }
                 };
-                let mut terminal_state = TerminalState::new(initial_size.unwrap_or_default());
+                let mut terminal_state = TerminalState::new(effective_size);
                 match serve_attached_client(
                     &pty.master,
                     child,
@@ -1098,6 +1100,12 @@ impl Drop for VsockListener {
     }
 }
 
+fn apply_initial_winsize(fd: RawFd, initial_size: Option<PtySize>) -> Result<PtySize> {
+    let effective_size = initial_size.unwrap_or_default();
+    set_winsize(fd, effective_size.rows, effective_size.cols)?;
+    Ok(effective_size)
+}
+
 fn set_winsize(fd: RawFd, rows: u16, cols: u16) -> Result<()> {
     let size = libc::winsize {
         ws_row: rows,
@@ -1265,6 +1273,53 @@ mod tests {
             PreStartClientResult::Wait => {}
             PreStartClientResult::Start { .. } => panic!("invalid pre-start data started command"),
         }
+    }
+
+    fn read_pty_winsize(fd: RawFd) -> Result<PtySize> {
+        let mut size = libc::winsize {
+            ws_row: 0,
+            ws_col: 0,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) } != 0 {
+            return Err(std::io::Error::last_os_error()).context("failed to read PTY winsize");
+        }
+        Ok(PtySize {
+            rows: size.ws_row,
+            cols: size.ws_col,
+        })
+    }
+
+    #[test]
+    fn initial_winsize_defaults_kernel_pty_when_missing() {
+        let pty = Pty::open().unwrap();
+
+        let effective_size = apply_initial_winsize(pty.master.as_raw_fd(), None).unwrap();
+
+        assert_eq!(effective_size, PtySize::default());
+        assert_eq!(
+            read_pty_winsize(pty.master.as_raw_fd()).unwrap(),
+            PtySize::default()
+        );
+    }
+
+    #[test]
+    fn initial_winsize_preserves_explicit_kernel_pty_size() {
+        let pty = Pty::open().unwrap();
+        let explicit_size = PtySize {
+            rows: 50,
+            cols: 160,
+        };
+
+        let effective_size =
+            apply_initial_winsize(pty.master.as_raw_fd(), Some(explicit_size)).unwrap();
+
+        assert_eq!(effective_size, explicit_size);
+        assert_eq!(
+            read_pty_winsize(pty.master.as_raw_fd()).unwrap(),
+            explicit_size
+        );
     }
 
     #[test]
