@@ -14,6 +14,7 @@ mod attach_profile;
 mod managed_attach_socket;
 pub(crate) mod nix_overlay;
 mod profile;
+mod pty_raw_passthrough;
 pub(crate) mod rootfs;
 pub(crate) mod supervisor;
 pub(crate) mod task_control;
@@ -219,6 +220,11 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                     env.extend(terminal_env::host_terminal_env_pairs());
                                     if let Some(pair) =
                                         attach_profile::guest_env_pair_from_process_env()
+                                    {
+                                        env.push(pair);
+                                    }
+                                    if let Some(pair) =
+                                        pty_raw_passthrough::guest_env_pair_from_process_env()
                                     {
                                         env.push(pair);
                                     }

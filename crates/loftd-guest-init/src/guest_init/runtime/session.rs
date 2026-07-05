@@ -29,6 +29,7 @@ const ATTACHED_PTY_DRAIN_MAX_ELAPSED: Duration = Duration::from_millis(1);
 const DEFAULT_TERMINAL_ROWS: u16 = 24;
 const DEFAULT_TERMINAL_COLS: u16 = 80;
 const TERMINAL_SCROLLBACK_ROWS: usize = 2_000;
+const PTY_RAW_PASSTHROUGH_ENV: &str = "LOFTD_PTY_RAW_PASSTHROUGH";
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 const EXIT_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
 // Reset attributes, home the cursor, and clear the visible viewport before
@@ -55,13 +56,16 @@ pub(in crate::guest_init) fn run(
         );
     }
     let listener = VsockListener::bind(config.port)?;
+    let pty_forwarding_mode = PtyForwardingMode::from_process_env();
     attach_profile::clear_process_env();
+    PtyForwardingMode::clear_process_env();
     run_pre_start_event_loop(
         command,
         identity,
         drop_to_identity,
         listener,
         config.attach_profile,
+        pty_forwarding_mode,
     )
 }
 
@@ -71,6 +75,7 @@ fn run_pre_start_event_loop(
     drop_to_identity: bool,
     listener: VsockListener,
     attach_profile: bool,
+    pty_forwarding_mode: PtyForwardingMode,
 ) -> Result<()> {
     loop {
         let client = listener.accept()?;
@@ -110,6 +115,7 @@ fn run_pre_start_event_loop(
                     &listener,
                     &mut terminal_state,
                     attach_profile,
+                    pty_forwarding_mode,
                 )? {
                     ClientResult::Detached => {
                         return run_event_loop(
@@ -118,6 +124,7 @@ fn run_pre_start_event_loop(
                             listener,
                             terminal_state,
                             attach_profile,
+                            pty_forwarding_mode,
                         );
                     }
                     ClientResult::ChildExited(code) => std::process::exit(code),
@@ -125,6 +132,38 @@ fn run_pre_start_event_loop(
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PtyForwardingMode {
+    Normalized,
+    RawPassthrough,
+}
+
+impl PtyForwardingMode {
+    fn from_process_env() -> Self {
+        Self::from_env_value(std::env::var(PTY_RAW_PASSTHROUGH_ENV).ok().as_deref())
+    }
+
+    fn from_env_value(value: Option<&str>) -> Self {
+        match value.filter(|value| pty_raw_passthrough_env_value_enabled(value)) {
+            Some(_) => Self::RawPassthrough,
+            None => Self::Normalized,
+        }
+    }
+
+    fn clear_process_env() {
+        // SAFETY: guest-init consumes this diagnostic flag during single-threaded
+        // managed-session setup before forking the user shell.
+        unsafe { std::env::remove_var(PTY_RAW_PASSTHROUGH_ENV) };
+    }
+}
+
+fn pty_raw_passthrough_env_value_enabled(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -478,6 +517,7 @@ fn run_event_loop(
     listener: VsockListener,
     mut terminal_state: TerminalState,
     attach_profile: bool,
+    pty_forwarding_mode: PtyForwardingMode,
 ) -> Result<()> {
     loop {
         if let Some(code) = reap_child(child)? {
@@ -516,6 +556,7 @@ fn run_event_loop(
                 &listener,
                 &mut terminal_state,
                 attach_profile,
+                pty_forwarding_mode,
             )? {
                 ClientResult::Detached => continue,
                 ClientResult::ChildExited(code) => std::process::exit(code),
@@ -537,6 +578,7 @@ fn serve_client(
     listener: &VsockListener,
     terminal_state: &mut TerminalState,
     attach_profile: bool,
+    pty_forwarding_mode: PtyForwardingMode,
 ) -> Result<ClientResult> {
     write_frame(
         &mut client,
@@ -560,6 +602,7 @@ fn serve_client(
         listener,
         terminal_state,
         attach_profile,
+        pty_forwarding_mode,
     )
 }
 
@@ -606,6 +649,7 @@ fn serve_attached_client(
     listener: &VsockListener,
     terminal_state: &mut TerminalState,
     attach_profile: bool,
+    pty_forwarding_mode: PtyForwardingMode,
 ) -> Result<ClientResult> {
     let mut profiler = GuestAttachProfiler::new(attach_profile);
     let active = Arc::new(AtomicBool::new(true));
@@ -715,8 +759,13 @@ fn serve_attached_client(
                 burst.stop_reason.as_trace_value()
             ),
         );
-        if !forward_and_record_pty_output(&burst.bytes, &mut client, terminal_state, &mut profiler)
-        {
+        if !forward_and_record_pty_output(
+            &burst.bytes,
+            &mut client,
+            terminal_state,
+            &mut profiler,
+            pty_forwarding_mode,
+        ) {
             break;
         }
     }
@@ -853,7 +902,7 @@ where
 }
 
 struct ForwardedPtyOutput {
-    normalized: Vec<u8>,
+    parser_bytes: Vec<u8>,
     write_succeeded: bool,
     normalize_elapsed: Duration,
 }
@@ -863,8 +912,9 @@ fn forward_and_record_pty_output(
     client: &mut impl Write,
     terminal_state: &mut TerminalState,
     profiler: &mut GuestAttachProfiler,
+    mode: PtyForwardingMode,
 ) -> bool {
-    let forwarded = normalize_and_write_pty_output(bytes, client, terminal_state, profiler);
+    let forwarded = normalize_and_write_pty_output(bytes, client, terminal_state, profiler, mode);
     let write_succeeded = forwarded.write_succeeded;
     record_forwarded_pty_output(&forwarded, terminal_state, profiler);
     write_succeeded
@@ -875,25 +925,46 @@ fn normalize_and_write_pty_output(
     client: &mut impl Write,
     terminal_state: &mut TerminalState,
     profiler: &mut GuestAttachProfiler,
+    mode: PtyForwardingMode,
 ) -> ForwardedPtyOutput {
     let normalize_started = Instant::now();
     let normalized = terminal_state.normalize_output(bytes);
     let normalize_elapsed = normalize_started.elapsed();
-    trace_data_from_env("guest", "pty-to-host-normalized-output", &normalized);
-    let frame_bytes = normalized.len();
-    let frame = Frame::Data(normalized);
+    match mode {
+        PtyForwardingMode::Normalized => {
+            trace_data_from_env("guest", "pty-to-host-normalized-output", &normalized);
+            let frame_bytes = normalized.len();
+            let frame = Frame::Data(normalized);
 
-    let frame_write_started = Instant::now();
-    let write_succeeded = write_frame(client, &frame).is_ok();
-    profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
+            let frame_write_started = Instant::now();
+            let write_succeeded = write_frame(client, &frame).is_ok();
+            profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
 
-    let Frame::Data(normalized) = frame else {
-        unreachable!("live PTY output frame must be data");
-    };
-    ForwardedPtyOutput {
-        normalized,
-        write_succeeded,
-        normalize_elapsed,
+            let Frame::Data(parser_bytes) = frame else {
+                unreachable!("live PTY output frame must be data");
+            };
+            ForwardedPtyOutput {
+                parser_bytes,
+                write_succeeded,
+                normalize_elapsed,
+            }
+        }
+        PtyForwardingMode::RawPassthrough => {
+            trace_data_from_env("guest", "pty-to-host-raw-output", bytes);
+            trace_data_from_env("guest", "pty-to-parser-normalized-output", &normalized);
+            let frame_bytes = bytes.len();
+            let frame = Frame::Data(bytes.to_vec());
+
+            let frame_write_started = Instant::now();
+            let write_succeeded = write_frame(client, &frame).is_ok();
+            profiler.record_frame_write(frame_bytes, frame_write_started.elapsed());
+
+            ForwardedPtyOutput {
+                parser_bytes: normalized,
+                write_succeeded,
+                normalize_elapsed,
+            }
+        }
     }
 }
 
@@ -903,7 +974,7 @@ fn record_forwarded_pty_output(
     profiler: &mut GuestAttachProfiler,
 ) {
     let parser_started = Instant::now();
-    terminal_state.record_normalized_output(&forwarded.normalized);
+    terminal_state.record_normalized_output(&forwarded.parser_bytes);
     let parser_elapsed = parser_started.elapsed();
     profiler.record_terminal_processing(forwarded.normalize_elapsed, parser_elapsed);
 }
@@ -1422,6 +1493,7 @@ mod tests {
                 &listener,
                 &mut terminal_state,
                 false,
+                PtyForwardingMode::Normalized,
             )
         });
 
@@ -1460,6 +1532,26 @@ mod tests {
     }
 
     #[test]
+    fn pty_raw_passthrough_mode_requires_truthy_value() {
+        assert_eq!(
+            PtyForwardingMode::from_env_value(None),
+            PtyForwardingMode::Normalized
+        );
+        assert_eq!(
+            PtyForwardingMode::from_env_value(Some("0")),
+            PtyForwardingMode::Normalized
+        );
+        assert_eq!(
+            PtyForwardingMode::from_env_value(Some("summary")),
+            PtyForwardingMode::Normalized
+        );
+        assert_eq!(
+            PtyForwardingMode::from_env_value(Some("true")),
+            PtyForwardingMode::RawPassthrough
+        );
+    }
+
+    #[test]
     fn attached_output_is_written_before_parser_record_on_success() {
         let mut terminal_state = TerminalState::new(PtySize::default());
         let mut profiler = GuestAttachProfiler::new(true);
@@ -1470,10 +1562,11 @@ mod tests {
             &mut writer,
             &mut terminal_state,
             &mut profiler,
+            PtyForwardingMode::Normalized,
         );
 
         assert!(forwarded.write_succeeded);
-        assert_eq!(forwarded.normalized.len(), "─│\n".len());
+        assert_eq!(forwarded.parser_bytes.len(), "─│\n".len());
         assert!(!terminal_state.parser.screen().contents().contains("─│"));
         let mut cursor = std::io::Cursor::new(writer);
         assert_eq!(
@@ -1483,6 +1576,41 @@ mod tests {
 
         record_forwarded_pty_output(&forwarded, &mut terminal_state, &mut profiler);
         assert!(terminal_state.parser.screen().contents().contains("─│"));
+    }
+
+    #[test]
+    fn raw_passthrough_writes_original_bytes_while_recording_normalized_parser_state() {
+        let mut terminal_state = TerminalState::new(PtySize::default());
+        let mut profiler = GuestAttachProfiler::new(true);
+        let mut writer = Vec::new();
+        let pty_bytes = b"\x1b(0qx\x1b(B\n";
+
+        let forwarded = normalize_and_write_pty_output(
+            pty_bytes,
+            &mut writer,
+            &mut terminal_state,
+            &mut profiler,
+            PtyForwardingMode::RawPassthrough,
+        );
+
+        assert!(forwarded.write_succeeded);
+        assert_eq!(forwarded.parser_bytes, "─│\n".as_bytes());
+        assert!(!terminal_state.parser.screen().contents().contains("─│"));
+        let mut cursor = std::io::Cursor::new(writer);
+        assert_eq!(
+            read_frame(&mut cursor).unwrap(),
+            Some(Frame::Data(pty_bytes.to_vec()))
+        );
+
+        record_forwarded_pty_output(&forwarded, &mut terminal_state, &mut profiler);
+        assert!(terminal_state.parser.screen().contents().contains("─│"));
+
+        let mut profile_output = Vec::new();
+        profiler.report_to(&mut profile_output).unwrap();
+        let profile_output = String::from_utf8(profile_output).unwrap();
+        assert!(profile_output.contains("frames=1"));
+        assert!(profile_output.contains("frame_bytes=9"));
+        assert!(profile_output.contains("frame_max_bytes=9"));
     }
 
     #[test]
@@ -1496,6 +1624,7 @@ mod tests {
             &mut writer,
             &mut terminal_state,
             &mut profiler,
+            PtyForwardingMode::Normalized,
         );
 
         assert!(!forwarded.write_succeeded);
@@ -1544,6 +1673,7 @@ mod tests {
             &mut writer,
             &mut terminal_state,
             &mut profiler,
+            PtyForwardingMode::Normalized,
         ));
         let mut cursor = std::io::Cursor::new(writer);
         assert_eq!(
@@ -1825,6 +1955,7 @@ mod tests {
                 &listener,
                 &mut terminal_state,
                 false,
+                PtyForwardingMode::Normalized,
             )
         });
 
