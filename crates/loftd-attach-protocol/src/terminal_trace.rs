@@ -11,6 +11,7 @@ pub const GUEST_TERMINAL_TRACE_PATH: &str = "/workspace/loftd-terminal.trace";
 const TRACE_HIT_LIMIT: usize = 24;
 const TRACE_ALT_CONTEXT_LIMIT: usize = 8;
 const TRACE_ALT_CONTEXT_RADIUS: usize = 24;
+const TRACE_INPUT_CONTEXT_BYTES: usize = 96;
 
 #[derive(Debug, Clone, Copy)]
 struct TerminalPattern {
@@ -243,10 +244,11 @@ pub fn trace_data_from_env(role: &str, direction: &str, bytes: &[u8]) {
         role,
         "data",
         &format!(
-            "direction={direction} bytes={} sequences={}{}",
+            "direction={direction} bytes={} sequences={}{}{}",
             bytes.len(),
             summary.render(),
-            summary.render_alt_contexts(bytes)
+            summary.render_alt_contexts(bytes),
+            render_input_contexts(direction, bytes)
         ),
     );
 }
@@ -361,6 +363,48 @@ fn render_hit_context(bytes: &[u8], hit: &TerminalSequenceHit) -> String {
     )
 }
 
+fn render_input_contexts(direction: &str, bytes: &[u8]) -> String {
+    if !is_host_input_direction(direction) {
+        return String::new();
+    }
+
+    let Some(control_offset) = first_input_control_offset(bytes) else {
+        return String::new();
+    };
+    let mut start = control_offset.saturating_sub(TRACE_INPUT_CONTEXT_BYTES / 2);
+    let end = bytes.len().min(start + TRACE_INPUT_CONTEXT_BYTES);
+    if end - start < TRACE_INPUT_CONTEXT_BYTES {
+        start = end.saturating_sub(TRACE_INPUT_CONTEXT_BYTES);
+    }
+    let window = &bytes[start..end];
+    let mut rendered = format!(
+        " input_contexts=input[{}..{}]:hex={}:esc={}",
+        start,
+        end,
+        hex_bytes(window),
+        escape_trace_bytes(window)
+    );
+    let omitted_before = start;
+    let omitted_after = bytes.len().saturating_sub(end);
+    if omitted_before > 0 || omitted_after > 0 {
+        let _ = write!(
+            rendered,
+            ";...+{omitted_before} before,+{omitted_after} after"
+        );
+    }
+    rendered
+}
+
+fn is_host_input_direction(direction: &str) -> bool {
+    direction.starts_with("host-to-guest-stdin") || direction == "host-to-guest-pty-input"
+}
+
+fn first_input_control_offset(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .iter()
+        .position(|byte| *byte == b'\x1b' || *byte < b' ' || *byte == b'\x7f')
+}
+
 fn hex_bytes(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -458,6 +502,76 @@ mod tests {
         let contexts = summary.render_alt_contexts(bytes);
 
         assert!(contexts.contains(";...+1"));
+    }
+
+    #[test]
+    fn renders_host_stdin_escape_input_context() {
+        let context = render_input_contexts("host-to-guest-stdin", b"\x1b[I\x1b[0n");
+
+        assert_eq!(
+            context,
+            " input_contexts=input[0..7]:hex=1b5b491b5b306e:esc=\\e\\x5bI\\e\\x5b0n"
+        );
+    }
+
+    #[test]
+    fn renders_guest_pty_escape_input_context() {
+        let context = render_input_contexts("host-to-guest-pty-input", b"\x1b[I\x1b[0n");
+
+        assert_eq!(
+            context,
+            " input_contexts=input[0..7]:hex=1b5b491b5b306e:esc=\\e\\x5bI\\e\\x5b0n"
+        );
+    }
+
+    #[test]
+    fn printable_host_input_does_not_render_input_context() {
+        assert_eq!(render_input_contexts("host-to-guest-stdin", b"abcXYZ"), "");
+    }
+
+    #[test]
+    fn output_direction_control_bytes_do_not_render_input_context() {
+        assert_eq!(
+            render_input_contexts("guest-to-host-stdout", b"\x1b[I\x1b[0n"),
+            ""
+        );
+    }
+
+    #[test]
+    fn long_input_context_is_bounded_with_exact_omission_marker() {
+        let mut bytes = b"\x1b[I".to_vec();
+        bytes.extend(std::iter::repeat_n(b'a', TRACE_INPUT_CONTEXT_BYTES + 5));
+
+        let context = render_input_contexts("host-to-guest-stdin", &bytes);
+
+        assert!(context.contains("input[0..96]"));
+        assert!(context.contains(";...+0 before,+8 after"));
+        assert!(!context.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    }
+
+    #[test]
+    fn delayed_control_input_context_is_anchored_near_control_byte() {
+        let mut bytes = vec![b'a'; TRACE_INPUT_CONTEXT_BYTES + 20];
+        bytes.push(b'\n');
+        bytes.extend(std::iter::repeat_n(b'b', 20));
+
+        let context = render_input_contexts("host-to-guest-stdin", &bytes);
+
+        assert!(context.contains("input[41..137]"));
+        assert!(context.contains("\\n"));
+        assert!(context.contains(";...+41 before,+0 after"));
+    }
+
+    #[test]
+    fn input_context_escapes_control_and_delimiter_bytes() {
+        let context = render_input_contexts("host-to-guest-stdin", b"a\nb\t\\;=[]\x7f");
+
+        assert_eq!(
+            context,
+            " input_contexts=input[0..10]:hex=610a62095c3b3d5b5d7f:esc=a\\nb\\t\\\\\\x3b\\x3d\\x5b\\x5d\\x7f"
+        );
+        assert!(!context.contains('\n'));
+        assert!(!context.contains('\t'));
     }
 
     #[test]

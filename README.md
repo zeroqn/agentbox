@@ -1186,6 +1186,10 @@ launch truncates the host workspace trace file before appending fresh events.
 When a traced data burst contains alternate-screen enter or exit sequences, the
 line also includes bounded hex and escaped-byte context around those hits so the
 surrounding terminal output can be inspected without dumping the full PTY burst.
+For host-to-guest stdin and guest PTY-input bursts that contain ESC, C0 control,
+or DEL bytes, the line also includes bounded `input_contexts=` hex and
+escaped-byte context. Terminal tracing is opt-in diagnostic output and can
+therefore include small bounded snippets of terminal input/control-byte payloads.
 The falsey values `0`, `false`, `no`, `off`, and an empty value disable the
 environment opt-in. Raw mode and tracing are independent:
 
