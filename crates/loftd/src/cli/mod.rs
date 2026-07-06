@@ -30,6 +30,25 @@ impl ContainerStoreBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PtyMode {
+    Normalized,
+    RawPassthrough,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PtyOptions {
+    pub(crate) mode: PtyMode,
+    pub(crate) trace: bool,
+}
+
+impl PtyOptions {
+    pub(crate) const DEFAULT: Self = Self {
+        mode: PtyMode::Normalized,
+        trace: false,
+    };
+}
+
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
 #[command(
     name = "loftd",
@@ -111,11 +130,13 @@ pub(crate) struct Cli {
     daemon: bool,
 
     #[arg(
-        long = "pty-raw-passthrough",
-        help = "Forward live guest PTY output without terminal normalization for this launched task",
-        long_help = "Forward live guest PTY output without terminal normalization for this launched task. This default-off diagnostic compatibility switch is equivalent to setting LOFTD_PTY_RAW_PASSTHROUGH=1 for the new task launch. It does not affect attach to existing tasks, detached restore frames, stdin forwarding, or the attach protocol."
+        long = "pty",
+        value_name = "MODE[,trace]",
+        value_parser = parse_pty_arg,
+        help = "Configure managed PTY live-output diagnostics for this launched task",
+        long_help = "Configure managed PTY live-output diagnostics for this launched task. Allowed values are normalize, raw, normalize,trace, and raw,trace. The default is normalize. The trace token enables loftd-terminal.trace in the host current working directory for the new launch; guest-init writes the same workspace file through /workspace/loftd-terminal.trace. Raw and trace are independent."
     )]
-    pty_raw_passthrough: bool,
+    pty: Option<PtyOptions>,
 
     #[arg(
         long = "seccomp",
@@ -421,7 +442,7 @@ impl Cli {
             profile: self.profile,
             root: self.root,
             daemon: self.daemon,
-            pty_raw_passthrough: self.pty_raw_passthrough,
+            pty: self.pty.unwrap_or(PtyOptions::DEFAULT),
             seccomp: self.seccomp,
             landlock: self.landlock,
             hardened: self.hardened,
@@ -460,7 +481,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) daemon: bool,
-    pub(crate) pty_raw_passthrough: bool,
+    pub(crate) pty: PtyOptions,
     pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) landlock: Option<LandlockMode>,
     pub(crate) hardened: bool,
@@ -493,6 +514,50 @@ fn parse_rootfs_backend_arg(value: &str) -> Result<TaskRootfsBackend, String> {
 
 fn parse_container_store_backend_arg(value: &str) -> Result<ContainerStoreBackend, String> {
     ContainerStoreBackend::parse_config_value(value)
+}
+
+fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("pty mode must be normalize or raw, optionally followed by ,trace".to_owned());
+    }
+
+    let mut mode = None;
+    let mut trace = false;
+    for token in value.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err("pty mode tokens must not be empty".to_owned());
+        }
+        match token {
+            "normalize" => {
+                if mode.replace(PtyMode::Normalized).is_some() {
+                    return Err("pty mode must specify exactly one of normalize or raw".to_owned());
+                }
+            }
+            "raw" => {
+                if mode.replace(PtyMode::RawPassthrough).is_some() {
+                    return Err("pty mode must specify exactly one of normalize or raw".to_owned());
+                }
+            }
+            "trace" => {
+                if trace {
+                    return Err("pty trace token must not be duplicated".to_owned());
+                }
+                trace = true;
+            }
+            other => {
+                return Err(format!(
+                    "unsupported pty token '{other}'; use normalize, raw, or trace"
+                ));
+            }
+        }
+    }
+
+    Ok(PtyOptions {
+        mode: mode.ok_or_else(|| "pty mode must specify normalize or raw".to_owned())?,
+        trace,
+    })
 }
 
 fn parse_seccomp_arg(value: &str) -> Result<SeccompMode, String> {
@@ -590,7 +655,7 @@ mod tests {
     use clap::Parser;
     use std::path::PathBuf;
 
-    use crate::cli::{Cli, ContainerStoreBackend, VolumeSpec};
+    use crate::cli::{Cli, ContainerStoreBackend, PtyMode, PtyOptions, VolumeSpec};
     use crate::logging::LogLevel;
     use crate::runtime::landlock::LandlockMode;
     use crate::runtime::launch::config::NetworkMode;
@@ -629,7 +694,7 @@ mod tests {
         assert_eq!(options.landlock, None);
         assert!(options.profile);
         assert!(options.debug);
-        assert!(!options.pty_raw_passthrough);
+        assert_eq!(options.pty, PtyOptions::DEFAULT);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
         assert!(options.publish.is_empty());
         assert!(options.volumes.is_empty());
@@ -664,19 +729,79 @@ mod tests {
     }
 
     #[test]
-    fn parses_pty_raw_passthrough_runtime_option() {
-        let cli = Cli::try_parse_from(["loftd", "--pty-raw-passthrough"])
-            .expect("pty raw passthrough runtime option should parse");
-        let options = cli.into_runtime_options();
+    fn parses_pty_runtime_modes() {
+        for (arg, expected) in [
+            (
+                "normalize",
+                PtyOptions {
+                    mode: PtyMode::Normalized,
+                    trace: false,
+                },
+            ),
+            (
+                "raw",
+                PtyOptions {
+                    mode: PtyMode::RawPassthrough,
+                    trace: false,
+                },
+            ),
+            (
+                "normalize,trace",
+                PtyOptions {
+                    mode: PtyMode::Normalized,
+                    trace: true,
+                },
+            ),
+            (
+                "raw,trace",
+                PtyOptions {
+                    mode: PtyMode::RawPassthrough,
+                    trace: true,
+                },
+            ),
+        ] {
+            let options = Cli::try_parse_from(["loftd", "--pty", arg])
+                .expect("pty mode should parse")
+                .into_runtime_options();
 
-        assert!(options.pty_raw_passthrough);
+            assert_eq!(options.pty, expected);
+        }
     }
 
     #[test]
-    fn pty_raw_passthrough_is_inert_for_attach_subcommand() {
-        let cli =
-            Cli::try_parse_from(["loftd", "--pty-raw-passthrough", "attach", "workspace-123"])
-                .expect("pty raw passthrough stays parse-compatible for attach");
+    fn rejects_malformed_pty_runtime_modes() {
+        for arg in [
+            "",
+            "trace",
+            "raw,normalize",
+            "normalize,raw",
+            "raw,raw",
+            "raw,trace,trace",
+            "raw,",
+            ",raw",
+            "passthrough",
+        ] {
+            let err =
+                Cli::try_parse_from(["loftd", "--pty", arg]).expect_err("bad pty mode should fail");
+            assert!(matches!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation | clap::error::ErrorKind::InvalidValue
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_removed_pty_raw_passthrough_flag() {
+        let err = Cli::try_parse_from(["loftd", "--pty-raw-passthrough"])
+            .expect_err("removed raw passthrough flag should fail");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn pty_option_is_inert_for_attach_subcommand() {
+        let cli = Cli::try_parse_from(["loftd", "--pty", "raw,trace", "attach", "workspace-123"])
+            .expect("pty option stays parse-compatible for attach");
 
         assert!(matches!(
             cli.into_action(),

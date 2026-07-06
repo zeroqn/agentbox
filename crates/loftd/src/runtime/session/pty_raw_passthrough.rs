@@ -1,65 +1,44 @@
 pub(in crate::runtime::session) const PTY_RAW_PASSTHROUGH_ENV: &str = "LOFTD_PTY_RAW_PASSTHROUGH";
 
-pub(in crate::runtime::session) fn guest_env_pair(flag_enabled: bool) -> Option<(String, String)> {
-    guest_env_pair_from_value(
-        flag_enabled,
-        std::env::var(PTY_RAW_PASSTHROUGH_ENV).ok().as_deref(),
-    )
-}
-
-pub(in crate::runtime::session) fn guest_env_pair_from_value(
-    flag_enabled: bool,
-    value: Option<&str>,
+pub(in crate::runtime::session) fn guest_env_pair(
+    mode: crate::cli::PtyMode,
 ) -> Option<(String, String)> {
-    (flag_enabled || value.is_some_and(env_value_enabled))
+    (mode == crate::cli::PtyMode::RawPassthrough)
         .then(|| (PTY_RAW_PASSTHROUGH_ENV.to_owned(), "1".to_owned()))
-}
-
-fn env_value_enabled(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::PtyMode;
 
     #[test]
-    fn pty_raw_passthrough_env_pair_accepts_cli_flag_without_env() {
+    fn pty_raw_passthrough_env_pair_accepts_raw_cli_mode() {
         assert_eq!(
-            guest_env_pair_from_value(true, None),
+            guest_env_pair(PtyMode::RawPassthrough),
             Some((PTY_RAW_PASSTHROUGH_ENV.to_owned(), "1".to_owned()))
         );
     }
 
     #[test]
-    fn pty_raw_passthrough_env_pair_accepts_cli_flag_with_falsey_env() {
-        assert_eq!(
-            guest_env_pair_from_value(true, Some("0")),
-            Some((PTY_RAW_PASSTHROUGH_ENV.to_owned(), "1".to_owned()))
-        );
-        assert_eq!(
-            guest_env_pair_from_value(true, Some("false")),
-            Some((PTY_RAW_PASSTHROUGH_ENV.to_owned(), "1".to_owned()))
-        );
+    fn host_raw_passthrough_env_is_not_public_fallback() {
+        let old = std::env::var_os(PTY_RAW_PASSTHROUGH_ENV);
+        unsafe { std::env::set_var(PTY_RAW_PASSTHROUGH_ENV, "1") };
+
+        let pair = guest_env_pair(PtyMode::Normalized);
+
+        unsafe {
+            if let Some(old) = old {
+                std::env::set_var(PTY_RAW_PASSTHROUGH_ENV, old);
+            } else {
+                std::env::remove_var(PTY_RAW_PASSTHROUGH_ENV);
+            }
+        }
+        assert_eq!(pair, None);
     }
 
     #[test]
-    fn pty_raw_passthrough_env_pair_accepts_truthy_env_without_cli_flag() {
-        assert_eq!(
-            guest_env_pair_from_value(false, Some("YES")),
-            Some((PTY_RAW_PASSTHROUGH_ENV.to_owned(), "1".to_owned()))
-        );
-    }
-
-    #[test]
-    fn pty_raw_passthrough_env_pair_rejects_missing_falsey_or_invalid_env_without_cli_flag() {
-        assert_eq!(guest_env_pair_from_value(false, None), None);
-        assert_eq!(guest_env_pair_from_value(false, Some("")), None);
-        assert_eq!(guest_env_pair_from_value(false, Some("0")), None);
-        assert_eq!(guest_env_pair_from_value(false, Some("false")), None);
-        assert_eq!(guest_env_pair_from_value(false, Some("summary")), None);
+    fn pty_raw_passthrough_env_pair_rejects_normalized_cli_mode() {
+        assert_eq!(guest_env_pair(PtyMode::Normalized), None);
     }
 }

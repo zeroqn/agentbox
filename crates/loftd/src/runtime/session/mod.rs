@@ -24,7 +24,10 @@ use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec, ManagedSessionConfig};
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
 use loftd_attach_protocol::{
-    DEFAULT_ATTACH_PORT, PROTOCOL_VERSION, terminal_trace::terminal_trace_env_pair_from_process_env,
+    DEFAULT_ATTACH_PORT, PROTOCOL_VERSION,
+    terminal_trace::{
+        prepare_terminal_trace_file_from_process_env, terminal_trace_env_pair_from_process_env,
+    },
 };
 use profile::LoftdHostProfiler;
 use rootfs::task::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
@@ -77,12 +80,14 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
         host_profile_enabled(&options),
         profile_scope.started_at(),
     );
-    let pty_raw_passthrough = options.pty_raw_passthrough;
+    let pty = options.pty;
     let cwd = profiler.measure_result("workspace_canonicalization", || {
         env::current_dir()?
             .canonicalize()
             .context("failed to canonicalize current directory for loftd workspace mount")
     })?;
+    prepare_terminal_trace_file_from_process_env(pty.trace, &cwd)
+        .context("failed to prepare loftd terminal trace file")?;
     let plan =
         profiler.measure_result("launch_plan_build", || LaunchPlan::from_env(options, cwd))?;
     profiler.record_metadata(
@@ -225,11 +230,13 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                         env.push(pair);
                                     }
                                     if let Some(pair) =
-                                        pty_raw_passthrough::guest_env_pair(pty_raw_passthrough)
+                                        pty_raw_passthrough::guest_env_pair(pty.mode)
                                     {
                                         env.push(pair);
                                     }
-                                    if let Some(pair) = terminal_trace_env_pair_from_process_env() {
+                                    if let Some(pair) =
+                                        terminal_trace_env_pair_from_process_env(pty.trace)
+                                    {
                                         env.push(pair);
                                     }
                                     env
@@ -418,7 +425,7 @@ mod tests {
             profile,
             root: false,
             daemon: false,
-            pty_raw_passthrough: false,
+            pty: crate::cli::PtyOptions::DEFAULT,
             seccomp: Some(crate::runtime::seccomp::SeccompMode::Off),
             landlock: None,
             hardened: false,

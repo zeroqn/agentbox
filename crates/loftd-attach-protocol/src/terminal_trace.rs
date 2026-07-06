@@ -5,6 +5,8 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const TERMINAL_TRACE_ENV: &str = "LOFTD_TERMINAL_TRACE";
+pub const TERMINAL_TRACE_FILE_NAME: &str = "loftd-terminal.trace";
+pub const GUEST_TERMINAL_TRACE_PATH: &str = "/workspace/loftd-terminal.trace";
 
 const TRACE_HIT_LIMIT: usize = 24;
 
@@ -169,28 +171,42 @@ struct TerminalSequenceHit {
     offset: usize,
 }
 
-pub fn terminal_trace_env_pair_from_process_env() -> Option<(String, String)> {
-    std::env::var(TERMINAL_TRACE_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| {
-            let path = Path::new(&value);
-            let propagated = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                    .join(path)
-            };
+pub fn terminal_trace_env_pair_from_process_env(cli_trace: bool) -> Option<(String, String)> {
+    terminal_trace_enabled_from_value(cli_trace, std::env::var(TERMINAL_TRACE_ENV).ok().as_deref())
+        .then(|| {
             (
                 TERMINAL_TRACE_ENV.to_owned(),
-                propagated.to_string_lossy().into_owned(),
+                GUEST_TERMINAL_TRACE_PATH.to_owned(),
             )
         })
 }
 
+pub fn prepare_terminal_trace_file_from_process_env(
+    cli_trace: bool,
+    host_workspace_dir: &Path,
+) -> io::Result<()> {
+    if !terminal_trace_enabled_from_value(
+        cli_trace,
+        std::env::var(TERMINAL_TRACE_ENV).ok().as_deref(),
+    ) {
+        return Ok(());
+    }
+    if cli_trace {
+        // SAFETY: loftd calls this during launch setup, before the managed-session
+        // attach loop starts worker threads. It makes CLI trace opt-in visible to
+        // host-side trace hooks that intentionally read process environment.
+        unsafe { std::env::set_var(TERMINAL_TRACE_ENV, "1") };
+    }
+    truncate_terminal_trace_file(&host_terminal_trace_path(host_workspace_dir))
+}
+
+pub fn host_terminal_trace_path(host_workspace_dir: &Path) -> std::path::PathBuf {
+    host_workspace_dir.join(TERMINAL_TRACE_FILE_NAME)
+}
+
 pub fn trace_data_from_env(role: &str, direction: &str, bytes: &[u8]) {
-    if std::env::var_os(TERMINAL_TRACE_ENV).is_none() {
+    if !terminal_trace_enabled_from_value(false, std::env::var(TERMINAL_TRACE_ENV).ok().as_deref())
+    {
         return;
     }
     let summary = TerminalSequenceSummary::summarize(bytes);
@@ -206,13 +222,52 @@ pub fn trace_data_from_env(role: &str, direction: &str, bytes: &[u8]) {
 }
 
 pub fn trace_event_from_env(role: &str, event: &str, detail: &str) {
-    let Some(path) = std::env::var_os(TERMINAL_TRACE_ENV) else {
-        return;
-    };
-    if path.is_empty() {
+    if !terminal_trace_enabled_from_value(false, std::env::var(TERMINAL_TRACE_ENV).ok().as_deref())
+    {
         return;
     }
-    let _ = append_terminal_trace_event(Path::new(&path), role, event, detail);
+    let Some(path) = terminal_trace_path_from_env_for_role(role) else {
+        return;
+    };
+    let _ = append_terminal_trace_event(&path, role, event, detail);
+}
+
+fn terminal_trace_path_from_env_for_role(role: &str) -> Option<std::path::PathBuf> {
+    let env_value = std::env::var(TERMINAL_TRACE_ENV).ok()?;
+    if !terminal_trace_env_value_enabled(&env_value) {
+        return None;
+    }
+    if role == "guest" {
+        return Some(GUEST_TERMINAL_TRACE_PATH.into());
+    }
+    Some(host_terminal_trace_path(
+        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    ))
+}
+
+fn terminal_trace_enabled_from_value(cli_trace: bool, env_value: Option<&str>) -> bool {
+    cli_trace || env_value.is_some_and(terminal_trace_env_value_enabled)
+}
+
+fn terminal_trace_env_value_enabled(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no" | "off"
+    )
+}
+
+fn truncate_terminal_trace_file(path: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map(|_| ())
 }
 
 fn append_terminal_trace_event(
@@ -324,21 +379,121 @@ mod tests {
     }
 
     #[test]
-    fn propagated_trace_env_makes_relative_paths_absolute() {
+    fn trace_env_pair_uses_fixed_workspace_path_for_cli_or_env_opt_in() {
+        with_terminal_trace_env(Some("relative-trace.log"), || {
+            assert_eq!(
+                terminal_trace_env_pair_from_process_env(false),
+                Some((
+                    TERMINAL_TRACE_ENV.to_owned(),
+                    GUEST_TERMINAL_TRACE_PATH.to_owned()
+                ))
+            );
+        });
+        with_terminal_trace_env(None, || {
+            assert_eq!(
+                terminal_trace_env_pair_from_process_env(true),
+                Some((
+                    TERMINAL_TRACE_ENV.to_owned(),
+                    GUEST_TERMINAL_TRACE_PATH.to_owned()
+                ))
+            );
+        });
+    }
+
+    #[test]
+    fn trace_env_pair_treats_falsey_values_as_disabled() {
+        for value in ["", "0", "false", "False", "NO", "off", "  off  "] {
+            with_terminal_trace_env(Some(value), || {
+                assert_eq!(terminal_trace_env_pair_from_process_env(false), None);
+            });
+        }
+    }
+
+    #[test]
+    fn trace_prepare_truncates_host_workspace_trace_file() {
+        with_terminal_trace_env(Some("1"), || {
+            let dir = unique_temp_dir("loftd-terminal-trace-prepare");
+            let path = host_terminal_trace_path(&dir);
+            std::fs::write(&path, "sentinel").unwrap();
+
+            prepare_terminal_trace_file_from_process_env(false, &dir).unwrap();
+
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+            let _ = std::fs::remove_dir_all(dir);
+        });
+    }
+
+    #[test]
+    fn host_trace_writer_uses_current_dir_and_ignores_env_path() {
+        with_terminal_trace_env(None, || {
+            let dir = unique_temp_dir("loftd-terminal-trace-host");
+            let ignored_path = dir.join("ignored-custom-trace.log");
+            let old_cwd = std::env::current_dir().unwrap();
+            unsafe { std::env::set_var(TERMINAL_TRACE_ENV, ignored_path.as_os_str()) };
+
+            std::env::set_current_dir(&dir).unwrap();
+            trace_event_from_env("host", "data", "direction=test");
+            std::env::set_current_dir(old_cwd).unwrap();
+
+            let host_trace = host_terminal_trace_path(&dir);
+            let trace = std::fs::read_to_string(&host_trace).unwrap();
+            assert!(trace.contains("role=host"));
+            assert!(trace.contains("direction=test"));
+            assert!(!ignored_path.exists());
+            let _ = std::fs::remove_dir_all(dir);
+        });
+    }
+
+    #[test]
+    fn guest_trace_path_uses_guest_workspace_path() {
+        with_terminal_trace_env(Some("/tmp/ignored-custom-trace.log"), || {
+            assert_eq!(
+                terminal_trace_path_from_env_for_role("guest"),
+                Some(std::path::PathBuf::from(GUEST_TERMINAL_TRACE_PATH))
+            );
+        });
+    }
+
+    #[test]
+    fn trace_truncation_helper_truncates_existing_file() {
+        let path = std::env::temp_dir().join(format!(
+            "loftd-terminal-trace-truncate-{}.log",
+            unix_timestamp_micros()
+        ));
+        std::fs::write(&path, "sentinel").unwrap();
+
+        truncate_terminal_trace_file(&path).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        let _ = std::fs::remove_file(path);
+    }
+
+    static TERMINAL_TRACE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("{}-{}", prefix, unix_timestamp_micros()));
+        std::fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    fn with_terminal_trace_env(value: Option<&str>, test: impl FnOnce()) {
+        let _guard = TERMINAL_TRACE_ENV_LOCK.lock().unwrap();
         let old = std::env::var_os(TERMINAL_TRACE_ENV);
         unsafe {
-            std::env::set_var(TERMINAL_TRACE_ENV, "relative-trace.log");
+            match value {
+                Some(value) => std::env::set_var(TERMINAL_TRACE_ENV, value),
+                None => std::env::remove_var(TERMINAL_TRACE_ENV),
+            }
         }
 
-        let pair = terminal_trace_env_pair_from_process_env().unwrap();
+        test();
 
-        if let Some(old) = old {
-            unsafe { std::env::set_var(TERMINAL_TRACE_ENV, old) };
-        } else {
-            unsafe { std::env::remove_var(TERMINAL_TRACE_ENV) };
+        unsafe {
+            if let Some(old) = old {
+                std::env::set_var(TERMINAL_TRACE_ENV, old);
+            } else {
+                std::env::remove_var(TERMINAL_TRACE_ENV);
+            }
         }
-        assert_eq!(pair.0, TERMINAL_TRACE_ENV);
-        assert!(Path::new(&pair.1).is_absolute());
-        assert!(pair.1.ends_with("relative-trace.log"));
     }
 }
