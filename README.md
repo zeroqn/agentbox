@@ -1166,19 +1166,22 @@ drain caps stopped a burst. Attaching to an already-running managed task
 profiles the host attach path immediately, but guest-side attach metrics are
 available only if that task was originally launched with `LOFTD_ATTACH_PROFILE=1`.
 
-For live-output compatibility diagnostics, set
-`LOFTD_PTY_RAW_PASSTHROUGH=1` when launching `loftd`. This default-off switch is
-intended for terminal-rendering A/B checks such as comparing a TUI under the
-normal managed PTY path versus raw live PTY forwarding. It only changes bytes
-sent from the guest PTY to the attached host client: live `Frame::Data` payloads
-carry the original PTY bytes, while guest-init still keeps its normalized parser
-copy for detach/reattach restore state. It does not change the attach protocol,
-stdin forwarding, detached restore frames, or the default behavior. Combine it
-with terminal tracing to compare normalized and raw output labels:
+For live-output compatibility diagnostics, pass `--pty-raw-passthrough` when
+launching a new `loftd` task. `LOFTD_PTY_RAW_PASSTHROUGH=1` remains available as
+an environment fallback for scripts. This default-off switch is intended for
+terminal-rendering A/B checks such as comparing a TUI under the normal managed
+PTY path versus raw live PTY forwarding. It only changes bytes sent from the
+guest PTY to the attached host client: live `Frame::Data` payloads carry the
+original PTY bytes, while guest-init still keeps its normalized parser copy for
+detach/reattach restore state. It does not change the attach protocol, stdin
+forwarding, detached restore frames, or the default behavior. It only affects
+newly launched tasks, not `loftd attach` to an existing task. Combine it with
+terminal tracing to compare normalized and raw output labels:
 
 ```bash
 LOFTD_TERMINAL_TRACE=/tmp/loftd-normal.trace loftd
-LOFTD_PTY_RAW_PASSTHROUGH=1 LOFTD_TERMINAL_TRACE=/tmp/loftd-raw.trace loftd
+LOFTD_TERMINAL_TRACE=/tmp/loftd-raw.trace loftd --pty-raw-passthrough
+LOFTD_PTY_RAW_PASSTHROUGH=1 LOFTD_TERMINAL_TRACE=/tmp/loftd-raw-env.trace loftd
 ```
 
 To collect repeatable PTY benchmark artifacts, run the repo-local benchmark

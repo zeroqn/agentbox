@@ -305,6 +305,7 @@ mod tests {
             profile: false,
             root: false,
             daemon: false,
+            pty_raw_passthrough: false,
             seccomp: Some(SeccompMode::Off),
             landlock: None,
             hardened: false,

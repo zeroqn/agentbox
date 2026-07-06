@@ -77,6 +77,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
         host_profile_enabled(&options),
         profile_scope.started_at(),
     );
+    let pty_raw_passthrough = options.pty_raw_passthrough;
     let cwd = profiler.measure_result("workspace_canonicalization", || {
         env::current_dir()?
             .canonicalize()
@@ -224,7 +225,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                         env.push(pair);
                                     }
                                     if let Some(pair) =
-                                        pty_raw_passthrough::guest_env_pair_from_process_env()
+                                        pty_raw_passthrough::guest_env_pair(pty_raw_passthrough)
                                     {
                                         env.push(pair);
                                     }
@@ -417,6 +418,7 @@ mod tests {
             profile,
             root: false,
             daemon: false,
+            pty_raw_passthrough: false,
             seccomp: Some(crate::runtime::seccomp::SeccompMode::Off),
             landlock: None,
             hardened: false,

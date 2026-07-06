@@ -111,6 +111,13 @@ pub(crate) struct Cli {
     daemon: bool,
 
     #[arg(
+        long = "pty-raw-passthrough",
+        help = "Forward live guest PTY output without terminal normalization for this launched task",
+        long_help = "Forward live guest PTY output without terminal normalization for this launched task. This default-off diagnostic compatibility switch is equivalent to setting LOFTD_PTY_RAW_PASSTHROUGH=1 for the new task launch. It does not affect attach to existing tasks, detached restore frames, stdin forwarding, or the attach protocol."
+    )]
+    pty_raw_passthrough: bool,
+
+    #[arg(
         long = "seccomp",
         value_name = "MODE[:POLICY]:PATH",
         value_parser = parse_seccomp_arg,
@@ -414,6 +421,7 @@ impl Cli {
             profile: self.profile,
             root: self.root,
             daemon: self.daemon,
+            pty_raw_passthrough: self.pty_raw_passthrough,
             seccomp: self.seccomp,
             landlock: self.landlock,
             hardened: self.hardened,
@@ -452,6 +460,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) profile: bool,
     pub(crate) root: bool,
     pub(crate) daemon: bool,
+    pub(crate) pty_raw_passthrough: bool,
     pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) landlock: Option<LandlockMode>,
     pub(crate) hardened: bool,
@@ -620,6 +629,7 @@ mod tests {
         assert_eq!(options.landlock, None);
         assert!(options.profile);
         assert!(options.debug);
+        assert!(!options.pty_raw_passthrough);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
         assert!(options.publish.is_empty());
         assert!(options.volumes.is_empty());
@@ -651,6 +661,27 @@ mod tests {
         let options = cli.into_runtime_options();
 
         assert!(options.daemon);
+    }
+
+    #[test]
+    fn parses_pty_raw_passthrough_runtime_option() {
+        let cli = Cli::try_parse_from(["loftd", "--pty-raw-passthrough"])
+            .expect("pty raw passthrough runtime option should parse");
+        let options = cli.into_runtime_options();
+
+        assert!(options.pty_raw_passthrough);
+    }
+
+    #[test]
+    fn pty_raw_passthrough_is_inert_for_attach_subcommand() {
+        let cli =
+            Cli::try_parse_from(["loftd", "--pty-raw-passthrough", "attach", "workspace-123"])
+                .expect("pty raw passthrough stays parse-compatible for attach");
+
+        assert!(matches!(
+            cli.into_action(),
+            crate::cli::CliAction::Attach { task_id, .. } if task_id == "workspace-123"
+        ));
     }
 
     #[test]
