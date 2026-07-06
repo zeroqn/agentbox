@@ -1183,6 +1183,9 @@ Inside the guest, guest-init writes the same workspace-mounted file as
 `/workspace/loftd-terminal.trace`. Custom paths are intentionally ignored so the
 host and guest stay on that single shared workspace trace file. A new traced
 launch truncates the host workspace trace file before appending fresh events.
+When a traced data burst contains alternate-screen enter or exit sequences, the
+line also includes bounded hex and escaped-byte context around those hits so the
+surrounding terminal output can be inspected without dumping the full PTY burst.
 The falsey values `0`, `false`, `no`, `off`, and an empty value disable the
 environment opt-in. Raw mode and tracing are independent:
 

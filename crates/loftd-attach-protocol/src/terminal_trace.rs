@@ -9,6 +9,8 @@ pub const TERMINAL_TRACE_FILE_NAME: &str = "loftd-terminal.trace";
 pub const GUEST_TERMINAL_TRACE_PATH: &str = "/workspace/loftd-terminal.trace";
 
 const TRACE_HIT_LIMIT: usize = 24;
+const TRACE_ALT_CONTEXT_LIMIT: usize = 8;
+const TRACE_ALT_CONTEXT_RADIUS: usize = 24;
 
 #[derive(Debug, Clone, Copy)]
 struct TerminalPattern {
@@ -163,6 +165,33 @@ impl TerminalSequenceSummary {
         }
         rendered
     }
+
+    fn render_alt_contexts(&self, bytes: &[u8]) -> String {
+        let contexts: Vec<_> = self
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit.name, "alt_enter" | "alt_exit"))
+            .take(TRACE_ALT_CONTEXT_LIMIT)
+            .map(|hit| render_hit_context(bytes, hit))
+            .collect();
+
+        if contexts.is_empty() {
+            return String::new();
+        }
+
+        let mut rendered = String::from(" alt_contexts=");
+        rendered.push_str(&contexts.join(";"));
+        let omitted = self
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit.name, "alt_enter" | "alt_exit"))
+            .count()
+            .saturating_sub(TRACE_ALT_CONTEXT_LIMIT);
+        if omitted > 0 {
+            let _ = write!(rendered, ";...+{omitted}");
+        }
+        rendered
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,9 +243,10 @@ pub fn trace_data_from_env(role: &str, direction: &str, bytes: &[u8]) {
         role,
         "data",
         &format!(
-            "direction={direction} bytes={} sequences={}",
+            "direction={direction} bytes={} sequences={}{}",
             bytes.len(),
-            summary.render()
+            summary.render(),
+            summary.render_alt_contexts(bytes)
         ),
     );
 }
@@ -282,14 +312,14 @@ fn append_terminal_trace_event(
         std::fs::create_dir_all(parent)?;
     }
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(
-        file,
-        "ts_us={} role={} event={} {}",
+    let line = format!(
+        "ts_us={} role={} event={} {}\n",
         unix_timestamp_micros(),
         sanitize_field(role),
         sanitize_field(event),
         sanitize_detail(detail)
-    )
+    );
+    file.write_all(line.as_bytes())
 }
 
 fn collect_hits(bytes: &[u8], pattern: TerminalPattern, hits: &mut Vec<TerminalSequenceHit>) {
@@ -308,6 +338,57 @@ fn collect_hits(bytes: &[u8], pattern: TerminalPattern, hits: &mut Vec<TerminalS
             offset += 1;
         }
     }
+}
+
+fn render_hit_context(bytes: &[u8], hit: &TerminalSequenceHit) -> String {
+    let pattern_len = TERMINAL_PATTERNS
+        .iter()
+        .find(|pattern| pattern.name == hit.name)
+        .map_or(0, |pattern| pattern.bytes.len());
+    let start = hit.offset.saturating_sub(TRACE_ALT_CONTEXT_RADIUS);
+    let end = bytes
+        .len()
+        .min(hit.offset + pattern_len + TRACE_ALT_CONTEXT_RADIUS);
+    let window = &bytes[start..end];
+    format!(
+        "{}@{}[{}..{}]:hex={}:esc={}",
+        hit.name,
+        hit.offset,
+        start,
+        end,
+        hex_bytes(window),
+        escape_trace_bytes(window)
+    )
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut rendered = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(rendered, "{byte:02x}");
+    }
+    rendered
+}
+
+fn escape_trace_bytes(bytes: &[u8]) -> String {
+    let mut rendered = String::new();
+    for byte in bytes {
+        match byte {
+            b'\x1b' => rendered.push_str("\\e"),
+            b'\n' => rendered.push_str("\\n"),
+            b'\r' => rendered.push_str("\\r"),
+            b'\t' => rendered.push_str("\\t"),
+            b'\\' => rendered.push_str("\\\\"),
+            b' '..=b'~'
+                if !matches!(byte, b' ' | b';' | b':' | b'=' | b'[' | b']' | b'"' | b'\'') =>
+            {
+                rendered.push(char::from(*byte));
+            }
+            _ => {
+                let _ = write!(rendered, "\\x{byte:02x}");
+            }
+        }
+    }
+    rendered
 }
 
 fn unix_timestamp_micros() -> u128 {
@@ -352,6 +433,31 @@ mod tests {
         assert_eq!(summary.count("mouse_1006_enable"), 1);
         assert!(summary.render().contains("alt_enter=1"));
         assert!(summary.render().contains("hits="));
+    }
+
+    #[test]
+    fn renders_bounded_alt_screen_contexts() {
+        let bytes = b"before\n\x1b[?1049hdirge frame\x1b[?1049lafter";
+
+        let summary = TerminalSequenceSummary::summarize(bytes);
+        let contexts = summary.render_alt_contexts(bytes);
+
+        assert!(contexts.starts_with(" alt_contexts="));
+        assert!(contexts.contains("alt_enter@7[0..39]"));
+        assert!(contexts.contains("alt_exit@26[2..39]"));
+        assert!(contexts.contains("hex=6265666f72650a1b5b3f3130343968"));
+        assert!(contexts.contains("esc=before\\n\\e\\x5b?1049hdirge\\x20frame"));
+        assert!(!contexts.contains('\n'));
+    }
+
+    #[test]
+    fn alt_screen_context_limit_is_reported() {
+        let bytes = b"\x1b[?1049h\x1b[?1049l\x1b[?1049h\x1b[?1049l\x1b[?1049h\x1b[?1049l\x1b[?1049h\x1b[?1049l\x1b[?1049h";
+
+        let summary = TerminalSequenceSummary::summarize(bytes);
+        let contexts = summary.render_alt_contexts(bytes);
+
+        assert!(contexts.contains(";...+1"));
     }
 
     #[test]
