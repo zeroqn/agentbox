@@ -40,12 +40,14 @@ pub(crate) enum PtyMode {
 pub(crate) struct PtyOptions {
     pub(crate) mode: PtyMode,
     pub(crate) trace: bool,
+    pub(crate) suppress_focus_input: bool,
 }
 
 impl PtyOptions {
     pub(crate) const DEFAULT: Self = Self {
         mode: PtyMode::Normalized,
         trace: false,
+        suppress_focus_input: false,
     };
 }
 
@@ -131,10 +133,10 @@ pub(crate) struct Cli {
 
     #[arg(
         long = "pty",
-        value_name = "MODE[,trace]",
+        value_name = "MODE[,trace][,no-focus-input]",
         value_parser = parse_pty_arg,
-        help = "Configure managed PTY live-output diagnostics for this launched task",
-        long_help = "Configure managed PTY live-output diagnostics for this launched task. Allowed values are normalize, raw, normalize,trace, and raw,trace. The default is normalize. The trace token enables loftd-terminal.trace in the host current working directory for the new launch; guest-init writes the same workspace file through /workspace/loftd-terminal.trace. Raw and trace are independent."
+        help = "Configure managed PTY diagnostics for this launched task",
+        long_help = "Configure managed PTY diagnostics for this launched task. Allowed mode values are normalize and raw; add trace to enable loftd-terminal.trace and add no-focus-input to suppress host terminal focus reports (ESC[I and ESC[O) before initial-launch stdin is forwarded to the guest. The default is normalize with tracing and focus-input suppression disabled. The trace token writes loftd-terminal.trace in the host current working directory for the new launch; guest-init writes the same workspace file through /workspace/loftd-terminal.trace. Raw, trace, and no-focus-input are independent diagnostics."
     )]
     pty: Option<PtyOptions>,
 
@@ -519,11 +521,15 @@ fn parse_container_store_backend_arg(value: &str) -> Result<ContainerStoreBacken
 fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
     let value = value.trim();
     if value.is_empty() {
-        return Err("pty mode must be normalize or raw, optionally followed by ,trace".to_owned());
+        return Err(
+            "pty mode must be normalize or raw, optionally followed by ,trace and/or ,no-focus-input"
+                .to_owned(),
+        );
     }
 
     let mut mode = None;
     let mut trace = false;
+    let mut suppress_focus_input = false;
     for token in value.split(',') {
         let token = token.trim();
         if token.is_empty() {
@@ -546,9 +552,15 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
                 }
                 trace = true;
             }
+            "no-focus-input" => {
+                if suppress_focus_input {
+                    return Err("pty no-focus-input token must not be duplicated".to_owned());
+                }
+                suppress_focus_input = true;
+            }
             other => {
                 return Err(format!(
-                    "unsupported pty token '{other}'; use normalize, raw, or trace"
+                    "unsupported pty token '{other}'; use normalize, raw, trace, or no-focus-input"
                 ));
             }
         }
@@ -557,6 +569,7 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
     Ok(PtyOptions {
         mode: mode.ok_or_else(|| "pty mode must specify normalize or raw".to_owned())?,
         trace,
+        suppress_focus_input,
     })
 }
 
@@ -695,6 +708,7 @@ mod tests {
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.pty, PtyOptions::DEFAULT);
+        assert!(!options.pty.suppress_focus_input);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
         assert!(options.publish.is_empty());
         assert!(options.volumes.is_empty());
@@ -736,6 +750,7 @@ mod tests {
                 PtyOptions {
                     mode: PtyMode::Normalized,
                     trace: false,
+                    suppress_focus_input: false,
                 },
             ),
             (
@@ -743,6 +758,7 @@ mod tests {
                 PtyOptions {
                     mode: PtyMode::RawPassthrough,
                     trace: false,
+                    suppress_focus_input: false,
                 },
             ),
             (
@@ -750,6 +766,7 @@ mod tests {
                 PtyOptions {
                     mode: PtyMode::Normalized,
                     trace: true,
+                    suppress_focus_input: false,
                 },
             ),
             (
@@ -757,6 +774,23 @@ mod tests {
                 PtyOptions {
                     mode: PtyMode::RawPassthrough,
                     trace: true,
+                    suppress_focus_input: false,
+                },
+            ),
+            (
+                "normalize,no-focus-input",
+                PtyOptions {
+                    mode: PtyMode::Normalized,
+                    trace: false,
+                    suppress_focus_input: true,
+                },
+            ),
+            (
+                "raw,no-focus-input,trace",
+                PtyOptions {
+                    mode: PtyMode::RawPassthrough,
+                    trace: true,
+                    suppress_focus_input: true,
                 },
             ),
         ] {
@@ -777,6 +811,8 @@ mod tests {
             "normalize,raw",
             "raw,raw",
             "raw,trace,trace",
+            "normalize,no-focus-input,no-focus-input",
+            "no-focus-input",
             "raw,",
             ",raw",
             "passthrough",

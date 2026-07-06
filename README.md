@@ -1191,12 +1191,19 @@ or DEL bytes, the line also includes bounded `input_contexts=` hex and
 escaped-byte context. Terminal tracing is opt-in diagnostic output and can
 therefore include small bounded snippets of terminal input/control-byte payloads.
 The falsey values `0`, `false`, `no`, `off`, and an empty value disable the
-environment opt-in. Raw mode and tracing are independent:
+environment opt-in. Raw mode and tracing are independent. For focus-report
+diagnostics, add the `no-focus-input` token to suppress only the host terminal
+focus gained/lost reports (`ESC[I` and `ESC[O`) before initial-launch stdin is
+forwarded to the guest. This is a default-off input-side diagnostic for A/B testing suspected
+focus-report feedback loops; it does not change guest-to-host PTY output,
+detached restore frames, or later `loftd attach` sessions.
 
 ```bash
 loftd --pty=normalize,trace
 loftd --pty=raw
 loftd --pty=raw,trace
+loftd --pty=normalize,no-focus-input,trace
+loftd --pty=raw,no-focus-input,trace
 LOFTD_TERMINAL_TRACE=1 loftd --pty=normalize
 ```
 

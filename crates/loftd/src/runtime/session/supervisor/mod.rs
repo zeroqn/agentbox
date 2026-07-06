@@ -13,6 +13,7 @@ pub(crate) mod sigwinch;
 pub(crate) mod vm_child;
 
 use crate::runtime::launch::config::LaunchConfig;
+use crate::runtime::session::attach::AttachInputPolicy;
 use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::task_control::ActiveTaskSpec;
 
@@ -60,6 +61,7 @@ pub(crate) trait Supervisor {
         profiler: &mut LoftdHostProfiler,
         active_task: &ActiveTaskSpec,
         daemon_initial_attach: bool,
+        attach_input_policy: AttachInputPolicy,
     ) -> Result<ChildStatus>;
 }
 
@@ -74,6 +76,7 @@ impl Supervisor for HostSupervisor {
         profiler: &mut LoftdHostProfiler,
         active_task: &ActiveTaskSpec,
         daemon_initial_attach: bool,
+        attach_input_policy: AttachInputPolicy,
     ) -> Result<ChildStatus> {
         let config_path = task_state_dir.join("launch.conf");
         config.write_to(&config_path)?;
@@ -83,6 +86,7 @@ impl Supervisor for HostSupervisor {
             profiler,
             active_task,
             daemon_initial_attach,
+            attach_input_policy,
         )
     }
 }

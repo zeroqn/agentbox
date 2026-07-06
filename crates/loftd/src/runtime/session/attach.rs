@@ -31,6 +31,22 @@ const FRAME_HEADER_LEN: usize = 5;
 const MAX_ATTACH_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 const HOST_OUTPUT_BATCH_MAX_FRAMES: usize = 16;
 const HOST_OUTPUT_BATCH_MAX_BYTES: usize = IO_BUF_SIZE;
+const FOCUS_GAINED_INPUT: &[u8] = b"\x1b[I";
+const FOCUS_LOST_INPUT: &[u8] = b"\x1b[O";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct AttachInputPolicy {
+    pub(crate) suppress_focus_input: bool,
+}
+
+impl AttachInputPolicy {
+    fn filter_host_input(self, input: Vec<u8>) -> Vec<u8> {
+        if !self.suppress_focus_input {
+            return input;
+        }
+        strip_focus_input(input.as_slice())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttachOutcome {
@@ -77,8 +93,17 @@ pub(crate) fn attach_to_socket(socket_path: &Path) -> Result<AttachOutcome> {
     attach_stream(stream)
 }
 
-pub(crate) fn attach_to_ready_socket(socket_path: &Path, daemon: bool) -> Result<AttachOutcome> {
-    attach_to_ready_socket_with_policy(socket_path, ConnectPolicy::post_ready(), daemon)
+pub(crate) fn attach_to_ready_socket_with_input_policy(
+    socket_path: &Path,
+    daemon: bool,
+    input_policy: AttachInputPolicy,
+) -> Result<AttachOutcome> {
+    attach_to_ready_socket_with_policy(
+        socket_path,
+        ConnectPolicy::post_ready(),
+        daemon,
+        input_policy,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,14 +153,17 @@ fn attach_to_ready_socket_with_policy(
     socket_path: &Path,
     policy: ConnectPolicy,
     daemon: bool,
+    input_policy: AttachInputPolicy,
 ) -> Result<AttachOutcome> {
     let deadline = Instant::now() + policy.timeout;
     let mut last_error = None;
     while Instant::now() <= deadline {
         match UnixStream::connect(socket_path) {
             Ok(mut stream) => match read_initial_hello(&mut stream)? {
-                InitialHello::Ready if daemon => return attach_stream_after_hello_daemon(stream),
-                InitialHello::Ready => return attach_stream_after_hello(stream),
+                InitialHello::Ready if daemon => {
+                    return attach_stream_after_hello_daemon(stream, input_policy);
+                }
+                InitialHello::Ready => return attach_stream_after_hello(stream, input_policy),
                 InitialHello::ClosedBeforeHandshake => {
                     last_error = Some(anyhow!("loftd attach socket closed before handshake"));
                 }
@@ -159,7 +187,7 @@ fn attach_to_ready_socket_with_policy(
 
 fn attach_stream(mut stream: UnixStream) -> Result<AttachOutcome> {
     match read_initial_hello(&mut stream)? {
-        InitialHello::Ready => attach_stream_after_hello(stream),
+        InitialHello::Ready => attach_stream_after_hello(stream, AttachInputPolicy::default()),
         InitialHello::ClosedBeforeHandshake => bail!("loftd attach socket closed before handshake"),
         InitialHello::Busy => bail!("loftd task already has an attached client"),
     }
@@ -185,7 +213,10 @@ fn read_initial_hello(stream: &mut UnixStream) -> Result<InitialHello> {
     }
 }
 
-fn attach_stream_after_hello(mut stream: UnixStream) -> Result<AttachOutcome> {
+fn attach_stream_after_hello(
+    mut stream: UnixStream,
+    input_policy: AttachInputPolicy,
+) -> Result<AttachOutcome> {
     let initial_size = terminal_size(libc::STDIN_FILENO);
     let _raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
     write_initial_attach_frames(&mut stream, initial_size)?;
@@ -193,7 +224,7 @@ fn attach_stream_after_hello(mut stream: UnixStream) -> Result<AttachOutcome> {
     let active = Arc::new(AtomicBool::new(true));
     let stdin_writer = writer.clone();
     let stdin_active = active.clone();
-    let stdin_thread = thread::spawn(move || proxy_stdin(stdin_writer, stdin_active));
+    let stdin_thread = thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, input_policy));
 
     let outcome = proxy_remote(stream);
     active.store(false, Ordering::Release);
@@ -201,14 +232,18 @@ fn attach_stream_after_hello(mut stream: UnixStream) -> Result<AttachOutcome> {
     outcome
 }
 
-fn attach_stream_after_hello_daemon(stream: UnixStream) -> Result<AttachOutcome> {
-    attach_stream_after_hello_daemon_with_tty_check(stream, || {
+fn attach_stream_after_hello_daemon(
+    stream: UnixStream,
+    input_policy: AttachInputPolicy,
+) -> Result<AttachOutcome> {
+    attach_stream_after_hello_daemon_with_tty_check(stream, input_policy, || {
         daemon_bootstrap_tty_available(libc::STDIN_FILENO, libc::STDOUT_FILENO)
     })
 }
 
 fn attach_stream_after_hello_daemon_with_tty_check(
     mut stream: UnixStream,
+    input_policy: AttachInputPolicy,
     tty_available: impl FnOnce() -> bool,
 ) -> Result<AttachOutcome> {
     ensure_daemon_bootstrap_tty(tty_available)?;
@@ -219,7 +254,7 @@ fn attach_stream_after_hello_daemon_with_tty_check(
     let active = Arc::new(AtomicBool::new(true));
     let stdin_writer = writer.clone();
     let stdin_active = active.clone();
-    let stdin_thread = thread::spawn(move || proxy_stdin(stdin_writer, stdin_active));
+    let stdin_thread = thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, input_policy));
 
     let mut stdout = std::io::stdout().lock();
     let outcome = proxy_remote_until_daemon_idle(
@@ -277,7 +312,11 @@ where
     write_frame(writer, &Frame::Attach)
 }
 
-fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Result<()> {
+fn proxy_stdin(
+    writer: Arc<Mutex<UnixStream>>,
+    active: Arc<AtomicBool>,
+    input_policy: AttachInputPolicy,
+) -> Result<()> {
     let mut filter = DetachFilter::default();
     let mut input = std::io::stdin().lock();
     let mut buf = [0u8; IO_BUF_SIZE];
@@ -304,10 +343,12 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
             StdinReadiness::TimedOut => {
                 let mut output = Vec::new();
                 filter.flush_incomplete_escape_sequence(&mut output);
-                if !output.is_empty() {
-                    trace_data_from_env("host", "host-to-guest-stdin-flush", &output);
-                    write_to_guest(&writer, &Frame::Data(output))?;
-                }
+                write_host_input_data_to_guest(
+                    &writer,
+                    input_policy,
+                    "host-to-guest-stdin-flush",
+                    output,
+                )?;
                 continue;
             }
             StdinReadiness::Readable => {}
@@ -316,10 +357,12 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
             Ok(0) => {
                 let mut output = Vec::new();
                 filter.flush_pending(&mut output);
-                if !output.is_empty() {
-                    trace_data_from_env("host", "host-to-guest-stdin-eof", &output);
-                    let _ = write_to_guest(&writer, &Frame::Data(output));
-                }
+                let _ = write_host_input_data_to_guest(
+                    &writer,
+                    input_policy,
+                    "host-to-guest-stdin-eof",
+                    output,
+                );
                 trace_event_from_env("host", "detach", "direction=host-to-guest reason=stdin-eof");
                 let _ = write_to_guest(&writer, &Frame::Detach);
                 return Ok(());
@@ -329,10 +372,12 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
         };
         let mut output = Vec::with_capacity(n);
         if filter.push(&buf[..n], &mut output) {
-            if !output.is_empty() {
-                trace_data_from_env("host", "host-to-guest-stdin-detach", &output);
-                write_to_guest(&writer, &Frame::Data(output))?;
-            }
+            write_host_input_data_to_guest(
+                &writer,
+                input_policy,
+                "host-to-guest-stdin-detach",
+                output,
+            )?;
             trace_event_from_env(
                 "host",
                 "detach",
@@ -341,12 +386,37 @@ fn proxy_stdin(writer: Arc<Mutex<UnixStream>>, active: Arc<AtomicBool>) -> Resul
             write_to_guest(&writer, &Frame::Detach)?;
             return Ok(());
         }
-        if !output.is_empty() {
-            trace_data_from_env("host", "host-to-guest-stdin", &output);
-            write_to_guest(&writer, &Frame::Data(output))?;
-        }
+        write_host_input_data_to_guest(&writer, input_policy, "host-to-guest-stdin", output)?;
     }
     Ok(())
+}
+
+fn write_host_input_data_to_guest(
+    writer: &Arc<Mutex<UnixStream>>,
+    input_policy: AttachInputPolicy,
+    trace_label: &str,
+    output: Vec<u8>,
+) -> Result<()> {
+    let output = input_policy.filter_host_input(output);
+    if output.is_empty() {
+        return Ok(());
+    }
+    trace_data_from_env("host", trace_label, &output);
+    write_to_guest(writer, &Frame::Data(output))
+}
+
+fn strip_focus_input(input: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(input.len());
+    let mut remaining = input;
+    while !remaining.is_empty() {
+        if remaining.starts_with(FOCUS_GAINED_INPUT) || remaining.starts_with(FOCUS_LOST_INPUT) {
+            remaining = &remaining[FOCUS_GAINED_INPUT.len()..];
+        } else {
+            output.push(remaining[0]);
+            remaining = &remaining[1..];
+        }
+    }
+    output
 }
 
 fn write_to_guest(writer: &Arc<Mutex<UnixStream>>, frame: &Frame) -> Result<()> {
@@ -922,6 +992,49 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
+    fn default_attach_input_policy_preserves_focus_reports() {
+        let input = b"a\x1b[Ib\x1b[Oc".to_vec();
+
+        let output = AttachInputPolicy::default().filter_host_input(input.clone());
+
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn attach_input_policy_suppresses_exact_focus_reports() {
+        let policy = AttachInputPolicy {
+            suppress_focus_input: true,
+        };
+
+        let output = policy.filter_host_input(b"a\x1b[Ib\x1b[Oc".to_vec());
+
+        assert_eq!(output, b"abc");
+    }
+
+    #[test]
+    fn attach_input_policy_preserves_non_focus_escape_input() {
+        let policy = AttachInputPolicy {
+            suppress_focus_input: true,
+        };
+        let input = b"\x1b[0n\x1b[?62;22;52c\x1b[74;1R\x1b\x1b[".to_vec();
+
+        let output = policy.filter_host_input(input.clone());
+
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn attach_input_policy_preserves_mixed_non_focus_order() {
+        let policy = AttachInputPolicy {
+            suppress_focus_input: true,
+        };
+
+        let output = policy.filter_host_input(b"pre\x1b[0n\x1b[Imid\x1b[74;1R\x1b[Opost".to_vec());
+
+        assert_eq!(output, b"pre\x1b[0nmid\x1b[74;1Rpost");
+    }
+
+    #[test]
     fn attach_outcome_messages_are_user_visible() {
         assert_eq!(AttachOutcome::Detached.message(), "loftd: detached\n");
         assert_eq!(
@@ -991,7 +1104,9 @@ mod tests {
             write_frame(&mut client, &Frame::Exit { code: 7 }).unwrap();
         });
 
-        let outcome = attach_to_ready_socket(&socket, false).unwrap();
+        let outcome =
+            attach_to_ready_socket_with_input_policy(&socket, false, AttachInputPolicy::default())
+                .unwrap();
 
         assert_eq!(outcome, AttachOutcome::Exited(7));
         server.join().unwrap();
@@ -1046,8 +1161,12 @@ mod tests {
             assert_eq!(read_frame(&mut server).unwrap(), None);
         });
 
-        let err = attach_stream_after_hello_daemon_with_tty_check(client, || false)
-            .expect_err("daemon attach should fail when TTY bootstrap is unavailable");
+        let err = attach_stream_after_hello_daemon_with_tty_check(
+            client,
+            AttachInputPolicy::default(),
+            || false,
+        )
+        .expect_err("daemon attach should fail when TTY bootstrap is unavailable");
 
         assert!(
             format!("{err:#}").contains("requires stdin and stdout"),
@@ -1147,7 +1266,9 @@ mod tests {
             write_frame(&mut client, &Frame::Exit { code: 0 }).unwrap();
         });
 
-        let outcome = attach_to_ready_socket(&socket, false).unwrap();
+        let outcome =
+            attach_to_ready_socket_with_input_policy(&socket, false, AttachInputPolicy::default())
+                .unwrap();
 
         assert_eq!(outcome, AttachOutcome::Exited(0));
         server.join().unwrap();

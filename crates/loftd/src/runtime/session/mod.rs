@@ -23,6 +23,7 @@ mod terminal_env;
 use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec, ManagedSessionConfig};
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
+use attach::AttachInputPolicy;
 use loftd_attach_protocol::{
     DEFAULT_ATTACH_PORT, PROTOCOL_VERSION,
     terminal_trace::{
@@ -81,6 +82,9 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
         profile_scope.started_at(),
     );
     let pty = options.pty;
+    let attach_input_policy = AttachInputPolicy {
+        suppress_focus_input: pty.suppress_focus_input,
+    };
     let cwd = profiler.measure_result("workspace_canonicalization", || {
         env::current_dir()?
             .canonicalize()
@@ -286,6 +290,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                                 profiler,
                                                 &active_task,
                                                 plan.daemon,
+                                                attach_input_policy,
                                             )
                                         },
                                     ),

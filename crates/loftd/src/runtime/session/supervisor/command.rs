@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::logging::INTERNAL_LOG_LEVEL_ENV;
 use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::seccomp;
-use crate::runtime::session::attach::{self, AttachOutcome};
+use crate::runtime::session::attach::{self, AttachInputPolicy, AttachOutcome};
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
 use crate::runtime::session::supervisor::readiness_pipe::{ParentReadyPipe, READY_FD_ENV};
@@ -27,6 +27,7 @@ pub(crate) fn run_helper_process(
     profiler: &mut LoftdHostProfiler,
     active_task: &ActiveTaskSpec,
     daemon_initial_attach: bool,
+    attach_input_policy: AttachInputPolicy,
 ) -> Result<ChildStatus> {
     let host_profile_enabled = profiler.is_enabled();
     let mut ready_pipe = if config.managed_session.is_some() {
@@ -126,7 +127,11 @@ pub(crate) fn run_helper_process(
             ));
         }
         let attach_result = profiler.measure_result("helper_initial_attach", || {
-            attach::attach_to_ready_socket(&managed.attach_socket, daemon_initial_attach)
+            attach::attach_to_ready_socket_with_input_policy(
+                &managed.attach_socket,
+                daemon_initial_attach,
+                attach_input_policy,
+            )
         });
         return match attach_result {
             Ok(AttachOutcome::Detached) => Ok(ChildStatus::detached()),
