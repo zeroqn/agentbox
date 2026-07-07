@@ -1,5 +1,5 @@
 {
-  agentboxVersion = "0.1.0";
+  agentboxVersion = "0.4.0";
 
   ohMyCodex = {
     version = "0.18.14";
