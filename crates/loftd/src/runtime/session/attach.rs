@@ -33,18 +33,111 @@ const HOST_OUTPUT_BATCH_MAX_FRAMES: usize = 16;
 const HOST_OUTPUT_BATCH_MAX_BYTES: usize = IO_BUF_SIZE;
 const FOCUS_GAINED_INPUT: &[u8] = b"\x1b[I";
 const FOCUS_LOST_INPUT: &[u8] = b"\x1b[O";
+const FOCUS_REPORT_ENABLE_OUTPUT: &[u8] = b"\x1b[?1004h";
+const FOCUS_STARTUP_GUARD_WINDOW: Duration = Duration::from_millis(750);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AttachInputPolicy {
-    pub(crate) suppress_focus_input: bool,
+    suppress_focus_input: bool,
+    focus_startup_guard: Option<Arc<Mutex<FocusStartupGuard>>>,
 }
 
 impl AttachInputPolicy {
-    fn filter_host_input(self, input: Vec<u8>) -> Vec<u8> {
-        if !self.suppress_focus_input {
+    pub(crate) fn new(suppress_focus_input: bool, focus_startup_guard: bool) -> Self {
+        Self {
+            suppress_focus_input,
+            focus_startup_guard: focus_startup_guard
+                .then(|| Arc::new(Mutex::new(FocusStartupGuard::default()))),
+        }
+    }
+
+    fn filter_host_input(&self, input: Vec<u8>) -> Vec<u8> {
+        self.filter_host_input_at(input, Instant::now())
+    }
+
+    fn filter_host_input_at(&self, input: Vec<u8>, now: Instant) -> Vec<u8> {
+        if self.suppress_focus_input {
+            return strip_focus_input(input.as_slice());
+        }
+        let Some(guard) = &self.focus_startup_guard else {
+            return input;
+        };
+        match guard.lock() {
+            Ok(mut guard) => guard.filter_host_input_at(input, now),
+            Err(_) => input,
+        }
+    }
+
+    fn observe_guest_output(&self, output: &[u8]) {
+        self.observe_guest_output_at(output, Instant::now());
+    }
+
+    fn observe_guest_output_at(&self, output: &[u8], now: Instant) {
+        let Some(guard) = &self.focus_startup_guard else {
+            return;
+        };
+        if let Ok(mut guard) = guard.lock() {
+            guard.observe_guest_output_at(output, now);
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct FocusStartupGuard {
+    active_until: Option<Instant>,
+    output_suffix: Vec<u8>,
+}
+
+impl FocusStartupGuard {
+    fn observe_guest_output_at(&mut self, output: &[u8], now: Instant) {
+        let mut search = Vec::with_capacity(self.output_suffix.len() + output.len());
+        search.extend_from_slice(&self.output_suffix);
+        search.extend_from_slice(output);
+        if contains_subslice(&search, FOCUS_REPORT_ENABLE_OUTPUT) {
+            self.active_until = Some(now + FOCUS_STARTUP_GUARD_WINDOW);
+        }
+        self.update_output_suffix(&search);
+    }
+
+    fn filter_host_input_at(&mut self, input: Vec<u8>, now: Instant) -> Vec<u8> {
+        if !self.is_active_at(now) {
             return input;
         }
-        strip_focus_input(input.as_slice())
+        self.filter_guarded_host_input(input.as_slice())
+    }
+
+    fn filter_guarded_host_input(&mut self, input: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(input.len());
+        let mut remaining = input;
+        while !remaining.is_empty() {
+            if remaining.starts_with(FOCUS_GAINED_INPUT) || remaining.starts_with(FOCUS_LOST_INPUT)
+            {
+                remaining = &remaining[FOCUS_GAINED_INPUT.len()..];
+            } else {
+                output.extend_from_slice(remaining);
+                self.active_until = None;
+                return output;
+            }
+        }
+        output
+    }
+
+    fn is_active_at(&mut self, now: Instant) -> bool {
+        match self.active_until {
+            Some(active_until) if now < active_until => true,
+            Some(_) => {
+                self.active_until = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn update_output_suffix(&mut self, bytes: &[u8]) {
+        let suffix_len = FOCUS_REPORT_ENABLE_OUTPUT.len().saturating_sub(1);
+        let start = bytes.len().saturating_sub(suffix_len);
+        self.output_suffix.clear();
+        self.output_suffix.extend_from_slice(&bytes[start..]);
     }
 }
 
@@ -224,9 +317,11 @@ fn attach_stream_after_hello(
     let active = Arc::new(AtomicBool::new(true));
     let stdin_writer = writer.clone();
     let stdin_active = active.clone();
-    let stdin_thread = thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, input_policy));
+    let stdin_input_policy = input_policy.clone();
+    let stdin_thread =
+        thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, stdin_input_policy));
 
-    let outcome = proxy_remote(stream);
+    let outcome = proxy_remote(stream, &input_policy);
     active.store(false, Ordering::Release);
     let _ = stdin_thread.join();
     outcome
@@ -254,7 +349,9 @@ fn attach_stream_after_hello_daemon_with_tty_check(
     let active = Arc::new(AtomicBool::new(true));
     let stdin_writer = writer.clone();
     let stdin_active = active.clone();
-    let stdin_thread = thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, input_policy));
+    let stdin_input_policy = input_policy.clone();
+    let stdin_thread =
+        thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, stdin_input_policy));
 
     let mut stdout = std::io::stdout().lock();
     let outcome = proxy_remote_until_daemon_idle(
@@ -263,6 +360,7 @@ fn attach_stream_after_hello_daemon_with_tty_check(
         &mut stdout,
         DAEMON_BOOTSTRAP_TIMEOUT,
         DAEMON_OUTPUT_IDLE_TIMEOUT,
+        &input_policy,
     );
     active.store(false, Ordering::Release);
     let _ = stdin_thread.join();
@@ -345,7 +443,7 @@ fn proxy_stdin(
                 filter.flush_incomplete_escape_sequence(&mut output);
                 write_host_input_data_to_guest(
                     &writer,
-                    input_policy,
+                    &input_policy,
                     "host-to-guest-stdin-flush",
                     output,
                 )?;
@@ -359,7 +457,7 @@ fn proxy_stdin(
                 filter.flush_pending(&mut output);
                 let _ = write_host_input_data_to_guest(
                     &writer,
-                    input_policy,
+                    &input_policy,
                     "host-to-guest-stdin-eof",
                     output,
                 );
@@ -374,7 +472,7 @@ fn proxy_stdin(
         if filter.push(&buf[..n], &mut output) {
             write_host_input_data_to_guest(
                 &writer,
-                input_policy,
+                &input_policy,
                 "host-to-guest-stdin-detach",
                 output,
             )?;
@@ -386,14 +484,14 @@ fn proxy_stdin(
             write_to_guest(&writer, &Frame::Detach)?;
             return Ok(());
         }
-        write_host_input_data_to_guest(&writer, input_policy, "host-to-guest-stdin", output)?;
+        write_host_input_data_to_guest(&writer, &input_policy, "host-to-guest-stdin", output)?;
     }
     Ok(())
 }
 
 fn write_host_input_data_to_guest(
     writer: &Arc<Mutex<UnixStream>>,
-    input_policy: AttachInputPolicy,
+    input_policy: &AttachInputPolicy,
     trace_label: &str,
     output: Vec<u8>,
 ) -> Result<()> {
@@ -417,6 +515,12 @@ fn strip_focus_input(input: &[u8]) -> Vec<u8> {
         }
     }
     output
+}
+
+fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 fn write_to_guest(writer: &Arc<Mutex<UnixStream>>, frame: &Frame) -> Result<()> {
@@ -469,7 +573,7 @@ fn size_changed(
     }
 }
 
-fn proxy_remote(mut stream: UnixStream) -> Result<AttachOutcome> {
+fn proxy_remote(mut stream: UnixStream, input_policy: &AttachInputPolicy) -> Result<AttachOutcome> {
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
     proxy_remote_unix_with_profile(
@@ -477,6 +581,7 @@ fn proxy_remote(mut stream: UnixStream) -> Result<AttachOutcome> {
         &mut stdout,
         &mut stderr,
         HostAttachProfiler::from_process_env(),
+        input_policy,
     )
 }
 
@@ -485,13 +590,14 @@ fn proxy_remote_unix_with_profile<W, E>(
     stdout: &mut W,
     stderr: &mut E,
     mut profiler: HostAttachProfiler,
+    input_policy: &AttachInputPolicy,
 ) -> Result<AttachOutcome>
 where
     W: Write,
     E: Write,
 {
     let mut source = UnixRemoteFrameReader::new(stream);
-    let result = proxy_remote_loop(&mut source, stdout, &mut profiler);
+    let result = proxy_remote_loop(&mut source, stdout, &mut profiler, input_policy);
     let report = profiler.report_to(stderr);
     if let Err(err) = report {
         return Err(err).context("failed to write loftd attach profile report");
@@ -512,7 +618,12 @@ where
     E: Write,
 {
     let mut source = BlockingRemoteFrameReader::new(stream);
-    let result = proxy_remote_loop(&mut source, stdout, &mut profiler);
+    let result = proxy_remote_loop(
+        &mut source,
+        stdout,
+        &mut profiler,
+        &AttachInputPolicy::default(),
+    );
     let report = profiler.report_to(stderr);
     if let Err(err) = report {
         return Err(err).context("failed to write loftd attach profile report");
@@ -524,6 +635,7 @@ fn proxy_remote_loop<S, W>(
     source: &mut S,
     stdout: &mut W,
     profiler: &mut HostAttachProfiler,
+    input_policy: &AttachInputPolicy,
 ) -> Result<AttachOutcome>
 where
     S: RemoteFrameSource,
@@ -533,6 +645,7 @@ where
         let frame = source.read_frame(profiler)?;
         match frame {
             Some(Frame::Data(data)) => {
+                input_policy.observe_guest_output(&data);
                 trace_data_from_env("host", "guest-to-host-stdout", &data);
                 let mut batch = StdoutBatch::new();
                 batch.push_data(data, profiler);
@@ -543,6 +656,7 @@ where
                     }
                     match source.try_read_frame(profiler)? {
                         TryRemoteFrame::Frame(Frame::Data(data)) => {
+                            input_policy.observe_guest_output(&data);
                             trace_data_from_env("host", "guest-to-host-stdout", &data);
                             if !batch.can_accept(data.len()) {
                                 batch.flush_to(stdout, profiler)?;
@@ -809,6 +923,7 @@ fn proxy_remote_until_daemon_idle<W: Write>(
     stdout: &mut W,
     startup_timeout: Duration,
     idle_timeout: Duration,
+    input_policy: &AttachInputPolicy,
 ) -> Result<AttachOutcome> {
     let mut stderr = std::io::stderr().lock();
     proxy_remote_until_daemon_idle_with_profile(
@@ -816,10 +931,19 @@ fn proxy_remote_until_daemon_idle<W: Write>(
         writer,
         stdout,
         &mut stderr,
-        startup_timeout,
-        idle_timeout,
+        DaemonIdleTimeouts {
+            startup: startup_timeout,
+            idle: idle_timeout,
+        },
         HostAttachProfiler::from_process_env(),
+        input_policy,
     )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DaemonIdleTimeouts {
+    startup: Duration,
+    idle: Duration,
 }
 
 fn proxy_remote_until_daemon_idle_with_profile<W: Write, E: Write>(
@@ -827,17 +951,17 @@ fn proxy_remote_until_daemon_idle_with_profile<W: Write, E: Write>(
     writer: &Arc<Mutex<UnixStream>>,
     stdout: &mut W,
     stderr: &mut E,
-    startup_timeout: Duration,
-    idle_timeout: Duration,
+    timeouts: DaemonIdleTimeouts,
     mut profiler: HostAttachProfiler,
+    input_policy: &AttachInputPolicy,
 ) -> Result<AttachOutcome> {
     let result = proxy_remote_until_daemon_idle_loop(
         stream,
         writer,
         stdout,
-        startup_timeout,
-        idle_timeout,
+        timeouts,
         &mut profiler,
+        input_policy,
     );
     let report = profiler.report_to(stderr);
     if let Err(err) = report {
@@ -850,15 +974,15 @@ fn proxy_remote_until_daemon_idle_loop<W: Write>(
     stream: &mut UnixStream,
     writer: &Arc<Mutex<UnixStream>>,
     stdout: &mut W,
-    startup_timeout: Duration,
-    idle_timeout: Duration,
+    timeouts: DaemonIdleTimeouts,
     profiler: &mut HostAttachProfiler,
+    input_policy: &AttachInputPolicy,
 ) -> Result<AttachOutcome> {
-    let startup_deadline = Instant::now() + startup_timeout;
+    let startup_deadline = Instant::now() + timeouts.startup;
     let mut saw_output = false;
     loop {
         let timeout = if saw_output {
-            idle_timeout
+            timeouts.idle
         } else {
             startup_deadline
                 .checked_duration_since(Instant::now())
@@ -879,6 +1003,7 @@ fn proxy_remote_until_daemon_idle_loop<W: Write>(
         let frame = read_profiled_frame(stream, profiler)?;
         match frame {
             Some(Frame::Data(data)) => {
+                input_policy.observe_guest_output(&data);
                 trace_data_from_env("host", "guest-to-host-stdout", &data);
                 let mut batch = StdoutBatch::new();
                 batch.push_data(data, profiler);
@@ -1002,9 +1127,7 @@ mod tests {
 
     #[test]
     fn attach_input_policy_suppresses_exact_focus_reports() {
-        let policy = AttachInputPolicy {
-            suppress_focus_input: true,
-        };
+        let policy = AttachInputPolicy::new(true, false);
 
         let output = policy.filter_host_input(b"a\x1b[Ib\x1b[Oc".to_vec());
 
@@ -1013,9 +1136,7 @@ mod tests {
 
     #[test]
     fn attach_input_policy_preserves_non_focus_escape_input() {
-        let policy = AttachInputPolicy {
-            suppress_focus_input: true,
-        };
+        let policy = AttachInputPolicy::new(true, false);
         let input = b"\x1b[0n\x1b[?62;22;52c\x1b[74;1R\x1b\x1b[".to_vec();
 
         let output = policy.filter_host_input(input.clone());
@@ -1025,13 +1146,116 @@ mod tests {
 
     #[test]
     fn attach_input_policy_preserves_mixed_non_focus_order() {
-        let policy = AttachInputPolicy {
-            suppress_focus_input: true,
-        };
+        let policy = AttachInputPolicy::new(true, false);
 
         let output = policy.filter_host_input(b"pre\x1b[0n\x1b[Imid\x1b[74;1R\x1b[Opost".to_vec());
 
         assert_eq!(output, b"pre\x1b[0nmid\x1b[74;1Rpost");
+    }
+
+    #[test]
+    fn focus_startup_guard_suppresses_focus_reports_after_focus_enable_output() {
+        let policy = AttachInputPolicy::new(false, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?1004h", now);
+        let output = policy.filter_host_input_at(b"\x1b[I\x1b[O".to_vec(), now);
+
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn focus_startup_guard_clears_after_forwarding_non_focus_input() {
+        let policy = AttachInputPolicy::new(false, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?1004h", now);
+        let first = policy.filter_host_input_at(b"\x1b[Ia".to_vec(), now);
+        let second = policy.filter_host_input_at(b"\x1b[O".to_vec(), now);
+
+        assert_eq!(first, b"a");
+        assert_eq!(second, b"\x1b[O");
+    }
+
+    #[test]
+    fn focus_startup_guard_clears_within_same_input_batch() {
+        let policy = AttachInputPolicy::new(false, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?1004h", now);
+        let output = policy.filter_host_input_at(b"\x1b[Ia\x1b[Ob".to_vec(), now);
+
+        assert_eq!(output, b"a\x1b[Ob");
+    }
+
+    #[test]
+    fn focus_startup_guard_preserves_batch_when_non_focus_precedes_focus() {
+        let policy = AttachInputPolicy::new(false, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?1004h", now);
+        let output = policy.filter_host_input_at(b"a\x1b[I".to_vec(), now);
+
+        assert_eq!(output, b"a\x1b[I");
+    }
+
+    #[test]
+    fn focus_startup_guard_expires_after_bounded_window() {
+        let policy = AttachInputPolicy::new(false, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?1004h", now);
+        let output = policy.filter_host_input_at(
+            b"\x1b[I".to_vec(),
+            now + FOCUS_STARTUP_GUARD_WINDOW + Duration::from_millis(1),
+        );
+
+        assert_eq!(output, b"\x1b[I");
+    }
+
+    #[test]
+    fn focus_startup_guard_restarts_after_reasserted_focus_enable_output() {
+        let policy = AttachInputPolicy::new(false, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?1004h", now);
+        policy.observe_guest_output_at(b"\x1b[?1004h", now + Duration::from_millis(600));
+        let output = policy.filter_host_input_at(b"\x1b[I".to_vec(), now + Duration::from_secs(1));
+
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn focus_startup_guard_detects_focus_enable_split_across_output_chunks() {
+        let policy = AttachInputPolicy::new(false, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?", now);
+        assert_eq!(
+            policy.filter_host_input_at(b"\x1b[I".to_vec(), now),
+            b"\x1b[I"
+        );
+        policy.observe_guest_output_at(b"1004h", now);
+
+        assert!(
+            policy
+                .filter_host_input_at(b"\x1b[I".to_vec(), now)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn no_focus_input_takes_precedence_over_focus_startup_guard_timeout() {
+        let policy = AttachInputPolicy::new(true, true);
+        let now = Instant::now();
+
+        policy.observe_guest_output_at(b"\x1b[?1004h", now);
+        let output = policy.filter_host_input_at(
+            b"a\x1b[Ib\x1b[Oc".to_vec(),
+            now + FOCUS_STARTUP_GUARD_WINDOW + Duration::from_millis(1),
+        );
+
+        assert_eq!(output, b"abc");
     }
 
     #[test]
@@ -1191,11 +1415,39 @@ mod tests {
             &mut output,
             Duration::from_secs(1),
             Duration::from_millis(20),
+            &AttachInputPolicy::default(),
         )
         .unwrap();
 
         assert_eq!(outcome, AttachOutcome::Detached);
         assert_eq!(output, b"fish> ");
+        server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_remote_proxy_observes_focus_enable_for_startup_guard() {
+        let policy = AttachInputPolicy::new(false, true);
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let writer = Arc::new(Mutex::new(client.try_clone().unwrap()));
+        let server_thread = thread::spawn(move || {
+            write_frame(&mut server, &Frame::Data(b"\x1b[?1004h".to_vec())).unwrap();
+            assert_eq!(read_frame(&mut server).unwrap(), Some(Frame::Detach));
+        });
+        let mut output = Vec::new();
+
+        let outcome = proxy_remote_until_daemon_idle(
+            &mut client,
+            &writer,
+            &mut output,
+            Duration::from_secs(1),
+            Duration::from_millis(20),
+            &policy,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(output, b"\x1b[?1004h");
+        assert!(policy.filter_host_input(b"\x1b[I".to_vec()).is_empty());
         server_thread.join().unwrap();
     }
 
@@ -1215,6 +1467,7 @@ mod tests {
             &mut output,
             Duration::from_secs(1),
             Duration::from_millis(200),
+            &AttachInputPolicy::default(),
         )
         .unwrap();
 
@@ -1235,6 +1488,7 @@ mod tests {
             &mut output,
             Duration::from_millis(20),
             Duration::from_millis(20),
+            &AttachInputPolicy::default(),
         )
         .expect_err("daemon bootstrap should require initial output before detach");
 
@@ -1350,6 +1604,7 @@ mod tests {
             &mut stdout,
             &mut stderr,
             HostAttachProfiler::new(true),
+            &AttachInputPolicy::default(),
         )
         .unwrap();
 
@@ -1366,6 +1621,29 @@ mod tests {
         assert!(stderr.contains("stdout_batch_frames_avg=3"));
         assert!(stderr.contains("stdout_write_count=1"));
         assert!(stderr.contains("stdout_flush_count=1"));
+    }
+
+    #[test]
+    fn unix_remote_proxy_observes_focus_enable_for_startup_guard() {
+        let policy = AttachInputPolicy::new(false, true);
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        write_frame(&mut server, &Frame::Data(b"\x1b[?1004h".to_vec())).unwrap();
+        write_frame(&mut server, &Frame::Detach).unwrap();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let outcome = proxy_remote_unix_with_profile(
+            &mut client,
+            &mut stdout,
+            &mut stderr,
+            HostAttachProfiler::new(true),
+            &policy,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Detached);
+        assert_eq!(stdout, b"\x1b[?1004h");
+        assert!(policy.filter_host_input(b"\x1b[I".to_vec()).is_empty());
     }
 
     struct NotifyingWriter {
@@ -1422,6 +1700,7 @@ mod tests {
             &mut stdout,
             &mut stderr,
             HostAttachProfiler::new(true),
+            &AttachInputPolicy::default(),
         )
         .unwrap();
 
@@ -1452,6 +1731,7 @@ mod tests {
             &mut stdout,
             &mut stderr,
             HostAttachProfiler::new(true),
+            &AttachInputPolicy::default(),
         )
         .unwrap();
 
@@ -1482,6 +1762,7 @@ mod tests {
             &mut stdout,
             &mut stderr,
             HostAttachProfiler::new(true),
+            &AttachInputPolicy::default(),
         )
         .unwrap();
 
@@ -1533,9 +1814,12 @@ mod tests {
             &writer,
             &mut output,
             &mut stderr,
-            Duration::from_secs(1),
-            Duration::from_millis(20),
+            DaemonIdleTimeouts {
+                startup: Duration::from_secs(1),
+                idle: Duration::from_millis(20),
+            },
             HostAttachProfiler::new(true),
+            &AttachInputPolicy::default(),
         )
         .unwrap();
 

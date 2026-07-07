@@ -41,6 +41,7 @@ pub(crate) struct PtyOptions {
     pub(crate) mode: PtyMode,
     pub(crate) trace: bool,
     pub(crate) suppress_focus_input: bool,
+    pub(crate) focus_startup_guard: bool,
 }
 
 impl PtyOptions {
@@ -48,6 +49,7 @@ impl PtyOptions {
         mode: PtyMode::Normalized,
         trace: false,
         suppress_focus_input: false,
+        focus_startup_guard: false,
     };
 }
 
@@ -133,10 +135,10 @@ pub(crate) struct Cli {
 
     #[arg(
         long = "pty",
-        value_name = "[MODE,][trace][,no-focus-input]",
+        value_name = "[MODE,][trace][,no-focus-input][,focus-startup-guard]",
         value_parser = parse_pty_arg,
         help = "Configure managed PTY diagnostics for this launched task",
-        long_help = "Configure managed PTY diagnostics for this launched task. Allowed mode values are normalize and raw; omit the mode to use normalize with modifier-only forms such as trace or no-focus-input. Add trace to enable loftd-terminal.trace and add no-focus-input to suppress host terminal focus reports (ESC[I and ESC[O) before initial-launch stdin is forwarded to the guest. The default is normalize with tracing and focus-input suppression disabled. The trace token writes loftd-terminal.trace in the host current working directory for the new launch; guest-init writes the same workspace file through /workspace/loftd-terminal.trace. Raw, trace, and no-focus-input are independent diagnostics."
+        long_help = "Configure managed PTY diagnostics for this launched task. Allowed mode values are normalize and raw; omit the mode to use normalize with modifier-only forms such as trace, no-focus-input, or focus-startup-guard. Add trace to enable loftd-terminal.trace; add no-focus-input to suppress all host terminal focus reports (ESC[I and ESC[O); add focus-startup-guard to suppress exact focus reports only for a short startup/reassertion window after the guest enables focus reporting. The default is normalize with tracing and focus-input suppression disabled. The trace token writes loftd-terminal.trace in the host current working directory for the new launch; guest-init writes the same workspace file through /workspace/loftd-terminal.trace. Raw, trace, no-focus-input, and focus-startup-guard are independent diagnostics."
     )]
     pty: Option<PtyOptions>,
 
@@ -521,12 +523,16 @@ fn parse_container_store_backend_arg(value: &str) -> Result<ContainerStoreBacken
 fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
     let value = value.trim();
     if value.is_empty() {
-        return Err("pty value must include normalize, raw, trace, or no-focus-input".to_owned());
+        return Err(
+            "pty value must include normalize, raw, trace, no-focus-input, or focus-startup-guard"
+                .to_owned(),
+        );
     }
 
     let mut mode = None;
     let mut trace = false;
     let mut suppress_focus_input = false;
+    let mut focus_startup_guard = false;
     for token in value.split(',') {
         let token = token.trim();
         if token.is_empty() {
@@ -555,9 +561,15 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
                 }
                 suppress_focus_input = true;
             }
+            "focus-startup-guard" => {
+                if focus_startup_guard {
+                    return Err("pty focus-startup-guard token must not be duplicated".to_owned());
+                }
+                focus_startup_guard = true;
+            }
             other => {
                 return Err(format!(
-                    "unsupported pty token '{other}'; use normalize, raw, trace, or no-focus-input"
+                    "unsupported pty token '{other}'; use normalize, raw, trace, no-focus-input, or focus-startup-guard"
                 ));
             }
         }
@@ -567,6 +579,7 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
         mode: mode.unwrap_or(PtyMode::Normalized),
         trace,
         suppress_focus_input,
+        focus_startup_guard,
     })
 }
 
@@ -706,6 +719,7 @@ mod tests {
         assert!(options.debug);
         assert_eq!(options.pty, PtyOptions::DEFAULT);
         assert!(!options.pty.suppress_focus_input);
+        assert!(!options.pty.focus_startup_guard);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
         assert!(options.publish.is_empty());
         assert!(options.volumes.is_empty());
@@ -748,6 +762,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: false,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -756,6 +771,7 @@ mod tests {
                     mode: PtyMode::RawPassthrough,
                     trace: false,
                     suppress_focus_input: false,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -764,6 +780,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: true,
                     suppress_focus_input: false,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -772,6 +789,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: true,
                     suppress_focus_input: false,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -780,6 +798,7 @@ mod tests {
                     mode: PtyMode::RawPassthrough,
                     trace: true,
                     suppress_focus_input: false,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -788,6 +807,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: true,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -796,6 +816,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: true,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -804,6 +825,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: true,
                     suppress_focus_input: true,
+                    focus_startup_guard: false,
                 },
             ),
             (
@@ -812,6 +834,43 @@ mod tests {
                     mode: PtyMode::RawPassthrough,
                     trace: true,
                     suppress_focus_input: true,
+                    focus_startup_guard: false,
+                },
+            ),
+            (
+                "focus-startup-guard",
+                PtyOptions {
+                    mode: PtyMode::Normalized,
+                    trace: false,
+                    suppress_focus_input: false,
+                    focus_startup_guard: true,
+                },
+            ),
+            (
+                "trace,focus-startup-guard",
+                PtyOptions {
+                    mode: PtyMode::Normalized,
+                    trace: true,
+                    suppress_focus_input: false,
+                    focus_startup_guard: true,
+                },
+            ),
+            (
+                "raw,focus-startup-guard,trace",
+                PtyOptions {
+                    mode: PtyMode::RawPassthrough,
+                    trace: true,
+                    suppress_focus_input: false,
+                    focus_startup_guard: true,
+                },
+            ),
+            (
+                "normalize,no-focus-input,focus-startup-guard",
+                PtyOptions {
+                    mode: PtyMode::Normalized,
+                    trace: false,
+                    suppress_focus_input: true,
+                    focus_startup_guard: true,
                 },
             ),
         ] {
@@ -834,6 +893,7 @@ mod tests {
             "raw,trace,trace",
             "normalize,no-focus-input,no-focus-input",
             "no-focus-input,no-focus-input",
+            "focus-startup-guard,focus-startup-guard",
             "raw,",
             ",raw",
             "passthrough",

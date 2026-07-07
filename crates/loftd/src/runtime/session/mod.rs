@@ -82,9 +82,8 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
         profile_scope.started_at(),
     );
     let pty = options.pty;
-    let attach_input_policy = AttachInputPolicy {
-        suppress_focus_input: pty.suppress_focus_input,
-    };
+    let attach_input_policy =
+        AttachInputPolicy::new(pty.suppress_focus_input, pty.focus_startup_guard);
     let cwd = profiler.measure_result("workspace_canonicalization", || {
         env::current_dir()?
             .canonicalize()
