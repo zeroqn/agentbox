@@ -23,12 +23,35 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
 
+      - name: Restore release sccache
+        uses: actions/cache@v4
+        with:
+          path: .ci-sccache
+          key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-${{ hashFiles('Cargo.lock', 'flake.lock', 'nix/pins.nix') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-
+            sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-
+
+      - name: Prepare release sccache directory
+        run: |
+          mkdir -p .ci-sccache
+          chmod -R a+rwX .ci-sccache
+
       - name: Build release binaries
         run: |
           set -euo pipefail
 
-          nix build .#agentbox-musl -o result-agentbox-musl
-          nix build .#loftd -o result-loftd
+          sccache_sandbox_path="/nix/var/cache/sccache=${GITHUB_WORKSPACE}/.ci-sccache"
+
+          nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#agentbox-musl-ci-sccache -o result-agentbox-musl
+          nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#loftd-ci-sccache -o result-loftd
+
+      - name: Normalize release sccache permissions
+        if: always()
+        run: |
+          if [ -d .ci-sccache ]; then
+            chmod -R a+rwX .ci-sccache
+          fi
 
       - name: Prepare and smoke-test release artifacts
         id: prep

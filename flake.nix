@@ -31,6 +31,10 @@
           dirge = import ./nix/pkgs/dirge.nix {
             inherit pkgs pins;
           };
+          dirgeCiSccache = import ./nix/pkgs/dirge.nix {
+            inherit pkgs pins;
+            enableCiSccache = true;
+          };
           ompPrebuilt = import ./nix/pkgs/omp-prebuilt.nix {
             inherit pkgs pins;
           };
@@ -72,21 +76,34 @@
               libkrunfw
               ;
           };
+          rustPackagesCiSccache = import ./nix/pkgs/agentbox-rust.nix {
+            inherit
+              self
+              pkgs
+              pins
+              libkrun
+              libkrunfw
+              ;
+            enableCiSccache = true;
+          };
           crun = import ./nix/pkgs/crun.nix {
             inherit pkgs libkrun libkrunfw;
           };
           podman = pkgs.podman.override {
             inherit crun;
           };
-          mkImage =
-            imageVariant:
+          mkImageWith =
+            {
+              imageVariant,
+              dirgePackage,
+              agentboxMuslPackage,
+            }:
             import ./nix/image/container.nix {
               inherit
                 pkgs
 
                 ohMyCodex
                 piCodingAgent
-                dirge
                 ompPrebuilt
                 rmuxPrebuilt
                 rtkPrebuilt
@@ -96,30 +113,53 @@
                 crun
                 imageVariant
                 ;
+              dirge = dirgePackage;
+              inherit agentboxMuslPackage;
+            };
+          mkImage =
+            imageVariant:
+            mkImageWith {
+              inherit imageVariant;
+              dirgePackage = dirge;
               agentboxMuslPackage = rustPackages.agentboxMuslPackage;
+            };
+          mkImageCiSccache =
+            imageVariant:
+            mkImageWith {
+              inherit imageVariant;
+              dirgePackage = dirgeCiSccache;
+              agentboxMuslPackage = rustPackagesCiSccache.agentboxMuslPackage;
             };
           loftdImage = mkImage "loftd";
           agentboxImage = mkImage "agentbox";
+          loftdImageCiSccache = mkImageCiSccache "loftd";
+          agentboxImageCiSccache = mkImageCiSccache "agentbox";
         in
         {
           default = rustPackages.rustPackage;
           oh-my-codex = ohMyCodex;
           pi-coding-agent = piCodingAgent;
           dirge = dirge;
+          dirge-ci-sccache = dirgeCiSccache;
           omp-prebuilt = ompPrebuilt;
           rmux-prebuilt = rmuxPrebuilt;
           symposium = symposium;
           agentbox = rustPackages.rustPackage;
+          agentbox-ci-sccache = rustPackagesCiSccache.rustPackage;
           loftd = rustPackages.rustPackage;
+          loftd-ci-sccache = rustPackagesCiSccache.rustPackage;
           agentbox-prebuilt = prebuiltAgentbox;
           loftd-prebuilt = prebuiltLoftd;
           agentbox-musl = rustPackages.agentboxMuslPackage;
+          agentbox-musl-ci-sccache = rustPackagesCiSccache.agentboxMuslPackage;
           agentbox-container = agentboxImage;
+          agentbox-container-ci-sccache = agentboxImageCiSccache;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
           crun = crun;
           podman = podman;
           container = loftdImage;
+          container-ci-sccache = loftdImageCiSccache;
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
         }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {

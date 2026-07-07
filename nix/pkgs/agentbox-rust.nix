@@ -1,6 +1,19 @@
-{ self, pkgs, pins, libkrun ? null, libkrunfw ? null }:
+{
+  self,
+  pkgs,
+  pins,
+  libkrun ? null,
+  libkrunfw ? null,
+  enableCiSccache ? false,
+}:
 let
   agentboxVersion = pins.agentboxVersion;
+  ciSccacheNativeBuildInputs = pkgs.lib.optionals enableCiSccache [ pkgs.sccache ];
+  ciSccacheEnv = pkgs.lib.optionalAttrs enableCiSccache {
+    RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
+    SCCACHE_DIR = "/nix/var/cache/sccache";
+    SCCACHE_IGNORE_SERVER_IO_ERROR = "1";
+  };
   runtimeLibraryPath = pkgs.lib.makeLibraryPath (
     pkgs.lib.optionals (libkrun != null) [ (pkgs.lib.getLib libkrun) ]
     ++ pkgs.lib.optionals (libkrunfw != null) [ (pkgs.lib.getLib libkrunfw) ]
@@ -27,12 +40,12 @@ let
       runtimeLibraryPath
     ];
 
-  rustPackage = pkgs.rustPlatform.buildRustPackage {
+  rustPackage = pkgs.rustPlatform.buildRustPackage ({
     pname = "agentbox";
     version = agentboxVersion;
     src = self;
 
-    nativeBuildInputs = [ pkgs.makeWrapper ];
+    nativeBuildInputs = [ pkgs.makeWrapper ] ++ ciSccacheNativeBuildInputs;
 
     cargoLock = {
       lockFile = ../../Cargo.lock;
@@ -60,7 +73,7 @@ let
       ''}
       wrapProgram "$out/bin/agentbox" ${pkgs.lib.escapeShellArgs runtimeWrapperArgs}
     '';
-  };
+  } // ciSccacheEnv);
 
   muslTarget =
     if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then
@@ -70,10 +83,12 @@ let
     else
       throw "agentbox-musl is only supported on Linux";
 
-  agentboxMuslPackage = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
+  agentboxMuslPackage = pkgs.pkgsStatic.rustPlatform.buildRustPackage ({
     pname = "agentbox";
     version = agentboxVersion;
     src = self;
+
+    nativeBuildInputs = ciSccacheNativeBuildInputs;
 
     cargoLock = {
       lockFile = ../../Cargo.lock;
@@ -96,7 +111,7 @@ let
       "--package"
       "loftd-guest-init"
     ];
-  };
+  } // ciSccacheEnv);
 in
 {
   inherit rustPackage agentboxMuslPackage;

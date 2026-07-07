@@ -17,11 +17,11 @@ jobs:
       matrix:
         include:
           - image_name: agentbox
-            flake_attr: agentbox-container
+            flake_attr: agentbox-container-ci-sccache
             local_image: localhost/agentbox:latest
             init_binary: /bin/agentbox-guest-init
           - image_name: loftd
-            flake_attr: container
+            flake_attr: container-ci-sccache
             local_image: localhost/loftd:latest
             init_binary: /bin/loftd-guest-init
     steps:
@@ -29,8 +29,31 @@ jobs:
         uses: actions/checkout@v4
       - name: Install Nix
         uses: cachix/install-nix-action@v31
+      - name: Restore ${{ matrix.image_name }} sccache
+        uses: actions/cache@v4
+        with:
+          path: .ci-sccache
+          key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-${{ matrix.image_name }}-${{ hashFiles('Cargo.lock', 'flake.lock', 'nix/pins.nix') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-${{ matrix.image_name }}-
+            sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-
+      - name: Prepare ${{ matrix.image_name }} sccache directory
+        run: |
+          mkdir -p .ci-sccache
+          chmod -R a+rwX .ci-sccache
       - name: Build ${{ matrix.image_name }} container archive
-        run: nix build ".#${{ matrix.flake_attr }}" -o "result-${{ matrix.image_name }}-container" --print-out-paths > "${{ matrix.image_name }}-container-path.txt"
+        run: |
+          nix build \
+            --option extra-sandbox-paths "/nix/var/cache/sccache=${GITHUB_WORKSPACE}/.ci-sccache" \
+            ".#${{ matrix.flake_attr }}" \
+            -o "result-${{ matrix.image_name }}-container" \
+            --print-out-paths > "${{ matrix.image_name }}-container-path.txt"
+      - name: Normalize ${{ matrix.image_name }} sccache permissions
+        if: always()
+        run: |
+          if [ -d .ci-sccache ]; then
+            chmod -R a+rwX .ci-sccache
+          fi
       - name: Free runner disk before loading ${{ matrix.image_name }} image
         run: |
           df -h
