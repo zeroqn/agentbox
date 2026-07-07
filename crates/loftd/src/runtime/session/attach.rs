@@ -34,20 +34,20 @@ const HOST_OUTPUT_BATCH_MAX_BYTES: usize = IO_BUF_SIZE;
 const FOCUS_GAINED_INPUT: &[u8] = b"\x1b[I";
 const FOCUS_LOST_INPUT: &[u8] = b"\x1b[O";
 const FOCUS_REPORT_ENABLE_OUTPUT: &[u8] = b"\x1b[?1004h";
-const FOCUS_STARTUP_GUARD_WINDOW: Duration = Duration::from_millis(750);
+const FOCUS_REPORT_GUARD_WINDOW: Duration = Duration::from_millis(750);
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AttachInputPolicy {
     suppress_focus_input: bool,
-    focus_startup_guard: Option<Arc<Mutex<FocusStartupGuard>>>,
+    focus_report_guard: Option<Arc<Mutex<FocusReportGuard>>>,
 }
 
 impl AttachInputPolicy {
-    pub(crate) fn new(suppress_focus_input: bool, focus_startup_guard: bool) -> Self {
+    pub(crate) fn new(suppress_focus_input: bool, focus_report_guard: bool) -> Self {
         Self {
             suppress_focus_input,
-            focus_startup_guard: focus_startup_guard
-                .then(|| Arc::new(Mutex::new(FocusStartupGuard::default()))),
+            focus_report_guard: focus_report_guard
+                .then(|| Arc::new(Mutex::new(FocusReportGuard::default()))),
         }
     }
 
@@ -59,7 +59,7 @@ impl AttachInputPolicy {
         if self.suppress_focus_input {
             return strip_focus_input(input.as_slice());
         }
-        let Some(guard) = &self.focus_startup_guard else {
+        let Some(guard) = &self.focus_report_guard else {
             return input;
         };
         match guard.lock() {
@@ -73,7 +73,7 @@ impl AttachInputPolicy {
     }
 
     fn observe_guest_output_at(&self, output: &[u8], now: Instant) {
-        let Some(guard) = &self.focus_startup_guard else {
+        let Some(guard) = &self.focus_report_guard else {
             return;
         };
         if let Ok(mut guard) = guard.lock() {
@@ -83,18 +83,18 @@ impl AttachInputPolicy {
 }
 
 #[derive(Debug, Default)]
-struct FocusStartupGuard {
+struct FocusReportGuard {
     active_until: Option<Instant>,
     output_suffix: Vec<u8>,
 }
 
-impl FocusStartupGuard {
+impl FocusReportGuard {
     fn observe_guest_output_at(&mut self, output: &[u8], now: Instant) {
         let mut search = Vec::with_capacity(self.output_suffix.len() + output.len());
         search.extend_from_slice(&self.output_suffix);
         search.extend_from_slice(output);
         if contains_subslice(&search, FOCUS_REPORT_ENABLE_OUTPUT) {
-            self.active_until = Some(now + FOCUS_STARTUP_GUARD_WINDOW);
+            self.active_until = Some(now + FOCUS_REPORT_GUARD_WINDOW);
         }
         self.update_output_suffix(&search);
     }
@@ -1154,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_startup_guard_suppresses_focus_reports_after_focus_enable_output() {
+    fn focus_report_guard_suppresses_focus_reports_after_focus_enable_output() {
         let policy = AttachInputPolicy::new(false, true);
         let now = Instant::now();
 
@@ -1165,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_startup_guard_clears_after_forwarding_non_focus_input() {
+    fn focus_report_guard_clears_after_forwarding_non_focus_input() {
         let policy = AttachInputPolicy::new(false, true);
         let now = Instant::now();
 
@@ -1178,7 +1178,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_startup_guard_clears_within_same_input_batch() {
+    fn focus_report_guard_clears_within_same_input_batch() {
         let policy = AttachInputPolicy::new(false, true);
         let now = Instant::now();
 
@@ -1189,7 +1189,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_startup_guard_preserves_batch_when_non_focus_precedes_focus() {
+    fn focus_report_guard_preserves_batch_when_non_focus_precedes_focus() {
         let policy = AttachInputPolicy::new(false, true);
         let now = Instant::now();
 
@@ -1200,21 +1200,21 @@ mod tests {
     }
 
     #[test]
-    fn focus_startup_guard_expires_after_bounded_window() {
+    fn focus_report_guard_expires_after_bounded_window() {
         let policy = AttachInputPolicy::new(false, true);
         let now = Instant::now();
 
         policy.observe_guest_output_at(b"\x1b[?1004h", now);
         let output = policy.filter_host_input_at(
             b"\x1b[I".to_vec(),
-            now + FOCUS_STARTUP_GUARD_WINDOW + Duration::from_millis(1),
+            now + FOCUS_REPORT_GUARD_WINDOW + Duration::from_millis(1),
         );
 
         assert_eq!(output, b"\x1b[I");
     }
 
     #[test]
-    fn focus_startup_guard_restarts_after_reasserted_focus_enable_output() {
+    fn focus_report_guard_restarts_after_reasserted_focus_enable_output() {
         let policy = AttachInputPolicy::new(false, true);
         let now = Instant::now();
 
@@ -1226,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_startup_guard_detects_focus_enable_split_across_output_chunks() {
+    fn focus_report_guard_detects_focus_enable_split_across_output_chunks() {
         let policy = AttachInputPolicy::new(false, true);
         let now = Instant::now();
 
@@ -1245,14 +1245,14 @@ mod tests {
     }
 
     #[test]
-    fn no_focus_input_takes_precedence_over_focus_startup_guard_timeout() {
+    fn no_focus_input_takes_precedence_over_focus_report_guard_timeout() {
         let policy = AttachInputPolicy::new(true, true);
         let now = Instant::now();
 
         policy.observe_guest_output_at(b"\x1b[?1004h", now);
         let output = policy.filter_host_input_at(
             b"a\x1b[Ib\x1b[Oc".to_vec(),
-            now + FOCUS_STARTUP_GUARD_WINDOW + Duration::from_millis(1),
+            now + FOCUS_REPORT_GUARD_WINDOW + Duration::from_millis(1),
         );
 
         assert_eq!(output, b"abc");
@@ -1425,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_remote_proxy_observes_focus_enable_for_startup_guard() {
+    fn daemon_remote_proxy_observes_focus_enable_for_report_guard() {
         let policy = AttachInputPolicy::new(false, true);
         let (mut client, mut server) = UnixStream::pair().unwrap();
         let writer = Arc::new(Mutex::new(client.try_clone().unwrap()));
@@ -1624,7 +1624,7 @@ mod tests {
     }
 
     #[test]
-    fn unix_remote_proxy_observes_focus_enable_for_startup_guard() {
+    fn unix_remote_proxy_observes_focus_enable_for_report_guard() {
         let policy = AttachInputPolicy::new(false, true);
         let (mut client, mut server) = UnixStream::pair().unwrap();
         write_frame(&mut server, &Frame::Data(b"\x1b[?1004h".to_vec())).unwrap();

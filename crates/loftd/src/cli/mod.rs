@@ -41,7 +41,7 @@ pub(crate) struct PtyOptions {
     pub(crate) mode: PtyMode,
     pub(crate) trace: bool,
     pub(crate) suppress_focus_input: bool,
-    pub(crate) focus_startup_guard: bool,
+    pub(crate) focus_report_guard: bool,
 }
 
 impl PtyOptions {
@@ -49,7 +49,7 @@ impl PtyOptions {
         mode: PtyMode::Normalized,
         trace: false,
         suppress_focus_input: false,
-        focus_startup_guard: false,
+        focus_report_guard: true,
     };
 }
 
@@ -135,10 +135,10 @@ pub(crate) struct Cli {
 
     #[arg(
         long = "pty",
-        value_name = "[MODE,][trace][,no-focus-input][,focus-startup-guard]",
+        value_name = "[MODE,][trace][,no-focus-input][,focus-report-guard]",
         value_parser = parse_pty_arg,
         help = "Configure managed PTY diagnostics for this launched task",
-        long_help = "Configure managed PTY diagnostics for this launched task. Allowed mode values are normalize and raw; omit the mode to use normalize with modifier-only forms such as trace, no-focus-input, or focus-startup-guard. Add trace to enable loftd-terminal.trace; add no-focus-input to suppress all host terminal focus reports (ESC[I and ESC[O); add focus-startup-guard to suppress exact focus reports only for a short startup/reassertion window after the guest enables focus reporting. The default is normalize with tracing and focus-input suppression disabled. The trace token writes loftd-terminal.trace in the host current working directory for the new launch; guest-init writes the same workspace file through /workspace/loftd-terminal.trace. Raw, trace, no-focus-input, and focus-startup-guard are independent diagnostics."
+        long_help = "Configure managed PTY diagnostics for this launched task. Allowed mode values are normalize and raw; omit the mode to use normalize with modifier-only forms such as trace, no-focus-input, or focus-report-guard. Add trace to enable loftd-terminal.trace; add no-focus-input to suppress all host terminal focus reports (ESC[I and ESC[O). The bounded focus-report guard is enabled by default and suppresses exact focus reports only for a short window after the guest enables or reasserts focus reporting (ESC[?1004h); add focus-report-guard only for explicitness. The default is normalize with tracing disabled and bounded focus-report guarding enabled. The trace token writes loftd-terminal.trace in the host current working directory for the new launch; guest-init writes the same workspace file through /workspace/loftd-terminal.trace. Raw, trace, no-focus-input, and focus-report-guard are independent diagnostics."
     )]
     pty: Option<PtyOptions>,
 
@@ -524,7 +524,7 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
     let value = value.trim();
     if value.is_empty() {
         return Err(
-            "pty value must include normalize, raw, trace, no-focus-input, or focus-startup-guard"
+            "pty value must include normalize, raw, trace, no-focus-input, or focus-report-guard"
                 .to_owned(),
         );
     }
@@ -532,7 +532,8 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
     let mut mode = None;
     let mut trace = false;
     let mut suppress_focus_input = false;
-    let mut focus_startup_guard = false;
+    let mut focus_report_guard = true;
+    let mut focus_report_guard_token_seen = false;
     for token in value.split(',') {
         let token = token.trim();
         if token.is_empty() {
@@ -561,15 +562,16 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
                 }
                 suppress_focus_input = true;
             }
-            "focus-startup-guard" => {
-                if focus_startup_guard {
-                    return Err("pty focus-startup-guard token must not be duplicated".to_owned());
+            "focus-report-guard" => {
+                if focus_report_guard_token_seen {
+                    return Err("pty focus-report-guard token must not be duplicated".to_owned());
                 }
-                focus_startup_guard = true;
+                focus_report_guard_token_seen = true;
+                focus_report_guard = true;
             }
             other => {
                 return Err(format!(
-                    "unsupported pty token '{other}'; use normalize, raw, trace, no-focus-input, or focus-startup-guard"
+                    "unsupported pty token '{other}'; use normalize, raw, trace, no-focus-input, or focus-report-guard"
                 ));
             }
         }
@@ -579,7 +581,7 @@ fn parse_pty_arg(value: &str) -> Result<PtyOptions, String> {
         mode: mode.unwrap_or(PtyMode::Normalized),
         trace,
         suppress_focus_input,
-        focus_startup_guard,
+        focus_report_guard,
     })
 }
 
@@ -719,7 +721,7 @@ mod tests {
         assert!(options.debug);
         assert_eq!(options.pty, PtyOptions::DEFAULT);
         assert!(!options.pty.suppress_focus_input);
-        assert!(!options.pty.focus_startup_guard);
+        assert!(options.pty.focus_report_guard);
         assert_eq!(options.network_mode, NetworkMode::Tsi);
         assert!(options.publish.is_empty());
         assert!(options.volumes.is_empty());
@@ -762,7 +764,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: false,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -771,7 +773,7 @@ mod tests {
                     mode: PtyMode::RawPassthrough,
                     trace: false,
                     suppress_focus_input: false,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -780,7 +782,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: true,
                     suppress_focus_input: false,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -789,7 +791,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: true,
                     suppress_focus_input: false,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -798,7 +800,7 @@ mod tests {
                     mode: PtyMode::RawPassthrough,
                     trace: true,
                     suppress_focus_input: false,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -807,7 +809,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: true,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -816,7 +818,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: true,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -825,7 +827,7 @@ mod tests {
                     mode: PtyMode::Normalized,
                     trace: true,
                     suppress_focus_input: true,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
@@ -834,43 +836,43 @@ mod tests {
                     mode: PtyMode::RawPassthrough,
                     trace: true,
                     suppress_focus_input: true,
-                    focus_startup_guard: false,
+                    focus_report_guard: true,
                 },
             ),
             (
-                "focus-startup-guard",
+                "focus-report-guard",
                 PtyOptions {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: false,
-                    focus_startup_guard: true,
+                    focus_report_guard: true,
                 },
             ),
             (
-                "trace,focus-startup-guard",
+                "trace,focus-report-guard",
                 PtyOptions {
                     mode: PtyMode::Normalized,
                     trace: true,
                     suppress_focus_input: false,
-                    focus_startup_guard: true,
+                    focus_report_guard: true,
                 },
             ),
             (
-                "raw,focus-startup-guard,trace",
+                "raw,focus-report-guard,trace",
                 PtyOptions {
                     mode: PtyMode::RawPassthrough,
                     trace: true,
                     suppress_focus_input: false,
-                    focus_startup_guard: true,
+                    focus_report_guard: true,
                 },
             ),
             (
-                "normalize,no-focus-input,focus-startup-guard",
+                "normalize,no-focus-input,focus-report-guard",
                 PtyOptions {
                     mode: PtyMode::Normalized,
                     trace: false,
                     suppress_focus_input: true,
-                    focus_startup_guard: true,
+                    focus_report_guard: true,
                 },
             ),
         ] {
@@ -893,7 +895,8 @@ mod tests {
             "raw,trace,trace",
             "normalize,no-focus-input,no-focus-input",
             "no-focus-input,no-focus-input",
-            "focus-startup-guard,focus-startup-guard",
+            "focus-report-guard,focus-report-guard",
+            "focus-startup-guard",
             "raw,",
             ",raw",
             "passthrough",

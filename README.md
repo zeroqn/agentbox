@@ -1193,28 +1193,28 @@ therefore include small bounded snippets of terminal input/control-byte payloads
 The falsey values `0`, `false`, `no`, `off`, and an empty value disable the
 environment opt-in. Raw mode and tracing are independent; when `--pty` contains
 only modifier tokens such as `trace`, `no-focus-input`, or
-`focus-startup-guard`, loftd uses the default `normalize` mode. For focus-report
-diagnostics, add `focus-startup-guard` to suppress exact host terminal focus
-gained/lost reports (`ESC[I` and `ESC[O`) only during a 750 ms guard after guest
-output enables or reasserts focus reporting (`ESC[?1004h`). The guard also ends
-early after the first non-focus host input is forwarded. Add the stronger
-`no-focus-input` token to suppress those exact focus reports for the whole
-initial-launch stdin path. Both are default-off input-side diagnostics for A/B
-testing suspected focus-report feedback loops; neither changes guest-to-host PTY
-output, detached restore frames, or later `loftd attach` sessions.
+`focus-report-guard`, loftd uses the default `normalize` mode. The bounded
+focus-report guard is enabled by default and suppresses exact host terminal
+focus gained/lost reports (`ESC[I` and `ESC[O`) only during a 750 ms guard after
+guest output enables or reasserts focus reporting (`ESC[?1004h`). The guard also
+ends early after the first non-focus host input is forwarded. Add
+`focus-report-guard` only for explicitness. Add the stronger `no-focus-input`
+token to suppress those exact focus reports for the whole initial-launch stdin
+path. These input-side diagnostics do not change guest-to-host PTY output,
+detached restore frames, or later `loftd attach` sessions.
 
 ```bash
-loftd --pty=focus-startup-guard
+loftd --pty=focus-report-guard
 loftd --pty=no-focus-input
 loftd --pty=trace
-loftd --pty=trace,focus-startup-guard
+loftd --pty=trace,focus-report-guard
 loftd --pty=trace,no-focus-input
 loftd --pty=normalize,trace
 loftd --pty=raw
 loftd --pty=raw,trace
-loftd --pty=normalize,focus-startup-guard,trace
+loftd --pty=normalize,focus-report-guard,trace
 loftd --pty=normalize,no-focus-input,trace
-loftd --pty=raw,focus-startup-guard,trace
+loftd --pty=raw,focus-report-guard,trace
 loftd --pty=raw,no-focus-input,trace
 LOFTD_TERMINAL_TRACE=1 loftd --pty=normalize
 ```
