@@ -1,5 +1,8 @@
+let
+  cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
+in
 {
-  agentboxVersion = "0.4.0";
+  agentboxVersion = cargoToml.workspace.package.version;
 
   ohMyCodex = {
     version = "0.18.14";
