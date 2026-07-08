@@ -10,6 +10,7 @@ use crate::runtime::seccomp::{self, SeccompMode};
 use crate::runtime::session::profile::LoftdHostProfiler;
 use crate::runtime::session::rootfs::task::{UnsharedBtrfsRootfsCommands, cleanup_task_rootfs_dir};
 use crate::runtime::session::supervisor::identity;
+use crate::runtime::session::supervisor::managed_exit_marker;
 use crate::runtime::session::supervisor::managed_ready;
 use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
 use crate::runtime::session::supervisor::rlimits;
@@ -136,28 +137,53 @@ fn run_helper_profiled_inner(
     let (status, wait_duration) =
         profiler.measure_result_with_duration("helper_wait_vm_worker", || worker.wait())?;
     profiler.record_vm_worker_wait_details(task_state_dir, wait_duration);
+    let observed_guest_exit_before_cleanup = config
+        .managed_session
+        .as_ref()
+        .and_then(|_| managed_exit_marker::observed_guest_exit_code(task_state_dir));
     let cleanup_error = cleanup_managed_task_after_vm_exit(&config, task_state_dir).err();
-    let worker_result = vm_worker_status_result(status, cleanup_error);
+    let observed_guest_exit = cleanup_error
+        .as_ref()
+        .and(observed_guest_exit_before_cleanup);
+    let worker_result = vm_worker_status_result(status, cleanup_error, observed_guest_exit);
     finalize_helper_seccomp_audit(worker_result, &config.seccomp)
 }
 
-fn vm_worker_status_result(status: i32, cleanup_error: Option<anyhow::Error>) -> Result<()> {
+fn vm_worker_status_result(
+    status: i32,
+    cleanup_error: Option<anyhow::Error>,
+    observed_guest_exit: Option<i32>,
+) -> Result<()> {
     if let Some(code) = status_exit_code(status) {
         if code == 0 {
             if let Some(err) = cleanup_error {
-                return Err(err);
+                return Err(context_cleanup_after_guest_exit(err, observed_guest_exit));
             }
             return Ok(());
         }
         if let Some(err) = cleanup_error {
-            return Err(err).context(format!("loftd VM worker exited with status {code}"));
+            return Err(context_cleanup_after_guest_exit(err, observed_guest_exit))
+                .context(format!("loftd VM worker exited with status {code}"));
         }
         bail!("loftd VM worker exited with status {code}");
     }
     if let Some(err) = cleanup_error {
-        return Err(err).context("loftd VM worker exited due to signal");
+        return Err(context_cleanup_after_guest_exit(err, observed_guest_exit))
+            .context("loftd VM worker exited due to signal");
     }
     bail!("loftd VM worker exited due to signal")
+}
+
+fn context_cleanup_after_guest_exit(
+    cleanup_error: anyhow::Error,
+    observed_guest_exit: Option<i32>,
+) -> anyhow::Error {
+    match observed_guest_exit {
+        Some(code) => cleanup_error.context(format!(
+            "failed after managed guest exited with status {code}"
+        )),
+        None => cleanup_error,
+    }
 }
 
 fn finalize_helper_seccomp_audit(run_result: Result<()>, seccomp_mode: &SeccompMode) -> Result<()> {
@@ -311,6 +337,35 @@ mod tests {
         assert!(!attach_socket.exists());
         assert!(unrelated_socket.exists());
         drop(unrelated_listener);
+    }
+
+    #[test]
+    fn vm_worker_status_contextualizes_cleanup_failure_after_observed_guest_exit() {
+        let err = vm_worker_status_result(0, Some(anyhow!("cleanup failure")), Some(127))
+            .expect_err("cleanup failure should surface");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("cleanup failure"));
+        assert!(message.contains("managed guest exited with status 127"));
+    }
+
+    #[test]
+    fn vm_worker_status_keeps_nonzero_worker_failure_without_observed_guest_exit() {
+        let err = vm_worker_status_result(127 << 8, None, None)
+            .expect_err("nonzero worker status should fail");
+
+        assert!(format!("{err:#}").contains("loftd VM worker exited with status 127"));
+    }
+
+    #[test]
+    fn vm_worker_status_combines_cleanup_and_worker_status_after_observed_guest_exit() {
+        let err = vm_worker_status_result(1 << 8, Some(anyhow!("cleanup failure")), Some(127))
+            .expect_err("cleanup failure should surface with both contexts");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("cleanup failure"));
+        assert!(message.contains("managed guest exited with status 127"));
+        assert!(message.contains("loftd VM worker exited with status 1"));
     }
 
     #[test]

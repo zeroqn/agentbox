@@ -386,11 +386,28 @@ fn finalize_btrfs_run_result(
 ) -> Result<ExitCode> {
     match (run_result, cleanup_result) {
         (Ok(status), Ok(_)) => Ok(status.exit_code()),
-        (Ok(_), Err(cleanup_error)) => Err(cleanup_error),
+        (Ok(status), Err(cleanup_error)) => {
+            Err(context_cleanup_after_child_status(cleanup_error, status))
+        }
         (Err(run_error), Ok(_)) => Err(run_error),
         (Err(run_error), Err(cleanup_error)) => Err(cleanup_error.context(format!(
             "failed to clean loftd task rootfs after libkrun helper error: {run_error:#}"
         ))),
+    }
+}
+
+fn context_cleanup_after_child_status(
+    cleanup_error: anyhow::Error,
+    status: supervisor::ChildStatus,
+) -> anyhow::Error {
+    match status {
+        supervisor::ChildStatus::Exited(code) => cleanup_error.context(format!(
+            "failed to clean loftd task rootfs after guest exited with status {code}"
+        )),
+        supervisor::ChildStatus::Signaled => {
+            cleanup_error.context("failed to clean loftd task rootfs after helper was signaled")
+        }
+        supervisor::ChildStatus::Detached => cleanup_error,
     }
 }
 
@@ -552,12 +569,14 @@ mod tests {
     #[test]
     fn btrfs_finalization_cleanup_error_dominates_successful_helper() {
         let err = finalize_btrfs_run_result(
-            Ok(supervisor::ChildStatus::exited(0)),
+            Ok(supervisor::ChildStatus::exited(127)),
             Err(anyhow!("cleanup failure")),
         )
         .expect_err("cleanup failure should dominate successful helper");
+        let text = format!("{err:#}");
 
-        assert_eq!(err.to_string(), "cleanup failure");
+        assert!(text.contains("cleanup failure"));
+        assert!(text.contains("guest exited with status 127"));
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::runtime::seccomp;
 use crate::runtime::session::attach::{self, AttachInputPolicy, AttachOutcome};
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
+use crate::runtime::session::supervisor::managed_exit_marker;
 use crate::runtime::session::supervisor::readiness_pipe::{ParentReadyPipe, READY_FD_ENV};
 use crate::runtime::session::supervisor::sigwinch::SigwinchForwarder;
 use crate::runtime::session::supervisor::{ChildStatus, LIBKRUN_ENTER_HELPER_ARG};
@@ -136,6 +137,14 @@ pub(crate) fn run_helper_process(
         return match attach_result {
             Ok(AttachOutcome::Detached) => Ok(ChildStatus::detached()),
             Ok(AttachOutcome::Exited(code)) => {
+                if let Err(err) =
+                    managed_exit_marker::write_observed_guest_exit(&active_task.task_dir, code)
+                {
+                    let _ = child.wait();
+                    return Err(err).context(format!(
+                        "failed to record managed guest exit status {code} before waiting for loftd helper"
+                    ));
+                }
                 let _ = child.wait();
                 Ok(ChildStatus::exited(code))
             }

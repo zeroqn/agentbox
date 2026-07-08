@@ -19,12 +19,15 @@ use crate::runtime::session::profile::{LoftdHostProfiler, vm_worker_wait_detail_
 use crate::runtime::session::supervisor::LIBKRUN_VM_WORKER_ARG;
 use crate::runtime::session::supervisor::entry::task_state_dir_from_config_path;
 use crate::runtime::session::supervisor::identity;
+use crate::runtime::session::supervisor::managed_exit_marker::{self, ManagedExitObservation};
 use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
 use crate::runtime::vm::libkrun::{DirectLibkrunLauncher, DynamicLibkrunApi};
 use crate::runtime::vm::network;
 use crate::runtime::vm::prepared_root;
 
 const SANDBOXED_CHILD_POLL: Duration = Duration::from_millis(25);
+const MANAGED_EXIT_MARKER_WAIT: Duration = Duration::from_millis(500);
+const MANAGED_EXIT_MARKER_POLL: Duration = Duration::from_millis(10);
 const SANDBOXED_PARENT_SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 static SANDBOXED_PARENT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
@@ -324,7 +327,12 @@ fn run_libkrun_in_current_namespace(
     let run_result =
         run_libkrun_in_sandboxed_child(config, task_state_dir, profiler, &prepared_root);
     let nix_overlay_cleanup = nix_overlay_mount.map(|mount| move || mount.unmount());
-    finalize_vm_worker_run(run_result, || prepared_root.unmount(), nix_overlay_cleanup)
+    finalize_vm_worker_run(
+        run_result,
+        || prepared_root.unmount(),
+        nix_overlay_cleanup,
+        config.managed_session.is_some().then_some(task_state_dir),
+    )
 }
 
 fn run_libkrun_in_sandboxed_child(
@@ -336,7 +344,10 @@ fn run_libkrun_in_sandboxed_child(
     let _signal_handlers = SandboxedParentSignalHandlers::install()?;
     let mut child = fork_sandboxed_libkrun_child(config, task_state_dir, profiler, prepared_root)?;
     let status = wait_for_sandboxed_child(&mut child)?;
-    sandboxed_child_status_result(status)
+    sandboxed_child_status_result(
+        status,
+        config.managed_session.is_some().then_some(task_state_dir),
+    )
 }
 
 fn fork_sandboxed_libkrun_child(
@@ -527,10 +538,39 @@ fn zeroed_sigaction() -> libc::sigaction {
     unsafe { std::mem::zeroed() }
 }
 
-fn sandboxed_child_status_result(status: i32) -> Result<()> {
+fn sandboxed_child_status_result(status: i32, managed_task_state_dir: Option<&Path>) -> Result<()> {
+    sandboxed_child_status_result_with_marker_wait(
+        status,
+        managed_task_state_dir,
+        MANAGED_EXIT_MARKER_WAIT,
+        MANAGED_EXIT_MARKER_POLL,
+    )
+}
+
+fn sandboxed_child_status_result_with_marker_wait(
+    status: i32,
+    managed_task_state_dir: Option<&Path>,
+    marker_wait: Duration,
+    marker_poll: Duration,
+) -> Result<()> {
     if let Some(code) = network::status_exit_code(status) {
         if code == 0 {
             return Ok(());
+        }
+        if let Some(task_state_dir) = managed_task_state_dir {
+            let observation = managed_exit_marker::wait_for_matching_observed_guest_exit(
+                task_state_dir,
+                code,
+                marker_wait,
+                marker_poll,
+            );
+            if let ManagedExitObservation::ObservedGuestExit(_) = observation {
+                return Ok(());
+            }
+            bail!(
+                "sandboxed loftd VM worker child exited with status {code}{}",
+                managed_exit_observation_suffix(&observation)
+            );
         }
         bail!("sandboxed loftd VM worker child exited with status {code}");
     }
@@ -541,6 +581,21 @@ fn sandboxed_child_status_result(status: i32) -> Result<()> {
         );
     }
     bail!("sandboxed loftd VM worker child ended with unexpected wait status {status}")
+}
+
+fn managed_exit_observation_suffix(observation: &ManagedExitObservation) -> String {
+    match observation {
+        ManagedExitObservation::ObservedGuestExit(_) => String::new(),
+        ManagedExitObservation::NoObservedGuestExit => {
+            "; no parent-observed managed guest exit marker was found".to_owned()
+        }
+        ManagedExitObservation::ObservedGuestExitDifferentCode { expected, observed } => {
+            format!("; parent observed managed guest exit status {observed}, expected {expected}")
+        }
+        ManagedExitObservation::InvalidMarker(err) => {
+            format!("; invalid parent-observed managed guest exit marker: {err}")
+        }
+    }
 }
 
 fn run_libkrun_with_prepared_root(
@@ -639,6 +694,7 @@ fn finalize_vm_worker_run<PreparedCleanup, NixCleanup>(
     run_result: Result<()>,
     cleanup_prepared_root: PreparedCleanup,
     cleanup_nix_overlay: Option<NixCleanup>,
+    managed_task_state_dir: Option<&Path>,
 ) -> Result<()>
 where
     PreparedCleanup: FnOnce() -> Result<()>,
@@ -647,7 +703,12 @@ where
     let prepared_root_cleanup = cleanup_prepared_root();
     let nix_overlay_cleanup = cleanup_nix_overlay.map(|cleanup| cleanup());
     let cleanup_result = combine_cleanup_results(prepared_root_cleanup, nix_overlay_cleanup);
-    combine_run_and_cleanup_results(run_result, cleanup_result)
+    let observed_guest_exit = cleanup_result
+        .as_ref()
+        .err()
+        .and(managed_task_state_dir)
+        .and_then(managed_exit_marker::observed_guest_exit_code);
+    combine_run_and_cleanup_results(run_result, cleanup_result, observed_guest_exit)
 }
 
 fn combine_cleanup_results(
@@ -667,14 +728,42 @@ fn combine_cleanup_results(
 fn combine_run_and_cleanup_results(
     run_result: Result<()>,
     cleanup_result: Result<()>,
+    observed_guest_exit: Option<i32>,
 ) -> Result<()> {
     match (run_result, cleanup_result) {
         (Ok(()), Ok(())) => Ok(()),
-        (Ok(()), Err(cleanup_error)) => Err(cleanup_error),
+        (Ok(()), Err(cleanup_error)) => Err(context_cleanup_after_guest_exit(
+            cleanup_error,
+            observed_guest_exit,
+            "failed to clean up loftd VM worker mounts",
+        )),
         (Err(run_error), Ok(())) => Err(run_error),
-        (Err(run_error), Err(cleanup_error)) => Err(cleanup_error.context(format!(
-            "failed to clean up loftd VM worker mounts after libkrun error: {run_error:#}"
-        ))),
+        (Err(run_error), Err(cleanup_error)) => {
+            let context = match observed_guest_exit {
+                Some(code) => format!(
+                    "failed to clean up loftd VM worker mounts after managed guest exited with status {code}; libkrun error: {run_error:#}"
+                ),
+                None => {
+                    format!(
+                        "failed to clean up loftd VM worker mounts after libkrun error: {run_error:#}"
+                    )
+                }
+            };
+            Err(cleanup_error.context(context))
+        }
+    }
+}
+
+fn context_cleanup_after_guest_exit(
+    cleanup_error: anyhow::Error,
+    observed_guest_exit: Option<i32>,
+    context: &'static str,
+) -> anyhow::Error {
+    match observed_guest_exit {
+        Some(code) => cleanup_error.context(format!(
+            "{context} after managed guest exited with status {code}"
+        )),
+        None => cleanup_error,
     }
 }
 
@@ -726,21 +815,72 @@ mod tests {
 
     #[test]
     fn sandboxed_child_status_accepts_clean_exit() {
-        assert!(sandboxed_child_status_result(0).is_ok());
+        assert!(sandboxed_child_status_result(0, None).is_ok());
     }
 
     #[test]
     fn sandboxed_child_status_rejects_nonzero_exit() {
         let status = 7 << 8;
-        let err = sandboxed_child_status_result(status).expect_err("nonzero exit should fail");
+        let err =
+            sandboxed_child_status_result(status, None).expect_err("nonzero exit should fail");
 
         assert!(format!("{err:#}").contains("exited with status 7"));
     }
 
     #[test]
+    fn managed_sandboxed_child_status_accepts_matching_observed_guest_exit_marker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        managed_exit_marker::write_observed_guest_exit(temp.path(), 127).expect("write marker");
+
+        let result = sandboxed_child_status_result_with_marker_wait(
+            127 << 8,
+            Some(temp.path()),
+            Duration::ZERO,
+            Duration::from_millis(1),
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn managed_sandboxed_child_status_rejects_nonzero_without_observed_marker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let err = sandboxed_child_status_result_with_marker_wait(
+            127 << 8,
+            Some(temp.path()),
+            Duration::ZERO,
+            Duration::from_millis(1),
+        )
+        .expect_err("missing parent-observed exit marker should fail");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("exited with status 127"));
+        assert!(message.contains("no parent-observed managed guest exit marker"));
+    }
+
+    #[test]
+    fn managed_sandboxed_child_status_rejects_different_observed_marker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        managed_exit_marker::write_observed_guest_exit(temp.path(), 126).expect("write marker");
+
+        let err = sandboxed_child_status_result_with_marker_wait(
+            127 << 8,
+            Some(temp.path()),
+            Duration::ZERO,
+            Duration::from_millis(1),
+        )
+        .expect_err("different parent-observed exit marker should fail");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("exited with status 127"));
+        assert!(message.contains("parent observed managed guest exit status 126"));
+    }
+
+    #[test]
     fn sandboxed_child_status_rejects_signaled_exit() {
-        let err =
-            sandboxed_child_status_result(libc::SIGTERM).expect_err("signaled child should fail");
+        let err = sandboxed_child_status_result(libc::SIGTERM, None)
+            .expect_err("signaled child should fail");
 
         assert!(format!("{err:#}").contains("terminated by signal"));
     }
@@ -798,6 +938,7 @@ mod tests {
                 calls.borrow_mut().push("nix-overlay");
                 Ok(())
             }),
+            None,
         )
         .expect("finalization should succeed");
 
@@ -818,6 +959,7 @@ mod tests {
                 calls.borrow_mut().push("nix-overlay");
                 Ok(())
             }),
+            None,
         )
         .expect_err("prepared-root failure should surface");
 
@@ -831,12 +973,31 @@ mod tests {
             Err(anyhow!("libkrun failed")),
             || Err(anyhow!("prepared-root busy")),
             None::<fn() -> Result<()>>,
+            None,
         )
         .expect_err("cleanup failure should surface with run context");
 
         let message = format!("{err:#}");
         assert!(message.contains("prepared-root busy"));
         assert!(message.contains("libkrun failed"));
+    }
+
+    #[test]
+    fn finalization_contextualizes_cleanup_failure_after_observed_guest_exit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        managed_exit_marker::write_observed_guest_exit(temp.path(), 127).expect("write marker");
+
+        let err = finalize_vm_worker_run(
+            Ok(()),
+            || Err(anyhow!("prepared-root busy")),
+            None::<fn() -> Result<()>>,
+            Some(temp.path()),
+        )
+        .expect_err("cleanup failure should surface with guest status context");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("prepared-root busy"));
+        assert!(message.contains("managed guest exited with status 127"));
     }
 
     #[test]

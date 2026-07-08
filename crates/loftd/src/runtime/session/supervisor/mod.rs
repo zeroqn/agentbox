@@ -6,6 +6,7 @@ use std::process::ExitCode;
 pub(crate) mod command;
 pub(crate) mod entry;
 pub(crate) mod identity;
+pub(crate) mod managed_exit_marker;
 pub(crate) mod managed_ready;
 pub(crate) mod readiness_pipe;
 pub(crate) mod rlimits;

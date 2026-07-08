@@ -858,7 +858,9 @@ Detach/attach behavior:
   `LC_CTYPE` to `C.UTF-8` so locale-sensitive terminal programs such as `tmux`
   can use UTF-8 character widths, including CJK text. Explicit locale values
   are preserved, `LC_ALL` is not set, and this does not broaden host
-  environment passthrough.
+  environment passthrough. When the managed guest reports an exit status, loftd
+  propagates that status as the foreground process result; a guest status such
+  as 127 is distinct from loftd helper or VM infrastructure failure diagnostics.
 - Press `Ctrl-\` twice to detach from the current terminal
   session. loftd recognizes both raw `Ctrl-\` bytes and CSI-u/Kitty-encoded
   `Ctrl-\` events from terminals or multiplexers. The host-side filter

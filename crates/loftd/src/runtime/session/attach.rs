@@ -311,7 +311,7 @@ fn attach_stream_after_hello(
     input_policy: AttachInputPolicy,
 ) -> Result<AttachOutcome> {
     let initial_size = terminal_size(libc::STDIN_FILENO);
-    let _raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
+    let mut raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
     write_initial_attach_frames(&mut stream, initial_size)?;
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let active = Arc::new(AtomicBool::new(true));
@@ -322,6 +322,9 @@ fn attach_stream_after_hello(
         thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, stdin_input_policy));
 
     let outcome = proxy_remote(stream, &input_policy);
+    if let Some(raw) = raw.as_mut() {
+        raw.restore_now();
+    }
     active.store(false, Ordering::Release);
     let _ = stdin_thread.join();
     outcome
@@ -343,7 +346,7 @@ fn attach_stream_after_hello_daemon_with_tty_check(
 ) -> Result<AttachOutcome> {
     ensure_daemon_bootstrap_tty(tty_available)?;
     let initial_size = terminal_size(libc::STDIN_FILENO);
-    let _raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
+    let mut raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
     write_initial_attach_frames(&mut stream, initial_size)?;
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let active = Arc::new(AtomicBool::new(true));
@@ -362,6 +365,9 @@ fn attach_stream_after_hello_daemon_with_tty_check(
         DAEMON_OUTPUT_IDLE_TIMEOUT,
         &input_policy,
     );
+    if let Some(raw) = raw.as_mut() {
+        raw.restore_now();
+    }
     active.store(false, Ordering::Release);
     let _ = stdin_thread.join();
     outcome
@@ -1099,6 +1105,13 @@ impl RawTerminalMode {
             active: true,
         }))
     }
+
+    fn restore_now(&mut self) {
+        if self.active {
+            let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.original) };
+            self.active = false;
+        }
+    }
 }
 
 impl Drop for RawTerminalMode {
@@ -1265,6 +1278,20 @@ mod tests {
             AttachOutcome::Exited(3).message(),
             "loftd: session exited with status 3\n"
         );
+    }
+
+    #[test]
+    fn raw_terminal_restore_now_disarms_drop_fallback() {
+        let mut raw = RawTerminalMode {
+            fd: -1,
+            original: unsafe { std::mem::zeroed() },
+            active: true,
+        };
+
+        raw.restore_now();
+        raw.restore_now();
+
+        assert!(!raw.active);
     }
 
     #[test]
