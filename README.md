@@ -861,6 +861,11 @@ Detach/attach behavior:
   environment passthrough. When the managed guest reports an exit status, loftd
   propagates that status as the foreground process result; a guest status such
   as 127 is distinct from loftd helper or VM infrastructure failure diagnostics.
+  Managed helper diagnostics are mediated by the parent after terminal raw mode
+  is restored, so infrastructure errors start on a fresh terminal line instead
+  of racing with guest PTY output. Detached or `--preserve-debug` sessions keep
+  helper stderr in the task state directory as `helper.stderr.log` for later
+  inspection; normal managed cleanup removes it with the task state.
 - Press `Ctrl-\` twice to detach from the current terminal
   session. loftd recognizes both raw `Ctrl-\` bytes and CSI-u/Kitty-encoded
   `Ctrl-\` events from terminals or multiplexers. The host-side filter

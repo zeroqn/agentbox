@@ -142,10 +142,8 @@ fn run_helper_profiled_inner(
         .as_ref()
         .and_then(|_| managed_exit_marker::observed_guest_exit_code(task_state_dir));
     let cleanup_error = cleanup_managed_task_after_vm_exit(&config, task_state_dir).err();
-    let observed_guest_exit = cleanup_error
-        .as_ref()
-        .and(observed_guest_exit_before_cleanup);
-    let worker_result = vm_worker_status_result(status, cleanup_error, observed_guest_exit);
+    let worker_result =
+        vm_worker_status_result(status, cleanup_error, observed_guest_exit_before_cleanup);
     finalize_helper_seccomp_audit(worker_result, &config.seccomp)
 }
 
@@ -164,6 +162,9 @@ fn vm_worker_status_result(
         if let Some(err) = cleanup_error {
             return Err(context_cleanup_after_guest_exit(err, observed_guest_exit))
                 .context(format!("loftd VM worker exited with status {code}"));
+        }
+        if observed_guest_exit == Some(code) {
+            return Ok(());
         }
         bail!("loftd VM worker exited with status {code}");
     }
@@ -355,6 +356,15 @@ mod tests {
             .expect_err("nonzero worker status should fail");
 
         assert!(format!("{err:#}").contains("loftd VM worker exited with status 127"));
+    }
+
+    #[test]
+    fn vm_worker_status_accepts_nonzero_after_observed_managed_guest_exit() {
+        vm_worker_status_result(1 << 8, None, Some(130))
+            .expect_err("different worker status should not be explained by observed guest exit");
+
+        vm_worker_status_result(130 << 8, None, Some(130))
+            .expect("parent-observed managed guest exit should explain duplicate worker status");
     }
 
     #[test]

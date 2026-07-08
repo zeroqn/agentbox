@@ -156,6 +156,21 @@ impl AttachOutcome {
     }
 }
 
+pub(crate) type ExitObserver<'a> = Option<&'a dyn Fn(i32) -> Result<()>>;
+
+#[derive(Clone, Copy)]
+struct AttachProxyOptions<'a> {
+    input_policy: &'a AttachInputPolicy,
+    exit_observer: ExitObserver<'a>,
+}
+
+fn observe_exit(observer: ExitObserver<'_>, code: i32) -> Result<()> {
+    if let Some(observer) = observer {
+        observer(code).context("failed to record managed guest exit at exit-frame observation")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn attach_to_task(
     app_dir: &Path,
     task_selector: &str,
@@ -186,16 +201,32 @@ pub(crate) fn attach_to_socket(socket_path: &Path) -> Result<AttachOutcome> {
     attach_stream(stream)
 }
 
+#[cfg(test)]
 pub(crate) fn attach_to_ready_socket_with_input_policy(
     socket_path: &Path,
     daemon: bool,
     input_policy: AttachInputPolicy,
+) -> Result<AttachOutcome> {
+    attach_to_ready_socket_with_input_policy_and_exit_observer(
+        socket_path,
+        daemon,
+        input_policy,
+        None,
+    )
+}
+
+pub(crate) fn attach_to_ready_socket_with_input_policy_and_exit_observer(
+    socket_path: &Path,
+    daemon: bool,
+    input_policy: AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome> {
     attach_to_ready_socket_with_policy(
         socket_path,
         ConnectPolicy::post_ready(),
         daemon,
         input_policy,
+        exit_observer,
     )
 }
 
@@ -247,6 +278,7 @@ fn attach_to_ready_socket_with_policy(
     policy: ConnectPolicy,
     daemon: bool,
     input_policy: AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome> {
     let deadline = Instant::now() + policy.timeout;
     let mut last_error = None;
@@ -254,9 +286,11 @@ fn attach_to_ready_socket_with_policy(
         match UnixStream::connect(socket_path) {
             Ok(mut stream) => match read_initial_hello(&mut stream)? {
                 InitialHello::Ready if daemon => {
-                    return attach_stream_after_hello_daemon(stream, input_policy);
+                    return attach_stream_after_hello_daemon(stream, input_policy, exit_observer);
                 }
-                InitialHello::Ready => return attach_stream_after_hello(stream, input_policy),
+                InitialHello::Ready => {
+                    return attach_stream_after_hello(stream, input_policy, exit_observer);
+                }
                 InitialHello::ClosedBeforeHandshake => {
                     last_error = Some(anyhow!("loftd attach socket closed before handshake"));
                 }
@@ -280,7 +314,9 @@ fn attach_to_ready_socket_with_policy(
 
 fn attach_stream(mut stream: UnixStream) -> Result<AttachOutcome> {
     match read_initial_hello(&mut stream)? {
-        InitialHello::Ready => attach_stream_after_hello(stream, AttachInputPolicy::default()),
+        InitialHello::Ready => {
+            attach_stream_after_hello(stream, AttachInputPolicy::default(), None)
+        }
         InitialHello::ClosedBeforeHandshake => bail!("loftd attach socket closed before handshake"),
         InitialHello::Busy => bail!("loftd task already has an attached client"),
     }
@@ -309,6 +345,7 @@ fn read_initial_hello(stream: &mut UnixStream) -> Result<InitialHello> {
 fn attach_stream_after_hello(
     mut stream: UnixStream,
     input_policy: AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome> {
     let initial_size = terminal_size(libc::STDIN_FILENO);
     let mut raw = RawTerminalMode::enter(libc::STDIN_FILENO)?;
@@ -321,7 +358,7 @@ fn attach_stream_after_hello(
     let stdin_thread =
         thread::spawn(move || proxy_stdin(stdin_writer, stdin_active, stdin_input_policy));
 
-    let outcome = proxy_remote(stream, &input_policy);
+    let outcome = proxy_remote(stream, &input_policy, exit_observer);
     if let Some(raw) = raw.as_mut() {
         raw.restore_now();
     }
@@ -333,8 +370,9 @@ fn attach_stream_after_hello(
 fn attach_stream_after_hello_daemon(
     stream: UnixStream,
     input_policy: AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome> {
-    attach_stream_after_hello_daemon_with_tty_check(stream, input_policy, || {
+    attach_stream_after_hello_daemon_with_tty_check(stream, input_policy, exit_observer, || {
         daemon_bootstrap_tty_available(libc::STDIN_FILENO, libc::STDOUT_FILENO)
     })
 }
@@ -342,6 +380,7 @@ fn attach_stream_after_hello_daemon(
 fn attach_stream_after_hello_daemon_with_tty_check(
     mut stream: UnixStream,
     input_policy: AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
     tty_available: impl FnOnce() -> bool,
 ) -> Result<AttachOutcome> {
     ensure_daemon_bootstrap_tty(tty_available)?;
@@ -364,6 +403,7 @@ fn attach_stream_after_hello_daemon_with_tty_check(
         DAEMON_BOOTSTRAP_TIMEOUT,
         DAEMON_OUTPUT_IDLE_TIMEOUT,
         &input_policy,
+        exit_observer,
     );
     if let Some(raw) = raw.as_mut() {
         raw.restore_now();
@@ -579,7 +619,11 @@ fn size_changed(
     }
 }
 
-fn proxy_remote(mut stream: UnixStream, input_policy: &AttachInputPolicy) -> Result<AttachOutcome> {
+fn proxy_remote(
+    mut stream: UnixStream,
+    input_policy: &AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
+) -> Result<AttachOutcome> {
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
     proxy_remote_unix_with_profile(
@@ -588,6 +632,7 @@ fn proxy_remote(mut stream: UnixStream, input_policy: &AttachInputPolicy) -> Res
         &mut stderr,
         HostAttachProfiler::from_process_env(),
         input_policy,
+        exit_observer,
     )
 }
 
@@ -597,13 +642,20 @@ fn proxy_remote_unix_with_profile<W, E>(
     stderr: &mut E,
     mut profiler: HostAttachProfiler,
     input_policy: &AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome>
 where
     W: Write,
     E: Write,
 {
     let mut source = UnixRemoteFrameReader::new(stream);
-    let result = proxy_remote_loop(&mut source, stdout, &mut profiler, input_policy);
+    let result = proxy_remote_loop(
+        &mut source,
+        stdout,
+        &mut profiler,
+        input_policy,
+        exit_observer,
+    );
     let report = profiler.report_to(stderr);
     if let Err(err) = report {
         return Err(err).context("failed to write loftd attach profile report");
@@ -629,6 +681,7 @@ where
         stdout,
         &mut profiler,
         &AttachInputPolicy::default(),
+        None,
     );
     let report = profiler.report_to(stderr);
     if let Err(err) = report {
@@ -642,6 +695,7 @@ fn proxy_remote_loop<S, W>(
     stdout: &mut W,
     profiler: &mut HostAttachProfiler,
     input_policy: &AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome>
 where
     S: RemoteFrameSource,
@@ -671,7 +725,7 @@ where
                         }
                         TryRemoteFrame::Frame(frame) => {
                             batch.flush_to(stdout, profiler)?;
-                            return handle_remote_control_frame(frame);
+                            return handle_remote_control_frame(frame, exit_observer);
                         }
                         TryRemoteFrame::NotReady => {
                             batch.flush_to(stdout, profiler)?;
@@ -684,7 +738,7 @@ where
                     }
                 }
             }
-            Some(frame) => return handle_remote_control_frame(frame),
+            Some(frame) => return handle_remote_control_frame(frame, exit_observer),
             None => return Ok(AttachOutcome::Detached),
         }
     }
@@ -913,9 +967,15 @@ impl StdoutBatch {
     }
 }
 
-fn handle_remote_control_frame(frame: Frame) -> Result<AttachOutcome> {
+fn handle_remote_control_frame(
+    frame: Frame,
+    exit_observer: ExitObserver<'_>,
+) -> Result<AttachOutcome> {
     match frame {
-        Frame::Exit { code } => Ok(AttachOutcome::Exited(code)),
+        Frame::Exit { code } => {
+            observe_exit(exit_observer, code)?;
+            Ok(AttachOutcome::Exited(code))
+        }
         Frame::Detach => Ok(AttachOutcome::Detached),
         Frame::Busy => bail!("loftd task already has an attached client"),
         Frame::Error(message) => bail!("loftd attach failed: {message}"),
@@ -930,6 +990,7 @@ fn proxy_remote_until_daemon_idle<W: Write>(
     startup_timeout: Duration,
     idle_timeout: Duration,
     input_policy: &AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome> {
     let mut stderr = std::io::stderr().lock();
     proxy_remote_until_daemon_idle_with_profile(
@@ -942,7 +1003,10 @@ fn proxy_remote_until_daemon_idle<W: Write>(
             idle: idle_timeout,
         },
         HostAttachProfiler::from_process_env(),
-        input_policy,
+        AttachProxyOptions {
+            input_policy,
+            exit_observer,
+        },
     )
 }
 
@@ -959,7 +1023,7 @@ fn proxy_remote_until_daemon_idle_with_profile<W: Write, E: Write>(
     stderr: &mut E,
     timeouts: DaemonIdleTimeouts,
     mut profiler: HostAttachProfiler,
-    input_policy: &AttachInputPolicy,
+    options: AttachProxyOptions<'_>,
 ) -> Result<AttachOutcome> {
     let result = proxy_remote_until_daemon_idle_loop(
         stream,
@@ -967,7 +1031,8 @@ fn proxy_remote_until_daemon_idle_with_profile<W: Write, E: Write>(
         stdout,
         timeouts,
         &mut profiler,
-        input_policy,
+        options.input_policy,
+        options.exit_observer,
     );
     let report = profiler.report_to(stderr);
     if let Err(err) = report {
@@ -983,6 +1048,7 @@ fn proxy_remote_until_daemon_idle_loop<W: Write>(
     timeouts: DaemonIdleTimeouts,
     profiler: &mut HostAttachProfiler,
     input_policy: &AttachInputPolicy,
+    exit_observer: ExitObserver<'_>,
 ) -> Result<AttachOutcome> {
     let startup_deadline = Instant::now() + timeouts.startup;
     let mut saw_output = false;
@@ -1016,7 +1082,10 @@ fn proxy_remote_until_daemon_idle_loop<W: Write>(
                 batch.flush_to(stdout, profiler)?;
                 saw_output = true;
             }
-            Some(Frame::Exit { code }) => return Ok(AttachOutcome::Exited(code)),
+            Some(Frame::Exit { code }) => {
+                observe_exit(exit_observer, code)?;
+                return Ok(AttachOutcome::Exited(code));
+            }
             Some(Frame::Detach) | None => return Ok(AttachOutcome::Detached),
             Some(Frame::Busy) => bail!("loftd task already has an attached client"),
             Some(Frame::Error(message)) => bail!("loftd attach failed: {message}"),
@@ -1415,6 +1484,7 @@ mod tests {
         let err = attach_stream_after_hello_daemon_with_tty_check(
             client,
             AttachInputPolicy::default(),
+            None,
             || false,
         )
         .expect_err("daemon attach should fail when TTY bootstrap is unavailable");
@@ -1443,6 +1513,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_millis(20),
             &AttachInputPolicy::default(),
+            None,
         )
         .unwrap();
 
@@ -1469,6 +1540,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_millis(20),
             &policy,
+            None,
         )
         .unwrap();
 
@@ -1495,6 +1567,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_millis(200),
             &AttachInputPolicy::default(),
+            None,
         )
         .unwrap();
 
@@ -1516,6 +1589,7 @@ mod tests {
             Duration::from_millis(20),
             Duration::from_millis(20),
             &AttachInputPolicy::default(),
+            None,
         )
         .expect_err("daemon bootstrap should require initial output before detach");
 
@@ -1553,6 +1627,33 @@ mod tests {
 
         assert_eq!(outcome, AttachOutcome::Exited(0));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn proxy_remote_records_exit_before_returning_exited_outcome() {
+        let mut stream = Vec::new();
+        write_frame(&mut stream, &Frame::Exit { code: 130 }).unwrap();
+        let mut stream = std::io::Cursor::new(stream);
+        let mut stdout = Vec::new();
+        let mut profiler = HostAttachProfiler::new(false);
+        let observed = std::cell::Cell::new(None);
+        let observer = |code| {
+            observed.set(Some(code));
+            Ok(())
+        };
+
+        let outcome = proxy_remote_loop(
+            &mut BlockingRemoteFrameReader::new(&mut stream),
+            &mut stdout,
+            &mut profiler,
+            &AttachInputPolicy::default(),
+            Some(&observer),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AttachOutcome::Exited(130));
+        assert_eq!(observed.get(), Some(130));
+        assert!(stdout.is_empty());
     }
 
     #[test]
@@ -1632,6 +1733,7 @@ mod tests {
             &mut stderr,
             HostAttachProfiler::new(true),
             &AttachInputPolicy::default(),
+            None,
         )
         .unwrap();
 
@@ -1665,6 +1767,7 @@ mod tests {
             &mut stderr,
             HostAttachProfiler::new(true),
             &policy,
+            None,
         )
         .unwrap();
 
@@ -1728,6 +1831,7 @@ mod tests {
             &mut stderr,
             HostAttachProfiler::new(true),
             &AttachInputPolicy::default(),
+            None,
         )
         .unwrap();
 
@@ -1759,6 +1863,7 @@ mod tests {
             &mut stderr,
             HostAttachProfiler::new(true),
             &AttachInputPolicy::default(),
+            None,
         )
         .unwrap();
 
@@ -1790,6 +1895,7 @@ mod tests {
             &mut stderr,
             HostAttachProfiler::new(true),
             &AttachInputPolicy::default(),
+            None,
         )
         .unwrap();
 
@@ -1846,7 +1952,10 @@ mod tests {
                 idle: Duration::from_millis(20),
             },
             HostAttachProfiler::new(true),
-            &AttachInputPolicy::default(),
+            AttachProxyOptions {
+                input_policy: &AttachInputPolicy::default(),
+                exit_observer: None,
+            },
         )
         .unwrap();
 

@@ -16,6 +16,20 @@ pub(crate) enum ManagedExitObservation {
     InvalidMarker(String),
 }
 
+pub(crate) fn reset_observed_guest_exit(task_state_dir: &Path) -> Result<()> {
+    let marker_path = marker_path(task_state_dir);
+    match fs::remove_file(&marker_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "failed to reset managed guest exit marker '{}'",
+                marker_path.display()
+            )
+        }),
+    }
+}
+
 pub(crate) fn write_observed_guest_exit(task_state_dir: &Path, code: i32) -> Result<()> {
     let marker_path = marker_path(task_state_dir);
     let temp_path = task_state_dir.join(format!(".{MARKER_FILE}.{}.tmp", std::process::id()));
@@ -111,6 +125,19 @@ mod tests {
         assert_eq!(
             read_matching_observed_guest_exit(temp.path(), 127),
             ManagedExitObservation::ObservedGuestExit(127)
+        );
+    }
+
+    #[test]
+    fn marker_reset_removes_stale_parent_observation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        write_observed_guest_exit(temp.path(), 130).expect("write marker");
+        reset_observed_guest_exit(temp.path()).expect("reset marker");
+
+        assert_eq!(
+            read_observed_guest_exit(temp.path()),
+            ManagedExitObservation::NoObservedGuestExit
         );
     }
 
