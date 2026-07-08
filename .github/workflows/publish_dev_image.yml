@@ -40,6 +40,7 @@ jobs:
       - name: Prepare ${{ matrix.image_name }} sccache directory
         run: |
           mkdir -p "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
+          sudo chown -R "$(id -u):$(id -g)" "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
           chmod -R a+rwX "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
       - name: Build ${{ matrix.image_name }} container archive
         run: |
@@ -52,6 +53,7 @@ jobs:
         if: always()
         run: |
           if [ -d "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
             chmod -R a+rwX "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
           fi
       - name: Free runner disk before loading ${{ matrix.image_name }} image

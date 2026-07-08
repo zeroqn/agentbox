@@ -35,6 +35,7 @@ jobs:
       - name: Prepare release sccache directory
         run: |
           mkdir -p /tmp/agentbox-ci-sccache-release
+          sudo chown -R "$(id -u):$(id -g)" /tmp/agentbox-ci-sccache-release
           chmod -R a+rwX /tmp/agentbox-ci-sccache-release
 
       - name: Build release binaries
@@ -50,6 +51,7 @@ jobs:
         if: always()
         run: |
           if [ -d /tmp/agentbox-ci-sccache-release ]; then
+            sudo chown -R "$(id -u):$(id -g)" /tmp/agentbox-ci-sccache-release
             chmod -R a+rwX /tmp/agentbox-ci-sccache-release
           fi
 
