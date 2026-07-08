@@ -1521,8 +1521,8 @@ and `:ro` remounts the bind target read-only after grafting:
 ```
 
 User volumes are additive only: they do not replace `/workspace`, `/nix`, or
-the built-in Codex/Pi/Cargo/sccache/container-store mounts, and duplicate guest
-targets are rejected. Loftd intentionally does not support Podman SELinux
+the built-in tool config/state, compiler-cache, and container-store mounts, and
+duplicate guest targets are rejected. Loftd intentionally does not support Podman SELinux
 suffixes (`:z`, `:Z`), ownership mutation (`:U`), propagation flags, named
 volumes, or anonymous volumes.
 
@@ -1535,7 +1535,7 @@ set. Host tool lookup follows the same wrapper-free pattern: per-tool overrides
 `$out/libexec/loftd-helpers`, then `PATH` for source/debug runs. The helper
 prepares a crun-style root export inside that same rootless namespace, and attaches that single prepared
 root plus the writable persistent container-store disk. The prepared root is a
-bind-mounted view of the task rootfs with the workspace, Codex, Pi, Cargo,
+bind-mounted view of the task rootfs with the workspace, tool state, Cargo,
 sccache, and host-prepared `/nix` overlay directories grafted into their final
 guest paths before `krun_set_root`. Loftd
 intentionally does not register one `krun_add_virtiofs3` device per developer
@@ -1658,12 +1658,16 @@ Each run ensures these host-backed paths and grafts them into the prepared root:
 
 - current workspace -> `/workspace`
 - `~/.codex` -> `/home/dev/.codex`
+- `~/.omp` -> `/home/dev/.omp`
 - `~/.pi` -> `/home/dev/.pi`
+- `~/.config/dirge` -> `/home/dev/.config/dirge`
+- `~/.local/share/dirge` -> `/home/dev/.local/share/dirge`
+- `~/.dirge` -> `/home/dev/.dirge`
 - `<state-root>/cargo` -> `/home/dev/.cargo`
 - `<loftd-state>/sccache` -> `/home/dev/.cache/sccache`
 - each `-v, --volume SOURCE:TARGET[:ro|:rw]` -> the requested absolute `TARGET`
 
-This keeps Codex, Pi, Cargo, and compiler-cache state outside the repo while
+This keeps tool config/state and compiler-cache state outside the repo while
 matching the existing agentbox task-volume contract.
 
 ---

@@ -378,9 +378,10 @@ mod tests {
     use super::*;
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::{
-        BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, GuestInitOverrideMount,
-        LaunchSpec, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG,
-        SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+        BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DIRGE_CONFIG_TAG,
+        DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET,
+        GuestInitOverrideMount, LaunchSpec, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
+        SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
     };
     use std::cell::RefCell;
     use std::path::Path;
@@ -475,6 +476,17 @@ mod tests {
             BindMount::directory(root.join("home/.codex"), CODEX_TAG, CODEX_TARGET),
             BindMount::directory(root.join("home/.omp"), OMP_TAG, OMP_TARGET),
             BindMount::directory(root.join("home/.pi"), PI_TAG, PI_TARGET),
+            BindMount::directory(
+                root.join("home/.config/dirge"),
+                DIRGE_CONFIG_TAG,
+                DIRGE_CONFIG_TARGET,
+            ),
+            BindMount::directory(
+                root.join("home/.local/share/dirge"),
+                DIRGE_DATA_TAG,
+                DIRGE_DATA_TARGET,
+            ),
+            BindMount::directory(root.join("home/.dirge"), DIRGE_HOME_TAG, DIRGE_HOME_TARGET),
             BindMount::directory(root.join("state/cargo"), CARGO_TAG, CARGO_TARGET),
             BindMount::directory(root.join("state/sccache"), SCCACHE_TAG, SCCACHE_TARGET),
         ]
@@ -527,6 +539,9 @@ mod tests {
             "home/.codex",
             "home/.omp",
             "home/.pi",
+            "home/.config/dirge",
+            "home/.local/share/dirge",
+            "home/.dirge",
             "state/cargo",
             "state/sccache",
         ] {
@@ -565,13 +580,13 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[13],
+            calls[19],
             Call::Bind(
                 dir.path().join("state/sccache").display().to_string(),
                 root.join("home/dev/.cache/sccache").display().to_string()
             )
         );
-        assert_eq!(calls[14], Call::RuntimeEtc(root.display().to_string()));
+        assert_eq!(calls[20], Call::RuntimeEtc(root.display().to_string()));
     }
 
     #[test]
@@ -583,6 +598,9 @@ mod tests {
             "home/.codex",
             "home/.omp",
             "home/.pi",
+            "home/.config/dirge",
+            "home/.local/share/dirge",
+            "home/.dirge",
             "state/cargo",
             "state/sccache",
         ] {
@@ -611,7 +629,7 @@ mod tests {
         let calls = commands.calls.borrow();
         let root = state.join(PREPARED_ROOT_DIR);
         assert_eq!(
-            calls[14],
+            calls[20],
             Call::CreateFile(
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
                     .display()
@@ -619,7 +637,7 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[15],
+            calls[21],
             Call::Bind(
                 override_path.display().to_string(),
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
@@ -628,14 +646,14 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[16],
+            calls[22],
             Call::ReadOnly(
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
                     .display()
                     .to_string()
             )
         );
-        assert_eq!(calls[17], Call::RuntimeEtc(root.display().to_string()));
+        assert_eq!(calls[23], Call::RuntimeEtc(root.display().to_string()));
     }
 
     #[test]
@@ -647,6 +665,9 @@ mod tests {
             "home/.codex",
             "home/.omp",
             "home/.pi",
+            "home/.config/dirge",
+            "home/.local/share/dirge",
+            "home/.dirge",
             "state/cargo",
             "state/sccache",
             "host-read-only-dir",
@@ -658,15 +679,17 @@ mod tests {
 
         let state = dir.path().join("task");
         let mut config = config(dir.path());
+        let file_volume_tag = format!("loftd-user-volume-{}", config.mounts.len());
         config.mounts.push(BindMount::file(
             host_file.clone(),
-            "loftd-user-volume-5",
+            file_volume_tag,
             "/workspace/config.json",
             true,
         ));
+        let dir_volume_tag = format!("loftd-user-volume-{}", config.mounts.len());
         config.mounts.push(BindMount {
             source: dir.path().join("host-read-only-dir"),
-            tag: "loftd-user-volume-6".to_owned(),
+            tag: dir_volume_tag,
             target: "/workspace/readonly".to_owned(),
             source_kind: BindMountSourceKind::Directory,
             read_only: true,
@@ -704,9 +727,10 @@ mod tests {
         let root = state.join(PREPARED_ROOT_DIR);
         let mut config = config(dir.path());
         let host_file = dir.path().join("host-config.json");
+        let file_volume_tag = format!("loftd-user-volume-{}", config.mounts.len());
         config.mounts.push(BindMount::file(
             host_file,
-            "loftd-user-volume-5",
+            file_volume_tag,
             "/workspace/config.json",
             true,
         ));

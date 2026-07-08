@@ -85,9 +85,7 @@ impl LaunchPlan {
         let image_cache_dir = state_layout.image_cache_dir();
         let sccache_dir = state_layout.sccache_dir();
         let home_dir = home_dir.ok_or_else(|| {
-            anyhow::anyhow!(
-                "HOME is not set; loftd cannot prepare .codex, .omp, and .pi bind mounts"
-            )
+            anyhow::anyhow!("HOME is not set; loftd cannot prepare built-in home/tool bind mounts")
         })?;
         let container_store_backend = options
             .container_store_backend
@@ -531,11 +529,20 @@ mod tests {
                 .find(|mount| mount.target == target)
                 .expect("mount should exist")
         };
-        assert_eq!(plan.bind_mounts.len(), 6);
+        assert_eq!(plan.bind_mounts.len(), 9);
         assert_eq!(mount("/workspace").source, workspace);
         assert_eq!(mount("/home/dev/.codex").source, home.join(".codex"));
         assert_eq!(mount("/home/dev/.omp").source, home.join(".omp"));
         assert_eq!(mount("/home/dev/.pi").source, home.join(".pi"));
+        assert_eq!(
+            mount("/home/dev/.config/dirge").source,
+            home.join(".config/dirge")
+        );
+        assert_eq!(
+            mount("/home/dev/.local/share/dirge").source,
+            home.join(".local/share/dirge")
+        );
+        assert_eq!(mount("/home/dev/.dirge").source, home.join(".dirge"));
         assert_eq!(
             mount("/home/dev/.cargo").source,
             plan.state_layout.root_dir().join("cargo")
@@ -547,6 +554,9 @@ mod tests {
         assert!(home.join(".codex").is_dir());
         assert!(home.join(".omp").is_dir());
         assert!(home.join(".pi").is_dir());
+        assert!(home.join(".config/dirge").is_dir());
+        assert!(home.join(".local/share/dirge").is_dir());
+        assert!(home.join(".dirge").is_dir());
         assert!(plan.state_layout.root_dir().join("cargo").is_dir());
         assert!(!plan.state_layout.root_dir().join("containers").exists());
         assert_eq!(
@@ -567,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_requires_home_for_codex_and_pi_mounts() {
+    fn plan_requires_home_for_builtin_home_tool_mounts() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
         let err = LaunchPlan::from_env_values(
             runtime_options(),
@@ -847,6 +857,7 @@ mod tests {
             .find(|mount| mount.target == "/guest/dir")
             .expect("dir volume mount");
         assert_eq!(dir_mount.source, source_dir);
+        assert_eq!(dir_mount.tag, "loftd-user-volume-9");
         assert_eq!(dir_mount.source_kind, BindMountSourceKind::Directory);
         assert!(!dir_mount.read_only);
 
@@ -856,6 +867,7 @@ mod tests {
             .find(|mount| mount.target == "/guest/file")
             .expect("file volume mount");
         assert_eq!(file_mount.source, source_file);
+        assert_eq!(file_mount.tag, "loftd-user-volume-10");
         assert_eq!(file_mount.source_kind, BindMountSourceKind::File);
         assert!(file_mount.read_only);
     }
@@ -879,6 +891,12 @@ mod tests {
             "/workspace/.",
             "/home/dev/.codex",
             "/home/dev/.codex/./",
+            "/home/dev/.config/dirge",
+            "/home/dev/.config/dirge/./",
+            "/home/dev/.local/share/dirge",
+            "/home/dev/.local/share/dirge/./",
+            "/home/dev/.dirge",
+            "/home/dev/.dirge/./",
         ] {
             let mut options = runtime_options();
             options.volumes = vec![VolumeSpec {

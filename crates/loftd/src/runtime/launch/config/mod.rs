@@ -10,10 +10,11 @@ pub(crate) use components::mounts::validate_mounts;
 pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
     BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET,
-    DiskAttachment, GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig,
-    LaunchSpec, ManagedSessionConfig, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG,
-    PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
-    canonical_mount_target,
+    DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG,
+    DIRGE_HOME_TARGET, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
+    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, ManagedSessionConfig, NIX_TARGET,
+    NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET,
+    WORKSPACE_TAG, WORKSPACE_TARGET, canonical_mount_target,
 };
 
 #[cfg(test)]
