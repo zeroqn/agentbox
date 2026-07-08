@@ -26,7 +26,7 @@ jobs:
       - name: Restore release sccache
         uses: actions/cache@v4
         with:
-          path: .ci-sccache
+          path: /tmp/agentbox-ci-sccache-release
           key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-${{ hashFiles('Cargo.lock', 'flake.lock', 'nix/pins.nix') }}
           restore-keys: |
             sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-
@@ -34,14 +34,14 @@ jobs:
 
       - name: Prepare release sccache directory
         run: |
-          mkdir -p .ci-sccache
-          chmod -R a+rwX .ci-sccache
+          mkdir -p /tmp/agentbox-ci-sccache-release
+          chmod -R a+rwX /tmp/agentbox-ci-sccache-release
 
       - name: Build release binaries
         run: |
           set -euo pipefail
 
-          sccache_sandbox_path="/nix/var/cache/sccache=${GITHUB_WORKSPACE}/.ci-sccache"
+          sccache_sandbox_path="/nix/var/cache/sccache=/tmp/agentbox-ci-sccache-release"
 
           nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#agentbox-musl-ci-sccache -o result-agentbox-musl
           nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#loftd-ci-sccache -o result-loftd
@@ -49,8 +49,8 @@ jobs:
       - name: Normalize release sccache permissions
         if: always()
         run: |
-          if [ -d .ci-sccache ]; then
-            chmod -R a+rwX .ci-sccache
+          if [ -d /tmp/agentbox-ci-sccache-release ]; then
+            chmod -R a+rwX /tmp/agentbox-ci-sccache-release
           fi
 
       - name: Prepare and smoke-test release artifacts
