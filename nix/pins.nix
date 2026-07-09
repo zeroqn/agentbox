@@ -56,11 +56,11 @@ in
   };
 
   dirge = {
-    version = "0.19.1";
+    version = "0.19.3";
     owner = "dirge-code";
     repo = "dirge";
-    rev = "v0.19.1";
-    srcHash = "sha256-di6VCB/H6RmO225SMwMZeVDGc8YwqhNvpuEGim8X58I=";
+    rev = "v0.19.3";
+    srcHash = "sha256-EevxOfm4/nRM4lBb96WYK0uHrEkSfeyiNTeNSABFZwY=";
   };
 
   ompPrebuiltRelease = {
