@@ -112,14 +112,4 @@ without approval as long as they do not modify files outside `.omx/`.
 
 ## Communication
 
-- Before changing repo-tracked files, create a plan file in `.omx/plans/`
-  named `YYYY-MM-DD-HHMM-short-slug.md`, present the plan to the user, and ask
-  for confirmation.
-- Do not change code until the relevant plan file exists and has been presented
-  to the user.
-- Implement changes according to the approved plan file. If the implementation
-  needs to diverge materially, update the plan file first and present the
-  revised plan before continuing.
-- Plan generation may be skipped only when bob explicitly approves that the
-  change is small. Agents must not make that determination unilaterally.
 - When a user question is needed, address the user as `bob`.
