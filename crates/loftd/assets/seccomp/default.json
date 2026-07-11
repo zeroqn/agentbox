@@ -106,6 +106,9 @@
         "syscall": "getrandom"
       },
       {
+        "syscall": "getsockopt"
+      },
+      {
         "syscall": "ioctl"
       },
       {
@@ -125,6 +128,9 @@
       },
       {
         "syscall": "madvise"
+      },
+      {
+        "syscall": "mkdir"
       },
       {
         "syscall": "mkdirat"

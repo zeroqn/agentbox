@@ -1444,6 +1444,19 @@ mod tests {
     }
 
     #[test]
+    fn packaged_default_policy_allows_profiled_passt_startup_syscalls() {
+        let policy: serde_json::Value =
+            serde_json::from_str(include_str!("../../assets/seccomp/default.json"))
+                .expect("default policy should parse");
+
+        let syscalls =
+            allowed_syscalls_from_policy_value(&policy).expect("default policy should inspect");
+
+        assert!(syscalls.contains("getsockopt"));
+        assert!(syscalls.contains("mkdir"));
+    }
+
+    #[test]
     fn extend_command_default_policy_resolves_and_extends_packaged_policy() {
         let dir = tempfile::tempdir().expect("tempdir");
         let policy = dir.path().join("default.json");
