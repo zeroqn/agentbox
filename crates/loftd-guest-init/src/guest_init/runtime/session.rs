@@ -30,6 +30,7 @@ const DEFAULT_TERMINAL_ROWS: u16 = 24;
 const DEFAULT_TERMINAL_COLS: u16 = 80;
 const TERMINAL_SCROLLBACK_ROWS: usize = 2_000;
 const PTY_RAW_PASSTHROUGH_ENV: &str = "LOFTD_PTY_RAW_PASSTHROUGH";
+const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 const EXIT_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
 // Reset attributes, home the cursor, and clear the visible viewport before
@@ -55,7 +56,10 @@ pub(in crate::guest_init) fn run(
             config.protocol_version
         );
     }
+    managed_debug(&format!("starting port={}", config.port));
+    managed_debug("vsock bind begin");
     let listener = VsockListener::bind(config.port)?;
+    managed_debug("vsock bind complete");
     let pty_forwarding_mode = PtyForwardingMode::from_process_env();
     attach_profile::clear_process_env();
     PtyForwardingMode::clear_process_env();
@@ -69,6 +73,12 @@ pub(in crate::guest_init) fn run(
     )
 }
 
+fn managed_debug(message: &str) {
+    if std::env::var(GUEST_DEBUG_ENV).ok().as_deref() == Some("1") {
+        eprintln!("loftd-guest-init: debug: managed session {message}");
+    }
+}
+
 fn run_pre_start_event_loop(
     command: &[String],
     identity: &DevIdentity,
@@ -78,7 +88,9 @@ fn run_pre_start_event_loop(
     pty_forwarding_mode: PtyForwardingMode,
 ) -> Result<()> {
     loop {
+        managed_debug("pre-start accept begin");
         let client = listener.accept()?;
+        managed_debug("pre-start accept complete");
         match handle_pre_start_client(client)? {
             PreStartClientResult::Wait => continue,
             PreStartClientResult::Start {
@@ -475,16 +487,19 @@ fn handle_pre_start_client<T>(mut client: T) -> Result<PreStartClientResult<T>>
 where
     T: Read + Write,
 {
+    managed_debug("pre-start hello write begin");
     write_frame(
         &mut client,
         &Frame::Hello {
             version: PROTOCOL_VERSION,
         },
     )?;
+    managed_debug("pre-start hello write complete");
     let mut initial_size = None;
     loop {
         match read_frame(&mut client)? {
             Some(Frame::Attach) => {
+                managed_debug("pre-start attach received");
                 trace_event_from_env("guest", "attach", "direction=host-to-guest-pre-start");
                 return Ok(PreStartClientResult::Start {
                     client,
@@ -499,7 +514,10 @@ where
                 );
                 initial_size = Some(PtySize { rows, cols });
             }
-            Some(Frame::Detach) | None => return Ok(PreStartClientResult::Wait),
+            Some(Frame::Detach) | None => {
+                managed_debug("pre-start readiness probe detached");
+                return Ok(PreStartClientResult::Wait);
+            }
             Some(frame) => {
                 write_frame(
                     &mut client,

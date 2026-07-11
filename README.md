@@ -898,7 +898,21 @@ Detach/attach behavior:
   need a separate design.
 - The attach transport is libkrun's vsock-to-host-Unix-socket mapping. If the
   required `krun_add_vsock_port2` symbol or setup path is unavailable, managed
-  attach fails clearly instead of falling back to another transport.
+  attach fails clearly instead of falling back to another transport. On slow or
+  heavily loaded hosts, managed attach readiness can need a longer guest boot
+  window before the guest sends its initial `Hello` frame. Increase the bounded
+  readiness windows with:
+
+  ```bash
+  LOFTD_MANAGED_ATTACH_READY_TIMEOUT_SECS=180 \
+  LOFTD_MANAGED_HELPER_READY_TIMEOUT_SECS=190 \
+  ./result/bin/loftd -- bash -lc 'echo ok'
+  ```
+
+  `LOFTD_MANAGED_ATTACH_READY_TIMEOUT_SECS` controls how long the helper waits
+  for the guest attach listener to complete the initial `Hello` handshake.
+  `LOFTD_MANAGED_HELPER_READY_TIMEOUT_SECS` controls how long the parent waits
+  for the helper to report readiness.
 - Exiting the guest shell or command terminates the VM and removes the active
   task/rootfs unless `--preserve-debug` was used. Detached tasks can be
   terminated with `loftd kill <task-id-or-handle-selector>`.

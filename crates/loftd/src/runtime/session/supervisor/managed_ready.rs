@@ -19,7 +19,9 @@ use crate::runtime::session::supervisor::identity::{
 use crate::runtime::session::supervisor::vm_child::VmWorkerGuard;
 use crate::runtime::vm::network::status_exit_code;
 
-const READY_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const MANAGED_ATTACH_READY_TIMEOUT_ENV: &str = "LOFTD_MANAGED_ATTACH_READY_TIMEOUT_SECS";
+pub(crate) const MANAGED_HELPER_READY_TIMEOUT_ENV: &str = "LOFTD_MANAGED_HELPER_READY_TIMEOUT_SECS";
+const DEFAULT_READY_TIMEOUT_SECS: u64 = 120;
 const READY_POLL: Duration = Duration::from_millis(25);
 const HANDSHAKE_PROBE_READ_TIMEOUT: Duration = Duration::from_secs(1);
 const ATTACH_SOCKET_MODE: u32 = 0o600;
@@ -30,12 +32,44 @@ pub(crate) fn wait_for_managed_attach_socket(
 ) -> Result<()> {
     wait_for_managed_attach_socket_with(
         managed,
-        ReadyOptions::default(),
+        ReadyOptions::from_env()?,
         &RealSocketOps,
         &RealFilesystemIdentityScope,
         &RealHandshakeProbe,
         || worker.try_wait(),
     )
+}
+
+pub(crate) fn managed_helper_ready_timeout() -> Result<Duration> {
+    let attach_timeout = managed_attach_ready_timeout()?;
+    match std::env::var(MANAGED_HELPER_READY_TIMEOUT_ENV) {
+        Ok(value) => parse_positive_duration_secs(MANAGED_HELPER_READY_TIMEOUT_ENV, &value),
+        Err(std::env::VarError::NotPresent) => Ok(attach_timeout + Duration::from_secs(10)),
+        Err(err) => Err(anyhow::Error::new(err)
+            .context(format!("failed to read {MANAGED_HELPER_READY_TIMEOUT_ENV}"))),
+    }
+}
+
+fn managed_attach_ready_timeout() -> Result<Duration> {
+    duration_from_env_secs(MANAGED_ATTACH_READY_TIMEOUT_ENV, DEFAULT_READY_TIMEOUT_SECS)
+}
+
+fn duration_from_env_secs(name: &str, default_secs: u64) -> Result<Duration> {
+    match std::env::var(name) {
+        Ok(value) => parse_positive_duration_secs(name, &value),
+        Err(std::env::VarError::NotPresent) => Ok(Duration::from_secs(default_secs)),
+        Err(err) => Err(anyhow::Error::new(err).context(format!("failed to read {name}"))),
+    }
+}
+
+fn parse_positive_duration_secs(name: &str, value: &str) -> Result<Duration> {
+    let secs = value.parse::<u64>().with_context(|| {
+        format!("{name} must be a positive integer number of seconds, got '{value}'")
+    })?;
+    if secs == 0 {
+        bail!("{name} must be greater than zero seconds");
+    }
+    Ok(Duration::from_secs(secs))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,12 +78,12 @@ struct ReadyOptions {
     poll: Duration,
 }
 
-impl Default for ReadyOptions {
-    fn default() -> Self {
-        Self {
-            timeout: READY_TIMEOUT,
+impl ReadyOptions {
+    fn from_env() -> Result<Self> {
+        Ok(Self {
+            timeout: managed_attach_ready_timeout()?,
             poll: READY_POLL,
-        }
+        })
     }
 }
 
@@ -382,7 +416,54 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use std::os::unix::net::UnixListener;
+    use std::sync::{Mutex, MutexGuard};
     use tempfile::tempdir;
+
+    #[test]
+    fn parse_positive_duration_secs_accepts_positive_seconds() {
+        assert_eq!(
+            parse_positive_duration_secs("TEST_TIMEOUT", "120").unwrap(),
+            Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn parse_positive_duration_secs_rejects_zero() {
+        let err = parse_positive_duration_secs("TEST_TIMEOUT", "0").unwrap_err();
+        assert!(format!("{err:#}").contains("must be greater than zero"));
+    }
+
+    #[test]
+    fn parse_positive_duration_secs_rejects_non_integer() {
+        let err = parse_positive_duration_secs("TEST_TIMEOUT", "slow").unwrap_err();
+        assert!(format!("{err:#}").contains("must be a positive integer number of seconds"));
+    }
+
+    #[test]
+    fn managed_helper_ready_timeout_defaults_to_attach_timeout_plus_margin() {
+        let _guard = EnvGuard::unset([
+            MANAGED_ATTACH_READY_TIMEOUT_ENV,
+            MANAGED_HELPER_READY_TIMEOUT_ENV,
+        ]);
+
+        assert_eq!(
+            managed_helper_ready_timeout().unwrap(),
+            Duration::from_secs(DEFAULT_READY_TIMEOUT_SECS + 10)
+        );
+    }
+
+    #[test]
+    fn managed_helper_ready_timeout_uses_explicit_override() {
+        let _guard = EnvGuard::set([
+            (MANAGED_ATTACH_READY_TIMEOUT_ENV, "180"),
+            (MANAGED_HELPER_READY_TIMEOUT_ENV, "190"),
+        ]);
+
+        assert_eq!(
+            managed_helper_ready_timeout().unwrap(),
+            Duration::from_secs(190)
+        );
+    }
 
     #[test]
     fn repairs_existing_unix_socket_mode_and_owner() {
@@ -660,6 +741,46 @@ mod tests {
                 self.completed.set(true);
             }
             result
+        }
+    }
+
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        entries: Vec<(&'static str, Option<String>)>,
+    }
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    impl EnvGuard {
+        fn unset(names: impl IntoIterator<Item = &'static str>) -> Self {
+            let _lock = ENV_LOCK.lock().unwrap();
+            let mut entries = Vec::new();
+            for name in names {
+                entries.push((name, std::env::var(name).ok()));
+                unsafe { std::env::remove_var(name) };
+            }
+            Self { _lock, entries }
+        }
+
+        fn set(values: impl IntoIterator<Item = (&'static str, &'static str)>) -> Self {
+            let _lock = ENV_LOCK.lock().unwrap();
+            let mut entries = Vec::new();
+            for (name, value) in values {
+                entries.push((name, std::env::var(name).ok()));
+                unsafe { std::env::set_var(name, value) };
+            }
+            Self { _lock, entries }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (name, value) in self.entries.drain(..).rev() {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(name, value) },
+                    None => unsafe { std::env::remove_var(name) },
+                }
+            }
         }
     }
 

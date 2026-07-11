@@ -17,6 +17,7 @@ use crate::runtime::session::attach::{self, AttachInputPolicy, AttachOutcome};
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
 use crate::runtime::session::supervisor::managed_exit_marker;
+use crate::runtime::session::supervisor::managed_ready;
 use crate::runtime::session::supervisor::readiness_pipe::{ParentReadyPipe, READY_FD_ENV};
 use crate::runtime::session::supervisor::sigwinch::SigwinchForwarder;
 use crate::runtime::session::supervisor::{ChildStatus, LIBKRUN_ENTER_HELPER_ARG};
@@ -126,8 +127,9 @@ pub(crate) fn run_helper_process(
         let ready_pipe = ready_pipe.as_mut().ok_or_else(|| {
             anyhow::anyhow!("managed loftd helper readiness pipe was not initialized")
         })?;
+        let helper_ready_timeout = managed_ready::managed_helper_ready_timeout()?;
         if let Err(err) = profiler.measure_result("helper_managed_attach_ready", || {
-            ready_pipe.wait_for_ready(&mut child, Duration::from_secs(35))
+            ready_pipe.wait_for_ready(&mut child, helper_ready_timeout)
         }) {
             terminate_spawned_child_group(&mut child);
             let _ = remove_active_task(&active_task.task_dir);
