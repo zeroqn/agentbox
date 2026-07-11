@@ -203,10 +203,10 @@ pub(crate) struct Cli {
     mem_gib: Option<u32>,
 
     #[arg(
-        long = "passt",
-        help = "Use libkrun virtio-net/passt mode instead of the default TSI mode"
+        long = "tsi",
+        help = "Use libkrun virtio-vsock/TSI proxy networking instead of the default virtio-net/passt mode"
     )]
-    passt: bool,
+    tsi: bool,
 
     #[arg(
         short = 'p',
@@ -215,7 +215,7 @@ pub(crate) struct Cli {
         value_parser = parse_publish_arg,
         action = ArgAction::Append,
         help = "Publish a host port to the guest; repeatable",
-        long_help = "Publish a host port to the guest; repeatable. Default TSI mode accepts simple TCP HOST_PORT:GUEST_PORT. With --passt, tcp:SPEC and udp:SPEC select passt TCP/UDP forwarding, and unprefixed SPEC defaults to TCP."
+        long_help = "Publish a host port to the guest; repeatable. Default passt mode accepts passt forwarding syntax; tcp:SPEC and udp:SPEC select passt TCP/UDP forwarding, and unprefixed SPEC defaults to TCP. With --tsi, only simple TCP HOST_PORT:GUEST_PORT mappings are accepted."
     )]
     publish: Vec<String>,
 
@@ -455,10 +455,10 @@ impl Cli {
             guest_init: self.guest_init,
             preserve_debug: self.preserve_debug,
             mem_gib: self.mem_gib,
-            network_mode: if self.passt {
-                NetworkMode::Passt
-            } else {
+            network_mode: if self.tsi {
                 NetworkMode::Tsi
+            } else {
+                NetworkMode::Passt
             },
             publish: self.publish,
             volumes: self.volumes,
@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(options.pty, PtyOptions::DEFAULT);
         assert!(!options.pty.suppress_focus_input);
         assert!(options.pty.focus_report_guard);
-        assert_eq!(options.network_mode, NetworkMode::Tsi);
+        assert_eq!(options.network_mode, NetworkMode::Passt);
         assert!(options.publish.is_empty());
         assert!(options.volumes.is_empty());
         assert_eq!(options.log_settings.level, LogLevel::Debug);
@@ -1207,11 +1207,19 @@ mod tests {
     }
 
     #[test]
-    fn passt_flag_selects_passt_network_mode() {
-        let cli = Cli::try_parse_from(["loftd", "--passt"]).expect("passt flag should parse");
+    fn tsi_flag_selects_tsi_network_mode() {
+        let cli = Cli::try_parse_from(["loftd", "--tsi"]).expect("tsi flag should parse");
         let options = cli.into_runtime_options();
 
-        assert_eq!(options.network_mode, NetworkMode::Passt);
+        assert_eq!(options.network_mode, NetworkMode::Tsi);
+    }
+
+    #[test]
+    fn passt_flag_is_removed() {
+        let err =
+            Cli::try_parse_from(["loftd", "--passt"]).expect_err("removed passt flag should fail");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]

@@ -80,7 +80,7 @@ launch config round-trips, and the direct libkrun FFI call order avoids host
    - `/nix` uses the persistent microvm `/nix` disk.
    - Rootless container storage uses the persistent microvm container-store
      disk.
-   - Outbound networking works through libkrun's no-passt/TSI default path.
+   - Outbound networking works through libkrun's default passt path.
    - Inbound port publishing is unavailable by design.
    - Terminal input/output is usable through the default virtio-console path.
    - Terminal resize behavior is recorded as pass/fail for the current host.

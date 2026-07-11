@@ -69,7 +69,7 @@ managed sidecar.
   `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for agentbox microvm or
   `LOFTD_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for loftd.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
-  default TSI and `--passt` mode; included in the Nix `.#loftd` helper dir,
+  default passt and opt-in `--tsi` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
 - Linux Landlock enabled in the host kernel for default `loftd` task launches.
   Ordinary launches now use host-side Landlock `relax` mode by default; use
@@ -832,7 +832,7 @@ Run/help:
 ./result/bin/loftd seccomp extend --policy loftd-seccomp.policy.json --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd seccomp extend --default-policy --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd --seccomp=enforce:loftd-seccomp.updated.json -- bash -lc 'echo ok'
-./result/bin/loftd --passt -- bash -lc 'echo ok'
+./result/bin/loftd --tsi -- bash -lc 'echo ok'
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
@@ -1471,7 +1471,7 @@ mounts, host `chown`, `:U` ownership mutation, or relaxed guest-init ownership
 repair. The internal helper is also a network manager: it creates one private
 network namespace holder for the loftd session, starts `pasta` with Podman-like
 `--map-guest-addr 169.254.1.2` and `--dns-forward 169.254.1.1`, then forks the
-VM worker into that namespace. When `--passt` is enabled, the helper creates an
+VM worker into that namespace. In the default passt mode, the helper creates an
 `AF_UNIX` socketpair and starts `passt` with `--fd <child-fd>` before the VM
 worker enters the private network namespace; the worker inherits the other fd
 and passes it to libkrun with `krun_add_net_unixstream()`. This follows crun's
@@ -1491,41 +1491,39 @@ read-only over that exact in-image target. Loftd still execs the discovered
 `LOFTD_*`, `KRUN_CONFIG`, arguments, and final guest command; it does not copy
 or chmod the task-rootfs `/nix/store` file.
 
-The default network mode remains libkrun TSI: loftd does not add a libkrun
-network device by default, but the libkrun VMM starts from the pasta-backed
+The default network mode is libkrun virtio-net/passt: loftd starts a `passt`
+unix-socket backend inside the same namespace, sets guest env `LOFTD_USE_PASST=1`,
+and calls `krun_add_net_unixstream()` before `krun_start_enter()`. Passing `--tsi`
+opts into libkrun's virtio-vsock/TSI proxy mode. In that mode loftd does not add a
+libkrun network device, but the libkrun VMM still starts from the pasta-backed
 namespace so the guest's Podman-like host aliases can reach the host at
-`169.254.1.2`. Passing `--passt` opts into libkrun virtio-net/passt mode. In
-that mode the VM worker starts an additional `passt` unix-socket backend inside
-the same namespace, sets guest env `LOFTD_USE_PASST=1`, and calls
-`krun_add_net_unixstream()` before `krun_start_enter()`. Both modes always
-materialize `/etc/hosts` with:
+`169.254.1.2`. Both modes always materialize `/etc/hosts` with:
 
 ```text
 169.254.1.2    host.containers.internal host.docker.internal
 ```
 
 Use repeatable `-p, --publish SPEC` to expose guest services on host ports.
-In the default TSI mode, loftd supports only simple TCP
+In the default passt mode, unprefixed publish specs default to TCP; `tcp:` and
+`udp:` select passt `-t` and `-u` forwarding respectively, and passt owns deeper
+grammar validation for ranges, bind-address suffixes, interfaces, and exclusions:
+
+```bash
+./result/bin/loftd -p tcp:8080:80 -p udp:5353:5353 -- bash -lc 'echo ok'
+```
+
+Passing `--tsi` switches to TSI mode, where loftd supports only simple TCP
 `HOST_PORT:GUEST_PORT` mappings through a two-hop path: `pasta` listens in the
 host-facing helper namespace and forwards `HOST_PORT` into the VM worker's
 private network namespace, while libkrun `krun_set_port_map()` maps guest
 listens on `GUEST_PORT` to that same target-namespace `HOST_PORT`:
 
 ```bash
-./result/bin/loftd -p 8080:80 -- bash -lc 'python3 -m http.server 80'
+./result/bin/loftd --tsi -p 8080:80 -- bash -lc 'python3 -m http.server 80'
 ```
 
 TSI publish specs intentionally reject UDP, host bind addresses, port ranges,
-random host ports, `all`/`none`, and protocol selectors. Use `--passt` when you
-need broader passt-compatible forwarding syntax. In passt mode, unprefixed
-publish specs default to TCP; `tcp:` and `udp:` select passt `-t` and `-u`
-forwarding respectively, and passt owns deeper grammar validation for ranges,
-bind-address suffixes, interfaces, and exclusions:
-
-```bash
-./result/bin/loftd --passt -p tcp:8080:80 -p udp:5353:5353 -- bash -lc 'echo ok'
-```
-
+random host ports, `all`/`none`, and protocol selectors.
 Loftd still does not create a shared/global rootless network namespace.
 
 Use repeatable `-v, --volume SOURCE:TARGET[:ro|:rw]` to add host bind mounts
@@ -1571,7 +1569,7 @@ python3 -m http.server 18080 --bind 0.0.0.0
 
 # terminal 2
 ./result/bin/loftd -- bash -lc 'getent hosts host.containers.internal && curl -fsS http://host.containers.internal:18080/'
-./result/bin/loftd --passt -- bash -lc 'getent hosts host.docker.internal && curl -fsS http://host.docker.internal:18080/'
+./result/bin/loftd --tsi -- bash -lc 'getent hosts host.docker.internal && curl -fsS http://host.docker.internal:18080/'
 ```
 
 For `/nix`, normal loftd launches now use a workspace-scoped host kernel
