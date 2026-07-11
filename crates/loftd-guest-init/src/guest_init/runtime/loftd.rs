@@ -38,6 +38,7 @@ pub(in crate::guest_init) enum LoftdEnterOperation {
     ValidatePreparedRootPaths,
     EnsureTmpTmpfs,
     EnsureTunDevice,
+    EnsureLoopback,
     ResolveIdentity,
     DeriveShellEnvironment,
     ExportShellEnvironment,
@@ -61,6 +62,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
         LoftdEnterOperation::ValidatePreparedRootPaths,
         LoftdEnterOperation::EnsureTmpTmpfs,
         LoftdEnterOperation::EnsureTunDevice,
+        LoftdEnterOperation::EnsureLoopback,
         LoftdEnterOperation::ResolveIdentity,
         LoftdEnterOperation::DeriveShellEnvironment,
         LoftdEnterOperation::ExportShellEnvironment,
@@ -113,6 +115,12 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     profiler.measure_result("ensure-tmp-tmpfs", ensure_tmp_tmpfs_mounted)?;
     profiler.measure_result("ensure-tun-device", || {
         crate::guest_init::components::rootless::kernel::prepare_tun_device()
+    })?;
+    profiler.measure_result("ensure-loopback", || {
+        if process::is_root() {
+            crate::guest_init::components::net::loopback::ensure_loopback_ipv4()?;
+        }
+        Ok(())
     })?;
     debug_breadcrumb("resolve-identity starting");
     let identity = profiler.measure_result("resolve-identity", || {
@@ -485,6 +493,23 @@ mod tests {
         );
         assert!(pos(LoftdEnterOperation::StartPodmanPrep) < pos(LoftdEnterOperation::DropAndExec));
         assert!(pos(LoftdEnterOperation::ExportNixRemote) < pos(LoftdEnterOperation::DropAndExec));
+    }
+
+    #[test]
+    fn planned_loftd_enter_ensures_loopback_before_user_command() {
+        let operations = planned_enter_operations();
+        let pos = |op| {
+            operations
+                .iter()
+                .position(|candidate| candidate == &op)
+                .expect("operation should exist")
+        };
+
+        assert!(pos(LoftdEnterOperation::EnsureLoopback) < pos(LoftdEnterOperation::DropAndExec));
+        assert!(
+            pos(LoftdEnterOperation::EnsureLoopback) < pos(LoftdEnterOperation::RunManagedSession)
+        );
+        assert!(pos(LoftdEnterOperation::EnsureLoopback) < pos(LoftdEnterOperation::StartNixPrep));
     }
 
     #[test]
