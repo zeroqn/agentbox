@@ -54,29 +54,37 @@ impl LoopbackConfigurator for IoctlLoopbackConfigurator {
 
     fn set_link_up(&mut self, interface: &str) -> Result<()> {
         let mut ifr = Ifreq::named(interface);
-        ioctl_readwrite(self.socket.as_raw_fd(), libc::SIOCGIFFLAGS, &mut ifr)
-            .with_context(|| format!("failed to read {interface} interface flags"))?;
+        ioctl_readwrite(
+            self.socket.as_raw_fd(),
+            libc::SIOCGIFFLAGS as libc::Ioctl,
+            &mut ifr,
+        )
+        .with_context(|| format!("failed to read {interface} interface flags"))?;
         unsafe {
             ifr.ifr_ifru.ifru_flags |= IFF_UP;
         }
-        ioctl_readwrite(self.socket.as_raw_fd(), libc::SIOCSIFFLAGS, &mut ifr)
-            .with_context(|| format!("failed to bring {interface} interface up"))
+        ioctl_readwrite(
+            self.socket.as_raw_fd(),
+            libc::SIOCSIFFLAGS as libc::Ioctl,
+            &mut ifr,
+        )
+        .with_context(|| format!("failed to bring {interface} interface up"))
     }
 }
 
 fn set_interface_address(fd: i32, interface: &str, address: [u8; 4]) -> Result<()> {
     let mut ifr = Ifreq::named(interface);
     ifr.ifr_ifru.ifru_addr = sockaddr_in(address);
-    ioctl_readwrite(fd, libc::SIOCSIFADDR, &mut ifr)
+    ioctl_readwrite(fd, libc::SIOCSIFADDR as libc::Ioctl, &mut ifr)
 }
 
 fn set_interface_netmask(fd: i32, interface: &str, netmask: [u8; 4]) -> Result<()> {
     let mut ifr = Ifreq::named(interface);
     ifr.ifr_ifru.ifru_addr = sockaddr_in(netmask);
-    ioctl_readwrite(fd, libc::SIOCSIFNETMASK, &mut ifr)
+    ioctl_readwrite(fd, libc::SIOCSIFNETMASK as libc::Ioctl, &mut ifr)
 }
 
-fn ioctl_readwrite(fd: i32, request: libc::c_ulong, ifr: &mut Ifreq) -> Result<()> {
+fn ioctl_readwrite(fd: i32, request: libc::Ioctl, ifr: &mut Ifreq) -> Result<()> {
     let rc = unsafe { libc::ioctl(fd, request, ifr as *mut Ifreq) };
     if rc < 0 {
         bail!(std::io::Error::last_os_error());
