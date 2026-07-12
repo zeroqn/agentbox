@@ -511,6 +511,49 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
 }
 
 #[test]
+fn drm_gpu_mode_enables_native_context_renderer_flags_before_start() {
+    const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
+    const VIRGLRENDERER_THREAD_SYNC: u32 = 1 << 1;
+    const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
+    const VIRGLRENDERER_USE_ASYNC_FENCE_CB: u32 = 1 << 8;
+    const VIRGLRENDERER_DRM: u32 = 1 << 10;
+    const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
+
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let config = LaunchConfig {
+        gpu_mode: GpuMode::Drm,
+        ..config()
+    };
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&config)
+        .expect("launch should succeed");
+
+    let calls = calls.borrow();
+    let gpu_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::SetGpuOptions2(..)))
+        .expect("drm GPU mode should configure GPU options");
+    let start_index = calls
+        .iter()
+        .position(|call| matches!(call, Call::StartEnter(..)))
+        .expect("launch should start");
+
+    assert_eq!(
+        calls[gpu_index],
+        Call::SetGpuOptions2(
+            7,
+            VIRGLRENDERER_USE_EGL
+                | VIRGLRENDERER_THREAD_SYNC
+                | VIRGLRENDERER_NO_VIRGL
+                | VIRGLRENDERER_USE_ASYNC_FENCE_CB
+                | VIRGLRENDERER_DRM,
+            GPU_SHM_SIZE_BYTES,
+        )
+    );
+    assert!(gpu_index < start_index);
+}
+
+#[test]
 fn nofile_rlimit_entry_uses_linux_resource_id_and_host_hard_as_soft_and_hard() {
     assert_eq!(
         guest_nofile_rlimit_entry(1_048_576),

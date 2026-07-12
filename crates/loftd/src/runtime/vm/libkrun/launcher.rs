@@ -16,7 +16,16 @@ use crate::runtime::vm::libkrun::api::LibkrunApi;
 pub(in crate::runtime::vm::libkrun) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
 pub(in crate::runtime::vm::libkrun) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
+const VIRGLRENDERER_THREAD_SYNC: u32 = 1 << 1;
+const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
+const VIRGLRENDERER_USE_ASYNC_FENCE_CB: u32 = 1 << 8;
 const VIRGLRENDERER_DRM: u32 = 1 << 10;
+const VIRGLRENDERER_NATIVE_CONTEXT_FLAGS: u32 = VIRGLRENDERER_USE_EGL
+    | VIRGLRENDERER_THREAD_SYNC
+    | VIRGLRENDERER_NO_VIRGL
+    | VIRGLRENDERER_USE_ASYNC_FENCE_CB
+    | VIRGLRENDERER_DRM;
 const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[cfg(test)]
@@ -286,13 +295,17 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             GpuMode::Drm => {
                 tracing::debug!(
                     ctx_id,
-                    virgl_flags = VIRGLRENDERER_DRM,
+                    virgl_flags = VIRGLRENDERER_NATIVE_CONTEXT_FLAGS,
                     shm_size = GPU_SHM_SIZE_BYTES,
                     "krun_set_gpu_options2: begin"
                 );
                 let rc = self
                     .api
-                    .set_gpu_options2(ctx_id, VIRGLRENDERER_DRM, GPU_SHM_SIZE_BYTES)?
+                    .set_gpu_options2(
+                        ctx_id,
+                        VIRGLRENDERER_NATIVE_CONTEXT_FLAGS,
+                        GPU_SHM_SIZE_BYTES,
+                    )?
                     .ok_or_else(|| {
                         anyhow!("libkrun setup failed: krun_set_gpu_options2 is unavailable")
                     })?;
