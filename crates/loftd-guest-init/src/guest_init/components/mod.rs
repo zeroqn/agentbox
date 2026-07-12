@@ -7,3 +7,4 @@ pub(in crate::guest_init) mod nix;
 pub(in crate::guest_init) mod podman;
 pub(in crate::guest_init) mod rootless;
 pub(in crate::guest_init) mod shell;
+pub(in crate::guest_init) mod wayland;

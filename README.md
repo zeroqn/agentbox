@@ -71,6 +71,13 @@ managed sidecar.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
   default passt and opt-in `--tsi` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
+- `loftd --wayland` enables guest Wayland passthrough through
+  `wl-cross-domain-proxy` and libkrun virtio-gpu DRM native contexts. The loftd
+  image includes the guest proxy binary and guest-init exports
+  `XDG_RUNTIME_DIR=/run/user/<uid>` plus `WAYLAND_DISPLAY=wayland-0` before the
+  task command starts. This mode requires a libkrun build with
+  `krun_set_gpu_options2` support; `--wayland` automatically selects
+  `--gpu=drm`.
 - Linux Landlock enabled in the host kernel for default `loftd` task launches.
   Ordinary launches now use host-side Landlock `relax` mode by default; use
   `--landlock=all` for stricter TCP bind handling,

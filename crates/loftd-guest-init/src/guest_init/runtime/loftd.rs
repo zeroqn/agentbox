@@ -48,6 +48,7 @@ pub(in crate::guest_init) enum LoftdEnterOperation {
     StartNixPrep,
     StartPodmanPrep,
     ExportNixRemote,
+    StartWaylandProxy,
     EnsureNofileFloor,
     ClearProfileEnvBeforeExec,
     ReportProfileBeforeExec,
@@ -72,6 +73,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
         LoftdEnterOperation::StartNixPrep,
         LoftdEnterOperation::StartPodmanPrep,
         LoftdEnterOperation::ExportNixRemote,
+        LoftdEnterOperation::StartWaylandProxy,
         LoftdEnterOperation::EnsureNofileFloor,
         LoftdEnterOperation::ClearProfileEnvBeforeExec,
         LoftdEnterOperation::ReportProfileBeforeExec,
@@ -180,6 +182,12 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
             unsafe { std::env::set_var("NIX_REMOTE", NIX_REMOTE_URI) };
         }
     });
+    profiler.measure_result("start-wayland-proxy", || {
+        crate::guest_init::components::wayland::start_if_enabled(
+            env_contract.loftd.wayland,
+            &identity,
+        )
+    })?;
     profiler.measure_result("ensure-nofile-floor", process::ensure_nofile_floor)?;
 
     profile::clear_guest_profile_env();
@@ -250,6 +258,7 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
             env.var(CONTAINERS_STORE_ENV),
         )?,
         use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
+        wayland: env_flag(env, "LOFTD_WAYLAND"),
         enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
         host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
         host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,

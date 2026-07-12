@@ -209,6 +209,7 @@ mod tests {
             containers_storage: false,
             container_store_backend: ContainerStoreBackend::RawDisk,
             use_passt: false,
+            wayland: false,
             enter_as_root: false,
             host_uid: None,
             host_gid: None,
