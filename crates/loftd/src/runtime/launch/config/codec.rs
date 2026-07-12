@@ -377,7 +377,12 @@ impl LaunchConfig {
         let log_level = LogLevel::parse_name(&log_level_text)
             .ok_or_else(|| anyhow!("loftd launch config log_level is invalid"))?;
         let network_mode = NetworkMode::parse_config_value(&required("network_mode")?)?;
-        let gpu_mode = GpuMode::parse_config_value(&required("gpu_mode")?)?;
+        let gpu_mode = GpuMode::parse_config_value(
+            fields
+                .get("gpu_mode")
+                .map(String::as_str)
+                .unwrap_or(GpuMode::Off.as_config_value()),
+        )?;
         let mounts = parse_mounts(&fields, mounts)?;
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
