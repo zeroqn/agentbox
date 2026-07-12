@@ -59,6 +59,7 @@
           libkrun = import ./nix/pkgs/libkrun.nix {
             inherit pkgs pins libkrunfw;
           };
+          wl-cross-domain-proxy = pkgs.callPackage ./nix/wl-cross-domain-proxy.nix { };
           prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix {
             inherit
               pkgs
@@ -111,6 +112,7 @@
                 libkrun
                 podman
                 crun
+                wl-cross-domain-proxy
                 imageVariant
                 ;
               dirge = dirgePackage;
@@ -156,6 +158,7 @@
           agentbox-container-ci-sccache = agentboxImageCiSccache;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
+          wl-cross-domain-proxy = wl-cross-domain-proxy;
           crun = crun;
           podman = podman;
           container = loftdImage;

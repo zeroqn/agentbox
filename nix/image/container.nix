@@ -8,6 +8,7 @@
   rtkPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
+  wl-cross-domain-proxy,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
   agentboxMuslPackage,
@@ -27,6 +28,7 @@ let
       rtkPrebuilt
       containerLibPolicySeccompJson
       libkrun
+      wl-cross-domain-proxy
       podman
       crun
       agentboxMuslPackage

@@ -8,6 +8,7 @@
   rtkPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
+  wl-cross-domain-proxy,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
   agentboxMuslPackage,
@@ -447,6 +448,9 @@ let
       dynamicToolchainImageLayer
       toolingImageLayer
       agentImageLayer
+    ]
+    ++ pkgs.lib.optionals (imageVariant == "loftd") [
+      wl-cross-domain-proxy
     ];
   imagePathPackages =
     baseImagePackages
@@ -457,6 +461,9 @@ let
       dynamicToolchainImageLayer
       toolingImageLayer
       agentImageLayer
+    ]
+    ++ pkgs.lib.optionals (imageVariant == "loftd") [
+      wl-cross-domain-proxy
     ];
   imagePath = pkgs.lib.makeBinPath (
     [
