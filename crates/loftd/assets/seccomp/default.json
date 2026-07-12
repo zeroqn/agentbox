@@ -22,10 +22,10 @@
         "syscall": "capset"
       },
       {
-        "syscall": "clone3"
+        "syscall": "clock_gettime"
       },
       {
-        "syscall": "clock_gettime"
+        "syscall": "clone3"
       },
       {
         "syscall": "close"
@@ -95,6 +95,9 @@
       },
       {
         "syscall": "getdents64"
+      },
+      {
+        "syscall": "geteuid"
       },
       {
         "syscall": "getpeername"
@@ -233,6 +236,9 @@
       },
       {
         "syscall": "umask"
+      },
+      {
+        "syscall": "unlink"
       },
       {
         "syscall": "unlinkat"
