@@ -58,6 +58,7 @@ let
       rtkPrebuilt
       containerLibPolicySeccompJson
       libkrun
+      wl-cross-domain-proxy
       podman
       crun
       agentboxMuslPackage
