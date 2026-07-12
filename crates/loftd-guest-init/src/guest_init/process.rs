@@ -4,6 +4,10 @@ use std::io;
 
 use crate::guest_init::components::home::identity::DevIdentity;
 
+const VIDEO_GID: libc::gid_t = 44;
+const RENDER_GID: libc::gid_t = 107;
+const DEV_SUPPLEMENTARY_GROUPS: &[libc::gid_t] = &[VIDEO_GID, RENDER_GID];
+
 pub(in crate::guest_init) fn uid() -> u32 {
     unsafe { libc::getuid() }
 }
@@ -31,10 +35,15 @@ pub(in crate::guest_init) fn drop_to_identity_and_exec(
         return Err(anyhow!("cannot exec an empty command"));
     }
 
-    let clear_groups_rc = unsafe { libc::setgroups(0, std::ptr::null()) };
-    if clear_groups_rc != 0 {
+    let set_groups_rc = unsafe {
+        libc::setgroups(
+            DEV_SUPPLEMENTARY_GROUPS.len(),
+            DEV_SUPPLEMENTARY_GROUPS.as_ptr(),
+        )
+    };
+    if set_groups_rc != 0 {
         return Err(std::io::Error::last_os_error())
-            .context("failed to clear supplementary groups");
+            .context("failed to set dev supplementary groups");
     }
     if unsafe { libc::setgid(identity.gid) } != 0 {
         return Err(std::io::Error::last_os_error())
@@ -199,6 +208,11 @@ mod tests {
             self.set_error
                 .map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
         }
+    }
+
+    #[test]
+    fn dev_supplementary_groups_include_wayland_device_groups() {
+        assert_eq!(DEV_SUPPLEMENTARY_GROUPS, &[VIDEO_GID, RENDER_GID]);
     }
 
     #[test]
