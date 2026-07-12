@@ -60,12 +60,23 @@ fn build_passwd(identity: &DevIdentity) -> Result<String> {
     ))
 }
 
-fn build_group(identity: &DevIdentity) -> Result<String> {
-    let existing = read_without_dev(Path::new("/etc/group"))?;
-    Ok(format!("{existing}{DEV_USER}:x:{}:\n", identity.gid))
+pub(in crate::guest_init) fn build_group(identity: &DevIdentity) -> Result<String> {
+    let existing = read_without_dynamic_groups(Path::new("/etc/group"))?;
+    Ok(format!(
+        "{existing}video:x:44:{DEV_USER}\nrender:x:107:{DEV_USER}\n{DEV_USER}:x:{}:\n",
+        identity.gid
+    ))
+}
+
+pub(in crate::guest_init) fn read_without_dynamic_groups(path: &Path) -> Result<String> {
+    read_without_named_entries(path, &["dev", "video", "render"])
 }
 
 fn read_without_dev(path: &Path) -> Result<String> {
+    read_without_named_entries(path, &["dev"])
+}
+
+fn read_without_named_entries(path: &Path, names: &[&str]) -> Result<String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -73,7 +84,10 @@ fn read_without_dev(path: &Path) -> Result<String> {
     };
     let mut out = String::new();
     for line in text.lines() {
-        if !line.starts_with("dev:") {
+        if !names
+            .iter()
+            .any(|name| line.starts_with(&format!("{name}:")))
+        {
             out.push_str(line);
             out.push('\n');
         }

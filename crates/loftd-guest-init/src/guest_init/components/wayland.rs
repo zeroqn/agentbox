@@ -6,9 +6,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::fs as guest_fs;
 
 pub(in crate::guest_init) const WAYLAND_DISPLAY: &str = "wayland-0";
 pub(in crate::guest_init) const PROXY_BIN: &str = "wl-cross-domain-proxy";
+const DRI_DIR: &str = "/dev/dri";
+const ROOT_UID: u32 = 0;
+const VIDEO_GID: u32 = 44;
+const RENDER_GID: u32 = 107;
 
 pub(in crate::guest_init) fn start_if_enabled(
     enabled: bool,
@@ -19,6 +24,7 @@ pub(in crate::guest_init) fn start_if_enabled(
     }
     let runtime_dir = runtime_dir(identity.uid);
     prepare_runtime_dir(&runtime_dir, identity)?;
+    prepare_drm_devices()?;
     export_guest_env(&runtime_dir);
     let child = spawn_proxy(&runtime_dir, WAYLAND_DISPLAY)
         .context("failed to start guest Wayland cross-domain proxy")?;
@@ -69,14 +75,65 @@ fn spawn_proxy(runtime_dir: &Path, wayland_display: &str) -> Result<Child> {
             )
         })?;
     }
-    Command::new(PROXY_BIN)
+    spawn_proxy_command(runtime_dir, wayland_display)
+        .spawn()
+        .with_context(|| anyhow!("failed to spawn {PROXY_BIN}"))
+}
+
+fn spawn_proxy_command(runtime_dir: &Path, wayland_display: &str) -> Command {
+    let mut command = Command::new(PROXY_BIN);
+    command
+        .arg("--socket-name")
+        .arg(wayland_display)
         .env("XDG_RUNTIME_DIR", runtime_dir)
         .env("WAYLAND_DISPLAY", wayland_display)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| anyhow!("failed to spawn {PROXY_BIN}"))
+        .stderr(Stdio::inherit());
+    command
+}
+
+fn prepare_drm_devices() -> Result<()> {
+    prepare_drm_devices_under(Path::new(DRI_DIR))
+}
+
+fn prepare_drm_devices_under(dri_dir: &Path) -> Result<()> {
+    let Ok(entries) = fs::read_dir(dri_dir) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", dri_dir.display()))?;
+        let path = entry.path();
+        if let Some(permissions) = drm_device_permissions(&path) {
+            guest_fs::chown(&path, ROOT_UID, permissions.gid)?;
+            guest_fs::chmod(&path, permissions.mode)?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DrmDevicePermissions {
+    gid: u32,
+    mode: u32,
+}
+
+fn drm_device_permissions(path: &Path) -> Option<DrmDevicePermissions> {
+    let name = path.file_name()?.to_str()?;
+    if name.starts_with("renderD") {
+        Some(DrmDevicePermissions {
+            gid: RENDER_GID,
+            mode: 0o666,
+        })
+    } else if name.starts_with("card") {
+        Some(DrmDevicePermissions {
+            gid: VIDEO_GID,
+            mode: 0o660,
+        })
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -92,5 +149,41 @@ mod tests {
     fn proxy_constants_match_guest_env_contract() {
         assert_eq!(WAYLAND_DISPLAY, "wayland-0");
         assert_eq!(PROXY_BIN, "wl-cross-domain-proxy");
+    }
+
+    #[test]
+    fn proxy_command_forces_exported_socket_name() {
+        let command = spawn_proxy_command(Path::new("/run/user/1000"), WAYLAND_DISPLAY);
+
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, ["--socket-name", WAYLAND_DISPLAY]);
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("WAYLAND_DISPLAY")),
+            Some((
+                std::ffi::OsStr::new("WAYLAND_DISPLAY"),
+                Some(std::ffi::OsStr::new(WAYLAND_DISPLAY))
+            ))
+        );
+    }
+
+    #[test]
+    fn drm_device_permissions_match_libkrun_gpu_nodes() {
+        assert_eq!(
+            drm_device_permissions(Path::new("/dev/dri/renderD128")),
+            Some(DrmDevicePermissions {
+                gid: RENDER_GID,
+                mode: 0o666,
+            })
+        );
+        assert_eq!(
+            drm_device_permissions(Path::new("/dev/dri/card0")),
+            Some(DrmDevicePermissions {
+                gid: VIDEO_GID,
+                mode: 0o660,
+            })
+        );
+        assert_eq!(drm_device_permissions(Path::new("/dev/dri/by-path")), None);
     }
 }

@@ -2,7 +2,9 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 
 use crate::guest_init::components::home::identity::DevIdentity;
-use crate::guest_init::components::home::root::{ensure_home_dirs, home_dirs, nix_cache_dir};
+use crate::guest_init::components::home::root::{
+    build_group, ensure_home_dirs, home_dirs, nix_cache_dir, read_without_dynamic_groups,
+};
 
 #[test]
 fn home_dirs_cover_cache_parent_but_leave_nix_cache_to_recursive_repair() {
@@ -20,6 +22,32 @@ fn home_dirs_cover_cache_parent_but_leave_nix_cache_to_recursive_repair() {
         nix_cache_dir(&identity),
         PathBuf::from("/home/dev/.cache/nix")
     );
+}
+
+#[test]
+fn group_file_adds_dev_to_video_and_render_groups() {
+    let identity = DevIdentity::new(1000, 1000, PathBuf::from("fish"));
+
+    let group = build_group(&identity).expect("group file should be built");
+
+    assert!(group.contains("video:x:44:dev\n"));
+    assert!(group.contains("render:x:107:dev\n"));
+    assert!(group.contains("dev:x:1000:\n"));
+}
+
+#[test]
+fn group_file_replaces_existing_device_group_entries() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let group_path = temp.path().join("group");
+    std::fs::write(
+        &group_path,
+        "root:x:0:\nvideo:x:44:\nrender:x:107:\ndev:x:1000:\n",
+    )
+    .expect("group fixture should be written");
+
+    let group = read_without_dynamic_groups(&group_path).expect("group file should be filtered");
+
+    assert_eq!(group, "root:x:0:\n");
 }
 
 #[test]
