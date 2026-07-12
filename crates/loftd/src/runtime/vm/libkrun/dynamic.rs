@@ -33,6 +33,7 @@ type KrunInitLog = unsafe extern "C" fn(i32, u32, u32, u32) -> i32;
 type KrunCreateCtx = unsafe extern "C" fn() -> i32;
 type KrunFreeCtx = unsafe extern "C" fn(u32) -> i32;
 type KrunSetVmConfig = unsafe extern "C" fn(u32, u8, u32) -> i32;
+type KrunSetGpuOptions2 = unsafe extern "C" fn(u32, u32, u64) -> i32;
 type KrunCheckNestedVirt = unsafe extern "C" fn() -> i32;
 type KrunSetNestedVirt = unsafe extern "C" fn(u32, bool) -> i32;
 type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
@@ -57,6 +58,7 @@ pub(crate) struct DynamicLibkrunApi {
     create_ctx: KrunCreateCtx,
     free_ctx: KrunFreeCtx,
     set_vm_config: KrunSetVmConfig,
+    set_gpu_options2: Option<KrunSetGpuOptions2>,
     check_nested_virt: Option<KrunCheckNestedVirt>,
     set_nested_virt: KrunSetNestedVirt,
     set_root: KrunSetRoot,
@@ -131,6 +133,8 @@ impl DynamicLibkrunApi {
                     handle,
                     "krun_set_vm_config",
                 )?),
+                set_gpu_options2: load_optional_symbol(handle, "krun_set_gpu_options2")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetGpuOptions2>(symbol)),
                 check_nested_virt: nested_virt_symbols
                     .check
                     .map(|symbol| std::mem::transmute::<*mut c_void, KrunCheckNestedVirt>(symbol)),
@@ -334,6 +338,18 @@ impl LibkrunApi for DynamicLibkrunApi {
     fn set_vm_config(&mut self, ctx_id: u32, vcpus: u8, ram_mib: u32) -> Result<i32> {
         // SAFETY: function pointer resolved from libkrun with verified signature.
         Ok(unsafe { (self.set_vm_config)(ctx_id, vcpus, ram_mib) })
+    }
+
+    fn set_gpu_options2(
+        &mut self,
+        ctx_id: u32,
+        virgl_flags: u32,
+        shm_size: u64,
+    ) -> Result<Option<i32>> {
+        Ok(self.set_gpu_options2.map(|set_gpu_options2| {
+            // SAFETY: function pointer resolved from libkrun with verified signature.
+            unsafe { set_gpu_options2(ctx_id, virgl_flags, shm_size) }
+        }))
     }
 
     fn check_nested_virt(&mut self) -> Result<Option<i32>> {

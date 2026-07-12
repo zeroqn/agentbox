@@ -18,6 +18,7 @@ use crate::runtime::session::rootfs::task::{
 use crate::runtime::session::task_control::{
     ProcfsInspector, WorkspaceTaskGateReport, ensure_workspace_has_no_running_tasks,
 };
+use crate::runtime::vm::gpu::GpuMode;
 use crate::runtime::vm::libkrun::{DirectLibkrunLauncher, DynamicLibkrunApi};
 use crate::runtime::vm::prepared_root;
 use crate::state::StateLayout;
@@ -154,6 +155,7 @@ fn maintenance_launch_config(
         vcpus: 1,
         log_level: options.log_settings.level,
         network_mode: NetworkMode::Tsi,
+        gpu_mode: GpuMode::Off,
         publish: Vec::new(),
         workdir: "/".to_owned(),
         exec_path: guest_init_exec.to_owned(),

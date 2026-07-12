@@ -181,6 +181,7 @@ mod tests {
             vcpus: 1,
             log_level: crate::logging::LogLevel::Info,
             network_mode: NetworkMode::Tsi,
+            gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             publish: Vec::new(),
             workdir: "/workspace".to_owned(),
             exec_path: "/bin/sh".to_owned(),

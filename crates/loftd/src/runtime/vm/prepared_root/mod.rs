@@ -505,6 +505,8 @@ mod tests {
             mem_gib: Some(4),
             log_level: LogLevel::Off,
             network_mode: NetworkMode::Tsi,
+            gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
+            wayland: false,
             publish: &[],
             profile: false,
             root: false,

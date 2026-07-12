@@ -5,6 +5,7 @@ use crate::logging::LogLevel;
 use crate::runtime::landlock::LandlockMode;
 use crate::runtime::seccomp::SeccompMode;
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
+use crate::runtime::vm::gpu::GpuMode;
 
 pub(crate) const WORKSPACE_TAG: &str = "loftd-workspace";
 pub(crate) const WORKSPACE_TARGET: &str = "/workspace";
@@ -35,6 +36,7 @@ pub(super) const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
 pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
 pub(super) const HARDENED_ALLOCATOR_VALUE: &str = "hardened";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
+pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
 pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
 pub(super) const GUEST_ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 pub(super) const GUEST_ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
@@ -210,6 +212,8 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) mem_gib: Option<u32>,
     pub(crate) log_level: LogLevel,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) gpu_mode: GpuMode,
+    pub(crate) wayland: bool,
     pub(crate) publish: &'a [String],
     pub(crate) profile: bool,
     pub(crate) root: bool,
@@ -249,6 +253,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) vcpus: u8,
     pub(crate) log_level: LogLevel,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) gpu_mode: GpuMode,
     pub(crate) publish: Vec<String>,
     pub(crate) workdir: String,
     pub(crate) exec_path: String,

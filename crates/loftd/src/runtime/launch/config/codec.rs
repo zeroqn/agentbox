@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::logging::LogLevel;
 use crate::runtime::landlock::LandlockMode;
 use crate::runtime::seccomp::SeccompMode;
+use crate::runtime::vm::gpu::GpuMode;
 
 use super::components::{guest_init, mounts};
 use super::guest_env::guest_config_json;
@@ -150,6 +151,7 @@ impl LaunchConfig {
             "network_mode",
             self.network_mode.as_config_value(),
         );
+        push_field(&mut out, "gpu_mode", self.gpu_mode.as_config_value());
         for (index, spec) in self.publish.iter().enumerate() {
             push_field(&mut out, &format!("publish.{index}"), spec);
         }
@@ -336,6 +338,7 @@ impl LaunchConfig {
                     | "vcpus"
                     | "log_level"
                     | "network_mode"
+                    | "gpu_mode"
                     | "workdir"
                     | "exec_path"
                     | "managed_session.attach_socket"
@@ -374,6 +377,7 @@ impl LaunchConfig {
         let log_level = LogLevel::parse_name(&log_level_text)
             .ok_or_else(|| anyhow!("loftd launch config log_level is invalid"))?;
         let network_mode = NetworkMode::parse_config_value(&required("network_mode")?)?;
+        let gpu_mode = GpuMode::parse_config_value(&required("gpu_mode")?)?;
         let mounts = parse_mounts(&fields, mounts)?;
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
@@ -405,6 +409,7 @@ impl LaunchConfig {
             vcpus,
             log_level,
             network_mode,
+            gpu_mode,
             publish: publish.into_values().collect(),
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,

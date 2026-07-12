@@ -732,6 +732,7 @@ mod tests {
     use crate::runtime::launch::config::ManagedSessionConfig;
     use crate::runtime::launch::config::{BindMountSourceKind, NetworkMode};
     use crate::runtime::seccomp::SeccompMode;
+    use crate::runtime::vm::gpu::GpuMode;
 
     fn test_config(task_rootfs: &Path) -> LaunchConfig {
         LaunchConfig {
@@ -745,6 +746,7 @@ mod tests {
             vcpus: 1,
             log_level: LogLevel::Off,
             network_mode: NetworkMode::Tsi,
+            gpu_mode: GpuMode::Off,
             publish: Vec::new(),
             workdir: "/workspace".to_owned(),
             exec_path: "/loftd-guest-init".to_owned(),

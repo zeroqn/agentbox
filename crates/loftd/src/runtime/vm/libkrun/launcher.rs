@@ -9,12 +9,15 @@ use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::publish::tsi_port_map;
 use crate::runtime::seccomp::{self, SeccompMode};
 use crate::runtime::session::supervisor::rlimits::host_nofile_hard_limit;
+use crate::runtime::vm::gpu::GpuMode;
 
 use crate::runtime::vm::libkrun::api::LibkrunApi;
 
 pub(in crate::runtime::vm::libkrun) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
 pub(in crate::runtime::vm::libkrun) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+const VIRGLRENDERER_DRM: u32 = 1 << 10;
+const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[cfg(test)]
 type AuditStartMarkerHook = Box<dyn FnMut() -> Result<()>>;
@@ -155,6 +158,7 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             .set_vm_config(ctx_id, config.vcpus, config.ram_mib)?;
         check_setup("krun_set_vm_config", rc)?;
         tracing::debug!(ctx_id, "krun_set_vm_config: complete");
+        self.configure_gpu(ctx_id, config.gpu_mode)?;
         self.configure_nested_virt(ctx_id)?;
         tracing::debug!(ctx_id, rootfs = %config.task_rootfs.display(), "krun_set_root: begin");
         let rc = self.api.set_root(ctx_id, &config.task_rootfs)?;
@@ -274,6 +278,29 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             "krun_start_enter returned before successful VM takeover"
         );
         check_start("krun_start_enter", rc)
+    }
+
+    fn configure_gpu(&mut self, ctx_id: u32, gpu_mode: GpuMode) -> Result<()> {
+        match gpu_mode {
+            GpuMode::Off => Ok(()),
+            GpuMode::Drm => {
+                tracing::debug!(
+                    ctx_id,
+                    virgl_flags = VIRGLRENDERER_DRM,
+                    shm_size = GPU_SHM_SIZE_BYTES,
+                    "krun_set_gpu_options2: begin"
+                );
+                let rc = self
+                    .api
+                    .set_gpu_options2(ctx_id, VIRGLRENDERER_DRM, GPU_SHM_SIZE_BYTES)?
+                    .ok_or_else(|| {
+                        anyhow!("libkrun setup failed: krun_set_gpu_options2 is unavailable")
+                    })?;
+                check_setup("krun_set_gpu_options2", rc)?;
+                tracing::debug!(ctx_id, "krun_set_gpu_options2: complete");
+                Ok(())
+            }
+        }
     }
 
     fn configure_nested_virt(&mut self, ctx_id: u32) -> Result<()> {

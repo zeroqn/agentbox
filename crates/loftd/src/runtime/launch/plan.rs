@@ -14,6 +14,7 @@ use crate::runtime::launch::config::{
     BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
 };
 use crate::runtime::seccomp::{self, AuditMode, SeccompMode};
+use crate::runtime::vm::gpu::GpuMode;
 use crate::state::{self, StateLayout};
 use crate::task_rootfs::TaskRootfsBackend;
 use crate::{DEFAULT_FALLBACK_IMAGE, DEFAULT_IMAGE};
@@ -37,6 +38,8 @@ pub(crate) struct LaunchPlan {
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) gpu_mode: GpuMode,
+    pub(crate) wayland: bool,
     pub(crate) publish: Vec<String>,
     pub(crate) guest_command: Vec<String>,
     pub(crate) debug: bool,
@@ -121,6 +124,8 @@ impl LaunchPlan {
             guest_init: options.guest_init,
             mem_gib: options.mem_gib,
             network_mode: options.network_mode,
+            gpu_mode: options.gpu_mode,
+            wayland: options.wayland,
             publish: options.publish,
             guest_command: options.guest_command,
             debug: options.log_settings.level.enables_debug(),
@@ -313,6 +318,8 @@ mod tests {
             preserve_debug: false,
             mem_gib: None,
             network_mode: NetworkMode::Tsi,
+            gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
+            wayland: false,
             publish: Vec::new(),
             volumes: Vec::new(),
             guest_command: Vec::new(),

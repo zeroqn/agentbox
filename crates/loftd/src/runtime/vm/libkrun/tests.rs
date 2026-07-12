@@ -6,6 +6,7 @@ use crate::runtime::launch::config::{
     OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
 };
 use crate::runtime::seccomp::{AuditMode, SeccompMode};
+use crate::runtime::vm::gpu::GpuMode;
 use crate::runtime::vm::libkrun::launcher::{
     NET_FLAG_DHCP_CLIENT, PROFILE_KERNEL_CMDLINE_APPEND, guest_nofile_rlimit_entry,
     with_audit_start_marker_hook_for_test,
@@ -27,6 +28,7 @@ enum Call {
     FreeCtx(u32),
     InitLog(u32),
     SetVmConfig(u32, u8, u32),
+    SetGpuOptions2(u32, u32, u64),
     CheckNestedVirt,
     SetNestedVirt(u32, bool),
     SetRoot(u32, String),
@@ -113,6 +115,18 @@ impl LibkrunApi for FakeLibkrunApi {
             .borrow_mut()
             .push(Call::SetVmConfig(ctx_id, vcpus, ram_mib));
         Ok(self.rc("krun_set_vm_config"))
+    }
+
+    fn set_gpu_options2(
+        &mut self,
+        ctx_id: u32,
+        virgl_flags: u32,
+        shm_size: u64,
+    ) -> Result<Option<i32>> {
+        self.calls
+            .borrow_mut()
+            .push(Call::SetGpuOptions2(ctx_id, virgl_flags, shm_size));
+        Ok(Some(self.rc("krun_set_gpu_options2")))
     }
 
     fn check_nested_virt(&mut self) -> Result<Option<i32>> {
@@ -267,6 +281,8 @@ fn config() -> LaunchConfig {
         mem_gib: Some(4),
         log_level: LogLevel::Debug,
         network_mode: NetworkMode::Tsi,
+        gpu_mode: GpuMode::Off,
+        wayland: false,
         publish: &[],
         profile: false,
         root: false,

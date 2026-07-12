@@ -1,10 +1,11 @@
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::landlock::LandlockMode;
 use crate::runtime::launch::config::NetworkMode;
 use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
+use crate::runtime::vm::gpu::GpuMode;
 use crate::task_rootfs::TaskRootfsBackend;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +27,21 @@ impl ContainerStoreBackend {
         match value {
             "raw-disk" => Ok(Self::RawDisk),
             _ => Err("allowed value is raw-disk".to_owned()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CliGpuMode {
+    Off,
+    Drm,
+}
+
+impl From<CliGpuMode> for GpuMode {
+    fn from(value: CliGpuMode) -> Self {
+        match value {
+            CliGpuMode::Off => Self::Off,
+            CliGpuMode::Drm => Self::Drm,
         }
     }
 }
@@ -207,6 +223,23 @@ pub(crate) struct Cli {
         help = "Use libkrun virtio-vsock/TSI proxy networking instead of the default virtio-net/passt mode"
     )]
     tsi: bool,
+
+    #[arg(
+        long = "gpu",
+        value_enum,
+        value_name = "MODE",
+        default_value = "off",
+        help = "Configure libkrun virtio-gpu mode",
+        long_help = "Configure libkrun virtio-gpu mode. Allowed values are off and drm. Wayland passthrough requires drm and enables it automatically."
+    )]
+    gpu: CliGpuMode,
+
+    #[arg(
+        long = "wayland",
+        help = "Enable guest Wayland passthrough through wl-cross-domain-proxy",
+        long_help = "Enable guest Wayland passthrough through wl-cross-domain-proxy. This starts a guest-local Wayland proxy and enables libkrun virtio-gpu DRM native-context support."
+    )]
+    wayland: bool,
 
     #[arg(
         short = 'p',
@@ -460,6 +493,12 @@ impl Cli {
             } else {
                 NetworkMode::Passt
             },
+            gpu_mode: if self.wayland {
+                GpuMode::Drm
+            } else {
+                self.gpu.into()
+            },
+            wayland: self.wayland,
             publish: self.publish,
             volumes: self.volumes,
             guest_command: self.guest_command,
@@ -495,6 +534,8 @@ pub(crate) struct RuntimeOptions {
     pub(crate) preserve_debug: bool,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) gpu_mode: GpuMode,
+    pub(crate) wayland: bool,
     pub(crate) publish: Vec<String>,
     pub(crate) volumes: Vec<VolumeSpec>,
     pub(crate) guest_command: Vec<String>,
