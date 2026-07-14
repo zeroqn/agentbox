@@ -8,6 +8,51 @@ const VIDEO_GID: libc::gid_t = 44;
 const RENDER_GID: libc::gid_t = 107;
 const DEV_SUPPLEMENTARY_GROUPS: &[libc::gid_t] = &[VIDEO_GID, RENDER_GID];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::guest_init) enum CredentialOperation {
+    SupplementaryGroups(&'static [libc::gid_t]),
+    PrimaryGid(libc::gid_t),
+    Uid(libc::uid_t),
+}
+
+impl CredentialOperation {
+    fn error_context(self) -> String {
+        match self {
+            Self::SupplementaryGroups(_) => "failed to set dev supplementary groups".to_owned(),
+            Self::PrimaryGid(gid) => format!("failed to set gid {gid}"),
+            Self::Uid(uid) => format!("failed to set uid {uid}"),
+        }
+    }
+}
+
+pub(in crate::guest_init) fn credential_plan(identity: &DevIdentity) -> [CredentialOperation; 3] {
+    [
+        CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
+        CredentialOperation::PrimaryGid(identity.gid),
+        CredentialOperation::Uid(identity.uid),
+    ]
+}
+
+pub(in crate::guest_init) fn apply_dev_credentials(identity: &DevIdentity) -> io::Result<()> {
+    for operation in credential_plan(identity) {
+        let rc = match operation {
+            CredentialOperation::SupplementaryGroups(groups) => unsafe {
+                libc::setgroups(groups.len(), groups.as_ptr())
+            },
+            CredentialOperation::PrimaryGid(gid) => unsafe { libc::setgid(gid) },
+            CredentialOperation::Uid(uid) => unsafe { libc::setuid(uid) },
+        };
+        if rc != 0 {
+            let error = io::Error::last_os_error();
+            return Err(io::Error::new(
+                error.kind(),
+                format!("{}: {error}", operation.error_context()),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(in crate::guest_init) fn uid() -> u32 {
     unsafe { libc::getuid() }
 }
@@ -35,24 +80,7 @@ pub(in crate::guest_init) fn drop_to_identity_and_exec(
         return Err(anyhow!("cannot exec an empty command"));
     }
 
-    let set_groups_rc = unsafe {
-        libc::setgroups(
-            DEV_SUPPLEMENTARY_GROUPS.len(),
-            DEV_SUPPLEMENTARY_GROUPS.as_ptr(),
-        )
-    };
-    if set_groups_rc != 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("failed to set dev supplementary groups");
-    }
-    if unsafe { libc::setgid(identity.gid) } != 0 {
-        return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("failed to set gid {}", identity.gid));
-    }
-    if unsafe { libc::setuid(identity.uid) } != 0 {
-        return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("failed to set uid {}", identity.uid));
-    }
+    apply_dev_credentials(identity)?;
 
     execvp(command)
 }
@@ -213,6 +241,34 @@ mod tests {
     #[test]
     fn dev_supplementary_groups_include_wayland_device_groups() {
         assert_eq!(DEV_SUPPLEMENTARY_GROUPS, &[VIDEO_GID, RENDER_GID]);
+    }
+
+    #[test]
+    fn dev_credential_plan_preserves_privilege_drop_order() {
+        let identity = DevIdentity::new(1000, 1000, "/bin/sh".into());
+
+        assert_eq!(
+            credential_plan(&identity),
+            [
+                CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
+                CredentialOperation::PrimaryGid(identity.gid),
+                CredentialOperation::Uid(identity.uid),
+            ]
+        );
+    }
+
+    #[test]
+    fn dev_credential_operations_preserve_syscall_error_context() {
+        let identity = DevIdentity::new(1000, 1000, "/bin/sh".into());
+
+        assert_eq!(
+            credential_plan(&identity).map(CredentialOperation::error_context),
+            [
+                "failed to set dev supplementary groups".to_owned(),
+                "failed to set gid 1000".to_owned(),
+                "failed to set uid 1000".to_owned(),
+            ]
+        );
     }
 
     #[test]

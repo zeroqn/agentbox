@@ -1,12 +1,13 @@
 use anyhow::{Context, Result, anyhow};
-use std::ffi::CString;
 use std::fs;
-use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
 use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::components::rootless::runtime_dir::ensure_user_runtime_dir;
 use crate::guest_init::fs as guest_fs;
+use crate::guest_init::process;
 
 pub(in crate::guest_init) const WAYLAND_DISPLAY: &str = "wayland-0";
 pub(in crate::guest_init) const PROXY_BIN: &str = "wl-cross-domain-proxy";
@@ -22,40 +23,12 @@ pub(in crate::guest_init) fn start_if_enabled(
     if !enabled {
         return Ok(None);
     }
-    let runtime_dir = runtime_dir(identity.uid);
-    prepare_runtime_dir(&runtime_dir, identity)?;
+    let runtime_dir = ensure_user_runtime_dir(identity)?;
     prepare_drm_devices()?;
     export_guest_env(&runtime_dir);
-    let child = spawn_proxy(&runtime_dir, WAYLAND_DISPLAY)
+    let child = spawn_proxy(&runtime_dir, WAYLAND_DISPLAY, identity)
         .context("failed to start guest Wayland cross-domain proxy")?;
     Ok(Some(child))
-}
-
-fn runtime_dir(uid: u32) -> PathBuf {
-    PathBuf::from(format!("/run/user/{uid}"))
-}
-
-fn prepare_runtime_dir(path: &Path, identity: &DevIdentity) -> Result<()> {
-    fs::create_dir_all(path).with_context(|| {
-        format!(
-            "failed to create guest XDG_RUNTIME_DIR '{}'",
-            path.display()
-        )
-    })?;
-    let c_path = CString::new(path.as_os_str().as_bytes())?;
-    let rc = unsafe { libc::chown(c_path.as_ptr(), identity.uid, identity.gid) };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error()).with_context(|| {
-            format!("failed to chown guest XDG_RUNTIME_DIR '{}'", path.display())
-        });
-    }
-    let mut permissions = fs::metadata(path)
-        .with_context(|| format!("failed to stat guest XDG_RUNTIME_DIR '{}'", path.display()))?
-        .permissions();
-    use std::os::unix::fs::PermissionsExt;
-    permissions.set_mode(0o700);
-    fs::set_permissions(path, permissions)
-        .with_context(|| format!("failed to chmod guest XDG_RUNTIME_DIR '{}'", path.display()))
 }
 
 fn export_guest_env(runtime_dir: &Path) {
@@ -65,7 +38,7 @@ fn export_guest_env(runtime_dir: &Path) {
     }
 }
 
-fn spawn_proxy(runtime_dir: &Path, wayland_display: &str) -> Result<Child> {
+fn spawn_proxy(runtime_dir: &Path, wayland_display: &str, identity: &DevIdentity) -> Result<Child> {
     let socket_path = runtime_dir.join(wayland_display);
     if socket_path.exists() {
         fs::remove_file(&socket_path).with_context(|| {
@@ -75,12 +48,24 @@ fn spawn_proxy(runtime_dir: &Path, wayland_display: &str) -> Result<Child> {
             )
         })?;
     }
-    spawn_proxy_command(runtime_dir, wayland_display)
+    spawn_proxy_command(runtime_dir, wayland_display, identity, process::uid())
         .spawn()
         .with_context(|| anyhow!("failed to spawn {PROXY_BIN}"))
 }
 
-fn spawn_proxy_command(runtime_dir: &Path, wayland_display: &str) -> Command {
+fn proxy_credential_plan(
+    starting_uid: u32,
+    identity: &DevIdentity,
+) -> Option<[process::CredentialOperation; 3]> {
+    (starting_uid == ROOT_UID).then(|| process::credential_plan(identity))
+}
+
+fn spawn_proxy_command(
+    runtime_dir: &Path,
+    wayland_display: &str,
+    identity: &DevIdentity,
+    starting_uid: u32,
+) -> Command {
     let mut command = Command::new(PROXY_BIN);
     command
         .arg("--socket-name")
@@ -90,6 +75,12 @@ fn spawn_proxy_command(runtime_dir: &Path, wayland_display: &str) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
+    if proxy_credential_plan(starting_uid, identity).is_some() {
+        let identity = identity.clone();
+        unsafe {
+            command.pre_exec(move || process::apply_dev_credentials(&identity));
+        }
+    }
     command
 }
 
@@ -141,22 +132,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn runtime_dir_uses_guest_uid() {
-        assert_eq!(runtime_dir(1000), PathBuf::from("/run/user/1000"));
-    }
-
-    #[test]
     fn proxy_constants_match_guest_env_contract() {
         assert_eq!(WAYLAND_DISPLAY, "wayland-0");
         assert_eq!(PROXY_BIN, "wl-cross-domain-proxy");
     }
 
     #[test]
-    fn proxy_command_forces_exported_socket_name() {
-        let command = spawn_proxy_command(Path::new("/run/user/1000"), WAYLAND_DISPLAY);
+    fn proxy_command_forces_exported_socket_name_and_dev_credentials() {
+        let identity = DevIdentity::new(1000, 1000, "/bin/sh".into());
+        let command = spawn_proxy_command(
+            Path::new("/run/user/1000"),
+            WAYLAND_DISPLAY,
+            &identity,
+            ROOT_UID,
+        );
 
         let args: Vec<_> = command.get_args().collect();
         assert_eq!(args, ["--socket-name", WAYLAND_DISPLAY]);
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("XDG_RUNTIME_DIR")),
+            Some((
+                std::ffi::OsStr::new("XDG_RUNTIME_DIR"),
+                Some(std::ffi::OsStr::new("/run/user/1000"))
+            ))
+        );
         assert_eq!(
             command
                 .get_envs()
@@ -166,6 +167,11 @@ mod tests {
                 Some(std::ffi::OsStr::new(WAYLAND_DISPLAY))
             ))
         );
+        assert_eq!(
+            proxy_credential_plan(ROOT_UID, &identity),
+            Some(process::credential_plan(&identity))
+        );
+        assert_eq!(proxy_credential_plan(identity.uid, &identity), None);
     }
 
     #[test]
