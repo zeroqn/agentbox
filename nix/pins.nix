@@ -47,20 +47,20 @@ in
   };
 
   piCodingAgent = {
-    version = "0.79.10";
+    version = "0.80.6";
     owner = "earendil-works";
     repo = "pi";
-    rev = "v0.79.10";
-    srcHash = "sha256-UMRkOzJpA1XcEHzRwHxgBg6idEmpVJzBKlrXZaVf4MQ=";
-    npmDepsHash = "sha256-ZFf9IUI3XPBDOlTqvRkoDvF2EqooMq9Q31YE8iaZkI8=";
+    rev = "v0.80.6";
+    srcHash = "sha256-e/wcHruEcBAHDF5tKvwew7LXjVp0eraHh2k+QaL2sCA=";
+    npmDepsHash = "sha256-7g2BfIc8kjFWeL2fxbgEtFuc4bpGgZl1MmEYppP6cE8=";
   };
 
   dirge = {
-    version = "0.19.4";
+    version = "0.19.5";
     owner = "dirge-code";
     repo = "dirge";
-    rev = "v0.19.4";
-    srcHash = "sha256-Px4HFXv9v8QP313O2ci73+Ywu3VcokGqjWl8DCeuwMQ=";
+    rev = "v0.19.5";
+    srcHash = "sha256-aDfJVNtVl9g44jcg8pfTOYMKAUeJxPWqipWJWNSRlys=";
   };
 
   ompPrebuiltRelease = {
@@ -82,15 +82,15 @@ in
   rmuxPrebuiltRelease = {
     owner = "Helvesec";
     repo = "rmux";
-    tag = "v0.7.1";
+    tag = "v0.8.0";
     systems = {
       x86_64-linux = {
-        asset = "rmux-0.7.1-linux-x86_64.tar.gz";
-        hash = "sha256-shGtBzhT0cF3sXBomCpQwaeGsgmavjuwspFajTKrgVY=";
+        asset = "rmux-0.8.0-linux-x86_64.tar.gz";
+        hash = "sha256-8mCqh87sJHlEKtOpRSg/HgxNXp5yHktfzKg7wZ9SJ/g=";
       };
       aarch64-linux = {
-        asset = "rmux-0.7.1-linux-aarch64.tar.gz";
-        hash = "sha256-Sc7gOUqoxIiIZ0ETVrogQ3vBiy57TVnO2GoUG6cRFp0=";
+        asset = "rmux-0.8.0-linux-aarch64.tar.gz";
+        hash = "sha256-uvA6/HtdffaBTIfEQyV6eK2P8t/L17mEf2V01H2WQXw=";
       };
     };
   };
@@ -144,11 +144,11 @@ in
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-97761f77e404";
+    tag = "sha-4da9e517e0ce";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
-        hash = "sha256-FcSZP65hraEpVfmSjs+UZbQJbf2zK4Qg1pMql3csNxQ=";
+        hash = "sha256-d+w49Jc5FXmy2moypshGtJ+as5GwV09/t/YEbhVnaqg=";
       };
     };
   };
@@ -159,11 +159,11 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-97761f77e404";
+    tag = "sha-4da9e517e0ce";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-06/eAKjeBXeSZ+jqs5No9oIw0ehw0gdFO5/EUp2v+xQ=";
+        hash = "sha256-ktjGwmqp8EvwHkp5AmvpOD6bpVgyNlvVHQVDhAiGrb0=";
       };
     };
   };
