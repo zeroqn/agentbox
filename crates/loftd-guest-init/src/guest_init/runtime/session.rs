@@ -28,6 +28,7 @@ const ATTACHED_PTY_DRAIN_MAX_BYTES: usize = 64 * 1024;
 const ATTACHED_PTY_DRAIN_MAX_ELAPSED: Duration = Duration::from_millis(1);
 const DEFAULT_TERMINAL_ROWS: u16 = 24;
 const DEFAULT_TERMINAL_COLS: u16 = 80;
+const MIN_TERMINAL_STATE_ROWS: u16 = 2;
 const TERMINAL_SCROLLBACK_ROWS: usize = 2_000;
 const PTY_RAW_PASSTHROUGH_ENV: &str = "LOFTD_PTY_RAW_PASSTHROUGH";
 const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
@@ -201,7 +202,11 @@ struct TerminalState {
 impl TerminalState {
     fn new(size: PtySize) -> Self {
         Self {
-            parser: vt100::Parser::new(size.rows, size.cols, TERMINAL_SCROLLBACK_ROWS),
+            parser: vt100::Parser::new(
+                size.rows.max(MIN_TERMINAL_STATE_ROWS),
+                size.cols,
+                TERMINAL_SCROLLBACK_ROWS,
+            ),
             output_normalizer: TerminalOutputNormalizer::default(),
         }
     }
@@ -221,7 +226,9 @@ impl TerminalState {
     }
 
     fn resize(&mut self, size: PtySize) {
-        self.parser.screen_mut().set_size(size.rows, size.cols);
+        self.parser
+            .screen_mut()
+            .set_size(size.rows.max(MIN_TERMINAL_STATE_ROWS), size.cols);
     }
 
     #[cfg(test)]
@@ -1847,6 +1854,15 @@ mod tests {
 
         assert_eq!(live_data, "─│\n".as_bytes());
         assert!(terminal_state.parser.screen().contents().contains("─│"));
+    }
+
+    #[test]
+    fn terminal_state_keeps_recording_after_resize_to_one_row() {
+        let mut terminal_state = TerminalState::new(PtySize::default());
+        terminal_state.record_output(b"\x1b[2;10r\x1b[?1049hhello\r\nworld\x1b[?1049l");
+
+        terminal_state.resize(PtySize { rows: 1, cols: 2 });
+        terminal_state.record_output(b"output\r\n\x1b[999;999H");
     }
 
     #[test]
