@@ -15,6 +15,7 @@ const LD_NIX_SO_PRELOAD_PATH: &str = "/etc/ld-nix.so.preload";
 enum AllocatorKind {
     Mimalloc,
     Hardened,
+    Glibc,
 }
 
 impl AllocatorKind {
@@ -22,6 +23,7 @@ impl AllocatorKind {
         match self {
             Self::Mimalloc => "mimalloc",
             Self::Hardened => "hardened",
+            Self::Glibc => unreachable!("glibc does not use allocator metadata"),
         }
     }
 
@@ -29,6 +31,9 @@ impl AllocatorKind {
         match self {
             Self::Mimalloc => MIMALLOC_LIB_ENV,
             Self::Hardened => GRAPHENE_HARDENED_MALLOC_LIB_ENV,
+            Self::Glibc => {
+                unreachable!("glibc does not use an allocator library environment variable")
+            }
         }
     }
 
@@ -36,6 +41,7 @@ impl AllocatorKind {
         match self {
             Self::Mimalloc => "/lib/libmimalloc.so",
             Self::Hardened => "/lib/libhardened_malloc.so",
+            Self::Glibc => unreachable!("glibc does not use an allocator library suffix"),
         }
     }
 
@@ -43,6 +49,7 @@ impl AllocatorKind {
         match self {
             Self::Mimalloc => "mimalloc",
             Self::Hardened => "hardened_malloc",
+            Self::Glibc => unreachable!("glibc does not use an allocator library display name"),
         }
     }
 }
@@ -54,6 +61,10 @@ pub(in crate::guest_init) fn ensure_from_env_if_root(is_root: bool) -> Result<()
     }
 
     let kind = allocator_kind_from_env()?;
+    if kind == AllocatorKind::Glibc {
+        return disable_at(Path::new(LD_NIX_SO_PRELOAD_PATH));
+    }
+
     let metadata = std::fs::read_to_string(ALLOCATOR_METADATA_PATH).ok();
     let env_fallback = std::env::var(kind.env_name()).ok();
     let Some(allocator_lib) =
@@ -77,7 +88,8 @@ fn parse_allocator_kind(value: &str) -> Result<AllocatorKind> {
     match value {
         "" | "mimalloc" => Ok(AllocatorKind::Mimalloc),
         "hardened" => Ok(AllocatorKind::Hardened),
-        _ => bail!("LOFTD_NIX_ALLOCATOR must be 'mimalloc' or 'hardened'"),
+        "glibc" => Ok(AllocatorKind::Glibc),
+        _ => bail!("LOFTD_NIX_ALLOCATOR must be 'mimalloc', 'hardened', or 'glibc'"),
     }
 }
 
@@ -130,6 +142,15 @@ fn parse_allocator_metadata(metadata: &str) -> Result<BTreeMap<String, String>> 
         entries.insert(key.to_owned(), value.to_owned());
     }
     Ok(entries)
+}
+
+fn disable_at(path: &Path) -> Result<()> {
+    fs::write_file(path, "", 0o644).with_context(|| {
+        format!(
+            "failed to disable Nix allocator preload at {}",
+            path.display()
+        )
+    })
 }
 
 fn ensure_at(path: &Path, allocator_lib: &str, kind: AllocatorKind) -> Result<()> {

@@ -9,9 +9,9 @@ mod model;
 pub(crate) use components::mounts::validate_mounts;
 pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
-    BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET,
-    DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG,
-    DIRGE_HOME_TARGET, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
+    AllocatorMode, BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG,
+    CODEX_TARGET, DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET,
+    DIRGE_HOME_TAG, DIRGE_HOME_TARGET, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
     LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, ManagedSessionConfig, NIX_TARGET,
     NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET,
     WORKSPACE_TAG, WORKSPACE_TARGET, canonical_mount_target,
@@ -50,13 +50,11 @@ impl LaunchConfig {
         if spec.log_level.enables_debug() {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_DEBUG_ENV, "1");
         }
-        if spec.hardened {
-            guest_env::insert_env(
-                &mut guest_config_env,
-                model::NIX_ALLOCATOR_ENV,
-                model::HARDENED_ALLOCATOR_VALUE,
-            );
-        }
+        guest_env::insert_env(
+            &mut guest_config_env,
+            model::NIX_ALLOCATOR_ENV,
+            spec.allocator.as_env_value(),
+        );
         components::network::contribute_guest_env(&mut guest_config_env, spec.network_mode);
         if spec.wayland {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_WAYLAND_ENV, "1");

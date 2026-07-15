@@ -34,7 +34,6 @@ pub(super) const ENTER_AS_ROOT_ENV: &str = "LOFTD_ENTER_AS_ROOT";
 pub(super) const GUEST_PROFILE_ENV: &str = "LOFTD_GUEST_PROFILE";
 pub(super) const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
 pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
-pub(super) const HARDENED_ALLOCATOR_VALUE: &str = "hardened";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
 pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
 pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
@@ -152,6 +151,23 @@ pub(crate) fn canonical_mount_target(target: &str) -> Result<String> {
     Ok(format!("/{}", components.join("/")))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AllocatorMode {
+    Mimalloc,
+    Hardened,
+    Glibc,
+}
+
+impl AllocatorMode {
+    pub(crate) fn as_env_value(self) -> &'static str {
+        match self {
+            Self::Mimalloc => "mimalloc",
+            Self::Hardened => "hardened",
+            Self::Glibc => "glibc",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GuestInitOverrideMount {
     pub(crate) source: PathBuf,
@@ -217,7 +233,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) publish: &'a [String],
     pub(crate) profile: bool,
     pub(crate) root: bool,
-    pub(crate) hardened: bool,
+    pub(crate) allocator: AllocatorMode,
     pub(crate) host_uid: u32,
     pub(crate) host_gid: u32,
     pub(crate) vcpus: u8,

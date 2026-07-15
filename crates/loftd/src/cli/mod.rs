@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::landlock::LandlockMode;
-use crate::runtime::launch::config::NetworkMode;
+use crate::runtime::launch::config::{AllocatorMode, NetworkMode};
 use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
 use crate::task_rootfs::TaskRootfsBackend;
@@ -27,6 +27,23 @@ impl ContainerStoreBackend {
         match value {
             "raw-disk" => Ok(Self::RawDisk),
             _ => Err("allowed value is raw-disk".to_owned()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CliAllocatorMode {
+    Mimalloc,
+    Hardened,
+    Glibc,
+}
+
+impl From<CliAllocatorMode> for AllocatorMode {
+    fn from(value: CliAllocatorMode) -> Self {
+        match value {
+            CliAllocatorMode::Mimalloc => Self::Mimalloc,
+            CliAllocatorMode::Hardened => Self::Hardened,
+            CliAllocatorMode::Glibc => Self::Glibc,
         }
     }
 }
@@ -74,7 +91,7 @@ impl PtyOptions {
     name = "loftd",
     version,
     about = "Launch a direct-libkrun microvm shell with the current directory mounted at /workspace",
-    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
+    after_help = "Examples:\n  loftd\n  loftd --mem 8\n  loftd --alloc glibc\n  loftd --rootfs-backend btrfs-snapshot\n  loftd --rootfs-backend fuse-overlay\n  loftd --container-store raw-disk\n  loftd --guest-init ./loftd-guest-init\n  loftd --profile\n  loftd --root\n  loftd --image ghcr.io/example/loftd:dev\n  LOFTD_IMAGE=ghcr.io/example/loftd:dev loftd\n  loftd -- bash -lc 'echo ok'\n  loftd decode-launch-conf .loftd/.../launch.conf
   loftd --daemon
   loftd --landlock=all -- bash -lc 'echo ok'
   loftd --landlock=best-effort -- bash -lc 'echo ok'
@@ -176,11 +193,14 @@ pub(crate) struct Cli {
     landlock: Option<LandlockMode>,
 
     #[arg(
-        long,
-        help = "Use GrapheneOS hardened_malloc for Nix-linked dynamic binaries",
-        long_help = "Use GrapheneOS hardened_malloc for Nix-linked dynamic binaries by asking guest-init to write hardened_malloc to /etc/ld-nix.so.preload. By default, loftd uses mimalloc for Nix-linked dynamic binaries. Foreign/FHS binaries are unchanged."
+        long = "alloc",
+        value_enum,
+        value_name = "ALLOCATOR",
+        default_value = "mimalloc",
+        help = "Select the allocator for Nix-linked dynamic binaries",
+        long_help = "Select the allocator for Nix-linked dynamic binaries. Allowed values are mimalloc, hardened, and glibc. mimalloc is the default; hardened selects GrapheneOS hardened_malloc; glibc disables /etc/ld-nix.so.preload so binaries use the standard glibc allocator. Foreign/FHS, static, and musl binaries are unchanged."
     )]
-    hardened: bool,
+    alloc: CliAllocatorMode,
 
     #[arg(
         long = "rootfs-backend",
@@ -482,7 +502,7 @@ impl Cli {
             pty: self.pty.unwrap_or(PtyOptions::DEFAULT),
             seccomp: self.seccomp,
             landlock: self.landlock,
-            hardened: self.hardened,
+            allocator: self.alloc.into(),
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
             guest_init: self.guest_init,
@@ -527,7 +547,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) pty: PtyOptions,
     pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) landlock: Option<LandlockMode>,
-    pub(crate) hardened: bool,
+    pub(crate) allocator: AllocatorMode,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
     pub(crate) guest_init: Option<PathBuf>,
@@ -724,7 +744,7 @@ mod tests {
     use crate::cli::{Cli, ContainerStoreBackend, PtyMode, PtyOptions, VolumeSpec};
     use crate::logging::LogLevel;
     use crate::runtime::landlock::LandlockMode;
-    use crate::runtime::launch::config::NetworkMode;
+    use crate::runtime::launch::config::{AllocatorMode, NetworkMode};
     use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
     use crate::task_rootfs::TaskRootfsBackend;
 
@@ -1339,17 +1359,40 @@ mod tests {
     }
 
     #[test]
-    fn parses_hardened_run_option() {
-        let cli = Cli::try_parse_from(["loftd", "--hardened"]).expect("hardened should parse");
-        let options = cli.into_runtime_options();
+    fn parses_allocator_modes() {
+        for (value, expected) in [
+            ("mimalloc", AllocatorMode::Mimalloc),
+            ("hardened", AllocatorMode::Hardened),
+            ("glibc", AllocatorMode::Glibc),
+        ] {
+            let cli = Cli::try_parse_from(["loftd", "--alloc", value])
+                .expect("allocator mode should parse");
 
-        assert!(options.hardened);
+            assert_eq!(cli.into_runtime_options().allocator, expected);
+        }
     }
 
     #[test]
-    fn hardened_is_inert_for_management_subcommands() {
-        let cli = Cli::try_parse_from(["loftd", "--hardened", "images", "list"])
-            .expect("hardened stays parse-compatible for management commands");
+    fn allocator_defaults_to_mimalloc() {
+        let options = Cli::try_parse_from(["loftd"])
+            .expect("default CLI should parse")
+            .into_runtime_options();
+
+        assert_eq!(options.allocator, AllocatorMode::Mimalloc);
+    }
+
+    #[test]
+    fn rejects_unknown_allocator_mode() {
+        let err = Cli::try_parse_from(["loftd", "--alloc", "jemalloc"])
+            .expect_err("unknown allocator should fail");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn allocator_is_inert_for_management_subcommands() {
+        let cli = Cli::try_parse_from(["loftd", "--alloc", "glibc", "images", "list"])
+            .expect("allocator stays parse-compatible for management commands");
 
         match cli.into_action() {
             crate::cli::CliAction::Images { command, .. } => {

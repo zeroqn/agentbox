@@ -1,8 +1,8 @@
 use std::fs;
 
 use super::{
-    AllocatorKind, ensure_at, parse_allocator_kind, preload_contents, select_allocator_lib,
-    validate_allocator_lib,
+    AllocatorKind, disable_at, ensure_at, parse_allocator_kind, preload_contents,
+    select_allocator_lib, validate_allocator_lib,
 };
 
 const MIMALLOC_LIB: &str =
@@ -33,6 +33,27 @@ fn ensure_at_writes_selected_allocator_preload() {
         fs::read_to_string(&path).expect("preload should exist"),
         format!("{HARDENED_LIB}\n")
     );
+}
+
+#[test]
+fn disable_at_empties_existing_allocator_preload() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let path = temp.path().join("ld-nix.so.preload");
+    fs::write(&path, format!("{MIMALLOC_LIB}\n")).expect("initial preload should be written");
+
+    disable_at(&path).expect("glibc mode should disable the preload");
+
+    assert_eq!(fs::read_to_string(&path).expect("preload should exist"), "");
+}
+
+#[test]
+fn disable_at_creates_empty_allocator_preload() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let path = temp.path().join("ld-nix.so.preload");
+
+    disable_at(&path).expect("glibc mode should create the preload file");
+
+    assert_eq!(fs::read_to_string(&path).expect("preload should exist"), "");
 }
 
 #[test]
@@ -67,6 +88,10 @@ fn selector_defaults_to_mimalloc_and_accepts_hardened() {
     assert_eq!(
         parse_allocator_kind("hardened").expect("hardened selector"),
         AllocatorKind::Hardened
+    );
+    assert_eq!(
+        parse_allocator_kind("glibc").expect("glibc selector"),
+        AllocatorKind::Glibc
     );
     assert!(parse_allocator_kind("graphene").is_err());
 }

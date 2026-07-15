@@ -11,7 +11,7 @@ use crate::runtime::host_tools;
 use crate::runtime::landlock::LandlockMode;
 use crate::runtime::launch::components::mounts;
 use crate::runtime::launch::config::{
-    BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
+    AllocatorMode, BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
 };
 use crate::runtime::seccomp::{self, AuditMode, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
@@ -49,7 +49,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) daemon: bool,
     pub(crate) seccomp: SeccompMode,
     pub(crate) landlock: LandlockMode,
-    pub(crate) hardened: bool,
+    pub(crate) allocator: AllocatorMode,
     pub(crate) preserve_debug: bool,
     pub(crate) config_diagnostics: ConfigDiagnostics,
 }
@@ -135,7 +135,7 @@ impl LaunchPlan {
             daemon: options.daemon,
             seccomp,
             landlock,
-            hardened: options.hardened,
+            allocator: options.allocator,
             preserve_debug: options.preserve_debug,
             config_diagnostics: ConfigDiagnostics {
                 config_path: config.path().to_path_buf(),
@@ -290,7 +290,7 @@ mod tests {
     use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec};
     use crate::logging::{LogLevel, LogSettings};
     use crate::runtime::landlock::LandlockMode;
-    use crate::runtime::launch::config::{BindMountSourceKind, NetworkMode};
+    use crate::runtime::launch::config::{AllocatorMode, BindMountSourceKind, NetworkMode};
     use crate::runtime::launch::plan::{
         ImageSelection, LaunchPlan, resolve_normal_launch_landlock,
         resolve_normal_launch_seccomp_with,
@@ -311,7 +311,7 @@ mod tests {
             pty: crate::cli::PtyOptions::DEFAULT,
             seccomp: Some(SeccompMode::Off),
             landlock: None,
-            hardened: false,
+            allocator: AllocatorMode::Mimalloc,
             rootfs_backend: None,
             container_store_backend: None,
             guest_init: None,

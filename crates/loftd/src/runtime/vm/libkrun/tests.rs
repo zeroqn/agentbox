@@ -286,7 +286,7 @@ fn config() -> LaunchConfig {
         publish: &[],
         profile: false,
         root: false,
-        hardened: false,
+        allocator: crate::runtime::launch::config::AllocatorMode::Mimalloc,
         host_uid: 1000,
         host_gid: 1001,
         vcpus: 2,
