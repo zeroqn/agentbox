@@ -56,11 +56,11 @@ in
   };
 
   dirge = {
-    version = "0.19.5";
+    version = "0.19.7";
     owner = "dirge-code";
     repo = "dirge";
-    rev = "v0.19.5";
-    srcHash = "sha256-aDfJVNtVl9g44jcg8pfTOYMKAUeJxPWqipWJWNSRlys=";
+    rev = "v0.19.7";
+    srcHash = "sha256-r6YSO3rSsBVQkBvDZW3WkziMapNSIbpU6IwYrwELyy0=";
   };
 
   ompPrebuiltRelease = {
@@ -144,11 +144,11 @@ in
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-4da9e517e0ce";
+    tag = "sha-6871b6223a7f";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
-        hash = "sha256-d+w49Jc5FXmy2moypshGtJ+as5GwV09/t/YEbhVnaqg=";
+        hash = "sha256-viKbIIecqLBzr7Qpwu/jiWUBQAS1J1nOwQISjDTy5Y4=";
       };
     };
   };
@@ -159,11 +159,11 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-4da9e517e0ce";
+    tag = "sha-6871b6223a7f";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-ktjGwmqp8EvwHkp5AmvpOD6bpVgyNlvVHQVDhAiGrb0=";
+        hash = "sha256-xVcvBhUxVCTKXUs38riWzwPxTLV85mljgU57xXdRjro=";
       };
     };
   };
