@@ -620,6 +620,15 @@ fn serve_client(
         trace_data_from_env("guest", "restore-to-host-output", &restore);
         write_frame(&mut client, &Frame::Data(restore))?;
     }
+    let foreground_pgid = unsafe { libc::tcgetpgrp(master.as_raw_fd()) };
+    if foreground_pgid < 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to read managed PTY foreground process group");
+    }
+    if unsafe { libc::kill(-foreground_pgid, libc::SIGWINCH) } != 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to request managed PTY foreground redraw");
+    }
     serve_attached_client(
         master,
         child,
@@ -1962,10 +1971,11 @@ mod tests {
     #[test]
     fn post_start_attach_sends_detached_restore_before_live_proxy() {
         let pty = Pty::open().unwrap();
+        set_winsize(pty.master.as_raw_fd(), 24, 80).unwrap();
         let child = unsafe { libc::fork() };
         assert!(child >= 0);
         if child == 0 {
-            let result = write_then_sleep_on_pty_slave(&pty.slave_path, b"detached-visible\n");
+            let result = run_sigwinch_redraw_pty_child(&pty.slave_path);
             std::process::exit(if result.is_ok() { 0 } else { 1 });
         }
         thread::sleep(Duration::from_millis(50));
@@ -1999,6 +2009,7 @@ mod tests {
                 version: PROTOCOL_VERSION
             })
         );
+        write_frame(&mut client, &Frame::Resize { rows: 24, cols: 80 }).unwrap();
         write_frame(&mut client, &Frame::Attach).unwrap();
 
         match read_frame(&mut client).unwrap() {
@@ -2006,13 +2017,21 @@ mod tests {
                 let mut restored = vt100::Parser::new(24, 80, 0);
                 restored.process(&data);
                 assert!(restored.screen().contents().contains("detached-visible"));
+                assert!(!restored.screen().contents().contains("redraw-visible"));
             }
             frame => panic!("expected restore frame, got {frame:?}"),
         }
+        assert_data_frames_eq(&mut client, b"redraw-visible\r\n");
+        thread::sleep(Duration::from_millis(550));
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) },
+            0
+        );
 
         write_frame(&mut client, &Frame::Detach).unwrap();
         assert_eq!(server.join().unwrap().unwrap(), ClientResult::Detached);
-        let mut status = 0;
+        assert_eq!(unsafe { libc::kill(child, libc::SIGTERM) }, 0);
         assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
     }
 
@@ -2178,6 +2197,50 @@ mod tests {
         slave.flush()?;
         thread::sleep(Duration::from_millis(200));
         Ok(())
+    }
+
+    extern "C" fn write_redraw_marker(_signal: libc::c_int) {
+        let marker = b"redraw-visible\n";
+        unsafe {
+            libc::write(libc::STDOUT_FILENO, marker.as_ptr().cast(), marker.len());
+        }
+    }
+
+    fn run_sigwinch_redraw_pty_child(slave_path: &str) -> Result<()> {
+        if unsafe { libc::setsid() } < 0 {
+            return Err(std::io::Error::last_os_error()).context("failed to create test session");
+        }
+        let mut slave = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(slave_path)?;
+        if unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY, 0) } != 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("failed to set test controlling PTY");
+        }
+        let pgid = unsafe { libc::getpgrp() };
+        if unsafe { libc::tcsetpgrp(slave.as_raw_fd(), pgid) } != 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("failed to set test foreground process group");
+        }
+        if unsafe { libc::dup2(slave.as_raw_fd(), libc::STDOUT_FILENO) } < 0 {
+            return Err(std::io::Error::last_os_error()).context("failed to wire test PTY output");
+        }
+
+        let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+        action.sa_sigaction = write_redraw_marker as *const () as usize;
+        if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0
+            || unsafe { libc::sigaction(libc::SIGWINCH, &action, std::ptr::null_mut()) } != 0
+        {
+            return Err(std::io::Error::last_os_error())
+                .context("failed to install test SIGWINCH handler");
+        }
+
+        slave.write_all(b"detached-visible\n")?;
+        slave.flush()?;
+        loop {
+            unsafe { libc::pause() };
+        }
     }
 
     #[test]
