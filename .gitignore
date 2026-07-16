@@ -1,4 +1,11 @@
 target/
 result
 .omx/
+
+.dolt/
+
+.claude/
+.codex/
+.opencode/
+.pi/
 .dirge/
