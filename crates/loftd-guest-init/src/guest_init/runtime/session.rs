@@ -246,7 +246,7 @@ impl TerminalState {
             restore.extend_from_slice(EXIT_ALTERNATE_SCREEN);
         }
         restore.extend_from_slice(CLEAR_VISIBLE_SCREEN);
-        restore.extend(screen.state_formatted());
+        restore.extend(screen.contents_formatted());
         restore.extend(screen.cursor_state_formatted());
         restore.extend(screen.attributes_formatted());
         restore
@@ -1919,17 +1919,37 @@ mod tests {
     }
 
     #[test]
-    fn terminal_restore_preserves_alternate_screen_and_input_modes() {
+    fn terminal_restore_preserves_visual_state_without_cached_input_modes() {
         let mut terminal_state = TerminalState::new(PtySize { rows: 10, cols: 40 });
-        terminal_state.record_output(b"\x1b[?1049h\x1b[?25l\x1b[?1h\x1b[?2004hinside-tui");
+        terminal_state.record_output(
+            b"\x1b[?1049h\x1b[?25l\x1b[?1h\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006hinside-tui",
+        );
 
-        let restored = restored_screen(&terminal_state);
+        let restore = terminal_state.render_restore();
+        for input_mode in [
+            b"\x1b[?1h".as_slice(),
+            b"\x1b[?1000h",
+            b"\x1b[?1002h",
+            b"\x1b[?1003h",
+            b"\x1b[?1006h",
+            b"\x1b[?2004h",
+        ] {
+            assert!(
+                !restore
+                    .windows(input_mode.len())
+                    .any(|bytes| bytes == input_mode),
+                "restore contains cached input mode {input_mode:?}"
+            );
+        }
+
+        let mut restored = vt100::Parser::new(10, 40, 0);
+        restored.process(&restore);
         let screen = restored.screen();
 
         assert!(screen.alternate_screen());
         assert!(screen.hide_cursor());
-        assert!(screen.application_cursor());
-        assert!(screen.bracketed_paste());
+        assert!(!screen.application_cursor());
+        assert!(!screen.bracketed_paste());
         assert!(screen.contents().contains("inside-tui"));
     }
 
@@ -2014,6 +2034,19 @@ mod tests {
 
         match read_frame(&mut client).unwrap() {
             Some(Frame::Data(data)) => {
+                for mouse_mode in [
+                    b"\x1b[?1000h".as_slice(),
+                    b"\x1b[?1002h",
+                    b"\x1b[?1003h",
+                    b"\x1b[?1006h",
+                ] {
+                    assert!(
+                        !data
+                            .windows(mouse_mode.len())
+                            .any(|bytes| bytes == mouse_mode),
+                        "restore contains cached mouse mode {mouse_mode:?}"
+                    );
+                }
                 let mut restored = vt100::Parser::new(24, 80, 0);
                 restored.process(&data);
                 assert!(restored.screen().contents().contains("detached-visible"));
@@ -2236,7 +2269,7 @@ mod tests {
                 .context("failed to install test SIGWINCH handler");
         }
 
-        slave.write_all(b"detached-visible\n")?;
+        slave.write_all(b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006hdetached-visible\n")?;
         slave.flush()?;
         loop {
             unsafe { libc::pause() };
