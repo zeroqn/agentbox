@@ -47,12 +47,12 @@ in
   };
 
   piCodingAgent = {
-    version = "0.80.6";
+    version = "0.80.10";
     owner = "earendil-works";
     repo = "pi";
-    rev = "v0.80.6";
-    srcHash = "sha256-e/wcHruEcBAHDF5tKvwew7LXjVp0eraHh2k+QaL2sCA=";
-    npmDepsHash = "sha256-7g2BfIc8kjFWeL2fxbgEtFuc4bpGgZl1MmEYppP6cE8=";
+    rev = "v0.80.10";
+    srcHash = "sha256-Vs/ndHYzFyfN4CjPV2zMYblLXe9IuM13UrPJI1VsZEQ=";
+    npmDepsHash = "sha256-Qok6sW42Hhu/r5zpU4mfDuH+Kj4uSYoCYzivVhqMiRY=";
   };
 
   dirge = {
@@ -144,7 +144,7 @@ in
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-6871b6223a7f";
+    tag = "sha-98080c888d86";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
@@ -159,7 +159,7 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-b2a659a8d043";
+    tag = "sha-98080c888d86";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
