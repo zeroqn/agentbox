@@ -1149,6 +1149,7 @@ fn terminal_size(fd: i32) -> Option<TerminalSize> {
 #[derive(Debug)]
 struct RawTerminalMode {
     fd: i32,
+    output_fd: i32,
     original: libc::termios,
     active: bool,
 }
@@ -1170,6 +1171,7 @@ impl RawTerminalMode {
         }
         Ok(Some(Self {
             fd,
+            output_fd: libc::STDOUT_FILENO,
             original,
             active: true,
         }))
@@ -1177,6 +1179,14 @@ impl RawTerminalMode {
 
     fn restore_now(&mut self) {
         if self.active {
+            let mouse_reset = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
+            let _ = unsafe {
+                libc::write(
+                    self.output_fd,
+                    mouse_reset.as_ptr().cast(),
+                    mouse_reset.len(),
+                )
+            };
             let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.original) };
             self.active = false;
         }
@@ -1185,9 +1195,7 @@ impl RawTerminalMode {
 
 impl Drop for RawTerminalMode {
     fn drop(&mut self) {
-        if self.active {
-            let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.original) };
-        }
+        self.restore_now();
     }
 }
 
@@ -1195,6 +1203,7 @@ impl Drop for RawTerminalMode {
 mod tests {
     use super::*;
     use loftd_attach_protocol::{DETACH_PREFIX_BYTE, DETACH_SUFFIX_BYTE};
+    use std::os::fd::FromRawFd;
     use std::os::unix::net::UnixListener;
     use std::sync::mpsc;
 
@@ -1350,16 +1359,25 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_restore_now_disarms_drop_fallback() {
+    fn raw_terminal_restore_now_disables_mouse_tracking_and_disarms_drop_fallback() {
+        let mut pipe_fds = [-1; 2];
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
         let mut raw = RawTerminalMode {
             fd: -1,
+            output_fd: pipe_fds[1],
             original: unsafe { std::mem::zeroed() },
             active: true,
         };
 
         raw.restore_now();
         raw.restore_now();
+        unsafe { libc::close(pipe_fds[1]) };
+        let mut output = Vec::new();
+        unsafe { std::fs::File::from_raw_fd(pipe_fds[0]) }
+            .read_to_end(&mut output)
+            .unwrap();
 
+        assert_eq!(output, b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
         assert!(!raw.active);
     }
 
