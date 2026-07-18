@@ -56,11 +56,11 @@ in
   };
 
   dirge = {
-    version = "0.19.10";
+    version = "0.19.13";
     owner = "dirge-code";
     repo = "dirge";
-    rev = "v0.19.10";
-    srcHash = "sha256-RSW9fvx8TRoE6zQSgJM09+MhIprx+3Mw20+0GDBZnJs=";
+    rev = "v0.19.13";
+    srcHash = "sha256-OXMYQb7wkUcqQkyA/EHSskJfVbBwf9h8RBDHsqL3CJM=";
   };
 
   ompPrebuiltRelease = {
@@ -159,7 +159,7 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-98080c888d86";
+    tag = "sha-fb740ea5c22b";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
