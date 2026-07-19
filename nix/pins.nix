@@ -52,15 +52,15 @@ in
     repo = "pi";
     rev = "v0.80.10";
     srcHash = "sha256-Vs/ndHYzFyfN4CjPV2zMYblLXe9IuM13UrPJI1VsZEQ=";
-    npmDepsHash = "sha256-Qok6sW42Hhu/r5zpU4mfDuH+Kj4uSYoCYzivVhqMiRY=";
+    npmDepsHash = "sha256-H8cMgmn4ccxRcYsec6ZjURDTQa1sZ8GvjzweKrPkndg=";
   };
 
   dirge = {
-    version = "0.19.13";
+    version = "0.19.17";
     owner = "dirge-code";
     repo = "dirge";
-    rev = "v0.19.13";
-    srcHash = "sha256-OXMYQb7wkUcqQkyA/EHSskJfVbBwf9h8RBDHsqL3CJM=";
+    rev = "v0.19.17";
+    srcHash = "sha256-qoWxrYI6hZIZDEzn83WJRgD5gRz8pQGNNljOKW8rJNE=";
   };
 
   ompPrebuiltRelease = {
@@ -82,15 +82,15 @@ in
   rmuxPrebuiltRelease = {
     owner = "Helvesec";
     repo = "rmux";
-    tag = "v0.8.0";
+    tag = "v0.9.0";
     systems = {
       x86_64-linux = {
-        asset = "rmux-0.8.0-linux-x86_64.tar.gz";
-        hash = "sha256-8mCqh87sJHlEKtOpRSg/HgxNXp5yHktfzKg7wZ9SJ/g=";
+        asset = "rmux-0.9.0-linux-x86_64.tar.gz";
+        hash = "sha256-5bq7i/cZW4diiwL3ttGntrbLzXXLEoo1Zqxb1Ylv2Sk=";
       };
       aarch64-linux = {
-        asset = "rmux-0.8.0-linux-aarch64.tar.gz";
-        hash = "sha256-uvA6/HtdffaBTIfEQyV6eK2P8t/L17mEf2V01H2WQXw=";
+        asset = "rmux-0.9.0-linux-aarch64.tar.gz";
+        hash = "sha256-3aaqyXqDdOFv8B6WRN8zDCBdT26pNPd2VAXKN/O8Q48=";
       };
     };
   };
@@ -144,11 +144,11 @@ in
     repo = "agentbox";
     # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
     # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-98080c888d86";
+    tag = "sha-69fd6a600fd8";
     systems = {
       x86_64-linux = {
         asset = "agentbox-x86_64-unknown-linux-musl";
-        hash = "sha256-viKbIIecqLBzr7Qpwu/jiWUBQAS1J1nOwQISjDTy5Y4=";
+        hash = "sha256-GUsBOaznqAVkF+Gx/xqGZpgfz5W493KjlcMKJWPzJZ4=";
       };
     };
   };
@@ -159,11 +159,11 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-fb740ea5c22b";
+    tag = "sha-69fd6a600fd8";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-xVcvBhUxVCTKXUs38riWzwPxTLV85mljgU57xXdRjro=";
+        hash = "sha256-HtM6ZfdekArw/LWIOXcA/qON/j4mKnDbDf+HSQp80LY=";
       };
     };
   };
