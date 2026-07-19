@@ -62,6 +62,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: true,
         publish: &[],
         profile: true,
         root: false,
@@ -113,6 +114,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     assert!(config.guest_config_env_contains("SCCACHE_DIR", "/home/dev/.cache/sccache"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
+    assert!(config.guest_config_env_contains("LOFTD_IO_URING", "1"));
     assert!(
         config
             .guest_config_env
@@ -140,6 +142,7 @@ fn launch_config_uses_explicit_guest_command() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -156,6 +159,12 @@ fn launch_config_uses_explicit_guest_command() {
 
     assert_eq!(config.argv, ["enter", "bash", "-lc", "echo ok"]);
     assert_ne!(config.argv.get(1).map(String::as_str), Some("--"));
+    assert!(
+        config
+            .guest_config_env
+            .iter()
+            .all(|(key, _)| key != "LOFTD_IO_URING")
+    );
 }
 
 #[test]
@@ -183,6 +192,7 @@ fn launch_config_round_trips_through_hex_line_format() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: true,
@@ -252,6 +262,7 @@ fn launch_config_round_trips_managed_session_contract() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -297,6 +308,7 @@ fn managed_session_extra_env_terminal_vars_are_guest_visible() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -355,6 +367,7 @@ fn non_managed_launch_does_not_allow_terminal_identity_from_image_env() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -391,6 +404,7 @@ fn launch_config_round_trips_seccomp_modes() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -442,6 +456,7 @@ fn launch_config_round_trips_landlock_modes() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -484,6 +499,7 @@ fn launch_config_legacy_missing_landlock_mode_defaults_to_relax() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -528,6 +544,7 @@ fn launch_config_rejects_legacy_enforce_landlock_mode() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -565,6 +582,7 @@ fn launch_config_refuses_to_serialize_unresolved_default_gap_audit() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -607,6 +625,7 @@ fn launch_config_rejects_inconsistent_seccomp_fields() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -685,6 +704,7 @@ fn launch_config_round_trips_volume_source_kind_and_access_mode() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -738,6 +758,7 @@ fn launch_config_carries_host_nix_overlay_and_adds_reserved_nix_mount() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -785,6 +806,7 @@ fn launch_config_rejects_user_mount_that_collides_with_host_nix_overlay() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -830,6 +852,7 @@ fn launch_config_rejects_noncanonical_reserved_target_aliases() {
             network_mode: NetworkMode::Tsi,
             gpu_mode: GpuMode::Off,
             wayland: false,
+            io_uring: false,
             publish: &[],
             profile: false,
             root: false,
@@ -876,6 +899,7 @@ fn launch_config_carries_publish_specs_from_launch_spec() {
         network_mode: NetworkMode::Passt,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &publish,
         profile: false,
         root: false,
@@ -1011,6 +1035,7 @@ fn launch_config_rejects_config_codex_mounts() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1049,6 +1074,7 @@ fn launch_config_requires_guest_init_override_to_be_read_only() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1195,6 +1221,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1285,6 +1312,7 @@ fn launch_config_emits_allocator_selector() {
             network_mode: NetworkMode::Tsi,
             gpu_mode: GpuMode::Off,
             wayland: false,
+            io_uring: false,
             publish: &[],
             profile: false,
             root: false,
@@ -1332,6 +1360,7 @@ fn guest_debug_env_follows_effective_log_level() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1360,6 +1389,7 @@ fn guest_debug_env_follows_effective_log_level() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1392,6 +1422,7 @@ fn profile_env_does_not_raise_guest_debug_level() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: true,
         root: false,
@@ -1426,6 +1457,7 @@ fn passt_mode_sets_guest_passt_dns_gate() {
         network_mode: NetworkMode::Passt,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1467,6 +1499,7 @@ fn writes_loftd_config_json_under_task_rootfs() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1522,6 +1555,7 @@ fn malformed_image_env_is_rejected() {
             network_mode: NetworkMode::Tsi,
             gpu_mode: GpuMode::Off,
             wayland: false,
+            io_uring: false,
             publish: &[],
             profile: false,
             root: false,
@@ -1558,6 +1592,7 @@ fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,

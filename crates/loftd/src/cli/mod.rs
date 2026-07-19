@@ -193,6 +193,13 @@ pub(crate) struct Cli {
     landlock: Option<LandlockMode>,
 
     #[arg(
+        long = "io-uring",
+        help = "Allow the guest dev group to create io_uring instances",
+        long_help = "Allow processes in the guest dev group to create io_uring instances. By default, loftd disables creation of new io_uring instances for all guest processes. This option keeps kernel.io_uring_disabled in restricted mode and sets kernel.io_uring_group to the dynamic dev GID. Processes outside that group remain denied unless permitted by the kernel's CAP_SYS_ADMIN exception. This option does not change host seccomp, host Landlock, or nested Podman seccomp policy."
+    )]
+    io_uring: bool,
+
+    #[arg(
         long = "alloc",
         value_enum,
         value_name = "ALLOCATOR",
@@ -502,6 +509,7 @@ impl Cli {
             pty: self.pty.unwrap_or(PtyOptions::DEFAULT),
             seccomp: self.seccomp,
             landlock: self.landlock,
+            io_uring: self.io_uring,
             allocator: self.alloc.into(),
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -547,6 +555,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) pty: PtyOptions,
     pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) landlock: Option<LandlockMode>,
+    pub(crate) io_uring: bool,
     pub(crate) allocator: AllocatorMode,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -778,6 +787,7 @@ mod tests {
         assert!(!options.daemon);
         assert_eq!(options.seccomp, None);
         assert_eq!(options.landlock, None);
+        assert!(!options.io_uring);
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.pty, PtyOptions::DEFAULT);
@@ -1281,6 +1291,14 @@ mod tests {
             Cli::try_parse_from(["loftd", "--passt"]).expect_err("removed passt flag should fail");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn io_uring_flag_enables_guest_io_uring() {
+        let cli = Cli::try_parse_from(["loftd", "--io-uring"]).expect("io_uring flag should parse");
+        let options = cli.into_runtime_options();
+
+        assert!(options.io_uring);
     }
 
     #[test]

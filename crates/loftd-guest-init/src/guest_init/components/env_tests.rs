@@ -99,3 +99,31 @@ fn internal_runtime_parses_authoritative_host_nix_overlay_marker() {
     assert!(parsed.nix_overlay);
     assert!(parsed.nix_host_overlay);
 }
+
+#[test]
+fn internal_runtime_disables_io_uring_when_marker_is_absent() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::remove_var("LOFTD_IO_URING");
+    }
+
+    let parsed = LoftdEnv::from_process_env().expect("env should parse");
+
+    assert!(!parsed.io_uring);
+}
+
+#[test]
+fn internal_runtime_enables_io_uring_from_marker() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::set_var("LOFTD_IO_URING", "1");
+    }
+    let parsed = LoftdEnv::from_process_env().expect("env should parse");
+    unsafe {
+        std::env::remove_var("LOFTD_IO_URING");
+    }
+
+    assert!(parsed.io_uring);
+}

@@ -59,6 +59,9 @@ impl LaunchConfig {
         if spec.wayland {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_WAYLAND_ENV, "1");
         }
+        if spec.io_uring {
+            guest_env::insert_env(&mut guest_config_env, model::GUEST_IO_URING_ENV, "1");
+        }
         if let Some(managed) = &spec.managed_session {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_SESSION_MANAGED_ENV, "1");
             guest_env::insert_env(
@@ -88,6 +91,7 @@ impl LaunchConfig {
             log_level: spec.log_level,
             network_mode: spec.network_mode,
             gpu_mode: spec.gpu_mode,
+            io_uring: spec.io_uring,
             publish: spec.publish.to_vec(),
             workdir: components::process::workdir_from_image(
                 spec.image_process_config.working_dir.as_deref(),

@@ -283,6 +283,7 @@ fn config() -> LaunchConfig {
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         wayland: false,
+        io_uring: false,
         publish: &[],
         profile: false,
         root: false,

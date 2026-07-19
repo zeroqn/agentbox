@@ -851,6 +851,7 @@ Run/help:
 ./result/bin/loftd seccomp extend --policy loftd-seccomp.policy.json --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd seccomp extend --default-policy --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd --seccomp=enforce:loftd-seccomp.updated.json -- bash -lc 'echo ok'
+./result/bin/loftd --io-uring -- bash -lc 'echo ok'
 ./result/bin/loftd --tsi -- bash -lc 'echo ok'
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
@@ -1068,6 +1069,26 @@ Seccomp behavior:
   Persisting any ptrace relaxation is a host policy decision, commonly
   represented with `boot.kernel.sysctl."kernel.yama.ptrace_scope"` in NixOS
   configuration.
+
+Guest io_uring behavior:
+
+- loftd disables creation of new io_uring instances guest-wide by default by
+  setting `kernel.io_uring_disabled=2` during root guest initialization. This
+  happens before Nix and Podman preparation, Wayland startup, managed-session
+  startup, or the task command. Guest initialization fails closed if the sysctl
+  cannot be applied.
+- `--io-uring` allows processes in the dynamic guest `dev` group to create
+  io_uring instances without `CAP_SYS_ADMIN`. Guest-init writes the `dev` GID to
+  `kernel.io_uring_group` and keeps `kernel.io_uring_disabled=1`; processes
+  outside that group remain denied unless permitted by the kernel's
+  `CAP_SYS_ADMIN` exception.
+- This guest-kernel setting does not alter loftd's host VM-worker seccomp policy
+  or host Landlock policy. Those layers continue to confine the host worker at
+  their existing boundary.
+- `--io-uring` also does not change nested Podman seccomp. The packaged default
+  nested-container profile blocks `io_uring_setup`, `io_uring_enter`, and
+  `io_uring_register`; enabling them in a nested container requires a separate,
+  explicit container seccomp policy.
 
 Container-store disk maintenance:
 

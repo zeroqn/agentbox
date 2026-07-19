@@ -45,6 +45,7 @@ pub(in crate::guest_init) enum LoftdEnterOperation {
     MaterializeHome,
     MaterializeAllocatorPreload,
     RestrictDmesg,
+    ConfigureIoUring,
     StartNixPrep,
     StartPodmanPrep,
     ExportNixRemote,
@@ -70,6 +71,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
         LoftdEnterOperation::MaterializeHome,
         LoftdEnterOperation::MaterializeAllocatorPreload,
         LoftdEnterOperation::RestrictDmesg,
+        LoftdEnterOperation::ConfigureIoUring,
         LoftdEnterOperation::StartNixPrep,
         LoftdEnterOperation::StartPodmanPrep,
         LoftdEnterOperation::ExportNixRemote,
@@ -155,6 +157,15 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     profiler.measure_result("restrict-dmesg", || {
         if process::is_root() {
             crate::guest_init::components::hardening::dmesg::restrict()?;
+        }
+        Ok(())
+    })?;
+    profiler.measure_result("configure-io-uring", || {
+        if process::is_root() {
+            crate::guest_init::components::hardening::io_uring::configure(
+                env_contract.loftd.io_uring,
+                identity.gid,
+            )?;
         }
         Ok(())
     })?;
@@ -259,6 +270,7 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
         )?,
         use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
         wayland: env_flag(env, "LOFTD_WAYLAND"),
+        io_uring: env_flag(env, "LOFTD_IO_URING"),
         enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
         host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
         host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
@@ -493,6 +505,21 @@ mod tests {
         assert!(
             pos(LoftdEnterOperation::ResolveIdentity) < pos(LoftdEnterOperation::StartPodmanPrep)
         );
+        assert!(
+            pos(LoftdEnterOperation::ConfigureIoUring) < pos(LoftdEnterOperation::StartNixPrep)
+        );
+        assert!(
+            pos(LoftdEnterOperation::ConfigureIoUring) < pos(LoftdEnterOperation::StartPodmanPrep)
+        );
+        assert!(
+            pos(LoftdEnterOperation::ConfigureIoUring)
+                < pos(LoftdEnterOperation::StartWaylandProxy)
+        );
+        assert!(
+            pos(LoftdEnterOperation::ConfigureIoUring)
+                < pos(LoftdEnterOperation::RunManagedSession)
+        );
+        assert!(pos(LoftdEnterOperation::ConfigureIoUring) < pos(LoftdEnterOperation::DropAndExec));
         assert!(pos(LoftdEnterOperation::StartNixPrep) < pos(LoftdEnterOperation::StartPodmanPrep));
         assert!(
             pos(LoftdEnterOperation::ExportNixRemote) < pos(LoftdEnterOperation::EnsureNofileFloor)

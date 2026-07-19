@@ -152,6 +152,11 @@ impl LaunchConfig {
             self.network_mode.as_config_value(),
         );
         push_field(&mut out, "gpu_mode", self.gpu_mode.as_config_value());
+        push_field(
+            &mut out,
+            "io_uring",
+            if self.io_uring { "true" } else { "false" },
+        );
         for (index, spec) in self.publish.iter().enumerate() {
             push_field(&mut out, &format!("publish.{index}"), spec);
         }
@@ -339,6 +344,7 @@ impl LaunchConfig {
                     | "log_level"
                     | "network_mode"
                     | "gpu_mode"
+                    | "io_uring"
                     | "workdir"
                     | "exec_path"
                     | "managed_session.attach_socket"
@@ -383,6 +389,11 @@ impl LaunchConfig {
                 .map(String::as_str)
                 .unwrap_or(GpuMode::Off.as_config_value()),
         )?;
+        let io_uring = fields
+            .get("io_uring")
+            .map(|value| parse_bool_field("io_uring", value))
+            .transpose()?
+            .unwrap_or(false);
         let mounts = parse_mounts(&fields, mounts)?;
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
@@ -415,6 +426,7 @@ impl LaunchConfig {
             log_level,
             network_mode,
             gpu_mode,
+            io_uring,
             publish: publish.into_values().collect(),
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,

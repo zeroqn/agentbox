@@ -507,6 +507,7 @@ mod tests {
             network_mode: NetworkMode::Tsi,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             wayland: false,
+            io_uring: false,
             publish: &[],
             profile: false,
             root: false,
