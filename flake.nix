@@ -103,7 +103,6 @@
               inherit
                 pkgs
 
-                ohMyCodex
                 piCodingAgent
                 ompPrebuilt
                 rmuxPrebuilt
@@ -183,7 +182,6 @@
             imageVariant:
             import ./nix/image/checks.nix {
               inherit pkgs imageVariant;
-              ohMyCodex = packages.oh-my-codex;
               piCodingAgent = packages.pi-coding-agent;
               dirge = packages.dirge;
               ompPrebuilt = packages.omp-prebuilt;
@@ -191,6 +189,7 @@
               rtkPrebuilt = packages.rtk-prebuilt or null;
               containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
               libkrun = packages.libkrun;
+              wl-cross-domain-proxy = packages.wl-cross-domain-proxy;
               podman = packages.podman;
               crun = packages.crun;
               agentboxMuslPackage = packages.agentbox-musl;
@@ -200,8 +199,10 @@
         in
         {
           container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
+          container-omx-absent = loftdImageChecks.omxAbsent;
           container-wrapper-contracts = loftdImageChecks.wrapperContracts;
           agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
+          agentbox-container-omx-absent = agentboxImageChecks.omxAbsent;
           agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
         }
       );

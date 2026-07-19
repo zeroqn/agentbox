@@ -1,6 +1,5 @@
 {
   pkgs,
-  ohMyCodex,
   piCodingAgent,
   dirge,
   ompPrebuilt,
@@ -20,7 +19,6 @@ let
   layers = import ./layers.nix {
     inherit
       pkgs
-      ohMyCodex
       piCodingAgent
       dirge
       ompPrebuilt
@@ -40,7 +38,6 @@ let
   imageConfig = import ./config.nix {
     inherit
       pkgs
-      ohMyCodex
       agentboxMuslPackage
       configPayloads
       layers
@@ -50,7 +47,6 @@ let
   imageChecks = import ./checks.nix {
     inherit
       pkgs
-      ohMyCodex
       piCodingAgent
       dirge
       ompPrebuilt

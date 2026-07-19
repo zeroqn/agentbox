@@ -1,6 +1,5 @@
 {
   pkgs,
-  ohMyCodex,
   piCodingAgent,
   dirge,
   ompPrebuilt,
@@ -368,7 +367,6 @@ let
     piCodingAgent
     dirge
     ompPrebuilt
-    ohMyCodex
   ];
   agentImageLayer = pkgs.buildEnv {
     name = "agentbox-agent-layer";
@@ -483,10 +481,6 @@ let
   imageContents =
     imagePackages
     ++ [
-      # The generated Codex hook and MCP config reference the raw
-      # oh-my-codex store path directly, so keep that payload in the
-      # image in addition to the /bin symlink tree from agentImageLayer.
-      ohMyCodex
       usrBinEnvCompat
       binInterpreterCompat
       fishConfig
@@ -605,6 +599,7 @@ let
 in
 {
   inherit
+    agentImageLayer
     agentboxImageLayeringPipeline
     agentboxImageMaxLayers
     imageContents

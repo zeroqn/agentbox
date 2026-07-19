@@ -1,6 +1,5 @@
 {
   pkgs,
-  ohMyCodex,
   piCodingAgent,
   dirge,
   ompPrebuilt,
@@ -20,7 +19,6 @@ let
   layers = import ./layers.nix {
     inherit
       pkgs
-      ohMyCodex
       piCodingAgent
       dirge
       ompPrebuilt
@@ -40,7 +38,6 @@ let
   imageConfig = import ./config.nix {
     inherit
       pkgs
-      ohMyCodex
       agentboxMuslPackage
       configPayloads
       layers
@@ -110,6 +107,7 @@ let
     It does not inspect, repair, or mutate the host Nix DB.
   '';
 
+  imageConfigFile = pkgs.writeText "${imageVariant}-image-config.json" imageConfigText;
   imageConfigRefsFile = pkgs.writeText "${imageVariant}-image-config-refs.txt" (
     refsText imageConfigRefs
   );
@@ -169,6 +167,29 @@ let
     test -f ${pkgs.ghostty.terminfo}/share/terminfo/x/xterm-ghostty
   '';
 
+  omxAbsent =
+    pkgs.runCommand "${imageVariant}-image-omx-absent-check"
+      {
+        nativeBuildInputs = [ pkgs.gnugrep ];
+      }
+      ''
+        set -euo pipefail
+
+        test ! -e ${layers.agentImageLayer}/bin/omx
+        test ! -e ${layers.agentImageLayer}/bin/omx-api
+        test ! -e ${layers.agentImageLayer}/bin/omx-runtime
+        test ! -e ${layers.agentImageLayer}/bin/omx-sparkshell
+
+        ! grep -F 'OMX_API_BIN=' ${imageConfigFile}
+        ! grep -F 'OMX_RUNTIME_BINARY=' ${imageConfigFile}
+        ! grep -F 'OMX_SPARKSHELL_BIN=' ${imageConfigFile}
+        ! grep -F 'oh-my-codex' ${imageConfigFile}
+        ! grep -F 'oh-my-codex' ${imageNixDbStorePathsFile}
+
+        mkdir -p "$out"
+        touch "$out/passed"
+      '';
+
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
       {
@@ -219,6 +240,7 @@ in
     imageNixDbStorePaths
     missingImageConfigNixDbRefs
     missingRefsMessage
+    omxAbsent
     wrapperContracts
     ;
 
