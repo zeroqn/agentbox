@@ -22,9 +22,6 @@
       packages = systems.forAllSystems (
         { pkgs, ... }:
         let
-          ohMyCodex = import ./nix/pkgs/oh-my-codex.nix {
-            inherit pkgs pins;
-          };
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
@@ -138,7 +135,6 @@
         in
         {
           default = rustPackages.rustPackage;
-          oh-my-codex = ohMyCodex;
           pi-coding-agent = piCodingAgent;
           dirge = dirge;
           dirge-ci-sccache = dirgeCiSccache;

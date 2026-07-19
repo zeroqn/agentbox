@@ -1930,12 +1930,6 @@ Refresh pinned `omp` prebuilt release metadata in `nix/pins.nix` from `can1357/o
 nix develop --command ./scripts/update-omp-prebuilt.sh
 ```
 
-Refresh pinned `oh-my-codex` version/hashes in `nix/pins.nix` (including bundled Linux-musl native helper asset hashes):
-
-```bash
-nix develop --command ./scripts/update-oh-my-codex.sh
-```
-
 ---
 
 ## Use from another flake (prebuilt binary)
