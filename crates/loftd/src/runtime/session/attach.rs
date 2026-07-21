@@ -1179,7 +1179,7 @@ impl RawTerminalMode {
 
     fn restore_now(&mut self) {
         if self.active {
-            let mouse_reset = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
+            let mouse_reset = b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l";
             let _ = unsafe {
                 libc::write(
                     self.output_fd,
@@ -1377,7 +1377,10 @@ mod tests {
             .read_to_end(&mut output)
             .unwrap();
 
-        assert_eq!(output, b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
+        assert_eq!(
+            output,
+            b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l"
+        );
         assert!(!raw.active);
     }
 

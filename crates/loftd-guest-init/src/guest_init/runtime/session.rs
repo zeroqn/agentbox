@@ -249,6 +249,7 @@ impl TerminalState {
         restore.extend(screen.contents_formatted());
         restore.extend(screen.cursor_state_formatted());
         restore.extend(screen.attributes_formatted());
+        restore.extend(screen.input_mode_formatted());
         restore
     }
 }
@@ -1919,26 +1920,24 @@ mod tests {
     }
 
     #[test]
-    fn terminal_restore_preserves_visual_state_without_cached_input_modes() {
+    fn terminal_restore_preserves_visual_and_input_state() {
         let mut terminal_state = TerminalState::new(PtySize { rows: 10, cols: 40 });
         terminal_state.record_output(
-            b"\x1b[?1049h\x1b[?25l\x1b[?1h\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006hinside-tui",
+            b"\x1b[?1049h\x1b[?25l\x1b[?1h\x1b[?2004h\x1b[?1002h\x1b[?1006hinside-tui",
         );
 
         let restore = terminal_state.render_restore();
         for input_mode in [
             b"\x1b[?1h".as_slice(),
-            b"\x1b[?1000h",
             b"\x1b[?1002h",
-            b"\x1b[?1003h",
             b"\x1b[?1006h",
             b"\x1b[?2004h",
         ] {
             assert!(
-                !restore
+                restore
                     .windows(input_mode.len())
                     .any(|bytes| bytes == input_mode),
-                "restore contains cached input mode {input_mode:?}"
+                "restore is missing cached input mode {input_mode:?}"
             );
         }
 
@@ -1948,8 +1947,16 @@ mod tests {
 
         assert!(screen.alternate_screen());
         assert!(screen.hide_cursor());
-        assert!(!screen.application_cursor());
-        assert!(!screen.bracketed_paste());
+        assert!(screen.application_cursor());
+        assert!(screen.bracketed_paste());
+        assert_eq!(
+            screen.mouse_protocol_mode(),
+            vt100::MouseProtocolMode::ButtonMotion
+        );
+        assert_eq!(
+            screen.mouse_protocol_encoding(),
+            vt100::MouseProtocolEncoding::Sgr
+        );
         assert!(screen.contents().contains("inside-tui"));
     }
 
@@ -2034,17 +2041,11 @@ mod tests {
 
         match read_frame(&mut client).unwrap() {
             Some(Frame::Data(data)) => {
-                for mouse_mode in [
-                    b"\x1b[?1000h".as_slice(),
-                    b"\x1b[?1002h",
-                    b"\x1b[?1003h",
-                    b"\x1b[?1006h",
-                ] {
+                for mouse_mode in [b"\x1b[?1003h".as_slice(), b"\x1b[?1006h"] {
                     assert!(
-                        !data
-                            .windows(mouse_mode.len())
+                        data.windows(mouse_mode.len())
                             .any(|bytes| bytes == mouse_mode),
-                        "restore contains cached mouse mode {mouse_mode:?}"
+                        "restore is missing cached mouse mode {mouse_mode:?}"
                     );
                 }
                 let mut restored = vt100::Parser::new(24, 80, 0);
