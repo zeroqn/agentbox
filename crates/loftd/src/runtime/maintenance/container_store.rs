@@ -157,6 +157,7 @@ fn maintenance_launch_config(
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
         io_uring: false,
+        perf: false,
         publish: Vec::new(),
         workdir: "/".to_owned(),
         exec_path: guest_init_exec.to_owned(),

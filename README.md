@@ -1090,6 +1090,26 @@ Guest io_uring behavior:
   `io_uring_register`; enabling them in a nested container requires a separate,
   explicit container seccomp policy.
 
+Guest performance profiling:
+
+```bash
+./result/bin/loftd --perf
+./result/bin/loftd --io-uring --perf
+```
+
+- The loftd guest image includes `perf` and `strace` on `PATH`.
+- Without `--perf`, loftd leaves the guest kernel's hardened
+  `kernel.perf_event_paranoid=3` setting unchanged.
+- `--perf` sets `kernel.perf_event_paranoid=-1` during root guest initialization,
+  before Nix and Podman preparation or the task command. This enables
+  unprivileged kernel software events and tracepoints, and weakens
+  performance-event isolation for that VM launch.
+- `--perf` does not allow io_uring creation. Use `--io-uring --perf` when an
+  io_uring workload needs both creation permission and kernel-path profiling.
+- Hardware PMU events such as cycles and instructions are not guaranteed. The
+  current x86 libkrun CPUID configuration disables the architectural PMU, so
+  software events and available tracepoints are the supported profiling scope.
+
 Container-store disk maintenance:
 
 ```bash

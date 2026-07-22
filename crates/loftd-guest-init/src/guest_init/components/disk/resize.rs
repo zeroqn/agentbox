@@ -211,6 +211,7 @@ mod tests {
             use_passt: false,
             wayland: false,
             io_uring: false,
+            perf: false,
             enter_as_root: false,
             host_uid: None,
             host_gid: None,

@@ -127,3 +127,30 @@ fn internal_runtime_enables_io_uring_from_marker() {
 
     assert!(parsed.io_uring);
 }
+
+#[test]
+fn internal_runtime_disables_perf_when_marker_is_absent() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::remove_var("LOFTD_PERF");
+    }
+    let parsed = LoftdEnv::from_process_env().expect("env should parse");
+
+    assert!(!parsed.perf);
+}
+
+#[test]
+fn internal_runtime_enables_perf_from_marker() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::set_var("LOFTD_PERF", "1");
+    }
+    let parsed = LoftdEnv::from_process_env().expect("env should parse");
+    unsafe {
+        std::env::remove_var("LOFTD_PERF");
+    }
+
+    assert!(parsed.perf);
+}

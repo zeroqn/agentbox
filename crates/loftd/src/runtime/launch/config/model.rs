@@ -37,6 +37,7 @@ pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
 pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
 pub(super) const GUEST_IO_URING_ENV: &str = "LOFTD_IO_URING";
+pub(super) const GUEST_PERF_ENV: &str = "LOFTD_PERF";
 pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
 pub(super) const GUEST_ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 pub(super) const GUEST_ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
@@ -232,6 +233,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
     pub(crate) io_uring: bool,
+    pub(crate) perf: bool,
     pub(crate) publish: &'a [String],
     pub(crate) profile: bool,
     pub(crate) root: bool,
@@ -273,6 +275,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) network_mode: NetworkMode,
     pub(crate) gpu_mode: GpuMode,
     pub(crate) io_uring: bool,
+    pub(crate) perf: bool,
     pub(crate) publish: Vec<String>,
     pub(crate) workdir: String,
     pub(crate) exec_path: String,

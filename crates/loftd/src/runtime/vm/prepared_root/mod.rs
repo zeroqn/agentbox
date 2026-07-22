@@ -508,6 +508,7 @@ mod tests {
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             wayland: false,
             io_uring: false,
+            perf: false,
             publish: &[],
             profile: false,
             root: false,

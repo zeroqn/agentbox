@@ -63,6 +63,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: true,
+        perf: true,
         publish: &[],
         profile: true,
         root: false,
@@ -115,6 +116,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
     assert!(config.guest_config_env_contains("LOFTD_IO_URING", "1"));
+    assert!(config.guest_config_env_contains("LOFTD_PERF", "1"));
     assert!(
         config
             .guest_config_env
@@ -143,6 +145,7 @@ fn launch_config_uses_explicit_guest_command() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -163,7 +166,7 @@ fn launch_config_uses_explicit_guest_command() {
         config
             .guest_config_env
             .iter()
-            .all(|(key, _)| key != "LOFTD_IO_URING")
+            .all(|(key, _)| key != "LOFTD_IO_URING" && key != "LOFTD_PERF")
     );
 }
 
@@ -193,6 +196,7 @@ fn launch_config_round_trips_through_hex_line_format() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: true,
@@ -263,6 +267,7 @@ fn launch_config_round_trips_managed_session_contract() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -309,6 +314,7 @@ fn managed_session_extra_env_terminal_vars_are_guest_visible() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -368,6 +374,7 @@ fn non_managed_launch_does_not_allow_terminal_identity_from_image_env() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -405,6 +412,7 @@ fn launch_config_round_trips_seccomp_modes() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -457,6 +465,7 @@ fn launch_config_round_trips_landlock_modes() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -480,6 +489,7 @@ fn launch_config_round_trips_landlock_modes() {
         config.landlock = mode;
         let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
         assert_eq!(parsed.landlock, mode);
+        assert_eq!(parsed.perf, config.perf);
         assert_eq!(parsed, config);
     }
 }
@@ -500,6 +510,7 @@ fn launch_config_legacy_missing_landlock_mode_defaults_to_relax() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -530,6 +541,47 @@ fn launch_config_legacy_missing_landlock_mode_defaults_to_relax() {
 }
 
 #[test]
+fn launch_config_legacy_missing_perf_defaults_to_false() {
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &OciProcessConfig::default(),
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Tsi,
+        gpu_mode: GpuMode::Off,
+        wayland: false,
+        io_uring: false,
+        perf: true,
+        publish: &[],
+        profile: false,
+        root: false,
+        allocator: AllocatorMode::Mimalloc,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        managed_session: None,
+    })
+    .expect("launch config should build")
+    .serialize()
+    .lines()
+    .filter(|line| !line.starts_with("perf="))
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    let parsed = LaunchConfig::parse(&format!("{config}\n")).expect("legacy config should parse");
+
+    assert!(!parsed.perf);
+}
+
+#[test]
 fn launch_config_rejects_legacy_enforce_landlock_mode() {
     let mut config = LaunchConfig::build_for_task(LaunchSpec {
         task_rootfs: Path::new("/state/task/rootfs"),
@@ -545,6 +597,7 @@ fn launch_config_rejects_legacy_enforce_landlock_mode() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -583,6 +636,7 @@ fn launch_config_refuses_to_serialize_unresolved_default_gap_audit() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -626,6 +680,7 @@ fn launch_config_rejects_inconsistent_seccomp_fields() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -705,6 +760,7 @@ fn launch_config_round_trips_volume_source_kind_and_access_mode() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -759,6 +815,7 @@ fn launch_config_carries_host_nix_overlay_and_adds_reserved_nix_mount() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -807,6 +864,7 @@ fn launch_config_rejects_user_mount_that_collides_with_host_nix_overlay() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -853,6 +911,7 @@ fn launch_config_rejects_noncanonical_reserved_target_aliases() {
             gpu_mode: GpuMode::Off,
             wayland: false,
             io_uring: false,
+            perf: false,
             publish: &[],
             profile: false,
             root: false,
@@ -900,6 +959,7 @@ fn launch_config_carries_publish_specs_from_launch_spec() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &publish,
         profile: false,
         root: false,
@@ -1036,6 +1096,7 @@ fn launch_config_rejects_config_codex_mounts() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1075,6 +1136,7 @@ fn launch_config_requires_guest_init_override_to_be_read_only() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1222,6 +1284,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1313,6 +1376,7 @@ fn launch_config_emits_allocator_selector() {
             gpu_mode: GpuMode::Off,
             wayland: false,
             io_uring: false,
+            perf: false,
             publish: &[],
             profile: false,
             root: false,
@@ -1361,6 +1425,7 @@ fn guest_debug_env_follows_effective_log_level() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1390,6 +1455,7 @@ fn guest_debug_env_follows_effective_log_level() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1423,6 +1489,7 @@ fn profile_env_does_not_raise_guest_debug_level() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: true,
         root: false,
@@ -1458,6 +1525,7 @@ fn passt_mode_sets_guest_passt_dns_gate() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1500,6 +1568,7 @@ fn writes_loftd_config_json_under_task_rootfs() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,
@@ -1556,6 +1625,7 @@ fn malformed_image_env_is_rejected() {
             gpu_mode: GpuMode::Off,
             wayland: false,
             io_uring: false,
+            perf: false,
             publish: &[],
             profile: false,
             root: false,
@@ -1593,6 +1663,7 @@ fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,

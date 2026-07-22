@@ -157,6 +157,7 @@ impl LaunchConfig {
             "io_uring",
             if self.io_uring { "true" } else { "false" },
         );
+        push_field(&mut out, "perf", if self.perf { "true" } else { "false" });
         for (index, spec) in self.publish.iter().enumerate() {
             push_field(&mut out, &format!("publish.{index}"), spec);
         }
@@ -345,6 +346,7 @@ impl LaunchConfig {
                     | "network_mode"
                     | "gpu_mode"
                     | "io_uring"
+                    | "perf"
                     | "workdir"
                     | "exec_path"
                     | "managed_session.attach_socket"
@@ -394,6 +396,11 @@ impl LaunchConfig {
             .map(|value| parse_bool_field("io_uring", value))
             .transpose()?
             .unwrap_or(false);
+        let perf = fields
+            .get("perf")
+            .map(|value| parse_bool_field("perf", value))
+            .transpose()?
+            .unwrap_or(false);
         let mounts = parse_mounts(&fields, mounts)?;
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
@@ -427,6 +434,7 @@ impl LaunchConfig {
             network_mode,
             gpu_mode,
             io_uring,
+            perf,
             publish: publish.into_values().collect(),
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,

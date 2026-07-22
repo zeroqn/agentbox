@@ -169,6 +169,12 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
         }
         Ok(())
     })?;
+    profiler.measure_result("configure-perf", || {
+        if process::is_root() {
+            crate::guest_init::components::hardening::perf::configure(env_contract.loftd.perf)?;
+        }
+        Ok(())
+    })?;
     profiler.measure_result("configure-passt-dns", || {
         if env_contract.loftd.use_passt && process::is_root() {
             crate::guest_init::components::net::dns::ensure_passt_resolv_conf(Path::new(
@@ -271,6 +277,7 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
         use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
         wayland: env_flag(env, "LOFTD_WAYLAND"),
         io_uring: env_flag(env, "LOFTD_IO_URING"),
+        perf: env_flag(env, "LOFTD_PERF"),
         enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
         host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
         host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,

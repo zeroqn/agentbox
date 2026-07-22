@@ -213,6 +213,16 @@ let
               grep -F 'loftd-guest-init internal podman service-wait' ${layers.dockerComposeCommandCompat}/bin/docker-compose
               grep -F 'loftd-nix-store-db-check' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
               grep -F '/run/loftd/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
+              test -x ${pkgs.perf}/bin/perf
+              test -x ${pkgs.strace}/bin/strace
+              case ":${layers.imagePath}:" in
+                *":${pkgs.perf}/bin:"*) ;;
+                *) exit 1 ;;
+              esac
+              case ":${layers.imagePath}:" in
+                *":${pkgs.strace}/bin:"*) ;;
+                *) exit 1 ;;
+              esac
               ! grep -F 'AGENTBOX_LIBKRUN' ${layers.nixCommandCompat}/bin/nix
               ! grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
             ''
@@ -226,6 +236,12 @@ let
               grep -F 'agentbox-guest-init libkrun podman service-wait' ${layers.dockerComposeCommandCompat}/bin/docker-compose
               grep -F 'agentbox-nix-store-db-check' ${layers.nixStoreDbCheck}/bin/agentbox-nix-store-db-check
               grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/agentbox-nix-store-db-check
+              case ":${layers.imagePath}:" in
+                *":${pkgs.perf}/bin:"*) exit 1 ;;
+              esac
+              case ":${layers.imagePath}:" in
+                *":${pkgs.strace}/bin:"*) exit 1 ;;
+              esac
             ''
         }
 

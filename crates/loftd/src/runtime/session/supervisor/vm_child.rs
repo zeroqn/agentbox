@@ -789,6 +789,7 @@ mod tests {
             network_mode: NetworkMode::Tsi,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             io_uring: false,
+            perf: false,
             publish: Vec::new(),
             workdir: "/workspace".to_owned(),
             exec_path: "/init".to_owned(),

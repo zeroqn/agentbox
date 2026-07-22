@@ -200,6 +200,13 @@ pub(crate) struct Cli {
     io_uring: bool,
 
     #[arg(
+        long = "perf",
+        help = "Allow unprivileged guest performance profiling",
+        long_help = "Set kernel.perf_event_paranoid=-1 inside the guest for this launch. This enables unprivileged kernel software events and tracepoints useful for application and io_uring analysis, and weakens guest performance-event isolation. This option does not allow io_uring creation; combine it with --io-uring when needed. Hardware PMU events depend on libkrun and host virtualization support and are not guaranteed."
+    )]
+    perf: bool,
+
+    #[arg(
         long = "alloc",
         value_enum,
         value_name = "ALLOCATOR",
@@ -510,6 +517,7 @@ impl Cli {
             seccomp: self.seccomp,
             landlock: self.landlock,
             io_uring: self.io_uring,
+            perf: self.perf,
             allocator: self.alloc.into(),
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -556,6 +564,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) landlock: Option<LandlockMode>,
     pub(crate) io_uring: bool,
+    pub(crate) perf: bool,
     pub(crate) allocator: AllocatorMode,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -788,6 +797,7 @@ mod tests {
         assert_eq!(options.seccomp, None);
         assert_eq!(options.landlock, None);
         assert!(!options.io_uring);
+        assert!(!options.perf);
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.pty, PtyOptions::DEFAULT);
@@ -1299,6 +1309,14 @@ mod tests {
         let options = cli.into_runtime_options();
 
         assert!(options.io_uring);
+    }
+
+    #[test]
+    fn perf_flag_enables_guest_perf() {
+        let cli = Cli::try_parse_from(["loftd", "--perf"]).expect("perf flag should parse");
+        let options = cli.into_runtime_options();
+
+        assert!(options.perf);
     }
 
     #[test]

@@ -284,6 +284,7 @@ fn config() -> LaunchConfig {
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,
+        perf: false,
         publish: &[],
         profile: false,
         root: false,

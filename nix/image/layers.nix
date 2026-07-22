@@ -448,6 +448,8 @@ let
       agentImageLayer
     ]
     ++ pkgs.lib.optionals (imageVariant == "loftd") [
+      pkgs.perf
+      pkgs.strace
       wl-cross-domain-proxy
     ];
   imagePathPackages =
@@ -461,6 +463,8 @@ let
       agentImageLayer
     ]
     ++ pkgs.lib.optionals (imageVariant == "loftd") [
+      pkgs.perf
+      pkgs.strace
       wl-cross-domain-proxy
     ];
   imagePath = pkgs.lib.makeBinPath (
