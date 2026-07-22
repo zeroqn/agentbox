@@ -1179,12 +1179,13 @@ impl RawTerminalMode {
 
     fn restore_now(&mut self) {
         if self.active {
-            let mouse_reset = b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l";
+            let terminal_reset =
+                b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1049l";
             let _ = unsafe {
                 libc::write(
                     self.output_fd,
-                    mouse_reset.as_ptr().cast(),
-                    mouse_reset.len(),
+                    terminal_reset.as_ptr().cast(),
+                    terminal_reset.len(),
                 )
             };
             let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.original) };
@@ -1379,7 +1380,7 @@ mod tests {
 
         assert_eq!(
             output,
-            b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l"
+            b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1049l"
         );
         assert!(!raw.active);
     }
