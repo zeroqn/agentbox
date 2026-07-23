@@ -115,6 +115,7 @@ let
       EOF_RMUX_CONF
       chmod 0644 ./etc/rmux.conf
       cat > ./etc/tmux.conf <<'EOF_TMUX_CONF'
+      set -g mouse on
       bind-key | split-window -h
       bind-key - split-window -v
       bind-key h select-pane -L
