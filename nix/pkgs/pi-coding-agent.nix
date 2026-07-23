@@ -1,5 +1,11 @@
 { pkgs, pins }:
 
+let
+  piAiNpmTarball = pkgs.fetchurl {
+    url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${pins.piCodingAgent.version}.tgz";
+    hash = pins.piCodingAgent.aiNpmTarballHash;
+  };
+in
 pkgs.buildNpmPackage {
   pname = "pi-coding-agent";
   version = pins.piCodingAgent.version;
@@ -19,9 +25,14 @@ pkgs.buildNpmPackage {
   postPatch = ''
     cp ${./pi-coding-agent-package.json} package.json
     cp ${./pi-coding-agent-package-lock.json} package-lock.json
-    substituteInPlace packages/ai/package.json \
-      --replace-fail 'npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json' \
-                     'tsgo -p tsconfig.build.json'
+    substituteInPlace packages/coding-agent/package.json \
+      --replace-fail 'npm --prefix ../ai run build' \
+                     'npm --prefix ../ai run build:offline'
+
+    mkdir -p packages/ai/src/providers/data
+    tar -xzf ${piAiNpmTarball} --strip-components=4 \
+      -C packages/ai/src/providers/data \
+      package/dist/providers/data
   '';
 
   nativeBuildInputs = [ pkgs.bun ];
