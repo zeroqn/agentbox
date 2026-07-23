@@ -156,7 +156,7 @@ let
     ! grep -F './etc/tmux.conf' ${containerSourceFile}
     test -x ${rmuxPrebuilt}/bin/rmux
     test -x ${pkgs.tmux}/bin/tmux
-    grep -F 'set -g mouse on' ${containerSourceFile}
+    test "$(grep -Fc 'set -g mouse on' ${containerSourceFile})" -eq 2
     ${rmuxPrebuilt}/bin/rmux -V
     ${pkgs.tmux}/bin/tmux -V
   '';

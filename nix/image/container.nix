@@ -106,6 +106,7 @@ let
       EOF_NIX_CONF
       chmod 0644 ./etc/nix/nix.conf
       cat > ./etc/rmux.conf <<'EOF_RMUX_CONF'
+      set -g mouse on
       bind | split-window -h
       bind - split-window -v
       bind h select-pane -L
