@@ -246,6 +246,11 @@ CI publishes release artifacts on every push to `main` and on every git tag
 - `.#rmux-prebuilt`: install the pinned published Helvesec/rmux Linux release
   tarball for the current system. The agentbox and loftd images include this
   package as `rmux` alongside Nixpkgs `tmux`.
+- `.#rio-bin` (`x86_64-linux`): install the pinned `zeroqn/headless` Rio package.
+  The x86_64 loftd image includes `rio` and installs its `rio` and `xterm-rio`
+  terminfo entries in `/home/dev/.terminfo`, so managed guest shells can use
+  either Rio terminal identity without additional guest setup. Upstream does
+  not currently publish this package for `aarch64-linux`.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the

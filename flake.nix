@@ -4,12 +4,17 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    headless = {
+      url = "github:zeroqn/headless";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
     {
       self,
       nixpkgs,
+      headless,
 
     }:
     let
@@ -20,8 +25,9 @@
     in
     {
       packages = systems.forAllSystems (
-        { pkgs, ... }:
+        { pkgs, system, ... }:
         let
+          rioBin = headless.packages.${system}.rio-bin or null;
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
@@ -101,6 +107,7 @@
                 pkgs
 
                 piCodingAgent
+                rioBin
                 ompPrebuilt
                 rmuxPrebuilt
                 rtkPrebuilt
@@ -160,6 +167,9 @@
           container-ci-sccache = loftdImageCiSccache;
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
         }
+        // pkgs.lib.optionalAttrs (rioBin != null) {
+          rio-bin = rioBin;
+        }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {
           rtk-prebuilt = rtkPrebuilt;
         }
@@ -179,6 +189,7 @@
             import ./nix/image/checks.nix {
               inherit pkgs imageVariant;
               piCodingAgent = packages.pi-coding-agent;
+              rioBin = packages.rio-bin or null;
               dirge = packages.dirge;
               ompPrebuilt = packages.omp-prebuilt;
               rmuxPrebuilt = packages.rmux-prebuilt;

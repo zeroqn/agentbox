@@ -1,6 +1,7 @@
 {
   pkgs,
   piCodingAgent,
+  rioBin,
   dirge,
   ompPrebuilt,
   rmuxPrebuilt,
@@ -447,11 +448,14 @@ let
       toolingImageLayer
       agentImageLayer
     ]
-    ++ pkgs.lib.optionals (imageVariant == "loftd") [
-      pkgs.perf
-      pkgs.strace
-      wl-cross-domain-proxy
-    ];
+    ++ pkgs.lib.optionals (imageVariant == "loftd") (
+      pkgs.lib.optional (rioBin != null) rioBin
+      ++ [
+        pkgs.perf
+        pkgs.strace
+        wl-cross-domain-proxy
+      ]
+    );
   imagePathPackages =
     baseImagePackages
     ++ rootlessPodmanImagePackages
@@ -462,11 +466,14 @@ let
       toolingImageLayer
       agentImageLayer
     ]
-    ++ pkgs.lib.optionals (imageVariant == "loftd") [
-      pkgs.perf
-      pkgs.strace
-      wl-cross-domain-proxy
-    ];
+    ++ pkgs.lib.optionals (imageVariant == "loftd") (
+      pkgs.lib.optional (rioBin != null) rioBin
+      ++ [
+        pkgs.perf
+        pkgs.strace
+        wl-cross-domain-proxy
+      ]
+    );
   imagePath = pkgs.lib.makeBinPath (
     [
       rustcCommandCompat

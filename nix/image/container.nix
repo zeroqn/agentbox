@@ -1,6 +1,7 @@
 {
   pkgs,
   piCodingAgent,
+  rioBin,
   dirge,
   ompPrebuilt,
   rmuxPrebuilt,
@@ -20,6 +21,7 @@ let
     inherit
       pkgs
       piCodingAgent
+      rioBin
       dirge
       ompPrebuilt
       rmuxPrebuilt
@@ -48,6 +50,7 @@ let
     inherit
       pkgs
       piCodingAgent
+      rioBin
       dirge
       ompPrebuilt
       rmuxPrebuilt
@@ -75,6 +78,7 @@ let
         ./etc/nix \
         ./home/dev/.cache \
         ./home/dev/.codex \
+        ./home/dev/.terminfo/r \
         ./home/dev/.terminfo/x \
         ./root \
         ./tmp \
@@ -127,6 +131,11 @@ let
       chmod 0644 ./etc/tmux.conf
       cp ${pkgs.ghostty.terminfo}/share/terminfo/x/xterm-ghostty ./home/dev/.terminfo/x/xterm-ghostty
       chmod 0644 ./home/dev/.terminfo/x/xterm-ghostty
+      ${pkgs.lib.optionalString (imageVariant == "loftd" && rioBin != null) ''
+        cp ${rioBin}/share/terminfo/r/rio ./home/dev/.terminfo/r/rio
+        cp ${rioBin}/share/terminfo/x/xterm-rio ./home/dev/.terminfo/x/xterm-rio
+        chmod 0644 ./home/dev/.terminfo/r/rio ./home/dev/.terminfo/x/xterm-rio
+      ''}
       if ! grep -q '^nixbld:' ./etc/group; then
         printf 'nixbld:x:${toString layers.nixBuilderGroupId}:${layers.nixBuilderGroupMembers}\n' >> ./etc/group
       fi

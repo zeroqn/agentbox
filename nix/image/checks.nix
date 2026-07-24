@@ -1,6 +1,7 @@
 {
   pkgs,
   piCodingAgent,
+  rioBin,
   dirge,
   ompPrebuilt,
   rmuxPrebuilt,
@@ -20,6 +21,7 @@ let
     inherit
       pkgs
       piCodingAgent
+      rioBin
       dirge
       ompPrebuilt
       rmuxPrebuilt
@@ -166,6 +168,11 @@ let
     grep -F 'pkgs.ghostty.terminfo' ${containerSourceFile}
     grep -F 'xterm-ghostty' ${containerSourceFile}
     test -f ${pkgs.ghostty.terminfo}/share/terminfo/x/xterm-ghostty
+    ${pkgs.lib.optionalString (rioBin != null) ''
+      test -x ${rioBin}/bin/rio
+      test -f ${rioBin}/share/terminfo/r/rio
+      test -f ${rioBin}/share/terminfo/x/xterm-rio
+    ''}
   '';
 
   omxAbsent =
@@ -216,6 +223,16 @@ let
               grep -F '/run/loftd/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
               test -x ${pkgs.perf}/bin/perf
               test -x ${pkgs.strace}/bin/strace
+              ${pkgs.lib.optionalString (rioBin != null) ''
+                test -x ${rioBin}/bin/rio
+                grep -F './home/dev/.terminfo/r' ${containerSourceFile}
+                grep -F '${rioBin}/share/terminfo/r/rio' ${containerSourceFile}
+                grep -F '${rioBin}/share/terminfo/x/xterm-rio' ${containerSourceFile}
+                case ":${layers.imagePath}:" in
+                  *":${rioBin}/bin:"*) ;;
+                  *) exit 1 ;;
+                esac
+              ''}
               case ":${layers.imagePath}:" in
                 *":${pkgs.perf}/bin:"*) ;;
                 *) exit 1 ;;
@@ -237,6 +254,12 @@ let
               grep -F 'agentbox-guest-init libkrun podman service-wait' ${layers.dockerComposeCommandCompat}/bin/docker-compose
               grep -F 'agentbox-nix-store-db-check' ${layers.nixStoreDbCheck}/bin/agentbox-nix-store-db-check
               grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/agentbox-nix-store-db-check
+              ${pkgs.lib.optionalString (rioBin != null) ''
+                case ":${layers.imagePath}:" in
+                  *":${rioBin}/bin:"*) exit 1 ;;
+                  *) ;;
+                esac
+              ''}
               case ":${layers.imagePath}:" in
                 *":${pkgs.perf}/bin:"*) exit 1 ;;
               esac
