@@ -14,7 +14,7 @@ use super::components::{guest_init, mounts};
 use super::guest_env::guest_config_json;
 use super::model::{
     BindMount, BindMountSourceKind, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
-    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, ManagedSessionConfig, NetworkMode,
+    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, ManagedSessionConfig, NetworkMode, WaypipeConfig,
 };
 
 impl LaunchConfig {
@@ -163,6 +163,18 @@ impl LaunchConfig {
         }
         push_field(&mut out, "workdir", &self.workdir);
         push_field(&mut out, "exec_path", &self.exec_path);
+        if let Some(waypipe) = &self.waypipe {
+            push_field(
+                &mut out,
+                "waypipe.socket",
+                &waypipe.socket.display().to_string(),
+            );
+            push_field(
+                &mut out,
+                "waypipe.guest_port",
+                &waypipe.guest_port.to_string(),
+            );
+        }
         if let Some(managed) = &self.managed_session {
             push_field(
                 &mut out,
@@ -349,6 +361,8 @@ impl LaunchConfig {
                     | "perf"
                     | "workdir"
                     | "exec_path"
+                    | "waypipe.socket"
+                    | "waypipe.guest_port"
                     | "managed_session.attach_socket"
                     | "managed_session.guest_port"
                     | "managed_session.protocol_version"
@@ -405,6 +419,7 @@ impl LaunchConfig {
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
         let host_nix_overlay = parse_host_nix_overlay(&fields)?;
+        let waypipe = parse_waypipe(&fields)?;
         let managed_session = parse_managed_session(&fields)?;
         let seccomp = SeccompMode::parse_config_value(
             fields.get("seccomp.mode").map(String::as_str),
@@ -442,11 +457,28 @@ impl LaunchConfig {
             env: env.into_values().collect(),
             guest_config_env: guest_config_env.into_values().collect(),
             passt_fd: None,
+            waypipe,
             managed_session,
             seccomp,
             landlock,
         })
     }
+}
+
+fn parse_waypipe(fields: &BTreeMap<String, String>) -> Result<Option<WaypipeConfig>> {
+    let keys_present = ["waypipe.socket", "waypipe.guest_port"]
+        .iter()
+        .any(|key| fields.contains_key(*key));
+    if !keys_present {
+        return Ok(None);
+    }
+
+    Ok(Some(WaypipeConfig {
+        socket: PathBuf::from(required_field(fields, "waypipe.socket")?),
+        guest_port: required_field(fields, "waypipe.guest_port")?
+            .parse::<u32>()
+            .context("loftd launch config waypipe.guest_port is invalid")?,
+    }))
 }
 
 fn parse_managed_session(

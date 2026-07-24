@@ -471,6 +471,7 @@ let
       ++ [
         pkgs.perf
         pkgs.strace
+        pkgs.waypipe
         wl-cross-domain-proxy
       ]
     );

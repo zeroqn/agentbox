@@ -252,12 +252,17 @@ let
                   *) exit 1 ;;
                 esac
               ''}
+              test -x ${pkgs.waypipe}/bin/waypipe
               case ":${layers.imagePath}:" in
                 *":${pkgs.perf}/bin:"*) ;;
                 *) exit 1 ;;
               esac
               case ":${layers.imagePath}:" in
                 *":${pkgs.strace}/bin:"*) ;;
+                *) exit 1 ;;
+              esac
+              case ":${layers.imagePath}:" in
+                *":${pkgs.waypipe}/bin:"*) ;;
                 *) exit 1 ;;
               esac
               ! grep -F 'AGENTBOX_LIBKRUN' ${layers.nixCommandCompat}/bin/nix
@@ -284,6 +289,9 @@ let
               esac
               case ":${layers.imagePath}:" in
                 *":${pkgs.strace}/bin:"*) exit 1 ;;
+              esac
+              case ":${layers.imagePath}:" in
+                *":${pkgs.waypipe}/bin:"*) exit 1 ;;
               esac
             ''
         }

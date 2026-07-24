@@ -7,6 +7,7 @@ use crate::runtime::seccomp::SeccompMode;
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
 use crate::runtime::vm::gpu::GpuMode;
 
+pub(crate) const DEFAULT_WAYPIPE_PORT: u32 = 50_427;
 pub(crate) const WORKSPACE_TAG: &str = "loftd-workspace";
 pub(crate) const WORKSPACE_TARGET: &str = "/workspace";
 pub const CODEX_TAG: &str = "loftd-codex";
@@ -36,6 +37,7 @@ pub(super) const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
 pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
 pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
+pub(super) const GUEST_WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
 pub(super) const GUEST_IO_URING_ENV: &str = "LOFTD_IO_URING";
 pub(super) const GUEST_PERF_ENV: &str = "LOFTD_PERF";
 pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
@@ -244,6 +246,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) extra_env: Vec<(String, String)>,
     pub(crate) host_nix_overlay: Option<HostNixOverlay>,
+    pub(crate) waypipe: Option<WaypipeConfig>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,
 }
 
@@ -251,6 +254,12 @@ pub(crate) struct LaunchSpec<'a> {
 ///
 /// `LaunchConfig` is derived from a resolved launch plan plus materialized task
 /// rootfs data and is written into the task rootfs for the helper process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaypipeConfig {
+    pub(crate) socket: PathBuf,
+    pub(crate) guest_port: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManagedSessionConfig {
     pub(crate) attach_socket: PathBuf,
@@ -283,6 +292,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) env: Vec<(String, String)>,
     pub(crate) guest_config_env: Vec<(String, String)>,
     pub(crate) passt_fd: Option<i32>,
+    pub(crate) waypipe: Option<WaypipeConfig>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,
     pub(crate) seccomp: SeccompMode,
     pub(crate) landlock: LandlockMode,

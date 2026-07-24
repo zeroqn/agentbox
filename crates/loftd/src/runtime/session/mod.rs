@@ -21,7 +21,9 @@ pub(crate) mod task_control;
 mod terminal_env;
 
 use crate::runtime::RuntimeProfileScope;
-use crate::runtime::launch::config::{self, LaunchConfig, LaunchSpec, ManagedSessionConfig};
+use crate::runtime::launch::config::{
+    self, DEFAULT_WAYPIPE_PORT, LaunchConfig, LaunchSpec, ManagedSessionConfig, WaypipeConfig,
+};
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
 use attach::AttachInputPolicy;
 use loftd_attach_protocol::{
@@ -84,10 +86,14 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
     let pty = options.pty;
     let attach_input_policy =
         AttachInputPolicy::new(pty.suppress_focus_input, pty.focus_report_guard);
+    let workspace = options
+        .waypipe
+        .as_ref()
+        .map_or_else(env::current_dir, |waypipe| Ok(waypipe.workspace.clone()))?;
     let cwd = profiler.measure_result("workspace_canonicalization", || {
-        env::current_dir()?
+        workspace
             .canonicalize()
-            .context("failed to canonicalize current directory for loftd workspace mount")
+            .context("failed to canonicalize loftd workspace mount")
     })?;
     prepare_terminal_trace_file_from_process_env(pty.trace, &cwd)
         .context("failed to prepare loftd terminal trace file")?;
@@ -249,6 +255,10 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                     env
                                 },
                                 host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
+                                waypipe: plan.waypipe_socket.clone().map(|socket| WaypipeConfig {
+                                    socket,
+                                    guest_port: DEFAULT_WAYPIPE_PORT,
+                                }),
                                 managed_session: Some(managed_session.clone()),
                             })
                         }) {
@@ -465,6 +475,7 @@ mod tests {
             network_mode: config::NetworkMode::Tsi,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             wayland: false,
+            waypipe: None,
             publish: Vec::new(),
             volumes: Vec::new(),
             guest_command: Vec::new(),

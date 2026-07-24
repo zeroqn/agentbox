@@ -181,6 +181,19 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             check_setup("krun_add_disk", rc)?;
             tracing::debug!(ctx_id, disk_id = %disk.id, "krun_add_disk: complete");
         }
+        if let Some(waypipe) = &config.waypipe {
+            tracing::debug!(
+                ctx_id,
+                guest_port = waypipe.guest_port,
+                socket = %waypipe.socket.display(),
+                "krun_add_vsock_port2: Waypipe begin"
+            );
+            let rc = self
+                .api
+                .add_vsock_port(ctx_id, waypipe.guest_port, &waypipe.socket, false)?;
+            check_setup("krun_add_vsock_port2 Waypipe", rc)?;
+            tracing::debug!(ctx_id, "krun_add_vsock_port2: Waypipe mapping registered");
+        }
         if let Some(managed) = &config.managed_session {
             tracing::debug!(
                 ctx_id,

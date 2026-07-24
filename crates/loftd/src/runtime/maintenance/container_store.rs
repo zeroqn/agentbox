@@ -169,6 +169,7 @@ fn maintenance_launch_config(
         env,
         guest_config_env: Vec::new(),
         passt_fd: None,
+        waypipe: None,
         managed_session: None,
         seccomp: Default::default(),
         landlock: crate::runtime::landlock::LandlockMode::Off,

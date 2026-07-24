@@ -20,6 +20,12 @@ pub(crate) enum ContainerStoreBackend {
     RawDisk,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaypipeOptions {
+    pub(crate) workspace: PathBuf,
+    pub(crate) socket: PathBuf,
+}
+
 impl ContainerStoreBackend {
     pub(crate) const DEFAULT: Self = Self::RawDisk;
 
@@ -274,6 +280,15 @@ pub(crate) struct Cli {
         long_help = "Enable guest Wayland passthrough through wl-cross-domain-proxy. This starts a guest-local Wayland proxy and enables libkrun virtio-gpu DRM native-context support."
     )]
     wayland: bool,
+
+    #[arg(
+        long = "waypipe",
+        value_name = "WORKSPACE:SOCKET",
+        value_parser = parse_waypipe_arg,
+        conflicts_with_all = ["wayland", "gpu"],
+        help = "Run a guest GUI command through an existing SSH-forwarded Waypipe socket"
+    )]
+    waypipe: Option<WaypipeOptions>,
 
     #[arg(
         short = 'p',
@@ -535,6 +550,7 @@ impl Cli {
                 self.gpu.into()
             },
             wayland: self.wayland,
+            waypipe: self.waypipe,
             publish: self.publish,
             volumes: self.volumes,
             guest_command: self.guest_command,
@@ -574,6 +590,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) network_mode: NetworkMode,
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
+    pub(crate) waypipe: Option<WaypipeOptions>,
     pub(crate) publish: Vec<String>,
     pub(crate) volumes: Vec<VolumeSpec>,
     pub(crate) guest_command: Vec<String>,
@@ -705,6 +722,26 @@ fn parse_seccomp_arg(value: &str) -> Result<SeccompMode, String> {
                 .to_owned(),
         ),
     }
+}
+
+fn parse_waypipe_arg(value: &str) -> Result<WaypipeOptions, String> {
+    let (workspace, socket) = value
+        .split_once(':')
+        .ok_or_else(|| "waypipe must be WORKSPACE:SOCKET".to_owned())?;
+    if workspace.trim().is_empty() || socket.trim().is_empty() {
+        return Err("waypipe must be WORKSPACE:SOCKET".to_owned());
+    }
+
+    let workspace = PathBuf::from(workspace);
+    let socket = PathBuf::from(socket);
+    if !workspace.is_absolute() {
+        return Err("waypipe workspace must be an absolute path".to_owned());
+    }
+    if !socket.is_absolute() {
+        return Err("waypipe socket must be an absolute path".to_owned());
+    }
+
+    Ok(WaypipeOptions { workspace, socket })
 }
 
 fn parse_publish_arg(value: &str) -> Result<String, String> {
@@ -1317,6 +1354,63 @@ mod tests {
         let options = cli.into_runtime_options();
 
         assert!(options.perf);
+    }
+
+    #[test]
+    fn waypipe_flag_parses_workspace_socket_and_command() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "--waypipe=/home/dev/foo:/tmp/loftd-waypipe.sock",
+            "--",
+            "gui-application",
+        ])
+        .expect("waypipe flag should parse");
+        let options = cli.into_runtime_options();
+        let waypipe = options.waypipe.expect("waypipe options should be present");
+
+        assert_eq!(waypipe.workspace, PathBuf::from("/home/dev/foo"));
+        assert_eq!(waypipe.socket, PathBuf::from("/tmp/loftd-waypipe.sock"));
+        assert_eq!(options.guest_command, ["gui-application"]);
+    }
+
+    #[test]
+    fn waypipe_flag_requires_workspace_and_socket() {
+        for value in ["", "/home/dev/foo", ":/tmp/waypipe.sock", "/home/dev/foo:"] {
+            let err = Cli::try_parse_from(["loftd", "--waypipe", value])
+                .expect_err("incomplete waypipe value should fail");
+
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        }
+    }
+
+    #[test]
+    fn waypipe_flag_requires_absolute_paths() {
+        for value in ["relative:/tmp/waypipe.sock", "/home/dev/foo:relative.sock"] {
+            let err = Cli::try_parse_from(["loftd", "--waypipe", value])
+                .expect_err("relative waypipe path should fail");
+
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        }
+    }
+
+    #[test]
+    fn waypipe_flag_conflicts_with_local_wayland_and_drm() {
+        for args in [
+            [
+                "loftd",
+                "--waypipe=/home/dev/foo:/tmp/waypipe.sock",
+                "--wayland",
+            ],
+            [
+                "loftd",
+                "--waypipe=/home/dev/foo:/tmp/waypipe.sock",
+                "--gpu=drm",
+            ],
+        ] {
+            let err = Cli::try_parse_from(args).expect_err("waypipe conflict should fail");
+
+            assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
     }
 
     #[test]

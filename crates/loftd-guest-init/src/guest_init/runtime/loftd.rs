@@ -22,6 +22,7 @@ const SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
 const ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
 const ATTACH_PROFILE_ENV: &str = "LOFTD_ATTACH_PROFILE";
+const WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -90,6 +91,7 @@ struct EnterEnv {
     host_uid: Option<u32>,
     host_gid: Option<u32>,
     loftd: LoftdEnv,
+    waypipe_port: Option<u32>,
     managed_session: Option<ManagedSessionConfig>,
 }
 
@@ -210,6 +212,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
     let drop_to_identity = should_drop_to_identity(process::is_root(), env_contract.enter_as_root);
+    let command = waypipe_command(command, env_contract.waypipe_port);
     if let Some(managed_session) = env_contract.managed_session {
         debug_breadcrumb("managed session starting");
         return session::run(&command, &identity, drop_to_identity, managed_session);
@@ -229,9 +232,28 @@ impl EnterEnv {
             host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
             host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
+            waypipe_port: parse_optional_u32(env, WAYPIPE_PORT_ENV)?,
             managed_session: managed_session_from_env(env)?,
         })
     }
+}
+
+fn waypipe_command(command: Vec<String>, port: Option<u32>) -> Vec<String> {
+    let Some(port) = port else {
+        return command;
+    };
+
+    let mut wrapped = vec![
+        "waypipe".to_owned(),
+        "--no-gpu".to_owned(),
+        "--vsock".to_owned(),
+        "--socket".to_owned(),
+        port.to_string(),
+        "server".to_owned(),
+        "--".to_owned(),
+    ];
+    wrapped.extend(command);
+    wrapped
 }
 
 fn managed_session_from_env(env: &impl EnvSource) -> Result<Option<ManagedSessionConfig>> {
@@ -562,6 +584,28 @@ mod tests {
         assert!(!parsed.enter_as_root);
         assert_eq!(parsed.host_uid, None);
         assert_eq!(parsed.host_gid, None);
+        assert_eq!(parsed.waypipe_port, None);
+    }
+
+    #[test]
+    fn waypipe_port_wraps_guest_command() {
+        let parsed = EnterEnv::from_env(&env(&[(WAYPIPE_PORT_ENV, "50427")]))
+            .expect("waypipe env should parse");
+
+        assert_eq!(parsed.waypipe_port, Some(50_427));
+        assert_eq!(
+            waypipe_command(vec!["gui-application".to_owned()], parsed.waypipe_port),
+            [
+                "waypipe",
+                "--no-gpu",
+                "--vsock",
+                "--socket",
+                "50427",
+                "server",
+                "--",
+                "gui-application",
+            ]
+        );
     }
 
     #[test]

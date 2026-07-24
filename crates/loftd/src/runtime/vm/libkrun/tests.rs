@@ -4,6 +4,7 @@ use crate::runtime::launch::config::{
     DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET,
     DiskAttachment, LaunchConfig, LaunchSpec, ManagedSessionConfig, NetworkMode, OMP_TAG,
     OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+    WaypipeConfig,
 };
 use crate::runtime::seccomp::{AuditMode, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
@@ -306,13 +307,42 @@ fn config() -> LaunchConfig {
         ],
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        waypipe: None,
         managed_session: None,
     })
     .expect("config should build")
 }
 
+fn waypipe_config(socket: &Path) -> LaunchConfig {
+    LaunchConfig {
+        waypipe: Some(WaypipeConfig {
+            socket: socket.into(),
+            guest_port: 50_427,
+        }),
+        ..config()
+    }
+}
+
 fn managed_config(attach_socket: &Path) -> LaunchConfig {
     LaunchConfig {
+        managed_session: Some(ManagedSessionConfig {
+            attach_socket: attach_socket.into(),
+            guest_port: 50_426,
+            protocol_version: 1,
+            attach_socket_uid: unsafe { libc::geteuid() },
+            attach_socket_gid: unsafe { libc::getegid() },
+            cleanup_task_rootfs_on_exit: true,
+        }),
+        ..config()
+    }
+}
+
+fn waypipe_managed_config(waypipe_socket: &Path, attach_socket: &Path) -> LaunchConfig {
+    LaunchConfig {
+        waypipe: Some(WaypipeConfig {
+            socket: waypipe_socket.into(),
+            guest_port: 50_427,
+        }),
         managed_session: Some(ManagedSessionConfig {
             attach_socket: attach_socket.into(),
             guest_port: 50_426,
@@ -606,6 +636,84 @@ fn nested_virt_check_unsupported_failure_or_absent_still_sets_nested_virt() {
         assert!(check_index < set_index);
         assert!(set_index < start_index);
     }
+}
+
+#[test]
+fn waypipe_adds_guest_to_host_vsock_connector() {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let socket = dir.path().join("waypipe.sock");
+    let calls = Rc::new(RefCell::new(Vec::new()));
+
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&waypipe_config(&socket))
+        .expect("waypipe launch should succeed");
+
+    let calls = calls.borrow();
+    assert!(calls.contains(&Call::AddVsockPort(
+        7,
+        50_427,
+        socket.display().to_string(),
+        false,
+    )));
+}
+
+#[test]
+fn waypipe_and_managed_session_register_independent_vsock_channels() {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let waypipe_socket = dir.path().join("waypipe.sock");
+    let attach_socket = dir.path().join("attach.sock");
+    let calls = Rc::new(RefCell::new(Vec::new()));
+
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&waypipe_managed_config(&waypipe_socket, &attach_socket))
+        .expect("combined launch should succeed");
+
+    let calls = calls.borrow();
+    assert!(calls.contains(&Call::AddVsockPort(
+        7,
+        50_427,
+        waypipe_socket.display().to_string(),
+        false,
+    )));
+    assert!(calls.contains(&Call::AddVsockPort(
+        7,
+        50_426,
+        attach_socket.display().to_string(),
+        true,
+    )));
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| matches!(call, Call::AddVsockPort(..)))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn waypipe_vsock_registration_failure_is_setup_failure_and_frees_context() {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let socket = dir.path().join("waypipe.sock");
+    let calls = Rc::new(RefCell::new(Vec::new()));
+
+    let err = DirectLibkrunLauncher::new(FakeLibkrunApi::failing(
+        calls.clone(),
+        "krun_add_vsock_port2",
+    ))
+    .start_enter(&waypipe_config(&socket))
+    .expect_err("waypipe launch should fail when libkrun rejects vsock registration");
+
+    assert!(
+        format!("{err:#}").contains("libkrun setup failed: krun_add_vsock_port2 Waypipe"),
+        "unexpected error: {err:#}"
+    );
+    let calls = calls.borrow();
+    assert!(calls.contains(&Call::FreeCtx(7)));
+    assert!(
+        !calls
+            .iter()
+            .any(|call| matches!(call, Call::StartEnter(..)))
+    );
 }
 
 #[test]

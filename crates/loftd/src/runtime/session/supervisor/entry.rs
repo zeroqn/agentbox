@@ -483,6 +483,7 @@ mod tests {
             env: Vec::new(),
             guest_config_env: Vec::new(),
             passt_fd: None,
+            waypipe: None,
             managed_session: Some(ManagedSessionConfig {
                 attach_socket: task_dir.join("attach.sock"),
                 guest_port: 1025,
