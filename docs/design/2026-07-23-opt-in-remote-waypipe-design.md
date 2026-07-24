@@ -8,11 +8,12 @@ The interface is:
 
 ```bash
 loftd \
-  --waypipe=/home/dev/foo:/tmp/loftd-waypipe-xxx.sock \
+  --workspace=/home/dev/foo \
+  --waypipe=/tmp/loftd-waypipe-xxx.sock \
   -- gui-application
 ```
 
-The first `--waypipe` field selects the host workspace directory. The second field identifies an existing Unix socket on the loftd host that is owned by SSH reverse forwarding. loftd bridges that socket to a dedicated guest vsock port and launches the requested command under a guest Waypipe server.
+The standalone `--workspace` option selects the host workspace directory and defaults to the current working directory when omitted. `--waypipe` identifies an existing Unix socket on the loftd host that is owned by SSH reverse forwarding. loftd bridges that socket to a dedicated guest vsock port and launches the requested command under a guest Waypipe server.
 
 This is separate from loftd's existing `--wayland` local compositor passthrough.
 
@@ -64,16 +65,18 @@ Launch a new guest and run the GUI application:
 
 ```bash
 loftd \
-  --waypipe=/home/dev/foo:/tmp/loftd-waypipe-xxx.sock \
+  --workspace=/home/dev/foo \
+  --waypipe=/tmp/loftd-waypipe-xxx.sock \
   -- gui-application
 ```
 
 ## CLI contract
 
-`--waypipe=WORKSPACE:SOCKET` is an optional top-level launch argument.
+`--workspace=WORKSPACE` and `--waypipe=SOCKET` are optional top-level launch arguments.
 
 - `WORKSPACE` is an absolute host directory.
 - `WORKSPACE` becomes the launch working directory and is mounted at guest `/workspace`.
+- If `--workspace` is omitted, loftd uses the current working directory.
 - `SOCKET` is an absolute host Unix-socket path.
 - `SOCKET` must already exist and be a Unix socket before loftd starts the VM.
 - The socket is owned by the SSH reverse-forwarding process.
@@ -82,18 +85,18 @@ loftd \
 - `--waypipe` is mutually exclusive with `--wayland`.
 - The initial version uses Waypipe `--no-gpu` and does not require `--gpu=drm`.
 
-The argument format is intentionally limited to two absolute paths. More Waypipe tuning options are excluded until a concrete use case requires them.
+The argument formats are intentionally limited to one absolute path each. More Waypipe tuning options are excluded until a concrete use case requires them.
 
 ## Architecture
 
 ### Host CLI and launch planning
 
-The loftd host parses `--waypipe=WORKSPACE:SOCKET` into a structured configuration containing:
+The loftd host parses `--workspace=WORKSPACE` and `--waypipe=SOCKET` into independent optional paths:
 
-- host workspace path
+- selected host workspace path
 - host Waypipe socket path
 
-Launch planning resolves the workspace as the launch directory instead of requiring the caller to change directories first. Existing workspace naming, state placement, and `/workspace` mount behavior should use this explicit directory as their source.
+Launch startup selects `--workspace` or the current working directory, canonicalizes it, and verifies it is a directory. Existing workspace naming, state placement, and `/workspace` mount behavior use that selected directory as their source.
 
 The launch plan carries a Waypipe configuration independently from the existing Wayland and GPU configuration.
 
@@ -198,9 +201,9 @@ Before starting the VM, loftd validates:
 Representative errors include:
 
 ```text
-waypipe workspace must be an absolute path: foo
-waypipe workspace does not exist: /home/dev/foo
-waypipe workspace is not a directory: /home/dev/foo
+workspace must be an absolute path: foo
+failed to canonicalize loftd workspace mount
+loftd workspace is not a directory: /home/dev/foo
 waypipe socket must be an absolute path: loftd-waypipe.sock
 waypipe socket does not exist: /tmp/loftd-waypipe-xxx.sock
 waypipe transport is not a Unix socket: /tmp/loftd-waypipe-xxx.sock
@@ -232,18 +235,17 @@ The host socket may disappear after validation because SSH exits. This is a norm
 
 ### Host CLI tests
 
-- Parse a valid `--waypipe=WORKSPACE:SOCKET` value.
-- Reject values without both fields.
-- Handle colons according to the supported Unix path contract without introducing unsupported URL-like syntax.
+- Parse valid standalone `--workspace=WORKSPACE` and `--waypipe=SOCKET` values, together and independently.
+- Reject empty or relative workspace and socket paths.
 - Reject `--waypipe` with `--wayland`.
-- Reject incompatible GPU selection.
-- Require a guest command.
+- Reject `--waypipe` with `--gpu=drm`.
+- Require a guest command when `--waypipe` is present.
 
 ### Launch planning tests
 
-- Use the explicit workspace as the source mounted at `/workspace`.
+- Use the selected workspace, or current working directory when omitted, as the source mounted at `/workspace`.
 - Validate workspace and socket types.
-- Preserve ordinary launch behavior when Waypipe is absent.
+- Preserve ordinary launch behavior when Waypipe is absent, including standalone workspace selection.
 - Carry the Waypipe channel into the launch configuration.
 
 ### Launch-contract tests

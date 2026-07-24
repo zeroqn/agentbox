@@ -86,14 +86,8 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
     let pty = options.pty;
     let attach_input_policy =
         AttachInputPolicy::new(pty.suppress_focus_input, pty.focus_report_guard);
-    let workspace = options
-        .waypipe
-        .as_ref()
-        .map_or_else(env::current_dir, |waypipe| Ok(waypipe.workspace.clone()))?;
     let cwd = profiler.measure_result("workspace_canonicalization", || {
-        workspace
-            .canonicalize()
-            .context("failed to canonicalize loftd workspace mount")
+        resolve_workspace(options.workspace.as_deref())
     })?;
     prepare_terminal_trace_file_from_process_env(pty.trace, &cwd)
         .context("failed to prepare loftd terminal trace file")?;
@@ -379,6 +373,20 @@ fn finalize_profiled_btrfs_run(
     }
 }
 
+fn resolve_workspace(workspace: Option<&std::path::Path>) -> Result<PathBuf> {
+    let workspace = workspace.map_or_else(env::current_dir, |path| Ok(path.to_path_buf()))?;
+    let workspace = workspace
+        .canonicalize()
+        .context("failed to canonicalize loftd workspace mount")?;
+    if !workspace.is_dir() {
+        bail!(
+            "loftd workspace is not a directory: {}",
+            workspace.display()
+        );
+    }
+    Ok(workspace)
+}
+
 fn host_profile_enabled(options: &RuntimeOptions) -> bool {
     options.profile
 }
@@ -475,11 +483,30 @@ mod tests {
             network_mode: config::NetworkMode::Tsi,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             wayland: false,
+            workspace: None,
             waypipe: None,
             publish: Vec::new(),
             volumes: Vec::new(),
             guest_command: Vec::new(),
         }
+    }
+
+    #[test]
+    fn resolve_workspace_accepts_directory_and_rejects_file() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir(&workspace).expect("workspace should exist");
+
+        assert_eq!(
+            resolve_workspace(Some(&workspace)).expect("directory should resolve"),
+            workspace
+        );
+
+        let file = dir.path().join("file");
+        std::fs::write(&file, "not a directory").expect("file should exist");
+        let err = resolve_workspace(Some(&file)).expect_err("file should fail");
+
+        assert!(format!("{err:#}").contains("loftd workspace is not a directory"));
     }
 
     #[test]

@@ -80,7 +80,7 @@ impl LaunchPlan {
         xdg_config_home: Option<&Path>,
         home_dir: Option<&Path>,
     ) -> Result<Self> {
-        let (workspace_dir, waypipe_socket) = resolve_waypipe(&options, workspace_dir)?;
+        let waypipe_socket = resolve_waypipe(&options)?;
         let config = config::state::read_config(xdg_config_home, home_dir)?;
         let state_layout = state::resolve_state_layout_from_parts(
             &workspace_dir,
@@ -152,56 +152,30 @@ impl LaunchPlan {
         })
     }
 }
-
-fn resolve_waypipe(
-    options: &RuntimeOptions,
-    workspace_dir: PathBuf,
-) -> Result<(PathBuf, Option<PathBuf>)> {
-    let Some(waypipe) = &options.waypipe else {
-        return Ok((workspace_dir, None));
+fn resolve_waypipe(options: &RuntimeOptions) -> Result<Option<PathBuf>> {
+    let Some(socket) = &options.waypipe else {
+        return Ok(None);
     };
     if options.guest_command.is_empty() {
         anyhow::bail!("--waypipe requires a guest command");
     }
-    if !waypipe.workspace.is_absolute() {
-        anyhow::bail!(
-            "waypipe workspace must be an absolute path: {}",
-            waypipe.workspace.display()
-        );
-    }
-    if !waypipe.socket.is_absolute() {
+    if !socket.is_absolute() {
         anyhow::bail!(
             "waypipe socket must be an absolute path: {}",
-            waypipe.socket.display()
+            socket.display()
         );
     }
 
-    let workspace = fs::canonicalize(&waypipe.workspace).with_context(|| {
-        format!(
-            "waypipe workspace does not exist: {}",
-            waypipe.workspace.display()
-        )
-    })?;
-    if !workspace.is_dir() {
-        anyhow::bail!(
-            "waypipe workspace is not a directory: {}",
-            waypipe.workspace.display()
-        );
-    }
-    let socket_metadata = fs::metadata(&waypipe.socket).with_context(|| {
-        format!(
-            "waypipe socket does not exist: {}",
-            waypipe.socket.display()
-        )
-    })?;
+    let socket_metadata = fs::metadata(socket)
+        .with_context(|| format!("waypipe socket does not exist: {}", socket.display()))?;
     if !socket_metadata.file_type().is_socket() {
         anyhow::bail!(
             "waypipe transport is not a Unix socket: {}",
-            waypipe.socket.display()
+            socket.display()
         );
     }
 
-    Ok((workspace, Some(waypipe.socket.clone())))
+    Ok(Some(socket.clone()))
 }
 
 fn resolve_normal_launch_seccomp(seccomp: Option<SeccompMode>) -> Result<SeccompMode> {
@@ -347,7 +321,7 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::path::{Path, PathBuf};
 
-    use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec, WaypipeOptions};
+    use crate::cli::{ContainerStoreBackend, RuntimeOptions, VolumeSpec};
     use crate::logging::{LogLevel, LogSettings};
     use crate::runtime::landlock::LandlockMode;
     use crate::runtime::launch::config::{AllocatorMode, BindMountSourceKind, NetworkMode};
@@ -382,6 +356,7 @@ mod tests {
             network_mode: NetworkMode::Tsi,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             wayland: false,
+            workspace: None,
             waypipe: None,
             publish: Vec::new(),
             volumes: Vec::new(),
@@ -1018,22 +993,20 @@ mod tests {
     }
 
     #[test]
-    fn waypipe_plan_uses_explicit_workspace_and_socket() {
+    fn waypipe_plan_uses_selected_workspace_and_socket() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
         let workspace = dir.path().join("workspace");
         let socket = dir.path().join("waypipe.sock");
         fs::create_dir_all(&workspace).expect("workspace should exist");
         let _listener = UnixListener::bind(&socket).expect("waypipe socket should exist");
         let mut options = runtime_options();
-        options.waypipe = Some(WaypipeOptions {
-            workspace: workspace.clone(),
-            socket: socket.clone(),
-        });
+        options.workspace = Some(workspace.clone());
+        options.waypipe = Some(socket.clone());
         options.guest_command = vec!["gui-application".to_owned()];
 
         let plan = LaunchPlan::from_env_values(
             options,
-            PathBuf::from("/ignored/current/directory"),
+            workspace.clone(),
             Some(dir.path().join("state").as_path()),
             Some(dir.path().join("config").as_path()),
             Some(dir.path().join("home").as_path()),
@@ -1045,35 +1018,40 @@ mod tests {
     }
 
     #[test]
-    fn waypipe_plan_rejects_invalid_paths_and_missing_command() {
+    fn ordinary_plan_uses_selected_workspace_without_waypipe() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
         let workspace = dir.path().join("workspace");
-        let socket = dir.path().join("waypipe.sock");
         fs::create_dir_all(&workspace).expect("workspace should exist");
+        let mut options = runtime_options();
+        options.workspace = Some(workspace.clone());
+
+        let plan = LaunchPlan::from_env_values(
+            options,
+            workspace.clone(),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect("ordinary plan should build");
+
+        assert_eq!(plan.workspace_dir, workspace);
+        assert_eq!(plan.waypipe_socket, None);
+    }
+
+    #[test]
+    fn waypipe_plan_rejects_invalid_socket_and_missing_command() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let socket = dir.path().join("waypipe.sock");
         let _listener = UnixListener::bind(&socket).expect("waypipe socket should exist");
 
         for (waypipe, command, expected) in [
             (
-                WaypipeOptions {
-                    workspace: PathBuf::from("relative"),
-                    socket: socket.clone(),
-                },
-                vec!["gui-application".to_owned()],
-                "waypipe workspace must be an absolute path",
-            ),
-            (
-                WaypipeOptions {
-                    workspace: workspace.clone(),
-                    socket: PathBuf::from("relative.sock"),
-                },
+                PathBuf::from("relative.sock"),
                 vec!["gui-application".to_owned()],
                 "waypipe socket must be an absolute path",
             ),
             (
-                WaypipeOptions {
-                    workspace: workspace.clone(),
-                    socket: socket.clone(),
-                },
+                socket.clone(),
                 Vec::new(),
                 "--waypipe requires a guest command",
             ),
@@ -1081,10 +1059,9 @@ mod tests {
             let mut options = runtime_options();
             options.waypipe = Some(waypipe);
             options.guest_command = command;
-
             let err = LaunchPlan::from_env_values(
                 options,
-                PathBuf::from("/ignored/current/directory"),
+                dir.path().to_path_buf(),
                 Some(dir.path().join("state").as_path()),
                 Some(dir.path().join("config").as_path()),
                 Some(dir.path().join("home").as_path()),
