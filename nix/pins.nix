@@ -15,11 +15,11 @@ in
   };
 
   dirge = {
-    version = "0.19.18";
+    version = "0.19.19";
     owner = "dirge-code";
     repo = "dirge";
-    rev = "v0.19.18";
-    srcHash = "sha256-TXDpPha7F/ZC5BQ9oLUA2zKYCGwNGmKx27aUUHQ82ws=";
+    rev = "v0.19.19";
+    srcHash = "sha256-eBVxsb/vHEIsM8Bv+LPlgyRz27S6F4UO/1nWJvpwd+w=";
   };
 
   ompPrebuiltRelease = {
@@ -41,15 +41,15 @@ in
   rmuxPrebuiltRelease = {
     owner = "Helvesec";
     repo = "rmux";
-    tag = "v0.9.0";
+    tag = "v0.9.1";
     systems = {
       x86_64-linux = {
-        asset = "rmux-0.9.0-linux-x86_64.tar.gz";
-        hash = "sha256-5bq7i/cZW4diiwL3ttGntrbLzXXLEoo1Zqxb1Ylv2Sk=";
+        asset = "rmux-0.9.1-linux-x86_64.tar.gz";
+        hash = "sha256-9+kbqpEulCwf0JC5v7MBQtUawdqLFC4Ijms6QXMh1Us=";
       };
       aarch64-linux = {
-        asset = "rmux-0.9.0-linux-aarch64.tar.gz";
-        hash = "sha256-3aaqyXqDdOFv8B6WRN8zDCBdT26pNPd2VAXKN/O8Q48=";
+        asset = "rmux-0.9.1-linux-aarch64.tar.gz";
+        hash = "sha256-3F/bElcVTBn1OmxqePsIVzVWuceR0kEcAT6BmGIxbbM=";
       };
     };
   };
