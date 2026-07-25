@@ -226,8 +226,8 @@ let
               ${pkgs.lib.optionalString (rioBin != null) ''
                 test -x ${rioBin}/bin/rio
                 grep -F './home/dev/.terminfo/r' ${containerSourceFile}
-                grep -F '''${rioBin}/share/terminfo/r/rio' ${containerSourceFile}
-                grep -F '''${rioBin}/share/terminfo/x/xterm-rio' ${containerSourceFile}
+                grep -F '${"$"}{rioBin}/share/terminfo/r/rio' ${containerSourceFile}
+                grep -F '${"$"}{rioBin}/share/terminfo/x/xterm-rio' ${containerSourceFile}
                 case ":${layers.imagePath}:" in
                   *":${rioBin}/bin:"*) ;;
                   *) exit 1 ;;
