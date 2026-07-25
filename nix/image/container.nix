@@ -110,13 +110,30 @@ let
       EOF_NIX_CONF
       chmod 0644 ./etc/nix/nix.conf
       cat > ./etc/rmux.conf <<'EOF_RMUX_CONF'
-      set -g mouse on
-      bind | split-window -h
-      bind - split-window -v
-      bind h select-pane -L
-      bind j select-pane -D
-      bind k select-pane -U
-      bind l select-pane -R
+      ${if imageVariant == "loftd" then ''
+        set -g mouse off
+        bind T if-shell -F '#{mouse}' 'set -g mouse off ; display-message "mouse OFF: native terminal selection enabled"' 'set -g mouse on ; display-message "mouse ON: pane mouse mode enabled"'
+
+        # Quality-of-life.
+        set -g history-limit 100000
+        set -g renumber-windows on
+        set -g base-index 1
+        setw -g pane-base-index 1
+        setw -g mode-keys vi
+        set -g status-keys vi
+
+        bind | split-window -h -c "#{pane_current_path}"
+        bind - split-window -v -c "#{pane_current_path}"
+        bind c new-window -c "#{pane_current_path}"
+      '' else ''
+        set -g mouse on
+        bind | split-window -h
+        bind - split-window -v
+        bind h select-pane -L
+        bind j select-pane -D
+        bind k select-pane -U
+        bind l select-pane -R
+      ''}
       EOF_RMUX_CONF
       chmod 0644 ./etc/rmux.conf
       cat > ./etc/tmux.conf <<'EOF_TMUX_CONF'

@@ -147,18 +147,37 @@ let
     grep -F 'pkgs.tmux' ${layersSourceFile}
     grep -F 'rmuxPrebuilt' ${containerSourceFile}
     grep -F './etc/rmux.conf' ${containerSourceFile}
-    grep -F 'bind | split-window -h' ${containerSourceFile}
-    grep -F 'bind - split-window -v' ${containerSourceFile}
-    grep -F 'bind h select-pane -L' ${containerSourceFile}
-    grep -F 'bind j select-pane -D' ${containerSourceFile}
-    grep -F 'bind k select-pane -U' ${containerSourceFile}
-    grep -F 'bind l select-pane -R' ${containerSourceFile}
+    ${
+      if imageVariant == "loftd" then
+        ''
+          grep -F 'set -g mouse off' ${containerSourceFile}
+          grep -F 'bind T if-shell -F '\'''#{mouse}'\''' '\'''set -g mouse off ; display-message "mouse OFF: native terminal selection enabled"'\''' '\'''set -g mouse on ; display-message "mouse ON: pane mouse mode enabled"'\''' ${containerSourceFile}
+          grep -F 'set -g history-limit 100000' ${containerSourceFile}
+          grep -F 'set -g renumber-windows on' ${containerSourceFile}
+          grep -F 'set -g base-index 1' ${containerSourceFile}
+          grep -F 'setw -g pane-base-index 1' ${containerSourceFile}
+          grep -F 'setw -g mode-keys vi' ${containerSourceFile}
+          grep -F 'set -g status-keys vi' ${containerSourceFile}
+          grep -F 'bind | split-window -h -c "#{pane_current_path}"' ${containerSourceFile}
+          grep -F 'bind - split-window -v -c "#{pane_current_path}"' ${containerSourceFile}
+          grep -F 'bind c new-window -c "#{pane_current_path}"' ${containerSourceFile}
+        ''
+      else
+        ''
+          grep -F 'set -g mouse on' ${containerSourceFile}
+          grep -F 'bind | split-window -h' ${containerSourceFile}
+          grep -F 'bind - split-window -v' ${containerSourceFile}
+          grep -F 'bind h select-pane -L' ${containerSourceFile}
+          grep -F 'bind j select-pane -D' ${containerSourceFile}
+          grep -F 'bind k select-pane -U' ${containerSourceFile}
+          grep -F 'bind l select-pane -R' ${containerSourceFile}
+        ''
+    }
     ! grep -F 'rmuxTmuxCommandCompat' ${layersSourceFile}
     ! grep -F 'rmux-tmux-command-compat' ${layersSourceFile}
     ! grep -F './etc/tmux.conf' ${containerSourceFile}
     test -x ${rmuxPrebuilt}/bin/rmux
     test -x ${pkgs.tmux}/bin/tmux
-    test "$(grep -Fc 'set -g mouse on' ${containerSourceFile})" -eq 2
     ${rmuxPrebuilt}/bin/rmux -V
     ${pkgs.tmux}/bin/tmux -V
   '';

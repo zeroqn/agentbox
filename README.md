@@ -1834,9 +1834,11 @@ The container provides:
 - common tools (`curl`, `jq`, `openssl`, `tmux`, `rmux`, etc.); `tmux` comes
   from Nixpkgs in both the agentbox and loftd images, and the pinned `rmux`
   release remains available separately as `rmux`. `/etc/rmux.conf` is the
-  image-level rmux config path. The default `rmux` config includes
-  tmux-compatible bindings for horizontal/vertical splits (`|`, `-`) and pane
-  selection with `h`, `j`, `k`, and `l`
+  image-level rmux config path. In the loftd image, the default config disables
+  mouse mode for native terminal selection, binds `T` to toggle mouse mode,
+  keeps large history and one-based window/pane indexes, uses vi keys, and
+  creates splits and new windows in the current pane directory. The agentbox
+  image retains the existing mouse-enabled pane navigation config.
 
 `clang_mold_wrapper` keeps the default linker policy in the image and avoids
 setting `RUSTFLAGS`, so existing Cargo config can still layer on top normally.
