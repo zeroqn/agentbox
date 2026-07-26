@@ -151,7 +151,7 @@ let
       if imageVariant == "loftd" then
         ''
           grep -F 'set -g mouse off' ${containerSourceFile}
-          grep -F 'bind T if-shell -F '\'''#{mouse}'\''' '\'''set -g mouse off ; display-message "mouse OFF: native terminal selection enabled"'\''' '\'''set -g mouse on ; display-message "mouse ON: pane mouse mode enabled"'\''' ${containerSourceFile}
+          grep -F "bind T if-shell -F '#{mouse}' 'set -g mouse off ; display-message \"mouse OFF: native terminal selection enabled\"' 'set -g mouse on ; display-message \"mouse ON: pane mouse mode enabled\"'" ${containerSourceFile}
           grep -F 'set -g history-limit 100000' ${containerSourceFile}
           grep -F 'set -g renumber-windows on' ${containerSourceFile}
           grep -F 'set -g base-index 1' ${containerSourceFile}
