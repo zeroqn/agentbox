@@ -46,11 +46,11 @@
         "rio-src": "rio-src"
       },
       "locked": {
-        "lastModified": 1784887044,
-        "narHash": "sha256-E9/a52k1LshR6rlP+DfM3ZLhDjGPbjuW3xUrucym9DU=",
+        "lastModified": 1785030653,
+        "narHash": "sha256-F6ggk3YqU0PzLBDLBLDFnZIosBKPTcpZCAomO6gsNzU=",
         "owner": "zeroqn",
         "repo": "headless",
-        "rev": "ef9431497afeee34fbcdbd448eb975c6ecae809e",
+        "rev": "bdde415a56dbee2b4235233beeb2bf28a0d56a40",
         "type": "github"
       },
       "original": {
