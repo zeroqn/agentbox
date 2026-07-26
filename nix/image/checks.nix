@@ -161,6 +161,10 @@ let
           grep -F 'bind | split-window -h -c "#{pane_current_path}"' ${containerSourceFile}
           grep -F 'bind - split-window -v -c "#{pane_current_path}"' ${containerSourceFile}
           grep -F 'bind c new-window -c "#{pane_current_path}"' ${containerSourceFile}
+          test "$(grep -Fc 'bind h select-pane -L' ${containerSourceFile})" -eq 2
+          test "$(grep -Fc 'bind j select-pane -D' ${containerSourceFile})" -eq 2
+          test "$(grep -Fc 'bind k select-pane -U' ${containerSourceFile})" -eq 2
+          test "$(grep -Fc 'bind l select-pane -R' ${containerSourceFile})" -eq 2
         ''
       else
         ''
