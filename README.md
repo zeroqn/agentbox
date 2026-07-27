@@ -1140,10 +1140,12 @@ Guest performance profiling:
 - The loftd guest image includes `perf` and `strace` on `PATH`.
 - Without `--perf`, loftd leaves the guest kernel's hardened
   `kernel.perf_event_paranoid=3` setting unchanged.
-- `--perf` sets `kernel.perf_event_paranoid=-1` during root guest initialization,
-  before Nix and Podman preparation or the task command. This enables
-  unprivileged kernel software events and tracepoints, and weakens
-  performance-event isolation for that VM launch.
+- `--perf` sets `kernel.perf_event_paranoid=-1` and
+  `kernel.kptr_restrict=0` during root guest initialization, before Nix and
+  Podman preparation or the task command. This enables unprivileged kernel
+  software events, tracepoints, and nonzero kernel symbol addresses through
+  `/proc/kallsyms`, and weakens performance-event and kernel-pointer isolation
+  for that VM launch.
 - `--perf` does not allow io_uring creation. Use `--io-uring --perf` when an
   io_uring workload needs both creation permission and kernel-path profiling.
 - Hardware PMU events such as cycles and instructions are not guaranteed. The

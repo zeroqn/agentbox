@@ -202,7 +202,7 @@ pub(crate) struct Cli {
     #[arg(
         long = "perf",
         help = "Allow unprivileged guest performance profiling",
-        long_help = "Set kernel.perf_event_paranoid=-1 inside the guest for this launch. This enables unprivileged kernel software events and tracepoints useful for application and io_uring analysis, and weakens guest performance-event isolation. This option does not allow io_uring creation; combine it with --io-uring when needed. Hardware PMU events depend on libkrun and host virtualization support and are not guaranteed."
+        long_help = "Set kernel.perf_event_paranoid=-1 and kernel.kptr_restrict=0 inside the guest for this launch. This enables unprivileged kernel software events, tracepoints, and nonzero /proc/kallsyms addresses useful for application, kernel CPU, and io_uring analysis, and weakens guest performance-event and kernel-pointer isolation. This option does not allow io_uring creation; combine it with --io-uring when needed. Hardware PMU events depend on libkrun and host virtualization support and are not guaranteed."
     )]
     perf: bool,
 

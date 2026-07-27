@@ -2,12 +2,12 @@
 
 ## Summary
 
-Add an explicit top-level `loftd --perf` option that relaxes the guest kernel's performance-event policy for that launch. The hardened default remains unchanged. Add `perf` and `strace` to the loftd guest image so optimization and diagnostic workflows are available without installing tools at runtime.
+Add an explicit top-level `loftd --perf` option that relaxes the guest kernel's performance-event and kernel-pointer policies for that launch. The hardened default remains unchanged. Add `perf` and `strace` to the loftd guest image so optimization and diagnostic workflows are available without installing tools at runtime.
 
 ## Goals
 
-- Preserve `kernel.perf_event_paranoid=3` for ordinary loftd launches.
-- Allow an explicitly opted-in guest workload to use kernel software events and tracepoints required for end-to-end io_uring profiling.
+- Preserve `kernel.perf_event_paranoid=3` and the guest kernel's restricted pointer policy for ordinary loftd launches.
+- Allow an explicitly opted-in guest workload to use kernel software events, tracepoints, and `/proc/kallsyms` addresses required for kernel CPU attribution and end-to-end io_uring profiling.
 - Keep performance profiling independent from permission to create io_uring instances.
 - Include `perf` and `strace` in the loftd image only.
 - Clearly document that hardware performance counters remain dependent on virtual PMU support.
@@ -46,7 +46,19 @@ to:
 /proc/sys/kernel/perf_event_paranoid
 ```
 
-This permits unprivileged guest processes to access kernel performance events and raw tracepoints where supported by the guest kernel. The option intentionally weakens performance-event isolation for that VM launch.
+and writes:
+
+```text
+0
+```
+
+to:
+
+```text
+/proc/sys/kernel/kptr_restrict
+```
+
+This permits unprivileged guest processes to access kernel performance events, raw tracepoints, and nonzero kernel symbol addresses through `/proc/kallsyms` where supported by the guest kernel. The option intentionally weakens performance-event and kernel-pointer isolation for that VM launch.
 
 For end-to-end io_uring profiling, the expected invocation is:
 
@@ -79,29 +91,30 @@ Older or omitted serialized launch fields decode to the secure `false` default. 
 
 ## Guest sysctl component
 
-Add a focused hardening component for `perf_event_paranoid`, following the existing dmesg and io_uring component patterns.
+Extend the focused perf hardening component, following the existing dmesg and io_uring component patterns.
 
 The component owns:
 
 ```text
 /proc/sys/kernel/perf_event_paranoid
+/proc/sys/kernel/kptr_restrict
 ```
 
 Behavior:
 
-- Disabled: perform no write and retain the guest kernel's value of `3`.
-- Enabled: write exactly `-1\n`.
+- Disabled: perform no writes and retain the guest kernel's hardened values.
+- Enabled: write exactly `-1\n` to `perf_event_paranoid` and `0\n` to `kptr_restrict`.
 - Open or write failure: fail guest initialization with context containing the sysctl path, setting name, and attempted value.
 
-The setting is applied only while guest-init is root. It is placed alongside the existing early hardening operations because the sysctl remains mutable after boot and must be configured before the user workload begins.
+The settings are applied only while guest-init is root. They are placed alongside the existing early hardening operations because the sysctls remain mutable after boot and must be configured before the user workload begins.
 
 ## CLI documentation
 
 The `--perf` help text will explain:
 
-- The option sets `kernel.perf_event_paranoid=-1` inside the guest for that launch.
-- It enables guest kernel software events and tracepoints useful for application and io_uring analysis.
-- It weakens guest performance-event isolation.
+- The option sets `kernel.perf_event_paranoid=-1` and `kernel.kptr_restrict=0` inside the guest for that launch.
+- It enables guest kernel software events, tracepoints, and nonzero `/proc/kallsyms` addresses useful for application, kernel CPU, and io_uring analysis.
+- It weakens guest performance-event and kernel-pointer isolation.
 - It does not alter io_uring creation policy; combine it with `--io-uring` when needed.
 - Hardware PMU events depend on libkrun and host virtualization support and are not guaranteed.
 
@@ -122,7 +135,7 @@ The selected `perf` userspace package comes from the repository's pinned nixpkgs
 
 ## Security considerations
 
-`perf_event_paranoid=-1` grants broad performance-event access inside the guest. This can expose kernel activity and information about other guest processes. The risk is constrained by:
+`perf_event_paranoid=-1` grants broad performance-event access inside the guest, and `kptr_restrict=0` exposes kernel symbol addresses through `/proc/kallsyms`. This can expose kernel activity, kernel address information, and information about other guest processes. The risk is constrained by:
 
 - An explicit per-launch option.
 - A hardened default of `3`.
