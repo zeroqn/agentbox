@@ -246,6 +246,13 @@ let
               grep -F '/run/loftd/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
               test -x ${pkgs.perf}/bin/perf
               test -x ${pkgs.strace}/bin/strace
+              test -f ${pkgs.mesa}/lib/dri/swrast_dri.so
+              test -f ${pkgs.mesa}/lib/libvulkan_lvp.so
+              test -f ${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json
+              test -f ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json
+              grep -F 'pkgs.mesa' ${layersSourceFile}
+              grep -F './usr/lib/loftd-software-renderer' ${containerSourceFile}
+              grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/loftd-software-renderer' ${containerSourceFile}
               ${pkgs.lib.optionalString (rioBin != null) ''
                 test -x ${rioBin}/bin/rio
                 grep -F './home/dev/.terminfo/r' ${containerSourceFile}

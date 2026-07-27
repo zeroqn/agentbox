@@ -23,6 +23,21 @@ const ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
 const ATTACH_PROFILE_ENV: &str = "LOFTD_ATTACH_PROFILE";
 const WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
+const SOFTWARE_RENDERER_ENV: &[(&str, &str)] = &[
+    ("LIBGL_ALWAYS_SOFTWARE", "1"),
+    (
+        "LIBGL_DRIVERS_PATH",
+        "/usr/lib/loftd-software-renderer/lib/dri",
+    ),
+    (
+        "__EGL_VENDOR_LIBRARY_FILENAMES",
+        "/usr/lib/loftd-software-renderer/share/glvnd/egl_vendor.d/50_mesa.json",
+    ),
+    (
+        "VK_DRIVER_FILES",
+        "/usr/lib/loftd-software-renderer/share/vulkan/icd.d/lvp_icd.x86_64.json",
+    ),
+];
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -243,7 +258,13 @@ fn waypipe_command(command: Vec<String>, port: Option<u32>) -> Vec<String> {
         return command;
     };
 
-    let mut wrapped = vec![
+    let mut wrapped = vec!["/usr/bin/env".to_owned()];
+    wrapped.extend(
+        SOFTWARE_RENDERER_ENV
+            .iter()
+            .map(|(name, value)| format!("{name}={value}")),
+    );
+    wrapped.extend([
         "waypipe".to_owned(),
         "--no-gpu".to_owned(),
         "--vsock".to_owned(),
@@ -251,7 +272,7 @@ fn waypipe_command(command: Vec<String>, port: Option<u32>) -> Vec<String> {
         port.to_string(),
         "server".to_owned(),
         "--".to_owned(),
-    ];
+    ]);
     wrapped.extend(command);
     wrapped
 }
@@ -585,6 +606,10 @@ mod tests {
         assert_eq!(parsed.host_uid, None);
         assert_eq!(parsed.host_gid, None);
         assert_eq!(parsed.waypipe_port, None);
+        assert_eq!(
+            waypipe_command(vec!["bash".to_owned()], parsed.waypipe_port),
+            ["bash"]
+        );
     }
 
     #[test]
@@ -596,6 +621,11 @@ mod tests {
         assert_eq!(
             waypipe_command(vec!["gui-application".to_owned()], parsed.waypipe_port),
             [
+                "/usr/bin/env",
+                "LIBGL_ALWAYS_SOFTWARE=1",
+                "LIBGL_DRIVERS_PATH=/usr/lib/loftd-software-renderer/lib/dri",
+                "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/lib/loftd-software-renderer/share/glvnd/egl_vendor.d/50_mesa.json",
+                "VK_DRIVER_FILES=/usr/lib/loftd-software-renderer/share/vulkan/icd.d/lvp_icd.x86_64.json",
                 "waypipe",
                 "--no-gpu",
                 "--vsock",

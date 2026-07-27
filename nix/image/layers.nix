@@ -451,6 +451,7 @@ let
     ++ pkgs.lib.optionals (imageVariant == "loftd") (
       pkgs.lib.optional (rioBin != null) rioBin
       ++ [
+        pkgs.mesa
         pkgs.perf
         pkgs.strace
         pkgs.waypipe

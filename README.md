@@ -79,11 +79,13 @@ managed sidecar.
   `krun_set_gpu_options2` support; `--wayland` automatically selects
   `--gpu=drm`.
 - `loftd [--workspace=WORKSPACE] --waypipe=SOCKET -- COMMAND...` launches one
-  guest GUI command under a software-only Waypipe server. `--workspace` selects
-  an absolute host directory and defaults to the current working directory;
-  the existing SSH-forwarded Unix `SOCKET` must be an absolute host path. This
-  mode is separate from `--wayland`, conflicts with `--wayland` and `--gpu`, and
-  requires the loftd image's guest `waypipe` binary.
+  guest GUI command under a software-only Waypipe server. OpenGL/EGL clients use
+  Mesa llvmpipe and Vulkan clients use Mesa lavapipe, with rendering performed
+  on the guest CPU. `--workspace` selects an absolute host directory and defaults
+  to the current working directory; the existing SSH-forwarded Unix `SOCKET`
+  must be an absolute host path. This mode is separate from `--wayland`,
+  conflicts with `--wayland` and `--gpu`, and requires the loftd image's guest
+  `waypipe` binary.
 - Linux Landlock enabled in the host kernel for default `loftd` task launches.
   Ordinary launches now use host-side Landlock `relax` mode by default; use
   `--landlock=all` for stricter TCP bind handling,
@@ -898,7 +900,10 @@ was provided. If `--workspace` is omitted, loftd uses the current working
 directory.
 loftd does not start SSH or the workstation Waypipe client and does not create,
 unlink, or clean up the forwarded socket. The initial mode uses `--no-gpu` and
-is mutually exclusive with `--wayland` and `--gpu`.
+is mutually exclusive with `--wayland` and `--gpu`. The loftd guest image
+provides Mesa software rendering for this mode: OpenGL/EGL applications use
+llvmpipe and Vulkan applications use lavapipe. Rendering occurs on the guest CPU
+and does not enable libkrun virtio-GPU acceleration.
 
 Detach/attach behavior:
 
