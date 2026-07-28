@@ -78,14 +78,17 @@ managed sidecar.
   task command starts. This mode requires a libkrun build with
   `krun_set_gpu_options2` support; `--wayland` automatically selects
   `--gpu=drm`.
-- `loftd [--workspace=WORKSPACE] --waypipe=SOCKET -- COMMAND...` launches one
-  guest GUI command under a software-only Waypipe server. OpenGL/EGL clients use
-  Mesa llvmpipe and Vulkan clients use Mesa lavapipe, with rendering performed
-  on the guest CPU. `--workspace` selects an absolute host directory and defaults
-  to the current working directory; the existing SSH-forwarded Unix `SOCKET`
-  must be an absolute host path. This mode is separate from `--wayland`,
-  conflicts with `--wayland` and `--gpu`, and requires the loftd image's guest
-  `waypipe` binary.
+- `loftd [--workspace=WORKSPACE] --waypipe[=SOCKET] [-- COMMAND...]` launches a
+  Waypipe-capable task with a software-only guest Waypipe server. An optional
+  absolute SSH-forwarded Unix `SOCKET` activates the initial target; valueless
+  `--waypipe` starts the capability without a target. Later,
+  `loftd --waypipe exec TASK -- COMMAND...` reuses the running server, while
+  `loftd --waypipe=SOCKET exec TASK -- COMMAND...` replaces the target and
+  restarts the server before running the command. Restarting drops existing GUI
+  applications connected to that Waypipe display. OpenGL/EGL clients use Mesa
+  llvmpipe and Vulkan clients use Mesa lavapipe, with rendering performed on the
+  guest CPU. This mode is separate from `--wayland`, conflicts with `--wayland`
+  and `--gpu`, and requires the loftd image's guest `waypipe` binary.
 - Linux Landlock enabled in the host kernel for default `loftd` task launches.
   Ordinary launches now use host-side Landlock `relax` mode by default; use
   `--landlock=all` for stricter TCP bind handling,
@@ -869,9 +872,12 @@ Run/help:
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
+./result/bin/loftd --workspace=/home/dev/foo --waypipe
 ./result/bin/loftd --workspace=/home/dev/foo --waypipe=/tmp/loftd-waypipe.sock -- gui-application
 ./result/bin/loftd ps
 ./result/bin/loftd exec <task-id-or-handle-selector> -- bash -lc 'echo ok'
+./result/bin/loftd --waypipe exec <task-id-or-handle-selector> -- gui-application
+./result/bin/loftd --waypipe=/tmp/other-waypipe.sock exec <task-id-or-handle-selector> -- gui-application
 ./result/bin/loftd attach <task-id-or-handle-selector>
 ./result/bin/loftd a <task-id-or-handle-selector>
 ./result/bin/loftd kill <task-id-or-handle-selector>
@@ -894,23 +900,36 @@ waypipe --socket "$XDG_RUNTIME_DIR/loftd-waypipe.sock" client
 # Workstation: keep an authenticated reverse Unix-socket forward open.
 ssh -R /tmp/loftd-waypipe.sock:"$XDG_RUNTIME_DIR/loftd-waypipe.sock" loftd-host
 
-# loftd host: launch one GUI command in a new guest.
+# loftd host: launch a Waypipe-capable task with the initial target.
 ./result/bin/loftd \
   --workspace=/home/dev/foo \
   --waypipe=/tmp/loftd-waypipe.sock \
   -- gui-application
+
+# Reuse the running Waypipe server for another GUI command.
+./result/bin/loftd --waypipe exec TASK -- another-gui-application
+
+# Replace the target, restart the guest Waypipe server, then run a command.
+./result/bin/loftd --waypipe=/tmp/other-waypipe.sock exec TASK -- gui-application
 ```
 
-loftd validates that the selected workspace is an absolute directory and the
-socket path is absolute and already exists as a Unix socket. The guest command
-is optional; when omitted, loftd starts the normal interactive fish login
-shell. If `--workspace` is omitted, loftd uses the current working directory.
-loftd does not start SSH or the workstation Waypipe client and does not create,
-unlink, or clean up the forwarded socket. The initial mode uses `--no-gpu` and
-is mutually exclusive with `--wayland` and `--gpu`. The loftd guest image
-provides Mesa software rendering for this mode: OpenGL/EGL applications use
-llvmpipe and Vulkan applications use lavapipe. Rendering occurs on the guest CPU
-and does not enable libkrun virtio-GPU acceleration.
+loftd validates that the selected workspace is an absolute directory and each
+valued socket path is absolute and already exists as a Unix socket. The guest
+command is optional; when omitted, loftd starts the normal interactive fish
+login shell. Valueless `--waypipe` launches the task capability without an
+active target. A valueless Waypipe exec reuses the running server and display.
+A valued Waypipe exec serially changes the target, terminates and reaps the
+running server, starts a fresh server on the stable display name, waits for
+readiness, and only then starts the command. This is replacement, not protocol
+reconnection: existing GUI applications connected to the old server lose their
+Wayland connection and normally exit. If `--workspace` is omitted, loftd uses
+the current working directory. loftd does not start SSH or the workstation
+Waypipe client and does not create, unlink, or clean up the forwarded socket.
+The mode uses `--no-gpu` and is mutually exclusive with `--wayland` and `--gpu`.
+The loftd guest image provides Mesa software rendering for this mode:
+OpenGL/EGL applications use llvmpipe and Vulkan applications use lavapipe.
+Rendering occurs on the guest CPU and does not enable libkrun virtio-GPU
+acceleration.
 
 Detach/attach behavior:
 

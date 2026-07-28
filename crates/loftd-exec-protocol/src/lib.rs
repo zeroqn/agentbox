@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::io::{Read, Write};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const DEFAULT_EXEC_PORT: u32 = 50_428;
 
 const MAX_PAYLOAD_LEN: usize = 1024 * 1024;
@@ -19,17 +19,33 @@ const TAG_STDERR: u8 = 8;
 const TAG_EXIT: u8 = 9;
 const TAG_ERROR: u8 = 10;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaypipeAction {
+    Disabled,
+    Reuse,
+    Replace,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
-    Hello { version: u16 },
+    Hello {
+        version: u16,
+    },
     Ready,
-    Start { argv: Vec<String> },
+    Start {
+        argv: Vec<String>,
+        waypipe: WaypipeAction,
+    },
     Stdin(Vec<u8>),
     StdinEof,
-    Signal { signal: i32 },
+    Signal {
+        signal: i32,
+    },
     Stdout(Vec<u8>),
     Stderr(Vec<u8>),
-    Exit { code: i32 },
+    Exit {
+        code: i32,
+    },
     Error(String),
 }
 
@@ -53,7 +69,7 @@ impl Frame {
         match self {
             Self::Hello { version } => Ok(version.to_be_bytes().to_vec()),
             Self::Ready | Self::StdinEof => Ok(Vec::new()),
-            Self::Start { argv } => encode_argv(argv),
+            Self::Start { argv, waypipe } => encode_start(argv, *waypipe),
             Self::Stdin(data) | Self::Stdout(data) | Self::Stderr(data) => Ok(data.clone()),
             Self::Signal { signal } | Self::Exit { code: signal } => {
                 Ok(signal.to_be_bytes().to_vec())
@@ -110,9 +126,10 @@ fn decode_frame(tag: u8, payload: Vec<u8>) -> Result<Frame> {
             require_empty(&payload, "ready")?;
             Ok(Frame::Ready)
         }
-        TAG_START => Ok(Frame::Start {
-            argv: decode_argv(&payload)?,
-        }),
+        TAG_START => {
+            let (argv, waypipe) = decode_start(&payload)?;
+            Ok(Frame::Start { argv, waypipe })
+        }
         TAG_STDIN => Ok(Frame::Stdin(payload)),
         TAG_STDIN_EOF => {
             require_empty(&payload, "stdin EOF")?;
@@ -131,6 +148,29 @@ fn decode_frame(tag: u8, payload: Vec<u8>) -> Result<Frame> {
         )),
         _ => bail!("unknown loftd exec protocol frame tag {tag}"),
     }
+}
+
+fn encode_start(argv: &[String], waypipe: WaypipeAction) -> Result<Vec<u8>> {
+    let mut payload = vec![match waypipe {
+        WaypipeAction::Disabled => 0,
+        WaypipeAction::Reuse => 1,
+        WaypipeAction::Replace => 2,
+    }];
+    payload.extend(encode_argv(argv)?);
+    Ok(payload)
+}
+
+fn decode_start(payload: &[u8]) -> Result<(Vec<String>, WaypipeAction)> {
+    let (&action, argv) = payload
+        .split_first()
+        .ok_or_else(|| anyhow!("loftd exec start payload is empty"))?;
+    let waypipe = match action {
+        0 => WaypipeAction::Disabled,
+        1 => WaypipeAction::Reuse,
+        2 => WaypipeAction::Replace,
+        _ => bail!("loftd exec start Waypipe action is invalid"),
+    };
+    Ok((decode_argv(argv)?, waypipe))
 }
 
 fn encode_argv(argv: &[String]) -> Result<Vec<u8>> {
@@ -257,6 +297,7 @@ mod tests {
             Frame::Ready,
             Frame::Start {
                 argv: vec!["sh".into(), "-c".into(), "echo hello".into()],
+                waypipe: WaypipeAction::Reuse,
             },
             Frame::Stdin(vec![0, 1, 2]),
             Frame::StdinEof,
@@ -274,6 +315,7 @@ mod tests {
     fn argv_preserves_boundaries() {
         round_trip(Frame::Start {
             argv: vec!["printf".into(), "a b".into(), "'quoted'".into(), "".into()],
+            waypipe: WaypipeAction::Replace,
         });
     }
 
@@ -287,7 +329,14 @@ mod tests {
 
     #[test]
     fn empty_argv_is_rejected() {
-        let err = write_frame(&mut Vec::new(), &Frame::Start { argv: Vec::new() }).unwrap_err();
+        let err = write_frame(
+            &mut Vec::new(),
+            &Frame::Start {
+                argv: Vec::new(),
+                waypipe: WaypipeAction::Disabled,
+            },
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("must not be empty"));
     }
 

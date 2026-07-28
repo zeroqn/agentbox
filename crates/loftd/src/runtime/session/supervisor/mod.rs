@@ -79,6 +79,23 @@ impl Supervisor for HostSupervisor {
         daemon_initial_attach: bool,
         attach_input_policy: AttachInputPolicy,
     ) -> Result<ChildStatus> {
+        let _waypipe_broker = active_task
+            .waypipe
+            .as_ref()
+            .map(|waypipe| {
+                let data_socket = config
+                    .waypipe
+                    .as_ref()
+                    .expect("active Waypipe task must have launch config")
+                    .socket
+                    .clone();
+                crate::runtime::session::waypipe_broker::WaypipeBroker::start(
+                    data_socket,
+                    waypipe.control_socket.clone(),
+                    waypipe.initial_target.clone(),
+                )
+            })
+            .transpose()?;
         let config_path = task_state_dir.join("launch.conf");
         config.write_to(&config_path)?;
         command::run_helper_process(

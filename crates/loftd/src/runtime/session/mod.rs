@@ -20,6 +20,7 @@ pub(crate) mod rootfs;
 pub(crate) mod supervisor;
 pub(crate) mod task_control;
 mod terminal_env;
+mod waypipe_broker;
 
 use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{
@@ -81,7 +82,11 @@ pub(crate) fn run_task_control_command(command: TaskControlCommand) -> Result<St
     task_control::run_task_control_command(command, state_layout.app_dir())
 }
 
-pub(crate) fn run_exec_command(task_id: String, command: Vec<String>) -> Result<ExitCode> {
+pub(crate) fn run_exec_command(
+    task_id: String,
+    command: Vec<String>,
+    waypipe: Option<Option<PathBuf>>,
+) -> Result<ExitCode> {
     let cwd = env::current_dir()?
         .canonicalize()
         .context("failed to canonicalize current directory for loftd exec command")?;
@@ -96,7 +101,12 @@ pub(crate) fn run_exec_command(task_id: String, command: Vec<String>) -> Result<
         home_dir.as_deref(),
         config.state_location_override(),
     )?;
-    exec::exec_in_task_with_procfs(state_layout.app_dir(), &task_id, command)
+    exec::exec_in_task_with_procfs(
+        state_layout.app_dir(),
+        &task_id,
+        command,
+        waypipe.as_ref().map(|target| target.as_deref()),
+    )
 }
 
 pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -> Result<ExitCode> {
@@ -222,6 +232,22 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                             lease.handle().task_dir(),
                         )
                         .context("failed to allocate loftd exec socket")?;
+                        let waypipe = if plan.waypipe {
+                            Some((
+                                managed_attach_socket::allocate_waypipe_data(
+                                    lease.handle().task_id(),
+                                    lease.handle().task_dir(),
+                                )
+                                .context("failed to allocate loftd Waypipe data socket")?,
+                                managed_attach_socket::allocate_waypipe_control(
+                                    lease.handle().task_id(),
+                                    lease.handle().task_dir(),
+                                )
+                                .context("failed to allocate loftd Waypipe control socket")?,
+                            ))
+                        } else {
+                            None
+                        };
                         let exec = ExecConfig {
                             socket: exec_socket,
                             guest_port: DEFAULT_EXEC_PORT,
@@ -282,8 +308,8 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                     env
                                 },
                                 host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
-                                waypipe: plan.waypipe_socket.clone().map(|socket| WaypipeConfig {
-                                    socket,
+                                waypipe: waypipe.as_ref().map(|(socket, _)| WaypipeConfig {
+                                    socket: socket.clone(),
                                     guest_port: DEFAULT_WAYPIPE_PORT,
                                 }),
                                 exec: Some(exec.clone()),
@@ -315,6 +341,12 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                         .selected_image_reference()
                                         .to_owned(),
                                     image_digest: lease.handle().image_digest().map(str::to_owned),
+                                    waypipe: waypipe.map(|(_, control_socket)| {
+                                        task_control::WaypipeTaskSpec {
+                                            control_socket,
+                                            initial_target: plan.waypipe_socket.clone(),
+                                        }
+                                    }),
                                     exec: Some(task_control::ExecTaskSpec {
                                         socket: exec.socket,
                                         guest_port: exec.guest_port,

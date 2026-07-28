@@ -41,6 +41,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) network_mode: NetworkMode,
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
+    pub(crate) waypipe: bool,
     pub(crate) waypipe_socket: Option<PathBuf>,
     pub(crate) io_uring: bool,
     pub(crate) perf: bool,
@@ -80,6 +81,7 @@ impl LaunchPlan {
         xdg_config_home: Option<&Path>,
         home_dir: Option<&Path>,
     ) -> Result<Self> {
+        let waypipe = options.waypipe.is_some();
         let waypipe_socket = resolve_waypipe(&options)?;
         let config = config::state::read_config(xdg_config_home, home_dir)?;
         let state_layout = state::resolve_state_layout_from_parts(
@@ -131,6 +133,7 @@ impl LaunchPlan {
             network_mode: options.network_mode,
             gpu_mode: options.gpu_mode,
             wayland: options.wayland,
+            waypipe,
             waypipe_socket,
             io_uring: options.io_uring,
             perf: options.perf,
@@ -153,7 +156,7 @@ impl LaunchPlan {
     }
 }
 fn resolve_waypipe(options: &RuntimeOptions) -> Result<Option<PathBuf>> {
-    let Some(socket) = &options.waypipe else {
+    let Some(Some(socket)) = &options.waypipe else {
         return Ok(None);
     };
     if !socket.is_absolute() {
@@ -998,7 +1001,7 @@ mod tests {
         let _listener = UnixListener::bind(&socket).expect("waypipe socket should exist");
         let mut options = runtime_options();
         options.workspace = Some(workspace.clone());
-        options.waypipe = Some(socket.clone());
+        options.waypipe = Some(Some(socket.clone()));
         options.guest_command = vec!["gui-application".to_owned()];
 
         let plan = LaunchPlan::from_env_values(
@@ -1011,9 +1014,30 @@ mod tests {
         .expect("waypipe plan should build");
 
         assert_eq!(plan.workspace_dir, workspace);
+        assert!(plan.waypipe);
         assert_eq!(plan.waypipe_socket, Some(socket));
     }
 
+    #[test]
+    fn waypipe_plan_supports_capability_without_initial_target() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("workspace should exist");
+        let mut options = runtime_options();
+        options.waypipe = Some(None);
+
+        let plan = LaunchPlan::from_env_values(
+            options,
+            workspace,
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect("Waypipe capability plan should build without a target");
+
+        assert!(plan.waypipe);
+        assert_eq!(plan.waypipe_socket, None);
+    }
     #[test]
     fn ordinary_plan_uses_selected_workspace_without_waypipe() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
@@ -1040,7 +1064,7 @@ mod tests {
     fn waypipe_plan_rejects_relative_socket() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
         let mut options = runtime_options();
-        options.waypipe = Some(PathBuf::from("relative.sock"));
+        options.waypipe = Some(Some(PathBuf::from("relative.sock")));
         options.guest_command = vec!["gui-application".to_owned()];
 
         let err = LaunchPlan::from_env_values(
@@ -1061,7 +1085,7 @@ mod tests {
         let socket = dir.path().join("waypipe.sock");
         let _listener = UnixListener::bind(&socket).expect("waypipe socket should exist");
         let mut options = runtime_options();
-        options.waypipe = Some(socket.clone());
+        options.waypipe = Some(Some(socket.clone()));
 
         let plan = LaunchPlan::from_env_values(
             options,

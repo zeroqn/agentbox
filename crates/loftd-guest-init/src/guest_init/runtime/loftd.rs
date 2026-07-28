@@ -213,13 +213,13 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
-    let _waypipe = env_contract
+    let waypipe = env_contract
         .waypipe_port
         .map(|port| crate::guest_init::components::waypipe::start(port, &identity))
         .transpose()?;
     let _exec = env_contract
         .exec
-        .map(|config| super::exec::start(config, identity.clone()))
+        .map(|config| super::exec::start(config, identity.clone(), waypipe.clone()))
         .transpose()?;
     let drop_to_identity = should_drop_to_identity(process::is_root(), env_contract.enter_as_root);
     if let Some(managed_session) = env_contract.managed_session {
@@ -609,14 +609,14 @@ mod tests {
     fn exec_env_is_all_or_none() {
         let parsed = EnterEnv::from_env(&env(&[
             ("LOFTD_EXEC_PORT", "50428"),
-            ("LOFTD_EXEC_PROTOCOL_VERSION", "1"),
+            ("LOFTD_EXEC_PROTOCOL_VERSION", "2"),
         ]))
         .expect("exec env should parse");
         assert_eq!(
             parsed.exec,
             Some(ExecConfig {
                 port: 50_428,
-                protocol_version: 1,
+                protocol_version: 2,
             })
         );
 

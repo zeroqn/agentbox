@@ -35,6 +35,12 @@ pub(crate) struct ManagedTaskSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaypipeTaskSpec {
+    pub(crate) control_socket: PathBuf,
+    pub(crate) initial_target: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActiveTaskSpec {
     pub(crate) task_id: String,
     pub(crate) workspace_slug: String,
@@ -42,6 +48,7 @@ pub(crate) struct ActiveTaskSpec {
     pub(crate) task_dir: PathBuf,
     pub(crate) image_reference: String,
     pub(crate) image_digest: Option<String>,
+    pub(crate) waypipe: Option<WaypipeTaskSpec>,
     pub(crate) exec: Option<ExecTaskSpec>,
     pub(crate) managed: Option<ManagedTaskSpec>,
 }
@@ -82,6 +89,11 @@ pub(crate) struct ManagedTaskRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaypipeTaskRecord {
+    pub(crate) control_socket: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActiveTaskRecord {
     pub(crate) task_id: String,
     pub(crate) workspace_slug: String,
@@ -91,6 +103,7 @@ pub(crate) struct ActiveTaskRecord {
     pub(crate) image_digest: Option<String>,
     pub(crate) started_at_unix_secs: u64,
     pub(crate) process: ProcessIdentity,
+    pub(crate) waypipe: Option<WaypipeTaskRecord>,
     pub(crate) exec: Option<ExecTaskRecord>,
     pub(crate) managed: Option<ManagedTaskRecord>,
 }
@@ -110,6 +123,9 @@ impl ActiveTaskRecord {
             image_digest: spec.image_digest,
             started_at_unix_secs,
             process,
+            waypipe: spec.waypipe.map(|waypipe| WaypipeTaskRecord {
+                control_socket: waypipe.control_socket,
+            }),
             exec: spec.exec.map(|exec| ExecTaskRecord {
                 socket: exec.socket,
                 guest_port: exec.guest_port,
@@ -749,6 +765,13 @@ fn encode_record(record: &ActiveTaskRecord) -> String {
         &record.process.proc_start_time_ticks.to_string(),
     );
     push_kv(&mut output, "boot_id", &record.process.boot_id);
+    if let Some(waypipe) = &record.waypipe {
+        push_kv(
+            &mut output,
+            "waypipe_control_socket",
+            &waypipe.control_socket.display().to_string(),
+        );
+    }
     if let Some(exec) = &record.exec {
         push_kv(
             &mut output,
@@ -818,9 +841,21 @@ fn decode_record(contents: &str) -> Result<ActiveTaskRecord> {
             proc_start_time_ticks: parse_required(&map, "proc_start_time_ticks")?,
             boot_id: required(&map, "boot_id")?.to_owned(),
         },
+        waypipe: parse_waypipe_record(&map)?,
         exec: parse_exec_record(&map)?,
         managed: parse_managed_record(&map)?,
     })
+}
+
+fn parse_waypipe_record(
+    map: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<WaypipeTaskRecord>> {
+    let Some(control_socket) = map.get("waypipe_control_socket") else {
+        return Ok(None);
+    };
+    Ok(Some(WaypipeTaskRecord {
+        control_socket: PathBuf::from(control_socket),
+    }))
 }
 
 fn parse_exec_record(
@@ -1055,6 +1090,7 @@ mod tests {
                 proc_start_time_ticks: 456,
                 boot_id: "boot".to_owned(),
             },
+            waypipe: None,
             exec: None,
             managed: None,
         }
@@ -1065,6 +1101,21 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let task_dir = dir.path().join("workspace-a/tasks/task-a");
         let original = record("task-a", task_dir.clone());
+
+        write_active_task_record(&original).expect("write record");
+        let decoded = read_active_task_record(&active_record_path(&task_dir)).expect("read record");
+
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn active_record_round_trips_waypipe_capability() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let task_dir = dir.path().join("workspace-a/tasks/task-a");
+        let mut original = record("task-a", task_dir.clone());
+        original.waypipe = Some(WaypipeTaskRecord {
+            control_socket: PathBuf::from("/tmp/loftd-1000/wc-0123456789abcdef.sock"),
+        });
 
         write_active_task_record(&original).expect("write record");
         let decoded = read_active_task_record(&active_record_path(&task_dir)).expect("read record");

@@ -17,6 +17,14 @@ pub(crate) fn allocate_exec(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
     allocate_named(task_id, task_dir, "e")
 }
 
+pub(crate) fn allocate_waypipe_data(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
+    allocate_named(task_id, task_dir, "wd")
+}
+
+pub(crate) fn allocate_waypipe_control(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
+    allocate_named(task_id, task_dir, "wc")
+}
+
 fn allocate_named(task_id: &str, task_dir: &Path, prefix: &str) -> Result<PathBuf> {
     let uid = current_uid();
     allocate_in_runtime_parent(Path::new("/tmp"), uid, task_id, task_dir, prefix)

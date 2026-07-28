@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use loftd_exec_protocol::{Frame, PROTOCOL_VERSION, read_frame, write_frame};
+use loftd_exec_protocol::{Frame, PROTOCOL_VERSION, WaypipeAction, read_frame, write_frame};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -9,6 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::guest_init::components::home::identity::DevIdentity;
+use crate::guest_init::components::waypipe::WaypipeService;
 use crate::guest_init::process;
 use crate::guest_init::runtime::vsock::VsockListener;
 
@@ -24,6 +25,7 @@ pub(in crate::guest_init) struct ExecConfig {
 pub(in crate::guest_init) fn start(
     config: ExecConfig,
     identity: DevIdentity,
+    waypipe: Option<WaypipeService>,
 ) -> Result<thread::JoinHandle<()>> {
     if config.protocol_version != PROTOCOL_VERSION {
         bail!(
@@ -42,8 +44,11 @@ pub(in crate::guest_init) fn start(
                 }
             };
             let identity = identity.clone();
+            let waypipe = waypipe.clone();
             thread::spawn(move || {
-                if let Err(err) = handle_client(client, &identity, Path::new("/workspace")) {
+                if let Err(err) =
+                    handle_client(client, &identity, Path::new("/workspace"), waypipe.as_ref())
+                {
                     eprintln!("loftd-guest-init: exec request failed: {err:#}");
                 }
             });
@@ -51,7 +56,12 @@ pub(in crate::guest_init) fn start(
     }))
 }
 
-fn handle_client(mut client: std::fs::File, identity: &DevIdentity, workdir: &Path) -> Result<()> {
+fn handle_client(
+    mut client: std::fs::File,
+    identity: &DevIdentity,
+    workdir: &Path,
+    waypipe: Option<&WaypipeService>,
+) -> Result<()> {
     match read_frame(&mut client)? {
         Some(Frame::Hello { version }) if version == PROTOCOL_VERSION => {
             write_frame(&mut client, &Frame::Ready)?;
@@ -68,11 +78,26 @@ fn handle_client(mut client: std::fs::File, identity: &DevIdentity, workdir: &Pa
         Some(frame) => bail!("expected exec hello, got {frame:?}"),
         None => return Ok(()),
     }
-    let argv = match read_frame(&mut client)? {
-        Some(Frame::Start { argv }) => argv,
+    let (argv, waypipe_action) = match read_frame(&mut client)? {
+        Some(Frame::Start { argv, waypipe }) => (argv, waypipe),
         Some(frame) => bail!("expected exec start, got {frame:?}"),
         None => return Ok(()),
     };
+    let waypipe_result = match (waypipe_action, waypipe) {
+        (WaypipeAction::Disabled, _) => Ok(()),
+        (WaypipeAction::Reuse, Some(service)) => service.reuse(),
+        (WaypipeAction::Replace, Some(service)) => service.replace(),
+        (WaypipeAction::Reuse | WaypipeAction::Replace, None) => Err(anyhow::anyhow!(
+            "loftd task does not have Waypipe capability"
+        )),
+    };
+    if let Err(err) = waypipe_result {
+        write_frame(
+            &mut client,
+            &Frame::Error(format!("Waypipe activation failed: {err:#}")),
+        )?;
+        return Ok(());
+    }
 
     let mut command = Command::new(&argv[0]);
     command
@@ -277,11 +302,42 @@ mod tests {
     }
 
     #[test]
+    fn exec_rejects_waypipe_reuse_without_task_capability() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let client = unsafe { std::fs::File::from_raw_fd(client.into_raw_fd()) };
+        let temp = tempfile::tempdir().unwrap();
+        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path(), None));
+
+        write_frame(
+            &mut server,
+            &Frame::Hello {
+                version: PROTOCOL_VERSION,
+            },
+        )
+        .unwrap();
+        assert_eq!(read_frame(&mut server).unwrap(), Some(Frame::Ready));
+        write_frame(
+            &mut server,
+            &Frame::Start {
+                argv: vec!["/bin/true".into()],
+                waypipe: WaypipeAction::Reuse,
+            },
+        )
+        .unwrap();
+
+        let frame = read_frame(&mut server).unwrap().unwrap();
+        assert!(
+            matches!(frame, Frame::Error(message) if message.contains("does not have Waypipe capability"))
+        );
+        thread.join().unwrap().unwrap();
+    }
+
+    #[test]
     fn exec_reports_startup_error_without_ending_connection_abruptly() {
         let (client, mut server) = UnixStream::pair().unwrap();
         let client = unsafe { std::fs::File::from_raw_fd(client.into_raw_fd()) };
         let temp = tempfile::tempdir().unwrap();
-        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path()));
+        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path(), None));
 
         write_frame(
             &mut server,
@@ -295,6 +351,7 @@ mod tests {
             &mut server,
             &Frame::Start {
                 argv: vec!["/definitely/missing-loftd-exec-command".into()],
+                waypipe: WaypipeAction::Disabled,
             },
         )
         .unwrap();
@@ -308,7 +365,7 @@ mod tests {
         let (client, mut server) = UnixStream::pair().unwrap();
         let client = unsafe { std::fs::File::from_raw_fd(client.into_raw_fd()) };
         let temp = tempfile::tempdir().unwrap();
-        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path()));
+        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path(), None));
 
         write_frame(
             &mut server,
@@ -326,6 +383,7 @@ mod tests {
                     "-c".into(),
                     "printf out; printf err >&2; exit 23".into(),
                 ],
+                waypipe: WaypipeAction::Disabled,
             },
         )
         .unwrap();

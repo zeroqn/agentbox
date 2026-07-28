@@ -288,10 +288,12 @@ pub(crate) struct Cli {
         long = "waypipe",
         value_name = "SOCKET",
         value_parser = parse_waypipe_arg,
+        num_args = 0..=1,
+        require_equals = true,
         conflicts_with_all = ["wayland","gpu"],
-        help = "Run a guest GUI command through an existing SSH-forwarded Waypipe socket"
+        help = "Enable persistent remote Waypipe forwarding, optionally activating an existing SSH-forwarded socket"
     )]
-    waypipe: Option<PathBuf>,
+    waypipe: Option<Option<PathBuf>>,
 
     #[arg(
         short = 'p',
@@ -481,6 +483,7 @@ pub(crate) enum CliAction {
     Exec {
         task_id: String,
         command: Vec<String>,
+        waypipe: Option<Option<PathBuf>>,
         log_settings: LogSettings,
     },
     Kill {
@@ -516,6 +519,7 @@ impl Cli {
                 CliCommand::Exec { task_id, command } => CliAction::Exec {
                     task_id,
                     command,
+                    waypipe: self.waypipe,
                     log_settings: LogSettings::from_process_env(self.log_level, self.debug),
                 },
                 CliCommand::Kill { task_id } => CliAction::Kill {
@@ -620,7 +624,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
     pub(crate) workspace: Option<PathBuf>,
-    pub(crate) waypipe: Option<PathBuf>,
+    pub(crate) waypipe: Option<Option<PathBuf>>,
     pub(crate) publish: Vec<String>,
     pub(crate) volumes: Vec<VolumeSpec>,
     pub(crate) guest_command: Vec<String>,
@@ -934,6 +938,56 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn waypipe_capability_without_initial_target_parses() {
+        let options = Cli::try_parse_from(["loftd", "--waypipe"])
+            .expect("valueless Waypipe capability should parse")
+            .into_runtime_options();
+
+        assert_eq!(options.waypipe, Some(None));
+    }
+
+    #[test]
+    fn valueless_waypipe_exec_reuses_running_server() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "--waypipe",
+            "exec",
+            "task-a",
+            "--",
+            "gui-application",
+        ])
+        .expect("valueless Waypipe exec should parse");
+
+        assert!(matches!(
+            cli.into_action(),
+            crate::cli::CliAction::Exec { task_id, command, waypipe, .. }
+                if task_id == "task-a"
+                    && command == ["gui-application"]
+                    && waypipe == Some(None)
+        ));
+    }
+
+    #[test]
+    fn valued_waypipe_exec_replaces_running_server() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "--waypipe=/tmp/waypipe-client.sock",
+            "exec",
+            "task-a",
+            "--",
+            "gui-application",
+        ])
+        .expect("valued Waypipe exec should parse");
+
+        assert!(matches!(
+            cli.into_action(),
+            crate::cli::CliAction::Exec { task_id, command, waypipe, .. }
+                if task_id == "task-a"
+                    && command == ["gui-application"]
+                    && waypipe == Some(Some(PathBuf::from("/tmp/waypipe-client.sock")))
+        ));
+    }
     #[test]
     fn parses_daemon_runtime_option() {
         let cli =
@@ -1441,7 +1495,7 @@ mod tests {
         assert_eq!(options.workspace, Some(PathBuf::from("/home/dev/foo")));
         assert_eq!(
             options.waypipe,
-            Some(PathBuf::from("/tmp/loftd-waypipe.sock"))
+            Some(Some(PathBuf::from("/tmp/loftd-waypipe.sock")))
         );
         assert_eq!(options.guest_command, ["gui-application"]);
     }
@@ -1458,458 +1512,454 @@ mod tests {
 
     #[test]
     fn workspace_and_waypipe_flags_require_absolute_nonempty_paths() {
-        for (flag, value) in [
-            ("--workspace", ""),
-            ("--workspace", "relative"),
-            ("--waypipe", ""),
-            ("--waypipe", "relative.sock"),
+        for args in [
+            vec!["loftd", "--workspace", ""],
+            vec!["loftd", "--workspace", "relative"],
+            vec!["loftd", "--waypipe="],
+            vec!["loftd", "--waypipe=relative.sock"],
         ] {
-            let err =
-                Cli::try_parse_from(["loftd", flag, value]).expect_err("invalid path should fail");
+            let err = Cli::try_parse_from(args).expect_err("invalid path should fail");
 
             assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
         }
     }
+}
 
-    #[test]
-    fn waypipe_flag_conflicts_with_local_wayland_and_drm() {
-        for args in [
-            ["loftd", "--waypipe=/tmp/waypipe.sock", "--wayland"],
-            ["loftd", "--waypipe=/tmp/waypipe.sock", "--gpu=drm"],
-        ] {
-            let err = Cli::try_parse_from(args).expect_err("waypipe conflict should fail");
-
-            assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
-        }
-    }
-
-    #[test]
-    fn publish_flag_is_repeatable() {
-        let cli = Cli::try_parse_from(["loftd", "-p", "8080:80", "--publish", "8443:443"])
-            .expect("publish flags should parse");
-        let options = cli.into_runtime_options();
-
-        assert_eq!(options.publish, ["8080:80", "8443:443"]);
-    }
-
-    #[test]
-    fn volume_flag_is_repeatable_and_parses_access_modes() {
-        let cli = Cli::try_parse_from([
-            "loftd",
-            "-v",
-            "/host/dir:/guest/dir",
-            "--volume",
-            "/host/file:/guest/file:ro",
-            "-v",
-            "/host/cache:/home/dev/cache:rw",
-        ])
-        .expect("volume flags should parse");
-        let options = cli.into_runtime_options();
-
-        assert_eq!(
-            options.volumes,
-            [
-                VolumeSpec {
-                    source: "/host/dir".into(),
-                    target: "/guest/dir".to_owned(),
-                    read_only: false,
-                },
-                VolumeSpec {
-                    source: "/host/file".into(),
-                    target: "/guest/file".to_owned(),
-                    read_only: true,
-                },
-                VolumeSpec {
-                    source: "/host/cache".into(),
-                    target: "/home/dev/cache".to_owned(),
-                    read_only: false,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn volume_rejects_empty_or_unsupported_specs() {
-        for args in [
-            ["loftd", "-v", ""],
-            ["loftd", "-v", "/host-only"],
-            ["loftd", "-v", ":/guest"],
-            ["loftd", "-v", "/host:"],
-            ["loftd", "-v", "/host:/guest:z"],
-            ["loftd", "-v", "/host:/guest:"],
-            ["loftd", "-v", "/host:/guest:ro:rshared"],
-        ] {
-            let err = Cli::try_parse_from(args).expect_err("volume spec should fail");
-            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
-        }
-    }
-
-    #[test]
-    fn publish_rejects_empty_spec() {
-        let empty_err =
-            Cli::try_parse_from(["loftd", "-p", ""]).expect_err("empty publish should fail");
-        let whitespace_err = Cli::try_parse_from(["loftd", "--publish", "   "])
-            .expect_err("blank publish should fail");
-
-        assert_eq!(empty_err.kind(), clap::error::ErrorKind::ValueValidation);
-        assert_eq!(
-            whitespace_err.kind(),
-            clap::error::ErrorKind::ValueValidation
-        );
-    }
-
-    #[test]
-    fn parses_allocator_modes() {
-        for (value, expected) in [
-            ("mimalloc", AllocatorMode::Mimalloc),
-            ("hardened", AllocatorMode::Hardened),
-            ("glibc", AllocatorMode::Glibc),
-        ] {
-            let cli = Cli::try_parse_from(["loftd", "--alloc", value])
-                .expect("allocator mode should parse");
-
-            assert_eq!(cli.into_runtime_options().allocator, expected);
-        }
-    }
-
-    #[test]
-    fn allocator_defaults_to_mimalloc() {
-        let options = Cli::try_parse_from(["loftd"])
-            .expect("default CLI should parse")
-            .into_runtime_options();
-
-        assert_eq!(options.allocator, AllocatorMode::Mimalloc);
-    }
-
-    #[test]
-    fn rejects_unknown_allocator_mode() {
-        let err = Cli::try_parse_from(["loftd", "--alloc", "jemalloc"])
-            .expect_err("unknown allocator should fail");
-
-        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
-    }
-
-    #[test]
-    fn allocator_is_inert_for_management_subcommands() {
-        let cli = Cli::try_parse_from(["loftd", "--alloc", "glibc", "images", "list"])
-            .expect("allocator stays parse-compatible for management commands");
-
-        match cli.into_action() {
-            crate::cli::CliAction::Images { command, .. } => {
-                assert_eq!(command, crate::cli::ImagesCommand::List)
-            }
-            other => panic!("expected images action, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_explicit_guest_command_after_delimiter() {
-        let cli = Cli::try_parse_from(["loftd", "--", "bash", "-lc", "echo ok"])
-            .expect("guest command should parse after delimiter");
-        let options = cli.into_runtime_options();
-
-        assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
-    }
-
-    #[test]
-    fn publish_preserves_guest_command() {
-        let cli = Cli::try_parse_from(["loftd", "-p", "8080:80", "--", "bash", "-lc", "echo ok"])
-            .expect("publish and command should parse");
-        let options = cli.into_runtime_options();
-
-        assert_eq!(options.publish, ["8080:80"]);
-        assert!(options.volumes.is_empty());
-        assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
-    }
-
-    #[test]
-    fn parses_explicit_guest_command_after_options_and_delimiter() {
-        let cli = Cli::try_parse_from([
-            "loftd",
-            "--guest-init",
-            "/tmp/loftd-guest-init",
-            "--log-level",
-            "debug",
-            "--profile",
-            "--",
-            "sh",
-            "/workspace/probe.sh",
-        ])
-        .expect("guest command should parse after options and delimiter");
-        let options = cli.into_runtime_options();
-
-        assert_eq!(
-            options.guest_init.as_deref(),
-            Some("/tmp/loftd-guest-init".as_ref())
-        );
-        assert_eq!(options.log_settings.level, LogLevel::Debug);
-        assert!(options.profile);
-        assert_eq!(options.guest_command, ["sh", "/workspace/probe.sh"]);
-    }
-
-    #[test]
-    fn parses_decode_launch_conf_subcommand() {
-        let cli = Cli::try_parse_from(["loftd", "decode-launch-conf", "/tmp/launch.conf"])
-            .expect("decode subcommand should parse");
-
-        assert_eq!(
-            cli.into_action(),
-            crate::cli::CliAction::DecodeLaunchConf {
-                path: "/tmp/launch.conf".into(),
-            }
-        );
-    }
-
-    #[test]
-    fn decode_launch_conf_is_not_confused_with_guest_command() {
-        let cli = Cli::try_parse_from(["loftd", "--", "decode-launch-conf", "/tmp/launch.conf"])
-            .expect("delimited words should remain a guest command");
-        let options = cli.into_runtime_options();
-
-        assert_eq!(
-            options.guest_command,
-            ["decode-launch-conf", "/tmp/launch.conf"]
-        );
-    }
-
-    #[test]
-    fn bare_words_are_not_guest_commands() {
-        let err = Cli::try_parse_from(["loftd", "microvm"])
-            .expect_err("guest commands must use an explicit delimiter");
-
-        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
-    }
-
-    #[test]
-    fn image_env_uses_loftd_prefix() {
-        let cli = Cli::try_parse_from(["loftd", "--image", "example/loftd:dev"])
-            .expect("image should parse");
-        let options = cli.into_runtime_options();
-
-        assert_eq!(options.image.as_deref(), Some("example/loftd:dev"));
-    }
-
-    #[test]
-    fn pull_latest_records_canonical_refresh_intent() {
-        let cli = Cli::try_parse_from(["loftd", "--pull-latest"]).expect("pull flag should parse");
-        let options = cli.into_runtime_options();
-
-        assert!(options.pull_latest);
-        assert_eq!(options.image, None);
-    }
-
-    #[test]
-    fn image_and_pull_latest_are_mutually_exclusive() {
-        let err = Cli::try_parse_from(["loftd", "--image", "example/loftd:dev", "--pull-latest"])
-            .expect_err("explicit image and canonical refresh should conflict");
+#[test]
+fn waypipe_flag_conflicts_with_local_wayland_and_drm() {
+    for args in [
+        ["loftd", "--waypipe=/tmp/waypipe.sock", "--wayland"],
+        ["loftd", "--waypipe=/tmp/waypipe.sock", "--gpu=drm"],
+    ] {
+        let err = Cli::try_parse_from(args).expect_err("waypipe conflict should fail");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
+}
 
-    #[test]
-    fn rootfs_backend_rejects_removed_values() {
-        let auto_err = Cli::try_parse_from(["loftd", "--rootfs-backend", "auto"])
-            .expect_err("auto backend should fail");
-        let reflink_err = Cli::try_parse_from(["loftd", "--rootfs-backend", "reflink"])
-            .expect_err("reflink backend should fail");
+#[test]
+fn publish_flag_is_repeatable() {
+    let cli = Cli::try_parse_from(["loftd", "-p", "8080:80", "--publish", "8443:443"])
+        .expect("publish flags should parse");
+    let options = cli.into_runtime_options();
 
-        assert_eq!(auto_err.kind(), clap::error::ErrorKind::ValueValidation);
-        assert_eq!(reflink_err.kind(), clap::error::ErrorKind::ValueValidation);
-    }
+    assert_eq!(options.publish, ["8080:80", "8443:443"]);
+}
 
-    #[test]
-    fn container_store_backend_accepts_raw_disk_only() {
-        let raw = Cli::try_parse_from(["loftd", "--container-store", "raw-disk"])
-            .expect("raw disk container store should parse")
-            .into_runtime_options();
+#[test]
+fn volume_flag_is_repeatable_and_parses_access_modes() {
+    let cli = Cli::try_parse_from([
+        "loftd",
+        "-v",
+        "/host/dir:/guest/dir",
+        "--volume",
+        "/host/file:/guest/file:ro",
+        "-v",
+        "/host/cache:/home/dev/cache:rw",
+    ])
+    .expect("volume flags should parse");
+    let options = cli.into_runtime_options();
 
-        assert_eq!(
-            raw.container_store_backend,
-            Some(ContainerStoreBackend::RawDisk)
-        );
-    }
+    assert_eq!(
+        options.volumes,
+        [
+            VolumeSpec {
+                source: "/host/dir".into(),
+                target: "/guest/dir".to_owned(),
+                read_only: false,
+            },
+            VolumeSpec {
+                source: "/host/file".into(),
+                target: "/guest/file".to_owned(),
+                read_only: true,
+            },
+            VolumeSpec {
+                source: "/host/cache".into(),
+                target: "/home/dev/cache".to_owned(),
+                read_only: false,
+            },
+        ]
+    );
+}
 
-    #[test]
-    fn container_store_backend_rejects_invalid_values() {
-        let bind_err = Cli::try_parse_from(["loftd", "--container-store", "bind"])
-            .expect_err("bind container store should fail");
-        let err = Cli::try_parse_from(["loftd", "--container-store", "auto"])
-            .expect_err("unknown container store should fail");
-
-        assert_eq!(bind_err.kind(), clap::error::ErrorKind::ValueValidation);
+#[test]
+fn volume_rejects_empty_or_unsupported_specs() {
+    for args in [
+        ["loftd", "-v", ""],
+        ["loftd", "-v", "/host-only"],
+        ["loftd", "-v", ":/guest"],
+        ["loftd", "-v", "/host:"],
+        ["loftd", "-v", "/host:/guest:z"],
+        ["loftd", "-v", "/host:/guest:"],
+        ["loftd", "-v", "/host:/guest:ro:rshared"],
+    ] {
+        let err = Cli::try_parse_from(args).expect_err("volume spec should fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
+}
 
-    #[test]
-    fn legacy_storage_flag_is_not_accepted() {
-        let err = Cli::try_parse_from(["loftd", "--storage", "auto"])
-            .expect_err("storage flag should not exist");
+#[test]
+fn publish_rejects_empty_spec() {
+    let empty_err =
+        Cli::try_parse_from(["loftd", "-p", ""]).expect_err("empty publish should fail");
+    let whitespace_err =
+        Cli::try_parse_from(["loftd", "--publish", "   "]).expect_err("blank publish should fail");
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
-    }
+    assert_eq!(empty_err.kind(), clap::error::ErrorKind::ValueValidation);
+    assert_eq!(
+        whitespace_err.kind(),
+        clap::error::ErrorKind::ValueValidation
+    );
+}
 
-    #[test]
-    fn parses_explicit_log_level() {
+#[test]
+fn parses_allocator_modes() {
+    for (value, expected) in [
+        ("mimalloc", AllocatorMode::Mimalloc),
+        ("hardened", AllocatorMode::Hardened),
+        ("glibc", AllocatorMode::Glibc),
+    ] {
         let cli =
-            Cli::try_parse_from(["loftd", "--log-level", "trace"]).expect("log level should parse");
-        let options = cli.into_runtime_options();
+            Cli::try_parse_from(["loftd", "--alloc", value]).expect("allocator mode should parse");
 
-        assert_eq!(options.log_settings.level, LogLevel::Trace);
+        assert_eq!(cli.into_runtime_options().allocator, expected);
     }
+}
 
-    #[test]
-    fn rejects_invalid_log_level() {
-        let err = Cli::try_parse_from(["loftd", "--log-level", "verbose"])
-            .expect_err("unknown log level should fail");
+#[test]
+fn allocator_defaults_to_mimalloc() {
+    let options = Cli::try_parse_from(["loftd"])
+        .expect("default CLI should parse")
+        .into_runtime_options();
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
-    }
+    assert_eq!(options.allocator, AllocatorMode::Mimalloc);
+}
 
-    #[test]
-    fn explicit_log_level_overrides_debug_compatibility() {
-        let cli = Cli::try_parse_from(["loftd", "--debug", "--log-level", "info"])
-            .expect("log level should parse");
-        let options = cli.into_runtime_options();
+#[test]
+fn rejects_unknown_allocator_mode() {
+    let err = Cli::try_parse_from(["loftd", "--alloc", "jemalloc"])
+        .expect_err("unknown allocator should fail");
 
-        assert!(options.debug);
-        assert_eq!(options.log_settings.level, LogLevel::Info);
-    }
+    assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+}
 
-    #[test]
-    fn memory_must_be_positive_gib() {
-        let err =
-            Cli::try_parse_from(["loftd", "--mem", "0"]).expect_err("zero memory should fail");
+#[test]
+fn allocator_is_inert_for_management_subcommands() {
+    let cli = Cli::try_parse_from(["loftd", "--alloc", "glibc", "images", "list"])
+        .expect("allocator stays parse-compatible for management commands");
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
-    }
-    #[test]
-    fn parses_images_sync_subcommand() {
-        let cli = Cli::try_parse_from(["loftd", "images", "sync", "ghcr.io/example/loftd:dev"])
-            .expect("images sync should parse");
-
-        match cli.into_action() {
-            crate::cli::CliAction::Images { command, .. } => assert_eq!(
-                command,
-                crate::cli::ImagesCommand::Sync {
-                    reference: "ghcr.io/example/loftd:dev".to_owned()
-                }
-            ),
-            other => panic!("expected images action, got {other:?}"),
+    match cli.into_action() {
+        crate::cli::CliAction::Images { command, .. } => {
+            assert_eq!(command, crate::cli::ImagesCommand::List)
         }
+        other => panic!("expected images action, got {other:?}"),
     }
+}
 
-    #[test]
-    fn parses_images_list_and_remove_subcommands() {
-        let list =
-            Cli::try_parse_from(["loftd", "images", "list"]).expect("images list should parse");
-        let remove = Cli::try_parse_from(["loftd", "images", "remove", "sha256-feedface"])
-            .expect("images remove should parse");
-        let dry_run =
-            Cli::try_parse_from(["loftd", "images", "remove", "--dry-run", "sha256-feedface"])
-                .expect("images remove dry-run should parse");
+#[test]
+fn parses_explicit_guest_command_after_delimiter() {
+    let cli = Cli::try_parse_from(["loftd", "--", "bash", "-lc", "echo ok"])
+        .expect("guest command should parse after delimiter");
+    let options = cli.into_runtime_options();
 
-        match list.into_action() {
-            crate::cli::CliAction::Images { command, .. } => {
-                assert_eq!(command, crate::cli::ImagesCommand::List);
+    assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
+}
+
+#[test]
+fn publish_preserves_guest_command() {
+    let cli = Cli::try_parse_from(["loftd", "-p", "8080:80", "--", "bash", "-lc", "echo ok"])
+        .expect("publish and command should parse");
+    let options = cli.into_runtime_options();
+
+    assert_eq!(options.publish, ["8080:80"]);
+    assert!(options.volumes.is_empty());
+    assert_eq!(options.guest_command, ["bash", "-lc", "echo ok"]);
+}
+
+#[test]
+fn parses_explicit_guest_command_after_options_and_delimiter() {
+    let cli = Cli::try_parse_from([
+        "loftd",
+        "--guest-init",
+        "/tmp/loftd-guest-init",
+        "--log-level",
+        "debug",
+        "--profile",
+        "--",
+        "sh",
+        "/workspace/probe.sh",
+    ])
+    .expect("guest command should parse after options and delimiter");
+    let options = cli.into_runtime_options();
+
+    assert_eq!(
+        options.guest_init.as_deref(),
+        Some("/tmp/loftd-guest-init".as_ref())
+    );
+    assert_eq!(options.log_settings.level, LogLevel::Debug);
+    assert!(options.profile);
+    assert_eq!(options.guest_command, ["sh", "/workspace/probe.sh"]);
+}
+
+#[test]
+fn parses_decode_launch_conf_subcommand() {
+    let cli = Cli::try_parse_from(["loftd", "decode-launch-conf", "/tmp/launch.conf"])
+        .expect("decode subcommand should parse");
+
+    assert_eq!(
+        cli.into_action(),
+        crate::cli::CliAction::DecodeLaunchConf {
+            path: "/tmp/launch.conf".into(),
+        }
+    );
+}
+
+#[test]
+fn decode_launch_conf_is_not_confused_with_guest_command() {
+    let cli = Cli::try_parse_from(["loftd", "--", "decode-launch-conf", "/tmp/launch.conf"])
+        .expect("delimited words should remain a guest command");
+    let options = cli.into_runtime_options();
+
+    assert_eq!(
+        options.guest_command,
+        ["decode-launch-conf", "/tmp/launch.conf"]
+    );
+}
+
+#[test]
+fn bare_words_are_not_guest_commands() {
+    let err = Cli::try_parse_from(["loftd", "microvm"])
+        .expect_err("guest commands must use an explicit delimiter");
+
+    assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+#[test]
+fn image_env_uses_loftd_prefix() {
+    let cli =
+        Cli::try_parse_from(["loftd", "--image", "example/loftd:dev"]).expect("image should parse");
+    let options = cli.into_runtime_options();
+
+    assert_eq!(options.image.as_deref(), Some("example/loftd:dev"));
+}
+
+#[test]
+fn pull_latest_records_canonical_refresh_intent() {
+    let cli = Cli::try_parse_from(["loftd", "--pull-latest"]).expect("pull flag should parse");
+    let options = cli.into_runtime_options();
+
+    assert!(options.pull_latest);
+    assert_eq!(options.image, None);
+}
+
+#[test]
+fn image_and_pull_latest_are_mutually_exclusive() {
+    let err = Cli::try_parse_from(["loftd", "--image", "example/loftd:dev", "--pull-latest"])
+        .expect_err("explicit image and canonical refresh should conflict");
+
+    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+}
+
+#[test]
+fn rootfs_backend_rejects_removed_values() {
+    let auto_err = Cli::try_parse_from(["loftd", "--rootfs-backend", "auto"])
+        .expect_err("auto backend should fail");
+    let reflink_err = Cli::try_parse_from(["loftd", "--rootfs-backend", "reflink"])
+        .expect_err("reflink backend should fail");
+
+    assert_eq!(auto_err.kind(), clap::error::ErrorKind::ValueValidation);
+    assert_eq!(reflink_err.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn container_store_backend_accepts_raw_disk_only() {
+    let raw = Cli::try_parse_from(["loftd", "--container-store", "raw-disk"])
+        .expect("raw disk container store should parse")
+        .into_runtime_options();
+
+    assert_eq!(
+        raw.container_store_backend,
+        Some(ContainerStoreBackend::RawDisk)
+    );
+}
+
+#[test]
+fn container_store_backend_rejects_invalid_values() {
+    let bind_err = Cli::try_parse_from(["loftd", "--container-store", "bind"])
+        .expect_err("bind container store should fail");
+    let err = Cli::try_parse_from(["loftd", "--container-store", "auto"])
+        .expect_err("unknown container store should fail");
+
+    assert_eq!(bind_err.kind(), clap::error::ErrorKind::ValueValidation);
+    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn legacy_storage_flag_is_not_accepted() {
+    let err = Cli::try_parse_from(["loftd", "--storage", "auto"])
+        .expect_err("storage flag should not exist");
+
+    assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+#[test]
+fn parses_explicit_log_level() {
+    let cli =
+        Cli::try_parse_from(["loftd", "--log-level", "trace"]).expect("log level should parse");
+    let options = cli.into_runtime_options();
+
+    assert_eq!(options.log_settings.level, LogLevel::Trace);
+}
+
+#[test]
+fn rejects_invalid_log_level() {
+    let err = Cli::try_parse_from(["loftd", "--log-level", "verbose"])
+        .expect_err("unknown log level should fail");
+
+    assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+}
+
+#[test]
+fn explicit_log_level_overrides_debug_compatibility() {
+    let cli = Cli::try_parse_from(["loftd", "--debug", "--log-level", "info"])
+        .expect("log level should parse");
+    let options = cli.into_runtime_options();
+
+    assert!(options.debug);
+    assert_eq!(options.log_settings.level, LogLevel::Info);
+}
+
+#[test]
+fn memory_must_be_positive_gib() {
+    let err = Cli::try_parse_from(["loftd", "--mem", "0"]).expect_err("zero memory should fail");
+
+    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+}
+#[test]
+fn parses_images_sync_subcommand() {
+    let cli = Cli::try_parse_from(["loftd", "images", "sync", "ghcr.io/example/loftd:dev"])
+        .expect("images sync should parse");
+
+    match cli.into_action() {
+        crate::cli::CliAction::Images { command, .. } => assert_eq!(
+            command,
+            crate::cli::ImagesCommand::Sync {
+                reference: "ghcr.io/example/loftd:dev".to_owned()
             }
-            other => panic!("expected images list action, got {other:?}"),
-        }
-        match remove.into_action() {
-            crate::cli::CliAction::Images { command, .. } => assert_eq!(
-                command,
-                crate::cli::ImagesCommand::Remove {
-                    dry_run: false,
-                    target: "sha256-feedface".to_owned()
-                }
-            ),
-            other => panic!("expected images remove action, got {other:?}"),
-        }
-        match dry_run.into_action() {
-            crate::cli::CliAction::Images { command, .. } => assert_eq!(
-                command,
-                crate::cli::ImagesCommand::Remove {
-                    dry_run: true,
-                    target: "sha256-feedface".to_owned()
-                }
-            ),
-            other => panic!("expected images remove dry-run action, got {other:?}"),
-        }
+        ),
+        other => panic!("expected images action, got {other:?}"),
     }
+}
 
-    #[test]
-    fn images_remove_help_mentions_dry_run() {
-        let err = Cli::try_parse_from(["loftd", "images", "remove", "--help"])
-            .expect_err("help should exit");
-        let rendered = err.to_string();
+#[test]
+fn parses_images_list_and_remove_subcommands() {
+    let list = Cli::try_parse_from(["loftd", "images", "list"]).expect("images list should parse");
+    let remove = Cli::try_parse_from(["loftd", "images", "remove", "sha256-feedface"])
+        .expect("images remove should parse");
+    let dry_run =
+        Cli::try_parse_from(["loftd", "images", "remove", "--dry-run", "sha256-feedface"])
+            .expect("images remove dry-run should parse");
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
-        assert!(rendered.contains("--dry-run"));
-        assert!(rendered.contains("fails when local Buildah removal would be skipped"));
-    }
-
-    #[test]
-    fn parses_task_control_ps_and_kill_subcommands() {
-        let ps = Cli::try_parse_from(["loftd", "ps"]).expect("ps should parse");
-        let kill =
-            Cli::try_parse_from(["loftd", "kill", "workspace-1-42"]).expect("kill should parse");
-
-        match ps.into_action() {
-            crate::cli::CliAction::Ps { .. } => {}
-            other => panic!("expected ps action, got {other:?}"),
+    match list.into_action() {
+        crate::cli::CliAction::Images { command, .. } => {
+            assert_eq!(command, crate::cli::ImagesCommand::List);
         }
-        match kill.into_action() {
-            crate::cli::CliAction::Kill { task_id, .. } => {
-                assert_eq!(task_id, "workspace-1-42");
+        other => panic!("expected images list action, got {other:?}"),
+    }
+    match remove.into_action() {
+        crate::cli::CliAction::Images { command, .. } => assert_eq!(
+            command,
+            crate::cli::ImagesCommand::Remove {
+                dry_run: false,
+                target: "sha256-feedface".to_owned()
             }
-            other => panic!("expected kill action, got {other:?}"),
-        }
+        ),
+        other => panic!("expected images remove action, got {other:?}"),
     }
-
-    #[test]
-    fn parses_container_store_resize_and_reset_subcommands() {
-        let resize = Cli::try_parse_from(["loftd", "container-store", "resize", "--size", "128G"])
-            .expect("container-store resize should parse");
-        let reset = Cli::try_parse_from(["loftd", "container-store", "reset", "--force"])
-            .expect("container-store reset should parse");
-
-        match resize.into_action() {
-            crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
-                command,
-                crate::cli::ContainerStoreCommand::Resize {
-                    size: "128G".to_owned()
-                }
-            ),
-            other => panic!("expected container-store resize action, got {other:?}"),
-        }
-        match reset.into_action() {
-            crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
-                command,
-                crate::cli::ContainerStoreCommand::Reset { force: true }
-            ),
-            other => panic!("expected container-store reset action, got {other:?}"),
-        }
+    match dry_run.into_action() {
+        crate::cli::CliAction::Images { command, .. } => assert_eq!(
+            command,
+            crate::cli::ImagesCommand::Remove {
+                dry_run: true,
+                target: "sha256-feedface".to_owned()
+            }
+        ),
+        other => panic!("expected images remove dry-run action, got {other:?}"),
     }
+}
 
-    #[test]
-    fn container_store_reset_accepts_missing_force_for_runtime_error() {
-        let reset = Cli::try_parse_from(["loftd", "container-store", "reset"])
-            .expect("runtime should produce force-specific error");
+#[test]
+fn images_remove_help_mentions_dry_run() {
+    let err =
+        Cli::try_parse_from(["loftd", "images", "remove", "--help"]).expect_err("help should exit");
+    let rendered = err.to_string();
 
-        match reset.into_action() {
-            crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
-                command,
-                crate::cli::ContainerStoreCommand::Reset { force: false }
-            ),
-            other => panic!("expected container-store reset action, got {other:?}"),
+    assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+    assert!(rendered.contains("--dry-run"));
+    assert!(rendered.contains("fails when local Buildah removal would be skipped"));
+}
+
+#[test]
+fn parses_task_control_ps_and_kill_subcommands() {
+    let ps = Cli::try_parse_from(["loftd", "ps"]).expect("ps should parse");
+    let kill = Cli::try_parse_from(["loftd", "kill", "workspace-1-42"]).expect("kill should parse");
+
+    match ps.into_action() {
+        crate::cli::CliAction::Ps { .. } => {}
+        other => panic!("expected ps action, got {other:?}"),
+    }
+    match kill.into_action() {
+        crate::cli::CliAction::Kill { task_id, .. } => {
+            assert_eq!(task_id, "workspace-1-42");
         }
+        other => panic!("expected kill action, got {other:?}"),
     }
+}
 
-    #[test]
-    fn images_words_after_delimiter_remain_guest_command() {
-        let cli = Cli::try_parse_from(["loftd", "--", "images", "list"])
-            .expect("delimited images words should parse as guest command");
-        let options = cli.into_runtime_options();
+#[test]
+fn parses_container_store_resize_and_reset_subcommands() {
+    let resize = Cli::try_parse_from(["loftd", "container-store", "resize", "--size", "128G"])
+        .expect("container-store resize should parse");
+    let reset = Cli::try_parse_from(["loftd", "container-store", "reset", "--force"])
+        .expect("container-store reset should parse");
 
-        assert_eq!(options.guest_command, ["images", "list"]);
+    match resize.into_action() {
+        crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
+            command,
+            crate::cli::ContainerStoreCommand::Resize {
+                size: "128G".to_owned()
+            }
+        ),
+        other => panic!("expected container-store resize action, got {other:?}"),
     }
+    match reset.into_action() {
+        crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
+            command,
+            crate::cli::ContainerStoreCommand::Reset { force: true }
+        ),
+        other => panic!("expected container-store reset action, got {other:?}"),
+    }
+}
+
+#[test]
+fn container_store_reset_accepts_missing_force_for_runtime_error() {
+    let reset = Cli::try_parse_from(["loftd", "container-store", "reset"])
+        .expect("runtime should produce force-specific error");
+
+    match reset.into_action() {
+        crate::cli::CliAction::ContainerStore { command, .. } => assert_eq!(
+            command,
+            crate::cli::ContainerStoreCommand::Reset { force: false }
+        ),
+        other => panic!("expected container-store reset action, got {other:?}"),
+    }
+}
+
+#[test]
+fn images_words_after_delimiter_remain_guest_command() {
+    let cli = Cli::try_parse_from(["loftd", "--", "images", "list"])
+        .expect("delimited images words should parse as guest command");
+    let options = cli.into_runtime_options();
+
+    assert_eq!(options.guest_command, ["images", "list"]);
 }

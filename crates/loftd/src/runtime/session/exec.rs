@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
-use loftd_exec_protocol::{Frame, PROTOCOL_VERSION, read_frame, write_frame};
+use loftd_exec_protocol::{Frame, PROTOCOL_VERSION, WaypipeAction, read_frame, write_frame};
 use std::io::{Read, Write};
 use std::mem::MaybeUninit;
 use std::os::fd::AsRawFd;
@@ -18,6 +18,7 @@ pub(crate) fn exec_in_task(
     app_dir: &Path,
     task_selector: &str,
     argv: Vec<String>,
+    waypipe: Option<Option<&Path>>,
     inspector: &impl ProcessInspector,
 ) -> Result<ExitCode> {
     if argv.is_empty() {
@@ -45,18 +46,44 @@ pub(crate) fn exec_in_task(
             exec.protocol_version
         );
     }
-    exec_on_socket(&exec.socket, argv)
+    let waypipe_action = match waypipe {
+        None => WaypipeAction::Disabled,
+        Some(None) => {
+            if record.waypipe.is_none() {
+                bail!(
+                    "loftd task '{}' does not support Waypipe; relaunch it with --waypipe",
+                    record.task_id
+                );
+            }
+            WaypipeAction::Reuse
+        }
+        Some(Some(target)) => {
+            let waypipe = record.waypipe.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "loftd task '{}' does not support Waypipe; relaunch it with --waypipe",
+                    record.task_id
+                )
+            })?;
+            let _activation = crate::runtime::session::waypipe_broker::update_target(
+                &waypipe.control_socket,
+                target,
+            )?;
+            return exec_on_socket(&exec.socket, argv, WaypipeAction::Replace);
+        }
+    };
+    exec_on_socket(&exec.socket, argv, waypipe_action)
 }
 
 pub(crate) fn exec_in_task_with_procfs(
     app_dir: &Path,
     task_selector: &str,
     argv: Vec<String>,
+    waypipe: Option<Option<&Path>>,
 ) -> Result<ExitCode> {
-    exec_in_task(app_dir, task_selector, argv, &ProcfsInspector)
+    exec_in_task(app_dir, task_selector, argv, waypipe, &ProcfsInspector)
 }
 
-fn exec_on_socket(socket: &Path, argv: Vec<String>) -> Result<ExitCode> {
+fn exec_on_socket(socket: &Path, argv: Vec<String>, waypipe: WaypipeAction) -> Result<ExitCode> {
     let mut stream = UnixStream::connect(socket).with_context(|| {
         format!(
             "failed to connect to loftd exec socket '{}'",
@@ -75,7 +102,7 @@ fn exec_on_socket(socket: &Path, argv: Vec<String>) -> Result<ExitCode> {
         Some(frame) => bail!("unexpected loftd exec handshake frame: {frame:?}"),
         None => bail!("loftd exec connection closed during handshake"),
     }
-    write_frame(&mut stream, &Frame::Start { argv })?;
+    write_frame(&mut stream, &Frame::Start { argv, waypipe })?;
 
     let signal_mask = BlockedExecSignals::block()?;
     let signal_fd = SignalFd::new(signal_mask.set())?;

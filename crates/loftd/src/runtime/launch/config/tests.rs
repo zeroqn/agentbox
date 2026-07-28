@@ -287,7 +287,7 @@ fn launch_config_round_trips_managed_session_contract() {
         exec: Some(ExecConfig {
             socket: Path::new("/state/task/exec.sock").to_path_buf(),
             guest_port: 50_428,
-            protocol_version: 1,
+            protocol_version: 2,
             socket_uid: 1000,
             socket_gid: 1000,
         }),
@@ -312,7 +312,7 @@ fn launch_config_round_trips_managed_session_contract() {
     assert_eq!(parsed.waypipe, config.waypipe);
     assert!(parsed.guest_config_env_contains("LOFTD_WAYPIPE_PORT", "50427"));
     assert!(parsed.guest_config_env_contains("LOFTD_EXEC_PORT", "50428"));
-    assert!(parsed.guest_config_env_contains("LOFTD_EXEC_PROTOCOL_VERSION", "1"));
+    assert!(parsed.guest_config_env_contains("LOFTD_EXEC_PROTOCOL_VERSION", "2"));
     assert!(parsed.guest_config_env_contains("LOFTD_SESSION_MANAGED", "1"));
     assert!(parsed.guest_config_env_contains("LOFTD_ATTACH_PORT", "50426"));
     assert!(parsed.guest_config_env_contains("LOFTD_ATTACH_PROTOCOL_VERSION", "1"));
