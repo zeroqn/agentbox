@@ -82,6 +82,23 @@ pub fn entrypoint() -> ExitCode {
                 }
             }
         }
+        CliAction::Exec {
+            task_id,
+            command,
+            log_settings,
+        } => {
+            if let Err(err) = logging::init_tracing(&log_settings) {
+                eprintln!("loftd: {err:#}");
+                return ExitCode::from(1);
+            }
+            match runtime::session::run_exec_command(task_id, command) {
+                Ok(code) => code,
+                Err(err) => {
+                    eprintln!("loftd: {err:#}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         CliAction::Ps { log_settings } => {
             if let Err(err) = logging::init_tracing(&log_settings) {
                 eprintln!("loftd: {err:#}");

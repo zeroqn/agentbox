@@ -38,6 +38,8 @@ pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
 pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
 pub(super) const GUEST_WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
+pub(super) const GUEST_EXEC_PORT_ENV: &str = "LOFTD_EXEC_PORT";
+pub(super) const GUEST_EXEC_PROTOCOL_VERSION_ENV: &str = "LOFTD_EXEC_PROTOCOL_VERSION";
 pub(super) const GUEST_IO_URING_ENV: &str = "LOFTD_IO_URING";
 pub(super) const GUEST_PERF_ENV: &str = "LOFTD_PERF";
 pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
@@ -247,6 +249,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) extra_env: Vec<(String, String)>,
     pub(crate) host_nix_overlay: Option<HostNixOverlay>,
     pub(crate) waypipe: Option<WaypipeConfig>,
+    pub(crate) exec: Option<ExecConfig>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,
 }
 
@@ -258,6 +261,15 @@ pub(crate) struct LaunchSpec<'a> {
 pub(crate) struct WaypipeConfig {
     pub(crate) socket: PathBuf,
     pub(crate) guest_port: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecConfig {
+    pub(crate) socket: PathBuf,
+    pub(crate) guest_port: u32,
+    pub(crate) protocol_version: u16,
+    pub(crate) socket_uid: u32,
+    pub(crate) socket_gid: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,6 +305,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) guest_config_env: Vec<(String, String)>,
     pub(crate) passt_fd: Option<i32>,
     pub(crate) waypipe: Option<WaypipeConfig>,
+    pub(crate) exec: Option<ExecConfig>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,
     pub(crate) seccomp: SeccompMode,
     pub(crate) landlock: LandlockMode,

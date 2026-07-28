@@ -7,6 +7,7 @@ use crate::guest_init::components::env::{
     NIX_REMOTE_URI,
 };
 use crate::guest_init::components::home::identity::{DevIdentity, validate_host_identity};
+use crate::guest_init::runtime::exec::ExecConfig;
 use crate::guest_init::runtime::session::{self, ManagedSessionConfig};
 use crate::guest_init::{command, process, profile};
 
@@ -23,21 +24,6 @@ const ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
 const ATTACH_PROFILE_ENV: &str = "LOFTD_ATTACH_PROFILE";
 const WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
-const SOFTWARE_RENDERER_ENV: &[(&str, &str)] = &[
-    ("LIBGL_ALWAYS_SOFTWARE", "1"),
-    (
-        "LIBGL_DRIVERS_PATH",
-        "/usr/lib/loftd-software-renderer/lib/dri",
-    ),
-    (
-        "__EGL_VENDOR_LIBRARY_FILENAMES",
-        "/usr/lib/loftd-software-renderer/share/glvnd/egl_vendor.d/50_mesa.json",
-    ),
-    (
-        "VK_DRIVER_FILES",
-        "/usr/lib/loftd-software-renderer/share/vulkan/icd.d/lvp_icd.x86_64.json",
-    ),
-];
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -107,6 +93,7 @@ struct EnterEnv {
     host_gid: Option<u32>,
     loftd: LoftdEnv,
     waypipe_port: Option<u32>,
+    exec: Option<ExecConfig>,
     managed_session: Option<ManagedSessionConfig>,
 }
 
@@ -226,8 +213,15 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
+    let _waypipe = env_contract
+        .waypipe_port
+        .map(|port| crate::guest_init::components::waypipe::start(port, &identity))
+        .transpose()?;
+    let _exec = env_contract
+        .exec
+        .map(|config| super::exec::start(config, identity.clone()))
+        .transpose()?;
     let drop_to_identity = should_drop_to_identity(process::is_root(), env_contract.enter_as_root);
-    let command = waypipe_command(command, env_contract.waypipe_port);
     if let Some(managed_session) = env_contract.managed_session {
         debug_breadcrumb("managed session starting");
         return session::run(&command, &identity, drop_to_identity, managed_session);
@@ -248,33 +242,27 @@ impl EnterEnv {
             host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
             waypipe_port: parse_optional_u32(env, WAYPIPE_PORT_ENV)?,
+            exec: exec_from_env(env)?,
             managed_session: managed_session_from_env(env)?,
         })
     }
 }
 
-fn waypipe_command(command: Vec<String>, port: Option<u32>) -> Vec<String> {
-    let Some(port) = port else {
-        return command;
-    };
-
-    let mut wrapped = vec!["/usr/bin/env".to_owned()];
-    wrapped.extend(
-        SOFTWARE_RENDERER_ENV
-            .iter()
-            .map(|(name, value)| format!("{name}={value}")),
-    );
-    wrapped.extend([
-        "waypipe".to_owned(),
-        "--no-gpu".to_owned(),
-        "--vsock".to_owned(),
-        "--socket".to_owned(),
-        port.to_string(),
-        "server".to_owned(),
-        "--".to_owned(),
-    ]);
-    wrapped.extend(command);
-    wrapped
+fn exec_from_env(env: &impl EnvSource) -> Result<Option<ExecConfig>> {
+    let port = parse_optional_u32(env, "LOFTD_EXEC_PORT")?;
+    let version = env.var("LOFTD_EXEC_PROTOCOL_VERSION");
+    match (port, version) {
+        (None, None) => Ok(None),
+        (Some(port), Some(version)) => Ok(Some(ExecConfig {
+            port,
+            protocol_version: version
+                .parse::<u16>()
+                .context("invalid numeric value in LOFTD_EXEC_PROTOCOL_VERSION")?,
+        })),
+        _ => Err(anyhow!(
+            "LOFTD_EXEC_PORT and LOFTD_EXEC_PROTOCOL_VERSION must be provided together"
+        )),
+    }
 }
 
 fn managed_session_from_env(env: &impl EnvSource) -> Result<Option<ManagedSessionConfig>> {
@@ -606,36 +594,34 @@ mod tests {
         assert_eq!(parsed.host_uid, None);
         assert_eq!(parsed.host_gid, None);
         assert_eq!(parsed.waypipe_port, None);
-        assert_eq!(
-            waypipe_command(vec!["bash".to_owned()], parsed.waypipe_port),
-            ["bash"]
-        );
+        assert_eq!(parsed.exec, None);
     }
 
     #[test]
-    fn waypipe_port_wraps_guest_command() {
+    fn waypipe_port_is_parsed_for_persistent_service() {
         let parsed = EnterEnv::from_env(&env(&[(WAYPIPE_PORT_ENV, "50427")]))
             .expect("waypipe env should parse");
 
         assert_eq!(parsed.waypipe_port, Some(50_427));
+    }
+
+    #[test]
+    fn exec_env_is_all_or_none() {
+        let parsed = EnterEnv::from_env(&env(&[
+            ("LOFTD_EXEC_PORT", "50428"),
+            ("LOFTD_EXEC_PROTOCOL_VERSION", "1"),
+        ]))
+        .expect("exec env should parse");
         assert_eq!(
-            waypipe_command(vec!["gui-application".to_owned()], parsed.waypipe_port),
-            [
-                "/usr/bin/env",
-                "LIBGL_ALWAYS_SOFTWARE=1",
-                "LIBGL_DRIVERS_PATH=/usr/lib/loftd-software-renderer/lib/dri",
-                "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/lib/loftd-software-renderer/share/glvnd/egl_vendor.d/50_mesa.json",
-                "VK_DRIVER_FILES=/usr/lib/loftd-software-renderer/share/vulkan/icd.d/lvp_icd.x86_64.json",
-                "waypipe",
-                "--no-gpu",
-                "--vsock",
-                "--socket",
-                "50427",
-                "server",
-                "--",
-                "gui-application",
-            ]
+            parsed.exec,
+            Some(ExecConfig {
+                port: 50_428,
+                protocol_version: 1,
+            })
         );
+
+        let err = EnterEnv::from_env(&env(&[("LOFTD_EXEC_PORT", "50428")])).unwrap_err();
+        assert!(format!("{err:#}").contains("must be provided together"));
     }
 
     #[test]

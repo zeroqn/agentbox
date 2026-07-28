@@ -871,12 +871,19 @@ Run/help:
 ./result/bin/loftd -- bash -lc 'echo ok'
 ./result/bin/loftd --workspace=/home/dev/foo --waypipe=/tmp/loftd-waypipe.sock -- gui-application
 ./result/bin/loftd ps
+./result/bin/loftd exec <task-id-or-handle-selector> -- bash -lc 'echo ok'
 ./result/bin/loftd attach <task-id-or-handle-selector>
 ./result/bin/loftd a <task-id-or-handle-selector>
 ./result/bin/loftd kill <task-id-or-handle-selector>
 ./result/bin/loftd container-store resize --size 128G
 ./result/bin/loftd container-store reset --force
 ```
+
+`loftd exec <task-id-or-handle-selector> -- COMMAND...` runs a non-PTY foreground
+command in an active task with separate stdin, stdout, and stderr streams. It
+uses the task's `/workspace` directory and returns the guest command's exit
+status. Tasks launched by older loftd versions do not have the exec transport;
+relaunch them with the current version before using `loftd exec`.
 
 Remote Waypipe launch:
 
@@ -894,10 +901,10 @@ ssh -R /tmp/loftd-waypipe.sock:"$XDG_RUNTIME_DIR/loftd-waypipe.sock" loftd-host
   -- gui-application
 ```
 
-loftd validates that the selected workspace is an absolute directory, the
-socket path is absolute and already exists as a Unix socket, and a guest command
-was provided. If `--workspace` is omitted, loftd uses the current working
-directory.
+loftd validates that the selected workspace is an absolute directory and the
+socket path is absolute and already exists as a Unix socket. The guest command
+is optional; when omitted, loftd starts the normal interactive fish login
+shell. If `--workspace` is omitted, loftd uses the current working directory.
 loftd does not start SSH or the workstation Waypipe client and does not create,
 unlink, or clean up the forwarded socket. The initial mode uses `--no-gpu` and
 is mutually exclusive with `--wayland` and `--gpu`. The loftd guest image

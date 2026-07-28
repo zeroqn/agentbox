@@ -194,6 +194,19 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             check_setup("krun_add_vsock_port2 Waypipe", rc)?;
             tracing::debug!(ctx_id, "krun_add_vsock_port2: Waypipe mapping registered");
         }
+        if let Some(exec) = &config.exec {
+            tracing::debug!(
+                ctx_id,
+                guest_port = exec.guest_port,
+                socket = %exec.socket.display(),
+                "krun_add_vsock_port2: exec begin"
+            );
+            let rc = self
+                .api
+                .add_vsock_port(ctx_id, exec.guest_port, &exec.socket, true)?;
+            check_setup("krun_add_vsock_port2 exec", rc)?;
+            tracing::debug!(ctx_id, "krun_add_vsock_port2: exec mapping registered");
+        }
         if let Some(managed) = &config.managed_session {
             tracing::debug!(
                 ctx_id,

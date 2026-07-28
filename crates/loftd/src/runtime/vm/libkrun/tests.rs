@@ -308,6 +308,7 @@ fn config() -> LaunchConfig {
         extra_env: Vec::new(),
         host_nix_overlay: None,
         waypipe: None,
+        exec: None,
         managed_session: None,
     })
     .expect("config should build")
@@ -315,6 +316,7 @@ fn config() -> LaunchConfig {
 
 fn waypipe_config(socket: &Path) -> LaunchConfig {
     LaunchConfig {
+        exec: None,
         waypipe: Some(WaypipeConfig {
             socket: socket.into(),
             guest_port: 50_427,
@@ -339,6 +341,7 @@ fn managed_config(attach_socket: &Path) -> LaunchConfig {
 
 fn waypipe_managed_config(waypipe_socket: &Path, attach_socket: &Path) -> LaunchConfig {
     LaunchConfig {
+        exec: None,
         waypipe: Some(WaypipeConfig {
             socket: waypipe_socket.into(),
             guest_port: 50_427,

@@ -156,9 +156,6 @@ fn resolve_waypipe(options: &RuntimeOptions) -> Result<Option<PathBuf>> {
     let Some(socket) = &options.waypipe else {
         return Ok(None);
     };
-    if options.guest_command.is_empty() {
-        anyhow::bail!("--waypipe requires a guest command");
-    }
     if !socket.is_absolute() {
         anyhow::bail!(
             "waypipe socket must be an absolute path: {}",
@@ -1039,36 +1036,43 @@ mod tests {
     }
 
     #[test]
-    fn waypipe_plan_rejects_invalid_socket_and_missing_command() {
+    #[test]
+    fn waypipe_plan_rejects_relative_socket() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let mut options = runtime_options();
+        options.waypipe = Some(PathBuf::from("relative.sock"));
+        options.guest_command = vec!["gui-application".to_owned()];
+
+        let err = LaunchPlan::from_env_values(
+            options,
+            dir.path().to_path_buf(),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect_err("relative waypipe socket should fail");
+
+        assert!(format!("{err:#}").contains("waypipe socket must be an absolute path"));
+    }
+
+    #[test]
+    fn commandless_waypipe_plan_is_accepted() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
         let socket = dir.path().join("waypipe.sock");
         let _listener = UnixListener::bind(&socket).expect("waypipe socket should exist");
+        let mut options = runtime_options();
+        options.waypipe = Some(socket.clone());
 
-        for (waypipe, command, expected) in [
-            (
-                PathBuf::from("relative.sock"),
-                vec!["gui-application".to_owned()],
-                "waypipe socket must be an absolute path",
-            ),
-            (
-                socket.clone(),
-                Vec::new(),
-                "--waypipe requires a guest command",
-            ),
-        ] {
-            let mut options = runtime_options();
-            options.waypipe = Some(waypipe);
-            options.guest_command = command;
-            let err = LaunchPlan::from_env_values(
-                options,
-                dir.path().to_path_buf(),
-                Some(dir.path().join("state").as_path()),
-                Some(dir.path().join("config").as_path()),
-                Some(dir.path().join("home").as_path()),
-            )
-            .expect_err("invalid waypipe plan should fail");
+        let plan = LaunchPlan::from_env_values(
+            options,
+            dir.path().to_path_buf(),
+            Some(dir.path().join("state").as_path()),
+            Some(dir.path().join("config").as_path()),
+            Some(dir.path().join("home").as_path()),
+        )
+        .expect("commandless waypipe plan should build");
 
-            assert!(format!("{err:#}").contains(expected));
-        }
+        assert!(plan.guest_command.is_empty());
+        assert_eq!(plan.waypipe_socket, Some(socket));
     }
 }

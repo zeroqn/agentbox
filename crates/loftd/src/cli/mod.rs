@@ -360,6 +360,21 @@ pub(crate) enum CliCommand {
     #[command(name = "ps", about = "List active loftd task VMs across workspaces")]
     Ps,
 
+    #[command(name = "exec", about = "Run a command in an active loftd task VM")]
+    Exec {
+        #[arg(value_name = "TASK")]
+        task_id: String,
+
+        #[arg(
+            value_name = "COMMAND",
+            required = true,
+            num_args = 1..,
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        command: Vec<String>,
+    },
+
     #[command(
         name = "attach",
         visible_alias = "a",
@@ -463,6 +478,11 @@ pub(crate) enum CliAction {
     Ps {
         log_settings: LogSettings,
     },
+    Exec {
+        task_id: String,
+        command: Vec<String>,
+        log_settings: LogSettings,
+    },
     Kill {
         task_id: String,
         log_settings: LogSettings,
@@ -491,6 +511,11 @@ impl Cli {
                     log_settings: LogSettings::from_process_env(self.log_level, self.debug),
                 },
                 CliCommand::Ps => CliAction::Ps {
+                    log_settings: LogSettings::from_process_env(self.log_level, self.debug),
+                },
+                CliCommand::Exec { task_id, command } => CliAction::Exec {
+                    task_id,
+                    command,
                     log_settings: LogSettings::from_process_env(self.log_level, self.debug),
                 },
                 CliCommand::Kill { task_id } => CliAction::Kill {
@@ -874,6 +899,38 @@ mod tests {
         assert!(matches!(
             alias.into_action(),
             crate::cli::CliAction::Attach { task_id, .. } if task_id == "workspace-123"
+        ));
+    }
+
+    #[test]
+    fn exec_requires_task_and_command() {
+        let err = Cli::try_parse_from(["loftd", "exec"])
+            .expect_err("exec without task and command should fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+
+        let err = Cli::try_parse_from(["loftd", "exec", "task-a"])
+            .expect_err("exec without command should fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn exec_parses_trailing_command_arguments() {
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "exec",
+            "task-a",
+            "--",
+            "printf",
+            "--format=%s",
+            "hello world",
+        ])
+        .expect("exec should parse");
+
+        assert!(matches!(
+            cli.into_action(),
+            crate::cli::CliAction::Exec { task_id, command, .. }
+                if task_id == "task-a"
+                    && command == ["printf", "--format=%s", "hello world"]
         ));
     }
 

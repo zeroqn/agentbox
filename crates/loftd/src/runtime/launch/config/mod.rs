@@ -11,10 +11,11 @@ pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
     AllocatorMode, BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG,
     CODEX_TARGET, DEFAULT_WAYPIPE_PORT, DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG,
-    DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET, DiskAttachment, GuestInitOverrideMount,
-    HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, ManagedSessionConfig,
-    NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET,
-    WORKSPACE_TAG, WORKSPACE_TARGET, WaypipeConfig, canonical_mount_target,
+    DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET, DiskAttachment, ExecConfig,
+    GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec,
+    ManagedSessionConfig, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
+    SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, WaypipeConfig,
+    canonical_mount_target,
 };
 
 #[cfg(test)]
@@ -72,6 +73,18 @@ impl LaunchConfig {
                 &waypipe.guest_port.to_string(),
             );
         }
+        if let Some(exec) = &spec.exec {
+            guest_env::insert_env(
+                &mut guest_config_env,
+                model::GUEST_EXEC_PORT_ENV,
+                &exec.guest_port.to_string(),
+            );
+            guest_env::insert_env(
+                &mut guest_config_env,
+                model::GUEST_EXEC_PROTOCOL_VERSION_ENV,
+                &exec.protocol_version.to_string(),
+            );
+        }
         if let Some(managed) = &spec.managed_session {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_SESSION_MANAGED_ENV, "1");
             guest_env::insert_env(
@@ -119,6 +132,7 @@ impl LaunchConfig {
             guest_config_env: guest_config_env.into_iter().collect(),
             passt_fd: None,
             waypipe: spec.waypipe,
+            exec: spec.exec,
             managed_session: spec.managed_session,
             seccomp: Default::default(),
             landlock: Default::default(),

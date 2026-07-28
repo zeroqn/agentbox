@@ -10,8 +10,16 @@ const RUNTIME_DIR_MODE: u32 = 0o700;
 pub(crate) const LINUX_UNIX_SOCKET_PATH_LIMIT: usize = 107;
 
 pub(crate) fn allocate(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
+    allocate_named(task_id, task_dir, "a")
+}
+
+pub(crate) fn allocate_exec(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
+    allocate_named(task_id, task_dir, "e")
+}
+
+fn allocate_named(task_id: &str, task_dir: &Path, prefix: &str) -> Result<PathBuf> {
     let uid = current_uid();
-    allocate_in_runtime_parent(Path::new("/tmp"), uid, task_id, task_dir)
+    allocate_in_runtime_parent(Path::new("/tmp"), uid, task_id, task_dir, prefix)
 }
 
 fn allocate_in_runtime_parent(
@@ -19,10 +27,14 @@ fn allocate_in_runtime_parent(
     uid: u32,
     task_id: &str,
     task_dir: &Path,
+    prefix: &str,
 ) -> Result<PathBuf> {
     let runtime_dir = runtime_parent.join(format!("loftd-{uid}"));
     ensure_owner_only_runtime_dir(&runtime_dir, uid)?;
-    let socket_path = runtime_dir.join(format!("a-{:016x}.sock", task_hash(task_id, task_dir)));
+    let socket_path = runtime_dir.join(format!(
+        "{prefix}-{:016x}.sock",
+        task_hash(task_id, task_dir)
+    ));
     validate_socket_path_budget(&socket_path)?;
     remove_stale_socket_at_exact_path(&socket_path)?;
     Ok(socket_path)
@@ -165,7 +177,7 @@ mod tests {
             .join("task-a");
 
         let socket =
-            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", &deep_task_dir)
+            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", &deep_task_dir, "a")
                 .expect("allocate socket path");
 
         assert_eq!(
@@ -190,9 +202,14 @@ mod tests {
         fs::create_dir(&target).unwrap();
         std::os::unix::fs::symlink(&target, &runtime_dir).unwrap();
 
-        let err =
-            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", Path::new("/task"))
-                .unwrap_err();
+        let err = allocate_in_runtime_parent(
+            temp.path(),
+            current_uid(),
+            "task-a",
+            Path::new("/task"),
+            "a",
+        )
+        .unwrap_err();
 
         assert!(format!("{err:#}").contains("must not be a symlink"));
     }
@@ -206,9 +223,14 @@ mod tests {
         )
         .unwrap();
 
-        let err =
-            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", Path::new("/task"))
-                .unwrap_err();
+        let err = allocate_in_runtime_parent(
+            temp.path(),
+            current_uid(),
+            "task-a",
+            Path::new("/task"),
+            "a",
+        )
+        .unwrap_err();
 
         assert!(format!("{err:#}").contains("is not a directory"));
     }
@@ -220,8 +242,14 @@ mod tests {
         fs::create_dir(&runtime_dir).unwrap();
         fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o755)).unwrap();
 
-        allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", Path::new("/task"))
-            .expect("owner-safe mode repair");
+        allocate_in_runtime_parent(
+            temp.path(),
+            current_uid(),
+            "task-a",
+            Path::new("/task"),
+            "a",
+        )
+        .expect("owner-safe mode repair");
 
         let mode = fs::symlink_metadata(runtime_dir)
             .unwrap()
@@ -236,17 +264,27 @@ mod tests {
         let temp = tempdir().unwrap();
         let runtime_dir = temp.path().join(format!("loftd-{}", current_uid()));
         fs::create_dir(&runtime_dir).unwrap();
-        let stale =
-            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", Path::new("/task"))
-                .expect("initial allocate");
+        let stale = allocate_in_runtime_parent(
+            temp.path(),
+            current_uid(),
+            "task-a",
+            Path::new("/task"),
+            "a",
+        )
+        .expect("initial allocate");
         let unrelated = runtime_dir.join("unrelated.sock");
         let stale_listener = UnixListener::bind(&stale).unwrap();
         let unrelated_listener = UnixListener::bind(&unrelated).unwrap();
 
         drop(stale_listener);
-        let allocated =
-            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", Path::new("/task"))
-                .expect("reallocate");
+        let allocated = allocate_in_runtime_parent(
+            temp.path(),
+            current_uid(),
+            "task-a",
+            Path::new("/task"),
+            "a",
+        )
+        .expect("reallocate");
 
         assert_eq!(allocated, stale);
         assert!(!stale.exists());
@@ -257,14 +295,24 @@ mod tests {
     #[test]
     fn rejects_existing_non_socket_leaf() {
         let temp = tempdir().unwrap();
-        let socket =
-            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", Path::new("/task"))
-                .expect("initial allocate");
+        let socket = allocate_in_runtime_parent(
+            temp.path(),
+            current_uid(),
+            "task-a",
+            Path::new("/task"),
+            "a",
+        )
+        .expect("initial allocate");
         fs::write(&socket, b"not a socket").unwrap();
 
-        let err =
-            allocate_in_runtime_parent(temp.path(), current_uid(), "task-a", Path::new("/task"))
-                .unwrap_err();
+        let err = allocate_in_runtime_parent(
+            temp.path(),
+            current_uid(),
+            "task-a",
+            Path::new("/task"),
+            "a",
+        )
+        .unwrap_err();
 
         assert!(format!("{err:#}").contains("already exists but is not a Unix socket"));
     }

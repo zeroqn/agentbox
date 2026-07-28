@@ -6,8 +6,10 @@ use crate::guest_init::cli::{
 
 pub(in crate::guest_init) mod as_dev;
 mod attach_profile;
+mod exec;
 pub(in crate::guest_init) mod loftd;
 mod session;
+mod vsock;
 
 pub(in crate::guest_init) fn run(command: GuestInitCommand) -> Result<()> {
     match command {

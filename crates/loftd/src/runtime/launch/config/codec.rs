@@ -13,8 +13,9 @@ use crate::runtime::vm::gpu::GpuMode;
 use super::components::{guest_init, mounts};
 use super::guest_env::guest_config_json;
 use super::model::{
-    BindMount, BindMountSourceKind, DiskAttachment, GuestInitOverrideMount, HostNixOverlay,
-    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, ManagedSessionConfig, NetworkMode, WaypipeConfig,
+    BindMount, BindMountSourceKind, DiskAttachment, ExecConfig, GuestInitOverrideMount,
+    HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, ManagedSessionConfig, NetworkMode,
+    WaypipeConfig,
 };
 
 impl LaunchConfig {
@@ -174,6 +175,17 @@ impl LaunchConfig {
                 "waypipe.guest_port",
                 &waypipe.guest_port.to_string(),
             );
+        }
+        if let Some(exec) = &self.exec {
+            push_field(&mut out, "exec.socket", &exec.socket.display().to_string());
+            push_field(&mut out, "exec.guest_port", &exec.guest_port.to_string());
+            push_field(
+                &mut out,
+                "exec.protocol_version",
+                &exec.protocol_version.to_string(),
+            );
+            push_field(&mut out, "exec.socket_uid", &exec.socket_uid.to_string());
+            push_field(&mut out, "exec.socket_gid", &exec.socket_gid.to_string());
         }
         if let Some(managed) = &self.managed_session {
             push_field(
@@ -363,6 +375,11 @@ impl LaunchConfig {
                     | "exec_path"
                     | "waypipe.socket"
                     | "waypipe.guest_port"
+                    | "exec.socket"
+                    | "exec.guest_port"
+                    | "exec.protocol_version"
+                    | "exec.socket_uid"
+                    | "exec.socket_gid"
                     | "managed_session.attach_socket"
                     | "managed_session.guest_port"
                     | "managed_session.protocol_version"
@@ -420,6 +437,7 @@ impl LaunchConfig {
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
         let host_nix_overlay = parse_host_nix_overlay(&fields)?;
         let waypipe = parse_waypipe(&fields)?;
+        let exec = parse_exec(&fields)?;
         let managed_session = parse_managed_session(&fields)?;
         let seccomp = SeccompMode::parse_config_value(
             fields.get("seccomp.mode").map(String::as_str),
@@ -458,6 +476,7 @@ impl LaunchConfig {
             guest_config_env: guest_config_env.into_values().collect(),
             passt_fd: None,
             waypipe,
+            exec,
             managed_session,
             seccomp,
             landlock,
@@ -478,6 +497,35 @@ fn parse_waypipe(fields: &BTreeMap<String, String>) -> Result<Option<WaypipeConf
         guest_port: required_field(fields, "waypipe.guest_port")?
             .parse::<u32>()
             .context("loftd launch config waypipe.guest_port is invalid")?,
+    }))
+}
+
+fn parse_exec(fields: &BTreeMap<String, String>) -> Result<Option<ExecConfig>> {
+    let keys = [
+        "exec.socket",
+        "exec.guest_port",
+        "exec.protocol_version",
+        "exec.socket_uid",
+        "exec.socket_gid",
+    ];
+    if !keys.iter().any(|key| fields.contains_key(*key)) {
+        return Ok(None);
+    }
+
+    Ok(Some(ExecConfig {
+        socket: PathBuf::from(required_field(fields, "exec.socket")?),
+        guest_port: required_field(fields, "exec.guest_port")?
+            .parse::<u32>()
+            .context("loftd launch config exec.guest_port is invalid")?,
+        protocol_version: required_field(fields, "exec.protocol_version")?
+            .parse::<u16>()
+            .context("loftd launch config exec.protocol_version is invalid")?,
+        socket_uid: required_field(fields, "exec.socket_uid")?
+            .parse::<u32>()
+            .context("loftd launch config exec.socket_uid is invalid")?,
+        socket_gid: required_field(fields, "exec.socket_gid")?
+            .parse::<u32>()
+            .context("loftd launch config exec.socket_gid is invalid")?,
     }))
 }
 

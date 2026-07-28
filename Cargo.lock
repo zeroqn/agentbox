@@ -254,6 +254,7 @@ dependencies = [
  "landlock",
  "libc",
  "loftd-attach-protocol",
+ "loftd-exec-protocol",
  "seccompiler",
  "serde",
  "serde_json",
@@ -270,6 +271,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "loftd-exec-protocol"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "loftd-guest-init"
 version = "0.6.0"
 dependencies = [
@@ -277,6 +285,7 @@ dependencies = [
  "clap",
  "libc",
  "loftd-attach-protocol",
+ "loftd-exec-protocol",
  "tempfile",
  "vt100",
 ]

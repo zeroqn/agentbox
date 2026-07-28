@@ -21,6 +21,13 @@ pub(crate) enum TaskControlCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecTaskSpec {
+    pub(crate) socket: PathBuf,
+    pub(crate) guest_port: u32,
+    pub(crate) protocol_version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManagedTaskSpec {
     pub(crate) attach_socket: PathBuf,
     pub(crate) guest_port: u32,
@@ -35,6 +42,7 @@ pub(crate) struct ActiveTaskSpec {
     pub(crate) task_dir: PathBuf,
     pub(crate) image_reference: String,
     pub(crate) image_digest: Option<String>,
+    pub(crate) exec: Option<ExecTaskSpec>,
     pub(crate) managed: Option<ManagedTaskSpec>,
 }
 
@@ -60,6 +68,13 @@ impl ProcessIdentity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecTaskRecord {
+    pub(crate) socket: PathBuf,
+    pub(crate) guest_port: u32,
+    pub(crate) protocol_version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManagedTaskRecord {
     pub(crate) attach_socket: PathBuf,
     pub(crate) guest_port: u32,
@@ -76,6 +91,7 @@ pub(crate) struct ActiveTaskRecord {
     pub(crate) image_digest: Option<String>,
     pub(crate) started_at_unix_secs: u64,
     pub(crate) process: ProcessIdentity,
+    pub(crate) exec: Option<ExecTaskRecord>,
     pub(crate) managed: Option<ManagedTaskRecord>,
 }
 
@@ -94,6 +110,11 @@ impl ActiveTaskRecord {
             image_digest: spec.image_digest,
             started_at_unix_secs,
             process,
+            exec: spec.exec.map(|exec| ExecTaskRecord {
+                socket: exec.socket,
+                guest_port: exec.guest_port,
+                protocol_version: exec.protocol_version,
+            }),
             managed: spec.managed.map(|managed| ManagedTaskRecord {
                 attach_socket: managed.attach_socket,
                 guest_port: managed.guest_port,
@@ -728,6 +749,19 @@ fn encode_record(record: &ActiveTaskRecord) -> String {
         &record.process.proc_start_time_ticks.to_string(),
     );
     push_kv(&mut output, "boot_id", &record.process.boot_id);
+    if let Some(exec) = &record.exec {
+        push_kv(
+            &mut output,
+            "exec_socket",
+            &exec.socket.display().to_string(),
+        );
+        push_kv(&mut output, "exec_guest_port", &exec.guest_port.to_string());
+        push_kv(
+            &mut output,
+            "exec_protocol_version",
+            &exec.protocol_version.to_string(),
+        );
+    }
     if let Some(managed) = &record.managed {
         push_kv(
             &mut output,
@@ -784,8 +818,23 @@ fn decode_record(contents: &str) -> Result<ActiveTaskRecord> {
             proc_start_time_ticks: parse_required(&map, "proc_start_time_ticks")?,
             boot_id: required(&map, "boot_id")?.to_owned(),
         },
+        exec: parse_exec_record(&map)?,
         managed: parse_managed_record(&map)?,
     })
+}
+
+fn parse_exec_record(
+    map: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<ExecTaskRecord>> {
+    let keys = ["exec_socket", "exec_guest_port", "exec_protocol_version"];
+    if !keys.iter().any(|key| map.contains_key(*key)) {
+        return Ok(None);
+    }
+    Ok(Some(ExecTaskRecord {
+        socket: PathBuf::from(required(map, "exec_socket")?),
+        guest_port: parse_required(map, "exec_guest_port")?,
+        protocol_version: parse_required(map, "exec_protocol_version")?,
+    }))
 }
 
 fn parse_managed_record(
@@ -1006,6 +1055,7 @@ mod tests {
                 proc_start_time_ticks: 456,
                 boot_id: "boot".to_owned(),
             },
+            exec: None,
             managed: None,
         }
     }

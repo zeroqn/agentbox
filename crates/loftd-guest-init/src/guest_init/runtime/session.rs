@@ -16,6 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::guest_init::runtime::attach_profile::{self, GuestAttachProfiler};
+use crate::guest_init::runtime::vsock::VsockListener;
 
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::process;
@@ -551,7 +552,7 @@ fn run_event_loop(
         }
         let mut fds = [
             libc::pollfd {
-                fd: listener.fd,
+                fd: listener.as_raw_fd(),
                 events: libc::POLLIN,
                 revents: 0,
             },
@@ -740,7 +741,7 @@ fn serve_attached_client(
                 revents: 0,
             },
             libc::pollfd {
-                fd: listener.fd,
+                fd: listener.as_raw_fd(),
                 events: libc::POLLIN,
                 revents: 0,
             },
@@ -1224,58 +1225,6 @@ fn child_main_result(
         process::drop_to_identity_and_exec(identity, command)
     } else {
         process::exec_command(command)
-    }
-}
-
-struct VsockListener {
-    fd: RawFd,
-}
-
-impl VsockListener {
-    fn bind(port: u32) -> Result<Self> {
-        let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM, 0) };
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to create AF_VSOCK socket");
-        }
-        let listener = Self { fd };
-        let addr = libc::sockaddr_vm {
-            svm_family: libc::AF_VSOCK as libc::sa_family_t,
-            svm_reserved1: 0,
-            svm_port: port,
-            svm_cid: libc::VMADDR_CID_ANY,
-            svm_zero: [0; 4],
-        };
-        let rc = unsafe {
-            libc::bind(
-                listener.fd,
-                (&addr as *const libc::sockaddr_vm).cast::<libc::sockaddr>(),
-                std::mem::size_of::<libc::sockaddr_vm>() as libc::socklen_t,
-            )
-        };
-        if rc != 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to bind AF_VSOCK listener");
-        }
-        if unsafe { libc::listen(listener.fd, 1) } != 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to listen on AF_VSOCK socket");
-        }
-        Ok(listener)
-    }
-
-    fn accept(&self) -> Result<File> {
-        let fd = unsafe { libc::accept(self.fd, std::ptr::null_mut(), std::ptr::null_mut()) };
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error()).context("failed to accept attach client");
-        }
-        Ok(unsafe { File::from_raw_fd(fd) })
-    }
-}
-
-impl Drop for VsockListener {
-    fn drop(&mut self) {
-        let _ = unsafe { libc::close(self.fd) };
     }
 }
 

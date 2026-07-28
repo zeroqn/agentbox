@@ -798,6 +798,7 @@ mod tests {
             guest_config_env: Vec::new(),
             passt_fd: None,
             waypipe: None,
+            exec: None,
             managed_session: None,
             seccomp: SeccompMode::Enforce {
                 policy_path: Path::new("/policy.json").to_path_buf(),

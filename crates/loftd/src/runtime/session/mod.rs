@@ -11,6 +11,7 @@ use crate::task_rootfs::TaskRootfsBackend;
 
 pub(crate) mod attach;
 mod attach_profile;
+pub(crate) mod exec;
 mod managed_attach_socket;
 pub(crate) mod nix_overlay;
 mod profile;
@@ -22,7 +23,8 @@ mod terminal_env;
 
 use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{
-    self, DEFAULT_WAYPIPE_PORT, LaunchConfig, LaunchSpec, ManagedSessionConfig, WaypipeConfig,
+    self, DEFAULT_WAYPIPE_PORT, ExecConfig, LaunchConfig, LaunchSpec, ManagedSessionConfig,
+    WaypipeConfig,
 };
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
 use attach::AttachInputPolicy;
@@ -32,6 +34,7 @@ use loftd_attach_protocol::{
         prepare_terminal_trace_file_from_process_env, terminal_trace_env_pair_from_process_env,
     },
 };
+use loftd_exec_protocol::{DEFAULT_EXEC_PORT, PROTOCOL_VERSION as EXEC_PROTOCOL_VERSION};
 use profile::LoftdHostProfiler;
 use rootfs::task::{HostBtrfsRootfsCommands, TaskRootfsLease, TaskRootfsManager};
 use supervisor::{HostSupervisor, Supervisor};
@@ -76,6 +79,24 @@ pub(crate) fn run_task_control_command(command: TaskControlCommand) -> Result<St
         config.state_location_override(),
     )?;
     task_control::run_task_control_command(command, state_layout.app_dir())
+}
+
+pub(crate) fn run_exec_command(task_id: String, command: Vec<String>) -> Result<ExitCode> {
+    let cwd = env::current_dir()?
+        .canonicalize()
+        .context("failed to canonicalize current directory for loftd exec command")?;
+    let xdg_state_home = env::var_os("XDG_STATE_HOME").map(PathBuf::from);
+    let xdg_config_home = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    let home_dir = env::var_os("HOME").map(PathBuf::from);
+    let config =
+        crate::config::state::read_config(xdg_config_home.as_deref(), home_dir.as_deref())?;
+    let state_layout = crate::state::resolve_state_layout_from_parts(
+        &cwd,
+        xdg_state_home.as_deref(),
+        home_dir.as_deref(),
+        config.state_location_override(),
+    )?;
+    exec::exec_in_task_with_procfs(state_layout.app_dir(), &task_id, command)
 }
 
 pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -> Result<ExitCode> {
@@ -196,6 +217,18 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                             lease.handle().task_dir(),
                         )
                         .context("failed to allocate loftd managed attach socket")?;
+                        let exec_socket = managed_attach_socket::allocate_exec(
+                            lease.handle().task_id(),
+                            lease.handle().task_dir(),
+                        )
+                        .context("failed to allocate loftd exec socket")?;
+                        let exec = ExecConfig {
+                            socket: exec_socket,
+                            guest_port: DEFAULT_EXEC_PORT,
+                            protocol_version: EXEC_PROTOCOL_VERSION,
+                            socket_uid: current_uid(),
+                            socket_gid: current_gid(),
+                        };
                         let managed_session = ManagedSessionConfig {
                             attach_socket,
                             guest_port: DEFAULT_ATTACH_PORT,
@@ -253,6 +286,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                     socket,
                                     guest_port: DEFAULT_WAYPIPE_PORT,
                                 }),
+                                exec: Some(exec.clone()),
                                 managed_session: Some(managed_session.clone()),
                             })
                         }) {
@@ -281,6 +315,11 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                         .selected_image_reference()
                                         .to_owned(),
                                     image_digest: lease.handle().image_digest().map(str::to_owned),
+                                    exec: Some(task_control::ExecTaskSpec {
+                                        socket: exec.socket,
+                                        guest_port: exec.guest_port,
+                                        protocol_version: exec.protocol_version,
+                                    }),
                                     managed: Some(task_control::ManagedTaskSpec {
                                         attach_socket: managed_session.attach_socket.clone(),
                                         guest_port: managed_session.guest_port,
