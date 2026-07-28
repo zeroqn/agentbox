@@ -303,7 +303,6 @@ let
     pkgs.rustc
     pkgs.rustfmt
     pkgs.sccache
-    pkgs.rustPlatform.rustLibSrc
   ];
 
   muslBin = pkgs.lib.getBin pkgs.musl;
@@ -495,6 +494,7 @@ let
   imageContents =
     imagePackages
     ++ [
+      pkgs.rustPlatform.rustLibSrc
       usrBinEnvCompat
       binInterpreterCompat
       fishConfig
