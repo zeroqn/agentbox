@@ -81,11 +81,11 @@ in
   libkrunfwRelease = {
     owner = "zeroqn";
     repo = "libkrunfw";
-    tag = "agentbox-7c5b4e1fad84";
+    tag = "agentbox-529642181201";
     systems = {
       x86_64-linux = {
         asset = "libkrunfw-x86_64-kvm-lto.tgz";
-        hash = "sha256-CpVsprAoEghhbU/2ECeFXpOnKX3CHNSFatedALDj/iI=";
+        hash = "sha256-rk3APfqyUU7qFGjqVMMsxkkcvvLOXKDjZ1hyeBHMiBQ=";
       };
       aarch64-linux = {
         asset = "libkrunfw-aarch64.tgz";
@@ -118,11 +118,11 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-3cf19afed03c";
+    tag = "sha-9b39168379fa";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-tp0fZ5v48/dMqjE/bB+MTK6yDEhszEK2f6O9DINcVc4=";
+        hash = "sha256-IHBYnZji4QE/8p+XfP01FiLY8hcvbahDlb+5XgP25D4=";
       };
     };
   };
