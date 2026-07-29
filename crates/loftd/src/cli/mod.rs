@@ -838,10 +838,10 @@ mod tests {
     use clap::Parser;
     use std::path::PathBuf;
 
-    use crate::cli::{Cli, ContainerStoreBackend, PtyMode, PtyOptions, VolumeSpec};
+    use crate::cli::{Cli, PtyMode, PtyOptions};
     use crate::logging::LogLevel;
     use crate::runtime::landlock::LandlockMode;
-    use crate::runtime::launch::config::{AllocatorMode, NetworkMode};
+    use crate::runtime::launch::config::NetworkMode;
     use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
     use crate::task_rootfs::TaskRootfsBackend;
 

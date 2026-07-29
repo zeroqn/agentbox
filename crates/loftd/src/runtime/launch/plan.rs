@@ -1060,7 +1060,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn waypipe_plan_rejects_relative_socket() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
         let mut options = runtime_options();
