@@ -18,6 +18,7 @@ pub(in crate::guest_init) struct ShellEnvironment {
 pub(in crate::guest_init) fn derive(
     identity: &DevIdentity,
     containers_storage: bool,
+    pulse_server: Option<&str>,
 ) -> ShellEnvironment {
     let home = identity.home.display().to_string();
     let tmpdir = identity.home.join(".cache/tmp");
@@ -47,6 +48,9 @@ pub(in crate::guest_init) fn derive(
     if containers_storage {
         let path = env::var("PATH").unwrap_or_default();
         vars.push(("PATH".to_owned(), format!("{WRAPPER_BIN_DIR}:{path}")));
+    }
+    if let Some(pulse_server) = pulse_server {
+        vars.push(("PULSE_SERVER".to_owned(), pulse_server.to_owned()));
     }
     append_utf8_locale_defaults(&mut vars, |key| env::var_os(key));
     ShellEnvironment {

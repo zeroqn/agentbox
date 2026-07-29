@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[test]
 fn internal_runtime_derives_parent_shell_environment_before_podman_prep() {
     let identity = DevIdentity::new(1234, 1235, PathBuf::from("/nix/store/fish/bin/fish"));
-    let shell_env = derive(&identity, true);
+    let shell_env = derive(&identity, true, None);
     assert!(
         shell_env
             .vars
@@ -43,7 +43,7 @@ fn internal_runtime_derives_parent_shell_environment_before_podman_prep() {
 #[test]
 fn internal_shell_environment_omits_docker_host_without_container_storage() {
     let identity = DevIdentity::new(1234, 1235, PathBuf::from("/nix/store/fish/bin/fish"));
-    let shell_env = derive(&identity, false);
+    let shell_env = derive(&identity, false, None);
 
     assert!(!shell_env.vars.iter().any(|(key, _)| key == "DOCKER_HOST"));
     assert!(
@@ -52,6 +52,26 @@ fn internal_shell_environment_omits_docker_host_without_container_storage() {
             .iter()
             .any(|(key, _)| key == "XDG_RUNTIME_DIR")
     );
+}
+
+#[test]
+fn internal_shell_environment_exports_pulse_server_when_configured() {
+    let identity = DevIdentity::new(1234, 1235, PathBuf::from("/nix/store/fish/bin/fish"));
+    let shell_env = derive(&identity, false, Some("tcp:192.0.2.10:4713"));
+
+    assert!(
+        shell_env
+            .vars
+            .contains(&("PULSE_SERVER".to_owned(), "tcp:192.0.2.10:4713".to_owned()))
+    );
+}
+
+#[test]
+fn internal_shell_environment_omits_pulse_server_without_configuration() {
+    let identity = DevIdentity::new(1234, 1235, PathBuf::from("/nix/store/fish/bin/fish"));
+    let shell_env = derive(&identity, false, None);
+
+    assert!(!shell_env.vars.iter().any(|(key, _)| key == "PULSE_SERVER"));
 }
 
 #[test]

@@ -71,6 +71,10 @@ managed sidecar.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
   default passt and opt-in `--tsi` mode; included in the Nix `.#loftd` helper dir,
   `.#loftd-prebuilt`, and `nix develop` environments.
+- Optional `loftd --pulse=tcp:IP:PORT` audio requires a host Pulse-compatible TCP
+  listener, typically provided by `pipewire-pulse`. Loftd exports the endpoint to
+  guest PulseAudio-compatible clients but does not configure or start the host
+  service.
 - `loftd --wayland` enables guest Wayland passthrough through
   `wl-cross-domain-proxy` and libkrun virtio-gpu DRM native contexts. The loftd
   image includes the guest proxy binary and guest-init exports
@@ -871,6 +875,8 @@ Run/help:
 ./result/bin/loftd --seccomp=enforce:loftd-seccomp.updated.json -- bash -lc 'echo ok'
 ./result/bin/loftd --io-uring -- bash -lc 'echo ok'
 ./result/bin/loftd --tsi -- bash -lc 'echo ok'
+./result/bin/loftd --tsi --pulse=tcp:127.0.0.1:4713 -- bash -lc 'printf "%s\n" "$PULSE_SERVER"'
+./result/bin/loftd --pulse=tcp:192.0.2.10:4713 -- paplay sample.wav
 ./result/bin/loftd --profile -- bash -lc 'echo ok'
 ./result/bin/loftd --guest-init ./result-musl/bin/loftd-guest-init -- bash -lc 'echo ok'
 ./result/bin/loftd -- bash -lc 'echo ok'
@@ -892,6 +898,36 @@ command in an active task with separate stdin, stdout, and stderr streams. It
 uses the task's `/workspace` directory and returns the guest command's exit
 status. Tasks launched by older loftd versions do not have the exec transport;
 relaunch them with the current version before using `loftd exec`.
+
+Pulse TCP audio:
+
+```ini
+# ~/.config/pipewire/pipewire-pulse.conf.d/loftd-tcp.conf
+pulse.properties = {
+    server.address = [
+        "unix:native"
+        "tcp:127.0.0.1:4713"
+    ]
+}
+```
+
+Restart the host `pipewire-pulse` user service after adding the drop-in, then
+launch a new task with `--pulse=tcp:IP:PORT`. Loftd accepts IPv4 and bracketed
+IPv6 socket addresses, uses the address literally, and exports the canonical
+value as `PULSE_SERVER` for PulseAudio-compatible guest applications. It does
+not start guest `pipewire` or `pipewire-pulse`, create a guest-local Pulse
+socket, proxy native PipeWire `pipewire-0`, forward a Pulse cookie, or test the
+connection before launch. `loftd exec` inherits the endpoint selected when the
+task was launched and cannot change it.
+
+With `--tsi`, a host-loopback listener such as `tcp:127.0.0.1:4713` can be used
+through the existing TSI host network context. With default passt networking,
+the listener must bind an address reachable from the guest and the same address
+must be supplied to `--pulse`; loftd does not rewrite loopback or discover that
+address. Host `pipewire-pulse` configuration owns authorization and network
+exposure. A permitted client may gain playback, capture, stream inspection, or
+server-control access, so restrict the listener with host ACL or anonymous-access
+policy and firewall/network isolation appropriate to the chosen bind address.
 
 Remote Waypipe launch:
 

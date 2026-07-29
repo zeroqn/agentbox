@@ -12,7 +12,8 @@ use crate::runtime::host_tools;
 use crate::runtime::landlock::LandlockMode;
 use crate::runtime::launch::components::mounts;
 use crate::runtime::launch::config::{
-    AllocatorMode, BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, canonical_mount_target,
+    AllocatorMode, BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, PulseServer,
+    canonical_mount_target,
 };
 use crate::runtime::seccomp::{self, AuditMode, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
@@ -39,6 +40,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) guest_init: Option<PathBuf>,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) pulse: Option<PulseServer>,
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
     pub(crate) waypipe: bool,
@@ -131,6 +133,7 @@ impl LaunchPlan {
             guest_init: options.guest_init,
             mem_gib: options.mem_gib,
             network_mode: options.network_mode,
+            pulse: options.pulse,
             gpu_mode: options.gpu_mode,
             wayland: options.wayland,
             waypipe,
@@ -354,6 +357,7 @@ mod tests {
             preserve_debug: false,
             mem_gib: None,
             network_mode: NetworkMode::Tsi,
+            pulse: None,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             wayland: false,
             workspace: None,
@@ -796,6 +800,11 @@ mod tests {
         let mut options = runtime_options();
         options.guest_init = Some(Path::new("./loftd-guest-init").to_path_buf());
         options.mem_gib = Some(8);
+        options.pulse = Some(
+            "tcp:[2001:db8::10]:4713"
+                .parse()
+                .expect("Pulse endpoint should parse"),
+        );
         options.guest_command = vec!["bash".to_owned(), "-lc".to_owned(), "echo ok".to_owned()];
         options.debug = true;
         options.log_settings = LogSettings::resolve(None, true, None);
@@ -819,6 +828,12 @@ mod tests {
         );
         assert_eq!(plan.mem_gib, Some(8));
         assert_eq!(plan.network_mode, NetworkMode::Tsi);
+        assert_eq!(
+            plan.pulse
+                .expect("Pulse endpoint should be preserved")
+                .as_env_value(),
+            "tcp:[2001:db8::10]:4713"
+        );
         assert_eq!(plan.guest_command, ["bash", "-lc", "echo ok"]);
         assert!(plan.debug);
         assert!(plan.profile);

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::landlock::LandlockMode;
-use crate::runtime::launch::config::{AllocatorMode, NetworkMode};
+use crate::runtime::launch::config::{AllocatorMode, NetworkMode, PulseServer};
 use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
 use crate::task_rootfs::TaskRootfsBackend;
@@ -257,6 +257,13 @@ pub(crate) struct Cli {
         help = "Use libkrun virtio-vsock/TSI proxy networking instead of the default virtio-net/passt mode"
     )]
     tsi: bool,
+
+    #[arg(
+        long = "pulse",
+        value_name = "tcp:IP:PORT",
+        help = "Direct guest PulseAudio-compatible clients to a host Pulse TCP server"
+    )]
+    pulse: Option<PulseServer>,
 
     #[arg(
         long = "gpu",
@@ -576,6 +583,7 @@ impl Cli {
             } else {
                 NetworkMode::Passt
             },
+            pulse: self.pulse,
             gpu_mode: if self.wayland {
                 GpuMode::Drm
             } else {
@@ -621,6 +629,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) preserve_debug: bool,
     pub(crate) mem_gib: Option<u32>,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) pulse: Option<PulseServer>,
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
     pub(crate) workspace: Option<PathBuf>,
@@ -1454,6 +1463,62 @@ mod tests {
         let options = cli.into_runtime_options();
 
         assert_eq!(options.network_mode, NetworkMode::Tsi);
+    }
+
+    #[test]
+    fn pulse_server_accepts_ip_socket_addresses_and_canonicalizes_them() {
+        let ipv4 = Cli::try_parse_from(["loftd", "--pulse=tcp:192.0.2.10:4713"])
+            .expect("IPv4 Pulse endpoint should parse")
+            .into_runtime_options();
+        let ipv6 = Cli::try_parse_from(["loftd", "--pulse=tcp:[2001:db8::10]:4713"])
+            .expect("IPv6 Pulse endpoint should parse")
+            .into_runtime_options();
+
+        assert_eq!(
+            ipv4.pulse
+                .expect("Pulse endpoint should be present")
+                .as_env_value(),
+            "tcp:192.0.2.10:4713"
+        );
+        assert_eq!(
+            ipv6.pulse
+                .expect("Pulse endpoint should be present")
+                .as_env_value(),
+            "tcp:[2001:db8::10]:4713"
+        );
+    }
+
+    #[test]
+    fn pulse_server_coexists_with_tsi() {
+        let options = Cli::try_parse_from(["loftd", "--tsi", "--pulse=tcp:127.0.0.1:4713"])
+            .expect("Pulse endpoint should coexist with TSI")
+            .into_runtime_options();
+
+        assert_eq!(options.network_mode, NetworkMode::Tsi);
+        assert_eq!(
+            options
+                .pulse
+                .expect("Pulse endpoint should be present")
+                .as_env_value(),
+            "tcp:127.0.0.1:4713"
+        );
+    }
+
+    #[test]
+    fn pulse_server_rejects_invalid_endpoints() {
+        for value in [
+            "udp:192.0.2.10:4713",
+            "tcp:pulse.example.test:4713",
+            "tcp:192.0.2.10",
+            "tcp:192.0.2.10:0",
+            "tcp:2001:db8::10:4713",
+            "/run/user/1000/pulse/native",
+        ] {
+            let error = Cli::try_parse_from(["loftd", &format!("--pulse={value}")])
+                .expect_err("invalid Pulse endpoint should fail");
+
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        }
     }
 
     #[test]

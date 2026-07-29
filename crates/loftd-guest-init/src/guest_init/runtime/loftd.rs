@@ -24,6 +24,7 @@ const ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
 const ATTACH_PROFILE_ENV: &str = "LOFTD_ATTACH_PROFILE";
 const WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
+const PULSE_SERVER_ENV: &str = "LOFTD_PULSE_SERVER";
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -92,6 +93,7 @@ struct EnterEnv {
     host_uid: Option<u32>,
     host_gid: Option<u32>,
     loftd: LoftdEnv,
+    pulse_server: Option<String>,
     waypipe_port: Option<u32>,
     exec: Option<ExecConfig>,
     managed_session: Option<ManagedSessionConfig>,
@@ -145,6 +147,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
         crate::guest_init::components::shell::env::derive(
             &identity,
             env_contract.loftd.containers_storage,
+            env_contract.pulse_server.as_deref(),
         )
     });
     profiler.measure("export-shell-env", || {
@@ -241,11 +244,28 @@ impl EnterEnv {
             host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
             host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
+            pulse_server: parse_pulse_server(env)?,
             waypipe_port: parse_optional_u32(env, WAYPIPE_PORT_ENV)?,
             exec: exec_from_env(env)?,
             managed_session: managed_session_from_env(env)?,
         })
     }
+}
+
+fn parse_pulse_server(env: &impl EnvSource) -> Result<Option<String>> {
+    let Some(value) = env.var(PULSE_SERVER_ENV) else {
+        return Ok(None);
+    };
+    let address = value
+        .strip_prefix("tcp:")
+        .ok_or_else(|| anyhow!("{PULSE_SERVER_ENV} must use tcp:IP:PORT"))?
+        .parse::<std::net::SocketAddr>()
+        .with_context(|| format!("{PULSE_SERVER_ENV} must contain a valid IP address and port"))?;
+    if address.port() == 0 {
+        bail!("{PULSE_SERVER_ENV} port must be nonzero");
+    }
+
+    Ok(Some(format!("tcp:{address}")))
 }
 
 fn exec_from_env(env: &impl EnvSource) -> Result<Option<ExecConfig>> {
@@ -593,8 +613,35 @@ mod tests {
         assert!(!parsed.enter_as_root);
         assert_eq!(parsed.host_uid, None);
         assert_eq!(parsed.host_gid, None);
+        assert_eq!(parsed.pulse_server, None);
         assert_eq!(parsed.waypipe_port, None);
         assert_eq!(parsed.exec, None);
+    }
+
+    #[test]
+    fn pulse_server_is_validated_and_canonicalized() {
+        let parsed = EnterEnv::from_env(&env(&[(PULSE_SERVER_ENV, "tcp:[2001:db8::10]:4713")]))
+            .expect("Pulse endpoint should parse");
+
+        assert_eq!(
+            parsed.pulse_server.as_deref(),
+            Some("tcp:[2001:db8::10]:4713")
+        );
+    }
+
+    #[test]
+    fn pulse_server_rejects_malformed_values() {
+        for value in [
+            "udp:192.0.2.10:4713",
+            "tcp:pulse.example.test:4713",
+            "tcp:192.0.2.10:0",
+            "tcp:2001:db8::10:4713",
+        ] {
+            let error = EnterEnv::from_env(&env(&[(PULSE_SERVER_ENV, value)]))
+                .expect_err("malformed Pulse endpoint should fail");
+
+            assert!(format!("{error:#}").contains(PULSE_SERVER_ENV));
+        }
     }
 
     #[test]

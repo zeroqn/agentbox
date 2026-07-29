@@ -282,6 +282,7 @@ fn config() -> LaunchConfig {
         mem_gib: Some(4),
         log_level: LogLevel::Debug,
         network_mode: NetworkMode::Tsi,
+        pulse: None,
         gpu_mode: GpuMode::Off,
         wayland: false,
         io_uring: false,

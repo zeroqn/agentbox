@@ -1,5 +1,7 @@
 use anyhow::Result;
+use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 
 use crate::logging::LogLevel;
 use crate::runtime::landlock::LandlockMode;
@@ -38,6 +40,7 @@ pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
 pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
 pub(super) const GUEST_WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
+pub(super) const GUEST_PULSE_SERVER_ENV: &str = "LOFTD_PULSE_SERVER";
 pub(super) const GUEST_EXEC_PORT_ENV: &str = "LOFTD_EXEC_PORT";
 pub(super) const GUEST_EXEC_PROTOCOL_VERSION_ENV: &str = "LOFTD_EXEC_PROTOCOL_VERSION";
 pub(super) const GUEST_IO_URING_ENV: &str = "LOFTD_IO_URING";
@@ -222,6 +225,34 @@ impl NetworkMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PulseServer {
+    address: SocketAddr,
+}
+
+impl PulseServer {
+    pub(crate) fn as_env_value(self) -> String {
+        format!("tcp:{}", self.address)
+    }
+}
+
+impl FromStr for PulseServer {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let address = value
+            .strip_prefix("tcp:")
+            .ok_or_else(|| "pulse server must use tcp:IP:PORT".to_owned())?
+            .parse::<SocketAddr>()
+            .map_err(|_| "pulse server must use tcp:IP:PORT with a valid IP address".to_owned())?;
+        if address.port() == 0 {
+            return Err("pulse server port must be nonzero".to_owned());
+        }
+
+        Ok(Self { address })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LaunchSpec<'a> {
     pub(crate) task_rootfs: &'a Path,
@@ -234,6 +265,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) mem_gib: Option<u32>,
     pub(crate) log_level: LogLevel,
     pub(crate) network_mode: NetworkMode,
+    pub(crate) pulse: Option<PulseServer>,
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
     pub(crate) io_uring: bool,

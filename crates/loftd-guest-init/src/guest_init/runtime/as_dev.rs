@@ -36,7 +36,7 @@ pub(in crate::guest_init) fn run(command: Vec<String>) -> Result<()> {
 
     let identity =
         resolve_materialized_dev_identity(&command, Path::new(PASSWD_PATH), Path::new(GROUP_PATH))?;
-    let shell_env = crate::guest_init::components::shell::env::derive(&identity, false);
+    let shell_env = crate::guest_init::components::shell::env::derive(&identity, false, None);
     crate::guest_init::components::shell::env::export(&shell_env);
     process::drop_to_identity_and_exec(&identity, &command)
 }
@@ -204,7 +204,7 @@ mod tests {
 
         let identity = resolve_materialized_dev_identity(&["fish".to_owned()], &passwd, &group)
             .expect("identity should resolve");
-        let shell_env = crate::guest_init::components::shell::env::derive(&identity, false);
+        let shell_env = crate::guest_init::components::shell::env::derive(&identity, false, None);
 
         assert!(
             shell_env
