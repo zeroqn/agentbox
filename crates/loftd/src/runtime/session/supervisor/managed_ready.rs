@@ -11,7 +11,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::runtime::launch::config::ManagedSessionConfig;
+use crate::runtime::launch::config::{ExecConfig, ManagedSessionConfig};
 use crate::runtime::session::managed_attach_socket::LINUX_UNIX_SOCKET_PATH_LIMIT;
 use crate::runtime::session::supervisor::identity::{
     FilesystemIdentityScope, RealFilesystemIdentityScope,
@@ -28,10 +28,12 @@ const ATTACH_SOCKET_MODE: u32 = 0o600;
 
 pub(crate) fn wait_for_managed_attach_socket(
     managed: &ManagedSessionConfig,
+    exec: Option<&ExecConfig>,
     worker: &mut VmWorkerGuard,
 ) -> Result<()> {
     wait_for_managed_attach_socket_with(
         managed,
+        exec,
         ReadyOptions::from_env()?,
         &RealSocketOps,
         &RealFilesystemIdentityScope,
@@ -142,6 +144,7 @@ impl SocketOps for RealSocketOps {
 
 fn wait_for_managed_attach_socket_with<F>(
     managed: &ManagedSessionConfig,
+    exec: Option<&ExecConfig>,
     options: ReadyOptions,
     ops: &impl SocketOps,
     identity_scope: &impl FilesystemIdentityScope,
@@ -166,7 +169,21 @@ where
         match prepare_attach_socket(managed, ops, identity_scope) {
             Ok(()) => {
                 match handshake_probe.probe(&managed.attach_socket, HANDSHAKE_PROBE_READ_TIMEOUT) {
-                    Ok(HandshakeProbeOutcome::Ready) => return Ok(()),
+                    Ok(HandshakeProbeOutcome::Ready) => {
+                        if let Some(exec) = exec {
+                            identity_scope
+                                .with_namespace_root(|| {
+                                    repair_exec_socket_with_namespace_root(exec, ops)
+                                })
+                                .with_context(|| {
+                                    format!(
+                                        "failed to repair libkrun exec socket '{}' with namespace-root filesystem identity",
+                                        exec.socket.display()
+                                    )
+                                })?;
+                        }
+                        return Ok(());
+                    }
                     Ok(HandshakeProbeOutcome::NotReady) => {
                         last_state = ReadyProbeState::HandshakeNotReady;
                     }
@@ -269,6 +286,62 @@ fn repair_attach_socket_with_namespace_root(
         )
     })?;
     verify_repaired_socket(managed, ops)
+}
+
+fn repair_exec_socket_with_namespace_root(exec: &ExecConfig, ops: &impl SocketOps) -> Result<()> {
+    let path = &exec.socket;
+    ops.chown(path, exec.socket_uid, exec.socket_gid)
+        .with_context(|| {
+            format!(
+                "failed to chown libkrun exec socket '{}' to {}:{}",
+                path.display(),
+                exec.socket_uid,
+                exec.socket_gid
+            )
+        })?;
+    ops.chmod(path, ATTACH_SOCKET_MODE).with_context(|| {
+        format!(
+            "failed to chmod libkrun exec socket '{}' to {:o}",
+            path.display(),
+            ATTACH_SOCKET_MODE
+        )
+    })?;
+    verify_exec_socket(exec, ops)
+}
+
+fn verify_exec_socket(exec: &ExecConfig, ops: &impl SocketOps) -> Result<()> {
+    let metadata = ops.symlink_metadata(&exec.socket).with_context(|| {
+        format!(
+            "failed to re-stat repaired libkrun exec socket '{}'",
+            exec.socket.display()
+        )
+    })?;
+    if !metadata.file_type().is_socket() {
+        bail!(
+            "repaired libkrun exec path '{}' is no longer a Unix socket",
+            exec.socket.display()
+        );
+    }
+    if metadata.uid() != exec.socket_uid || metadata.gid() != exec.socket_gid {
+        bail!(
+            "repaired libkrun exec socket '{}' has owner {}:{}, expected {}:{}",
+            exec.socket.display(),
+            metadata.uid(),
+            metadata.gid(),
+            exec.socket_uid,
+            exec.socket_gid
+        );
+    }
+    let actual_mode = metadata.permissions().mode() & 0o777;
+    if actual_mode != ATTACH_SOCKET_MODE {
+        bail!(
+            "repaired libkrun exec socket '{}' has mode {:o}, expected {:o}",
+            exec.socket.display(),
+            actual_mode,
+            ATTACH_SOCKET_MODE
+        );
+    }
+    Ok(())
 }
 
 fn verify_repaired_socket(managed: &ManagedSessionConfig, ops: &impl SocketOps) -> Result<()> {
@@ -475,6 +548,7 @@ mod tests {
 
         wait_for_managed_attach_socket_with(
             &managed,
+            None,
             ReadyOptions {
                 timeout: Duration::from_secs(1),
                 poll: Duration::from_millis(1),
@@ -502,6 +576,7 @@ mod tests {
 
         let err = wait_for_managed_attach_socket_with(
             &managed,
+            None,
             ReadyOptions {
                 timeout: Duration::from_secs(1),
                 poll: Duration::from_millis(1),
@@ -523,6 +598,7 @@ mod tests {
 
         let err = wait_for_managed_attach_socket_with(
             &managed,
+            None,
             ReadyOptions {
                 timeout: Duration::from_millis(1),
                 poll: Duration::from_millis(1),
@@ -550,6 +626,7 @@ mod tests {
 
         let err = wait_for_managed_attach_socket_with(
             &managed,
+            None,
             ReadyOptions {
                 timeout: Duration::from_millis(1),
                 poll: Duration::from_millis(1),
@@ -571,6 +648,7 @@ mod tests {
 
         let err = wait_for_managed_attach_socket_with(
             &managed,
+            None,
             ReadyOptions {
                 timeout: Duration::from_secs(1),
                 poll: Duration::from_millis(1),
@@ -586,6 +664,66 @@ mod tests {
     }
 
     #[test]
+    fn repairs_exec_socket_before_reporting_ready() {
+        let temp = tempdir().unwrap();
+        let attach_socket = temp.path().join("attach.sock");
+        let exec_socket = temp.path().join("exec.sock");
+        let _attach_listener = UnixListener::bind(&attach_socket).unwrap();
+        let _exec_listener = UnixListener::bind(&exec_socket).unwrap();
+        fs::set_permissions(&exec_socket, fs::Permissions::from_mode(0o755)).unwrap();
+        let managed = managed_config(&attach_socket);
+        let exec = crate::runtime::launch::config::ExecConfig {
+            socket: exec_socket.clone(),
+            guest_port: 7778,
+            protocol_version: 1,
+            socket_uid: unsafe { libc::getuid() },
+            socket_gid: unsafe { libc::getgid() },
+        };
+
+        wait_for_managed_attach_socket_with(
+            &managed,
+            Some(&exec),
+            ReadyOptions {
+                timeout: Duration::from_secs(1),
+                poll: Duration::from_millis(1),
+            },
+            &RealSocketOps,
+            &NoopIdentityScope,
+            &ReadyHandshakeProbe,
+            || Ok(None),
+        )
+        .unwrap();
+
+        let metadata = fs::symlink_metadata(&exec_socket).unwrap();
+        assert_eq!(metadata.uid(), exec.socket_uid);
+        assert_eq!(metadata.gid(), exec.socket_gid);
+        assert_eq!(metadata.permissions().mode() & 0o777, ATTACH_SOCKET_MODE);
+    }
+
+    #[test]
+    fn repairs_exec_socket_owner_and_mode() {
+        let temp = tempdir().unwrap();
+        let socket_path = temp.path().join("exec.sock");
+        let _listener = UnixListener::bind(&socket_path).unwrap();
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o755)).unwrap();
+        let exec = crate::runtime::launch::config::ExecConfig {
+            socket: socket_path.clone(),
+            guest_port: 7778,
+            protocol_version: 1,
+            socket_uid: unsafe { libc::getuid() },
+            socket_gid: unsafe { libc::getgid() },
+        };
+
+        repair_exec_socket_with_namespace_root(&exec, &RealSocketOps).unwrap();
+
+        let metadata = fs::symlink_metadata(&socket_path).unwrap();
+        assert!(metadata.file_type().is_socket());
+        assert_eq!(metadata.uid(), exec.socket_uid);
+        assert_eq!(metadata.gid(), exec.socket_gid);
+        assert_eq!(metadata.permissions().mode() & 0o777, ATTACH_SOCKET_MODE);
+    }
+
+    #[test]
     fn runs_repair_inside_namespace_root_identity_scope() {
         let temp = tempdir().unwrap();
         let socket_path = temp.path().join("attach.sock");
@@ -596,6 +734,7 @@ mod tests {
 
         wait_for_managed_attach_socket_with(
             &managed,
+            None,
             ReadyOptions {
                 timeout: Duration::from_secs(1),
                 poll: Duration::from_millis(1),
@@ -624,6 +763,7 @@ mod tests {
 
         wait_for_managed_attach_socket_with(
             &managed,
+            None,
             ReadyOptions {
                 timeout: Duration::from_secs(1),
                 poll: Duration::from_millis(1),

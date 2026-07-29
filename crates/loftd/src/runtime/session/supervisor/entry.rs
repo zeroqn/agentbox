@@ -124,7 +124,11 @@ fn run_helper_profiled_inner(
         && let Some(writer) = ready_writer.take()
     {
         match profiler.measure_result("helper_managed_attach_ready", || {
-            managed_ready::wait_for_managed_attach_socket(managed, &mut worker)
+            managed_ready::wait_for_managed_attach_socket(
+                managed,
+                config.exec.as_ref(),
+                &mut worker,
+            )
         }) {
             Ok(()) => writer.send_ready()?,
             Err(err) => {
