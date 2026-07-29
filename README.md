@@ -205,21 +205,23 @@ nix build .#container
 nix build .#agentbox-container
 ```
 
-CI publishes release artifacts on every push to `main` and on every git tag
-(`v*`):
+CI publishes loftd release artifacts on every push to `main` and on every git
+tag (`v*`):
 
-- **Rolling** (branch push to `main`): `agentbox-<arch>-unknown-linux-musl`
-  and `loftd-<arch>-unknown-linux-gnu` are uploaded to the `alpha`
-  prerelease and to a `sha-<12chars>` immutable prerelease.
+- **Rolling** (branch push to `main`): `loftd-<arch>-unknown-linux-gnu` is
+  uploaded to the `alpha` prerelease and to a `sha-<12chars>` immutable
+  prerelease.
 - **Versioned** (tag push, e.g. `v0.1.0`):
-  `agentbox-<version>-<arch>-unknown-linux-musl` and
-  `loftd-<version>-<arch>-unknown-linux-gnu` are uploaded to a full
+  `loftd-<version>-<arch>-unknown-linux-gnu` is uploaded to a full
   (non-prerelease) release named after the tag, and to the matching
   `sha-<12chars>` immutable prerelease.
-- **Images** (`ghcr.io/<owner>/agentbox:<tag>`,
-  `ghcr.io/<owner>/loftd:<tag>`) are published by the image workflow on
-  every push to `main` (`latest`, `sha-<12chars>`) and on every tag push
-  (the tag name itself, plus `sha-<12chars>`).
+- **Images** (`ghcr.io/<owner>/loftd:<tag>`) are published by the image workflow
+  on every push to `main` (`latest`, `sha-<12chars>`), every push to `dev`
+  (`dev`, `sha-<12chars>`), and every tag push (the tag name itself, plus
+  `sha-<12chars>`).
+
+Agentbox source and local Nix outputs remain available but are deprecated.
+GitHub Actions no longer publishes new agentbox images or release binaries.
 
  ### Build outputs
 - `.#agentbox`: compile from source.
@@ -1920,21 +1922,16 @@ root, but does not otherwise change the persistent host mount layout.
 
 ### Container image (GitHub Actions)
 
-On push to `main`, push to `dev`, and tag pushes, CI publishes separate images:
+On push to `main`, push to `dev`, and tag pushes, CI publishes the loftd image:
 
-- `ghcr.io/<repo-owner>/agentbox:latest` (main only)
-- `ghcr.io/<repo-owner>/agentbox:dev` (dev only)
-- `ghcr.io/<repo-owner>/agentbox:<git-tag>` (tag only)
-- `ghcr.io/<repo-owner>/agentbox:sha-<12-char-commit>`
 - `ghcr.io/<repo-owner>/loftd:latest` (main only)
 - `ghcr.io/<repo-owner>/loftd:dev` (dev only)
 - `ghcr.io/<repo-owner>/loftd:<git-tag>` (tag only)
 - `ghcr.io/<repo-owner>/loftd:sha-<12-char-commit>`
 
-The agentbox image is built from `.#agentbox-container` and verifies
-`agentbox-guest-init`. The loftd image is built from `.#container` and verifies
-`loftd-guest-init`. Agentbox image names are not aliases for loftd image names
-while loftd remains incomplete.
+The image is built from `.#container` and verifies `loftd-guest-init`.
+Agentbox source and `.#agentbox-container` remain available for local builds,
+but GitHub Actions no longer publishes `ghcr.io/<repo-owner>/agentbox`.
 
 ### Prebuilt binaries (GitHub Releases)
 
@@ -1945,9 +1942,8 @@ Main-branch CI also publishes prerelease binary assets:
 
 Older `sha-*` prereleases are pruned (retains newest 20).
 
-The `agentbox-<arch>-unknown-linux-musl` asset is the portable static/musl
-agentbox CLI. The `loftd-<arch>-unknown-linux-gnu` asset is a neutral dynamic
-Linux ELF packaging input and intentionally non-standalone: it must not contain
+The `loftd-<arch>-unknown-linux-gnu` asset is a neutral dynamic Linux ELF
+packaging input and intentionally non-standalone: it must not contain
 release-builder `/nix/store/<hash>-...` references, and Nix packaging patches
 its ordinary ELF runtime dependencies before wiring the libkrun/runtime-tool
 environment.

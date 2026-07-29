@@ -19,4 +19,10 @@ jobs:
         uses: cachix/install-nix-action@v31
 
       - name: Run tests
-        run: nix develop --command cargo test
+        run: |
+          nix develop --command cargo test \
+            --package loftd \
+            --package loftd-guest-init \
+            --package loftd-attach-protocol \
+            --package loftd-exec-protocol \
+            --package loftd-repository-tests

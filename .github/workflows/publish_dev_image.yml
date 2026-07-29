@@ -1,4 +1,4 @@
-name: Publish separate agentbox and loftd Dev Images
+name: Publish loftd Dev Image
 
 on:
   push:
@@ -16,10 +16,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image_name: agentbox
-            flake_attr: agentbox-container-ci-sccache
-            local_image: localhost/agentbox:latest
-            init_binary: /bin/agentbox-guest-init
           - image_name: loftd
             flake_attr: container-ci-sccache
             local_image: localhost/loftd:latest

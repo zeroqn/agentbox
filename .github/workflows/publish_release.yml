@@ -28,7 +28,7 @@ jobs:
       - name: Restore release sccache
         uses: actions/cache@v4
         with:
-          path: /tmp/agentbox-ci-sccache-release
+          path: /tmp/loftd-ci-sccache-release
           key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-${{ hashFiles('Cargo.lock', 'flake.lock', 'nix/pins.nix') }}
           restore-keys: |
             sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-
@@ -36,25 +36,24 @@ jobs:
 
       - name: Prepare release sccache directory
         run: |
-          mkdir -p /tmp/agentbox-ci-sccache-release
-          sudo chown -R "$(id -u):$(id -g)" /tmp/agentbox-ci-sccache-release
-          chmod -R a+rwX /tmp/agentbox-ci-sccache-release
+          mkdir -p /tmp/loftd-ci-sccache-release
+          sudo chown -R "$(id -u):$(id -g)" /tmp/loftd-ci-sccache-release
+          chmod -R a+rwX /tmp/loftd-ci-sccache-release
 
       - name: Build release binaries
         run: |
           set -euo pipefail
 
-          sccache_sandbox_path="/nix/var/cache/sccache=/tmp/agentbox-ci-sccache-release"
+          sccache_sandbox_path="/nix/var/cache/sccache=/tmp/loftd-ci-sccache-release"
 
-          nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#agentbox-musl-ci-sccache -o result-agentbox-musl
           nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#loftd-ci-sccache -o result-loftd
 
       - name: Normalize release sccache permissions
         if: always()
         run: |
-          if [ -d /tmp/agentbox-ci-sccache-release ]; then
-            sudo chown -R "$(id -u):$(id -g)" /tmp/agentbox-ci-sccache-release
-            chmod -R a+rwX /tmp/agentbox-ci-sccache-release
+          if [ -d /tmp/loftd-ci-sccache-release ]; then
+            sudo chown -R "$(id -u):$(id -g)" /tmp/loftd-ci-sccache-release
+            chmod -R a+rwX /tmp/loftd-ci-sccache-release
           fi
 
       - name: Prepare and smoke-test release artifacts
@@ -68,11 +67,9 @@ jobs:
 
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             release_version="${GITHUB_REF_NAME}"
-            agentbox_asset_name="agentbox-${release_version}-${arch}-unknown-linux-musl"
             loftd_asset_name="loftd-${release_version}-${arch}-unknown-linux-gnu"
           else
             release_version=""
-            agentbox_asset_name="agentbox-${arch}-unknown-linux-musl"
             loftd_asset_name="loftd-${arch}-unknown-linux-gnu"
           fi
 
@@ -82,8 +79,6 @@ jobs:
           fi
 
           mkdir -p dist
-          install -m 0755 result-agentbox-musl/bin/agentbox "dist/${agentbox_asset_name}"
-
           raw_loftd_path="result-loftd/bin/loftd"
           test -x "${raw_loftd_path}"
           if [ "$(dd if="${raw_loftd_path}" bs=2 count=1 2>/dev/null)" = "#!" ]; then
@@ -119,16 +114,11 @@ jobs:
             exit 1
           fi
 
-          "dist/${agentbox_asset_name}" --help > /dev/null
           result-loftd/bin/loftd --help > /dev/null
 
-          sha256sum "dist/${agentbox_asset_name}" > "dist/${agentbox_asset_name}.sha256"
           sha256sum "dist/${loftd_asset_name}" > "dist/${loftd_asset_name}.sha256"
 
           {
-            echo "agentbox_asset_name=${agentbox_asset_name}"
-            echo "agentbox_asset_path=dist/${agentbox_asset_name}"
-            echo "agentbox_checksum_path=dist/${agentbox_asset_name}.sha256"
             echo "loftd_asset_name=${loftd_asset_name}"
             echo "loftd_asset_path=dist/${loftd_asset_name}"
             echo "loftd_checksum_path=dist/${loftd_asset_name}.sha256"
@@ -139,9 +129,7 @@ jobs:
       - name: Attest release binaries
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: |
-            ${{ steps.prep.outputs.agentbox_asset_path }}
-            ${{ steps.prep.outputs.loftd_asset_path }}
+          subject-path: ${{ steps.prep.outputs.loftd_asset_path }}
 
       - name: Write release notes
         run: |
@@ -158,10 +146,9 @@ jobs:
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
           Assets:
-          - \`${{ steps.prep.outputs.agentbox_asset_name }}\`: portable static/musl agentbox CLI.
           - \`${{ steps.prep.outputs.loftd_asset_name }}\`: neutral dynamically linked loftd ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wires libkrun/runtime-tool dependencies. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
 
-          Versioned images (\`ghcr.io/<repo-owner>/agentbox:${GITHUB_REF_NAME}\`, \`ghcr.io/<repo-owner>/loftd:${GITHUB_REF_NAME}\`) are published by the image workflow on tag push.
+          The versioned image \`ghcr.io/<repo-owner>/loftd:${GITHUB_REF_NAME}\` is published by the image workflow on tag push.
           The matching \`${{ steps.prep.outputs.sha_tag }}\` prerelease is the revision-addressed binary set for this exact revision.
           EOF_NOTES
           else
@@ -173,7 +160,6 @@ jobs:
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
           Assets:
-          - \`${{ steps.prep.outputs.agentbox_asset_name }}\`: portable static/musl agentbox CLI.
           - \`${{ steps.prep.outputs.loftd_asset_name }}\`: neutral dynamically linked loftd ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wires libkrun/runtime-tool dependencies. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
 
           The \`alpha\` prerelease is reused on every push to main.
@@ -238,8 +224,6 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          AGENTBOX_ASSET_PATH: ${{ steps.prep.outputs.agentbox_asset_path }}
-          AGENTBOX_CHECKSUM_PATH: ${{ steps.prep.outputs.agentbox_checksum_path }}
           LOFTD_ASSET_PATH: ${{ steps.prep.outputs.loftd_asset_path }}
           LOFTD_CHECKSUM_PATH: ${{ steps.prep.outputs.loftd_checksum_path }}
           RELEASE_VERSION: ${{ steps.prep.outputs.release_version }}
@@ -249,23 +233,17 @@ jobs:
 
           if [ "${GITHUB_REF_TYPE}" = "branch" ]; then
             gh release upload alpha \
-              "${AGENTBOX_ASSET_PATH}" \
-              "${AGENTBOX_CHECKSUM_PATH}" \
               "${LOFTD_ASSET_PATH}" \
               "${LOFTD_CHECKSUM_PATH}" \
               --clobber
           else
             gh release upload "${RELEASE_VERSION}" \
-              "${AGENTBOX_ASSET_PATH}" \
-              "${AGENTBOX_CHECKSUM_PATH}" \
               "${LOFTD_ASSET_PATH}" \
               "${LOFTD_CHECKSUM_PATH}" \
               --clobber
           fi
 
           gh release upload "${SHA_TAG}" \
-            "${AGENTBOX_ASSET_PATH}" \
-            "${AGENTBOX_CHECKSUM_PATH}" \
             "${LOFTD_ASSET_PATH}" \
             "${LOFTD_CHECKSUM_PATH}" \
             --clobber
