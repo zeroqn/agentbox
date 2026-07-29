@@ -294,6 +294,11 @@ let
     exec tail -f /dev/null
   '';
 
+  rustSourceImage = pkgs.runCommand "agentbox-rust-source-image" { } ''
+    mkdir -p "$out/share"
+    ln -s ${pkgs.rustPlatform.rustLibSrc} "$out/share/rust-src"
+  '';
+
   stableRustToolchainPackages = [
     pkgs.cargo
     clangMoldWrapper
@@ -494,7 +499,7 @@ let
   imageContents =
     imagePackages
     ++ [
-      pkgs.rustPlatform.rustLibSrc
+      rustSourceImage
       usrBinEnvCompat
       binInterpreterCompat
       fishConfig
@@ -619,6 +624,7 @@ in
     imageContents
     imagePath
     realPodmanBin
+    rustSourceImage
     clangMoldWrapper
     nixCommandCompat
     nixStoreDbCheck

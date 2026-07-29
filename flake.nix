@@ -207,9 +207,11 @@
         {
           container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
           container-omx-absent = loftdImageChecks.omxAbsent;
+          container-root-cargo-absent = loftdImageChecks.rootCargoAbsent;
           container-wrapper-contracts = loftdImageChecks.wrapperContracts;
           agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
           agentbox-container-omx-absent = agentboxImageChecks.omxAbsent;
+          agentbox-container-root-cargo-absent = agentboxImageChecks.rootCargoAbsent;
           agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
         }
       );

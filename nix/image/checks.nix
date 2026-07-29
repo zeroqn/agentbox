@@ -198,6 +198,15 @@ let
     ''}
   '';
 
+  rootCargoAbsent = pkgs.runCommand "${imageVariant}-image-root-cargo-absent-check" { } ''
+    set -euo pipefail
+
+    test ! -e ${layers.rustSourceImage}/.cargo
+    test -f ${layers.rustSourceImage}/share/rust-src/.cargo/config.toml
+
+    touch "$out"
+  '';
+
   omxAbsent =
     pkgs.runCommand "${imageVariant}-image-omx-absent-check"
       {
@@ -319,6 +328,7 @@ in
     missingImageConfigNixDbRefs
     missingRefsMessage
     omxAbsent
+    rootCargoAbsent
     wrapperContracts
     ;
 
