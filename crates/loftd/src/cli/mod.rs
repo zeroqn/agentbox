@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::logging::{LogLevel, LogSettings};
 use crate::runtime::landlock::LandlockMode;
-use crate::runtime::launch::config::{AllocatorMode, NetworkMode, PulseServer};
+use crate::runtime::launch::config::{AllocatorMode, GuestPermissions, NetworkMode, PulseServer};
 use crate::runtime::seccomp::{AuditMode, SeccompCommand, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
 use crate::task_rootfs::TaskRootfsBackend;
@@ -193,18 +193,13 @@ pub(crate) struct Cli {
     landlock: Option<LandlockMode>,
 
     #[arg(
-        long = "io-uring",
-        help = "Allow the guest dev group to create io_uring instances",
-        long_help = "Allow processes in the guest dev group to create io_uring instances. By default, loftd disables creation of new io_uring instances for all guest processes. This option keeps kernel.io_uring_disabled in restricted mode and sets kernel.io_uring_group to the dynamic dev GID. Processes outside that group remain denied unless permitted by the kernel's CAP_SYS_ADMIN exception. This option does not change host seccomp, host Landlock, or nested Podman seccomp policy."
+        long,
+        value_name = "PERMISSION[,PERMISSION...]",
+        value_parser = parse_permissions_arg,
+        help = "Grant optional permissions inside the guest VM",
+        long_help = "Grant comma-separated optional permissions inside the guest VM. Allowed values are io-uring, net-admin, bpf, and perf. io-uring and perf relax their existing guest kernel policies; net-admin and bpf grant CAP_NET_ADMIN and CAP_BPF to guest dev workloads. No permission is enabled by default."
     )]
-    io_uring: bool,
-
-    #[arg(
-        long = "perf",
-        help = "Allow unprivileged guest performance profiling",
-        long_help = "Set kernel.perf_event_paranoid=-1 and kernel.kptr_restrict=0 inside the guest for this launch. This enables unprivileged kernel software events, tracepoints, and nonzero /proc/kallsyms addresses useful for application, kernel CPU, and io_uring analysis, and weakens guest performance-event and kernel-pointer isolation. This option does not allow io_uring creation; combine it with --io-uring when needed. Hardware PMU events depend on libkrun and host virtualization support and are not guaranteed."
-    )]
-    perf: bool,
+    permissions: Option<GuestPermissions>,
 
     #[arg(
         long = "alloc",
@@ -570,8 +565,7 @@ impl Cli {
             pty: self.pty.unwrap_or(PtyOptions::DEFAULT),
             seccomp: self.seccomp,
             landlock: self.landlock,
-            io_uring: self.io_uring,
-            perf: self.perf,
+            permissions: self.permissions.unwrap_or_default(),
             allocator: self.alloc.into(),
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -620,8 +614,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) pty: PtyOptions,
     pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) landlock: Option<LandlockMode>,
-    pub(crate) io_uring: bool,
-    pub(crate) perf: bool,
+    pub(crate) permissions: GuestPermissions,
     pub(crate) allocator: AllocatorMode,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -637,6 +630,10 @@ pub(crate) struct RuntimeOptions {
     pub(crate) publish: Vec<String>,
     pub(crate) volumes: Vec<VolumeSpec>,
     pub(crate) guest_command: Vec<String>,
+}
+
+fn parse_permissions_arg(value: &str) -> Result<GuestPermissions, String> {
+    value.parse()
 }
 
 pub(crate) fn parse_mem_gib_arg(value: &str) -> Result<u32, String> {
@@ -884,8 +881,7 @@ mod tests {
         assert!(!options.daemon);
         assert_eq!(options.seccomp, None);
         assert_eq!(options.landlock, None);
-        assert!(!options.io_uring);
-        assert!(!options.perf);
+        assert!(options.permissions.is_empty());
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.pty, PtyOptions::DEFAULT);
@@ -1530,19 +1526,35 @@ mod tests {
     }
 
     #[test]
-    fn io_uring_flag_enables_guest_io_uring() {
-        let cli = Cli::try_parse_from(["loftd", "--io-uring"]).expect("io_uring flag should parse");
+    fn permissions_flag_parses_supported_values() {
+        let cli = Cli::try_parse_from(["loftd", "--permissions=perf,bpf,io-uring,net-admin,bpf"])
+            .expect("permissions should parse");
         let options = cli.into_runtime_options();
 
-        assert!(options.io_uring);
+        assert_eq!(
+            options.permissions.to_string(),
+            "io-uring,net-admin,bpf,perf"
+        );
     }
 
     #[test]
-    fn perf_flag_enables_guest_perf() {
-        let cli = Cli::try_parse_from(["loftd", "--perf"]).expect("perf flag should parse");
-        let options = cli.into_runtime_options();
+    fn permissions_flag_rejects_unknown_and_empty_values() {
+        for value in ["", "io-uring,,perf", "sys-admin"] {
+            let error = Cli::try_parse_from(["loftd", &format!("--permissions={value}")])
+                .expect_err("invalid permissions should fail");
 
-        assert!(options.perf);
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        }
+    }
+
+    #[test]
+    fn removed_guest_permission_flags_fail() {
+        for flag in ["--io-uring", "--perf"] {
+            let error = Cli::try_parse_from(["loftd", flag])
+                .expect_err("removed permission flag should fail");
+
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
     }
 
     #[test]

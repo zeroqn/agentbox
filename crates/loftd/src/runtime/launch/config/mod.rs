@@ -12,10 +12,10 @@ pub(crate) use model::{
     AllocatorMode, BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG,
     CODEX_TARGET, DEFAULT_WAYPIPE_PORT, DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG,
     DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET, DiskAttachment, ExecConfig,
-    GuestInitOverrideMount, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec,
-    ManagedSessionConfig, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
-    PulseServer, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, WaypipeConfig,
-    canonical_mount_target,
+    GuestInitOverrideMount, GuestPermissions, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig,
+    LaunchSpec, ManagedSessionConfig, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG,
+    PI_TARGET, PulseServer, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+    WaypipeConfig, canonical_mount_target,
 };
 
 #[cfg(test)]
@@ -67,11 +67,12 @@ impl LaunchConfig {
         if spec.wayland {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_WAYLAND_ENV, "1");
         }
-        if spec.io_uring {
-            guest_env::insert_env(&mut guest_config_env, model::GUEST_IO_URING_ENV, "1");
-        }
-        if spec.perf {
-            guest_env::insert_env(&mut guest_config_env, model::GUEST_PERF_ENV, "1");
+        if !spec.permissions.is_empty() {
+            guest_env::insert_env(
+                &mut guest_config_env,
+                model::GUEST_PERMISSIONS_ENV,
+                &spec.permissions.to_string(),
+            );
         }
         if let Some(waypipe) = &spec.waypipe {
             guest_env::insert_env(
@@ -121,8 +122,7 @@ impl LaunchConfig {
             log_level: spec.log_level,
             network_mode: spec.network_mode,
             gpu_mode: spec.gpu_mode,
-            io_uring: spec.io_uring,
-            perf: spec.perf,
+            permissions: spec.permissions,
             publish: spec.publish.to_vec(),
             workdir: components::process::workdir_from_image(
                 spec.image_process_config.working_dir.as_deref(),

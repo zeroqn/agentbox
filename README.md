@@ -873,7 +873,7 @@ Run/help:
 ./result/bin/loftd seccomp extend --policy loftd-seccomp.policy.json --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd seccomp extend --default-policy --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd --seccomp=enforce:loftd-seccomp.updated.json -- bash -lc 'echo ok'
-./result/bin/loftd --io-uring -- bash -lc 'echo ok'
+./result/bin/loftd --permissions=io-uring -- bash -lc 'echo ok'
 ./result/bin/loftd --tsi -- bash -lc 'echo ok'
 ./result/bin/loftd --tsi --pulse=tcp:127.0.0.1:4713 -- bash -lc 'printf "%s\n" "$PULSE_SERVER"'
 ./result/bin/loftd --pulse=tcp:192.0.2.10:4713 -- paplay sample.wav
@@ -1174,47 +1174,51 @@ Seccomp behavior:
   represented with `boot.kernel.sysctl."kernel.yama.ptrace_scope"` in NixOS
   configuration.
 
-Guest io_uring behavior:
+Guest permissions:
 
-- loftd disables creation of new io_uring instances guest-wide by default by
-  setting `kernel.io_uring_disabled=2` during root guest initialization. This
-  happens before Nix and Podman preparation, Wayland startup, managed-session
-  startup, or the task command. Guest initialization fails closed if the sysctl
-  cannot be applied.
-- `--io-uring` allows processes in the dynamic guest `dev` group to create
+```bash
+./result/bin/loftd --permissions=io-uring
+./result/bin/loftd --permissions=perf
+./result/bin/loftd --permissions=io-uring,net-admin,bpf,perf
+```
+
+- `--permissions` accepts the comma-separated values `io-uring`, `net-admin`,
+  `bpf`, and `perf`. Values are order-independent and duplicates are ignored.
+  The former `--io-uring` and `--perf` flags have been removed.
+- No optional permission is enabled by default.
+- Without `io-uring`, loftd disables creation of new io_uring instances
+  guest-wide by setting `kernel.io_uring_disabled=2` during root guest
+  initialization. This happens before Nix and Podman preparation, Wayland
+  startup, managed-session startup, or the task command. Guest initialization
+  fails closed if the sysctl cannot be applied.
+- `io-uring` allows processes in the dynamic guest `dev` group to create
   io_uring instances without `CAP_SYS_ADMIN`. Guest-init writes the `dev` GID to
   `kernel.io_uring_group` and keeps `kernel.io_uring_disabled=1`; processes
   outside that group remain denied unless permitted by the kernel's
   `CAP_SYS_ADMIN` exception.
-- This guest-kernel setting does not alter loftd's host VM-worker seccomp policy
-  or host Landlock policy. Those layers continue to confine the host worker at
-  their existing boundary.
-- `--io-uring` also does not change nested Podman seccomp. The packaged default
-  nested-container profile blocks `io_uring_setup`, `io_uring_enter`, and
-  `io_uring_register`; enabling them in a nested container requires a separate,
-  explicit container seccomp policy.
-
-Guest performance profiling:
-
-```bash
-./result/bin/loftd --perf
-./result/bin/loftd --io-uring --perf
-```
-
-- The loftd guest image includes `perf` and `strace` on `PATH`.
-- Without `--perf`, loftd leaves the guest kernel's hardened
-  `kernel.perf_event_paranoid=3` setting unchanged.
-- `--perf` sets `kernel.perf_event_paranoid=-1` and
-  `kernel.kptr_restrict=0` during root guest initialization, before Nix and
-  Podman preparation or the task command. This enables unprivileged kernel
-  software events, tracepoints, and nonzero kernel symbol addresses through
-  `/proc/kallsyms`, and weakens performance-event and kernel-pointer isolation
-  for that VM launch.
-- `--perf` does not allow io_uring creation. Use `--io-uring --perf` when an
-  io_uring workload needs both creation permission and kernel-path profiling.
+- `net-admin` grants guest `dev` workloads `CAP_NET_ADMIN`, including the
+  initial command, managed PTY command, hidden `as-dev` path, and later
+  `loftd exec` commands. This permits powerful guest-only networking changes
+  such as interface, route, nftables, policy-routing, and TPROXY configuration.
+- `bpf` grants those same guest `dev` workload paths `CAP_BPF`. It does not
+  imply `net-admin`, `perf`, `CAP_PERFMON`, or `CAP_SYS_ADMIN`; BPF operations
+  requiring another capability still require that permission separately.
+- The loftd guest image includes `perf` and `strace` on `PATH`. Without `perf`,
+  loftd leaves the guest kernel's hardened `kernel.perf_event_paranoid=3`
+  setting unchanged. `perf` sets `kernel.perf_event_paranoid=-1` and
+  `kernel.kptr_restrict=0` before the task starts, enabling unprivileged kernel
+  software events, tracepoints, and nonzero `/proc/kallsyms` addresses while
+  weakening guest performance-event and kernel-pointer isolation.
 - Hardware PMU events such as cycles and instructions are not guaranteed. The
   current x86 libkrun CPUID configuration disables the architectural PMU, so
   software events and available tracepoints are the supported profiling scope.
+- These permissions affect only processes inside the guest VM. They do not
+  alter loftd's host VM-worker capabilities, host seccomp, host Landlock, or
+  host networking.
+- Nested Podman capability and seccomp policy remains independent. In
+  particular, the packaged nested-container profile blocks io_uring syscalls,
+  and selected guest capabilities are not automatically granted inside nested
+  containers.
 
 Container-store disk maintenance:
 

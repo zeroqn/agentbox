@@ -2,11 +2,134 @@ use anyhow::{Context, Result, anyhow};
 use std::ffi::CString;
 use std::io;
 
+use crate::guest_init::components::env::{GuestPermission, GuestPermissions};
 use crate::guest_init::components::home::identity::DevIdentity;
+
+const CAP_NET_ADMIN: u32 = 12;
+const CAP_BPF: u32 = 39;
+const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+const PR_CAP_AMBIENT: libc::c_int = 47;
+const PR_CAP_AMBIENT_RAISE: libc::c_ulong = 2;
 
 const VIDEO_GID: libc::gid_t = 44;
 const RENDER_GID: libc::gid_t = 107;
 const DEV_SUPPLEMENTARY_GROUPS: &[libc::gid_t] = &[VIDEO_GID, RENDER_GID];
+
+#[repr(C)]
+struct CapUserHeader {
+    version: u32,
+    pid: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CapUserData {
+    effective: u32,
+    permitted: u32,
+    inheritable: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::guest_init) struct WorkloadCapabilities {
+    values: [u32; 2],
+    len: usize,
+}
+
+impl WorkloadCapabilities {
+    fn as_slice(&self) -> &[u32] {
+        &self.values[..self.len]
+    }
+
+    fn is_empty(self) -> bool {
+        self.len == 0
+    }
+}
+
+pub(in crate::guest_init) fn workload_capability_plan(
+    permissions: GuestPermissions,
+) -> WorkloadCapabilities {
+    let mut capabilities = WorkloadCapabilities::default();
+    if permissions.contains(GuestPermission::NetAdmin) {
+        capabilities.values[capabilities.len] = CAP_NET_ADMIN;
+        capabilities.len += 1;
+    }
+    if permissions.contains(GuestPermission::Bpf) {
+        capabilities.values[capabilities.len] = CAP_BPF;
+        capabilities.len += 1;
+    }
+    capabilities
+}
+
+fn capability_mask(capabilities: WorkloadCapabilities) -> [u32; 2] {
+    let mut mask = [0; 2];
+    for capability in capabilities.as_slice() {
+        mask[(*capability / 32) as usize] |= 1 << (*capability % 32);
+    }
+    mask
+}
+
+fn restrict_capability_bounding_set(capabilities: WorkloadCapabilities) -> io::Result<()> {
+    const CAP_SETPCAP: u32 = 8;
+    for capability in (0..=40).filter(|capability| *capability != CAP_SETPCAP) {
+        if capabilities.as_slice().contains(&capability) {
+            continue;
+        }
+        if unsafe { libc::prctl(libc::PR_CAPBSET_DROP, capability, 0, 0, 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    if !capabilities.as_slice().contains(&CAP_SETPCAP)
+        && unsafe { libc::prctl(libc::PR_CAPBSET_DROP, CAP_SETPCAP, 0, 0, 0) } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn set_workload_capabilities(capabilities: WorkloadCapabilities) -> io::Result<()> {
+    let mask = capability_mask(capabilities);
+    let mut header = CapUserHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let data = [
+        CapUserData {
+            effective: mask[0],
+            permitted: mask[0],
+            inheritable: mask[0],
+        },
+        CapUserData {
+            effective: mask[1],
+            permitted: mask[1],
+            inheritable: mask[1],
+        },
+    ];
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_capset,
+            &mut header as *mut CapUserHeader,
+            data.as_ptr(),
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    for capability in capabilities.as_slice() {
+        let rc = unsafe {
+            libc::prctl(
+                PR_CAP_AMBIENT,
+                PR_CAP_AMBIENT_RAISE,
+                libc::c_ulong::from(*capability),
+                0,
+                0,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::guest_init) enum CredentialOperation {
@@ -33,7 +156,18 @@ pub(in crate::guest_init) fn credential_plan(identity: &DevIdentity) -> [Credent
     ]
 }
 
-pub(in crate::guest_init) fn apply_dev_credentials(identity: &DevIdentity) -> io::Result<()> {
+pub(in crate::guest_init) fn apply_dev_credentials(
+    identity: &DevIdentity,
+    permissions: GuestPermissions,
+) -> io::Result<()> {
+    let capabilities = workload_capability_plan(permissions);
+    restrict_capability_bounding_set(capabilities)?;
+    if !capabilities.is_empty() {
+        let rc = unsafe { libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
     for operation in credential_plan(identity) {
         let rc = match operation {
             CredentialOperation::SupplementaryGroups(groups) => unsafe {
@@ -49,6 +183,9 @@ pub(in crate::guest_init) fn apply_dev_credentials(identity: &DevIdentity) -> io
                 format!("{}: {error}", operation.error_context()),
             ));
         }
+    }
+    if !capabilities.is_empty() {
+        set_workload_capabilities(capabilities)?;
     }
     Ok(())
 }
@@ -74,13 +211,14 @@ pub(in crate::guest_init) fn exec_command(command: &[String]) -> Result<()> {
 
 pub(in crate::guest_init) fn drop_to_identity_and_exec(
     identity: &DevIdentity,
+    permissions: GuestPermissions,
     command: &[String],
 ) -> Result<()> {
     if command.is_empty() {
         return Err(anyhow!("cannot exec an empty command"));
     }
 
-    apply_dev_credentials(identity)?;
+    apply_dev_credentials(identity, permissions)?;
 
     execvp(command)
 }
@@ -236,6 +374,20 @@ mod tests {
             self.set_error
                 .map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
         }
+    }
+
+    #[test]
+    fn selected_workload_capabilities_map_exactly() {
+        assert_eq!(
+            workload_capability_plan("net-admin,bpf".parse().expect("permissions should parse"))
+                .as_slice(),
+            [CAP_NET_ADMIN, CAP_BPF]
+        );
+    }
+
+    #[test]
+    fn unselected_workload_capabilities_are_empty() {
+        assert!(workload_capability_plan(Default::default()).is_empty());
     }
 
     #[test]

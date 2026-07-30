@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use std::env;
+use std::str::FromStr;
 
 pub(in crate::guest_init) const DEV_USER: &str = "dev";
 pub(in crate::guest_init) const DEV_HOME: &str = "/home/dev";
@@ -44,6 +45,86 @@ impl ContainerStoreBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::guest_init) enum GuestPermission {
+    IoUring,
+    NetAdmin,
+    Bpf,
+    Perf,
+}
+
+impl GuestPermission {
+    const ALL: [Self; 4] = [Self::IoUring, Self::NetAdmin, Self::Bpf, Self::Perf];
+
+    pub(in crate::guest_init) const fn as_str(self) -> &'static str {
+        match self {
+            Self::IoUring => "io-uring",
+            Self::NetAdmin => "net-admin",
+            Self::Bpf => "bpf",
+            Self::Perf => "perf",
+        }
+    }
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::IoUring => 1 << 0,
+            Self::NetAdmin => 1 << 1,
+            Self::Bpf => 1 << 2,
+            Self::Perf => 1 << 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::guest_init) struct GuestPermissions(u8);
+
+impl GuestPermissions {
+    pub(in crate::guest_init) const fn contains(self, permission: GuestPermission) -> bool {
+        self.0 & permission.bit() != 0
+    }
+}
+
+impl FromStr for GuestPermissions {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        if value.is_empty() {
+            anyhow::bail!("LOFTD_PERMISSIONS must not be empty");
+        }
+        let mut permissions = Self::default();
+        for token in value.split(',') {
+            let permission = match token {
+                "io-uring" => GuestPermission::IoUring,
+                "net-admin" => GuestPermission::NetAdmin,
+                "bpf" => GuestPermission::Bpf,
+                "perf" => GuestPermission::Perf,
+                "" => anyhow::bail!("LOFTD_PERMISSIONS must not contain empty values"),
+                other => {
+                    anyhow::bail!("LOFTD_PERMISSIONS contains unsupported permission '{other}'")
+                }
+            };
+            permissions.0 |= permission.bit();
+        }
+        Ok(permissions)
+    }
+}
+
+impl std::fmt::Display for GuestPermissions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut first = true;
+        for permission in GuestPermission::ALL {
+            if self.contains(permission) {
+                if !first {
+                    formatter.write_str(",")?;
+                }
+                formatter.write_str(permission.as_str())?;
+                first = false;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct LoftdEnv {
     pub(in crate::guest_init) nix_overlay: bool,
@@ -52,8 +133,7 @@ pub(in crate::guest_init) struct LoftdEnv {
     pub(in crate::guest_init) container_store_backend: ContainerStoreBackend,
     pub(in crate::guest_init) use_passt: bool,
     pub(in crate::guest_init) wayland: bool,
-    pub(in crate::guest_init) io_uring: bool,
-    pub(in crate::guest_init) perf: bool,
+    pub(in crate::guest_init) permissions: GuestPermissions,
     pub(in crate::guest_init) enter_as_root: bool,
     pub(in crate::guest_init) host_uid: Option<u32>,
     pub(in crate::guest_init) host_gid: Option<u32>,
@@ -79,8 +159,9 @@ impl LoftdEnv {
             )?,
             use_passt: env_flag_any("LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
             wayland: env_flag("LOFTD_WAYLAND"),
-            io_uring: env_flag("LOFTD_IO_URING"),
-            perf: env_flag("LOFTD_PERF"),
+            permissions: env::var("LOFTD_PERMISSIONS")
+                .ok()
+                .map_or(Ok(GuestPermissions::default()), |value| value.parse())?,
             enter_as_root: env_flag_any(ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
             host_uid: parse_optional_u32_any("LOFTD_HOST_UID", LEGACY_HOST_UID_ENV)?,
             host_gid: parse_optional_u32_any("LOFTD_HOST_GID", LEGACY_HOST_GID_ENV)?,

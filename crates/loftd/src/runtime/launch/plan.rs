@@ -12,8 +12,8 @@ use crate::runtime::host_tools;
 use crate::runtime::landlock::LandlockMode;
 use crate::runtime::launch::components::mounts;
 use crate::runtime::launch::config::{
-    AllocatorMode, BindMount, BindMountSourceKind, NIX_TARGET, NetworkMode, PulseServer,
-    canonical_mount_target,
+    AllocatorMode, BindMount, BindMountSourceKind, GuestPermissions, NIX_TARGET, NetworkMode,
+    PulseServer, canonical_mount_target,
 };
 use crate::runtime::seccomp::{self, AuditMode, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
@@ -45,8 +45,7 @@ pub(crate) struct LaunchPlan {
     pub(crate) wayland: bool,
     pub(crate) waypipe: bool,
     pub(crate) waypipe_socket: Option<PathBuf>,
-    pub(crate) io_uring: bool,
-    pub(crate) perf: bool,
+    pub(crate) permissions: GuestPermissions,
     pub(crate) publish: Vec<String>,
     pub(crate) guest_command: Vec<String>,
     pub(crate) debug: bool,
@@ -138,8 +137,7 @@ impl LaunchPlan {
             wayland: options.wayland,
             waypipe,
             waypipe_socket,
-            io_uring: options.io_uring,
-            perf: options.perf,
+            permissions: options.permissions,
             publish: options.publish,
             guest_command: options.guest_command,
             debug: options.log_settings.level.enables_debug(),
@@ -348,8 +346,7 @@ mod tests {
             pty: crate::cli::PtyOptions::DEFAULT,
             seccomp: Some(SeccompMode::Off),
             landlock: None,
-            io_uring: false,
-            perf: false,
+            permissions: crate::runtime::launch::config::GuestPermissions::default(),
             allocator: AllocatorMode::Mimalloc,
             rootfs_backend: None,
             container_store_backend: None,

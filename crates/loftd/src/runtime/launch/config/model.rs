@@ -43,8 +43,7 @@ pub(super) const GUEST_WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
 pub(super) const GUEST_PULSE_SERVER_ENV: &str = "LOFTD_PULSE_SERVER";
 pub(super) const GUEST_EXEC_PORT_ENV: &str = "LOFTD_EXEC_PORT";
 pub(super) const GUEST_EXEC_PROTOCOL_VERSION_ENV: &str = "LOFTD_EXEC_PROTOCOL_VERSION";
-pub(super) const GUEST_IO_URING_ENV: &str = "LOFTD_IO_URING";
-pub(super) const GUEST_PERF_ENV: &str = "LOFTD_PERF";
+pub(super) const GUEST_PERMISSIONS_ENV: &str = "LOFTD_PERMISSIONS";
 pub(super) const GUEST_SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
 pub(super) const GUEST_ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 pub(super) const GUEST_ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
@@ -66,6 +65,93 @@ pub(super) const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
     "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB",
     "LOFTD_REAL_PODMAN",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GuestPermission {
+    IoUring,
+    NetAdmin,
+    Bpf,
+    Perf,
+}
+
+impl GuestPermission {
+    const ALL: [Self; 4] = [Self::IoUring, Self::NetAdmin, Self::Bpf, Self::Perf];
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::IoUring => "io-uring",
+            Self::NetAdmin => "net-admin",
+            Self::Bpf => "bpf",
+            Self::Perf => "perf",
+        }
+    }
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::IoUring => 1 << 0,
+            Self::NetAdmin => 1 << 1,
+            Self::Bpf => 1 << 2,
+            Self::Perf => 1 << 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct GuestPermissions(u8);
+
+impl GuestPermissions {
+    pub(crate) const fn contains(self, permission: GuestPermission) -> bool {
+        self.0 & permission.bit() != 0
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl FromStr for GuestPermissions {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.is_empty() {
+            return Err("permissions must not be empty".to_owned());
+        }
+
+        let mut permissions = Self::default();
+        for token in value.split(',') {
+            let permission = match token {
+                "io-uring" => GuestPermission::IoUring,
+                "net-admin" => GuestPermission::NetAdmin,
+                "bpf" => GuestPermission::Bpf,
+                "perf" => GuestPermission::Perf,
+                "" => return Err("permissions must not contain empty values".to_owned()),
+                other => {
+                    return Err(format!(
+                        "unsupported permission '{other}'; use io-uring, net-admin, bpf, or perf"
+                    ));
+                }
+            };
+            permissions.0 |= permission.bit();
+        }
+        Ok(permissions)
+    }
+}
+
+impl std::fmt::Display for GuestPermissions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut first = true;
+        for permission in GuestPermission::ALL {
+            if self.contains(permission) {
+                if !first {
+                    formatter.write_str(",")?;
+                }
+                formatter.write_str(permission.as_str())?;
+                first = false;
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindMount {
@@ -268,8 +354,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) pulse: Option<PulseServer>,
     pub(crate) gpu_mode: GpuMode,
     pub(crate) wayland: bool,
-    pub(crate) io_uring: bool,
-    pub(crate) perf: bool,
+    pub(crate) permissions: GuestPermissions,
     pub(crate) publish: &'a [String],
     pub(crate) profile: bool,
     pub(crate) root: bool,
@@ -327,8 +412,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) log_level: LogLevel,
     pub(crate) network_mode: NetworkMode,
     pub(crate) gpu_mode: GpuMode,
-    pub(crate) io_uring: bool,
-    pub(crate) perf: bool,
+    pub(crate) permissions: GuestPermissions,
     pub(crate) publish: Vec<String>,
     pub(crate) workdir: String,
     pub(crate) exec_path: String,

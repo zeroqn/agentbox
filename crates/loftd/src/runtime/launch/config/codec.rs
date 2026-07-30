@@ -153,12 +153,9 @@ impl LaunchConfig {
             self.network_mode.as_config_value(),
         );
         push_field(&mut out, "gpu_mode", self.gpu_mode.as_config_value());
-        push_field(
-            &mut out,
-            "io_uring",
-            if self.io_uring { "true" } else { "false" },
-        );
-        push_field(&mut out, "perf", if self.perf { "true" } else { "false" });
+        if !self.permissions.is_empty() {
+            push_field(&mut out, "permissions", &self.permissions.to_string());
+        }
         for (index, spec) in self.publish.iter().enumerate() {
             push_field(&mut out, &format!("publish.{index}"), spec);
         }
@@ -369,8 +366,7 @@ impl LaunchConfig {
                     | "log_level"
                     | "network_mode"
                     | "gpu_mode"
-                    | "io_uring"
-                    | "perf"
+                    | "permissions"
                     | "workdir"
                     | "exec_path"
                     | "waypipe.socket"
@@ -422,16 +418,13 @@ impl LaunchConfig {
                 .map(String::as_str)
                 .unwrap_or(GpuMode::Off.as_config_value()),
         )?;
-        let io_uring = fields
-            .get("io_uring")
-            .map(|value| parse_bool_field("io_uring", value))
-            .transpose()?
-            .unwrap_or(false);
-        let perf = fields
-            .get("perf")
-            .map(|value| parse_bool_field("perf", value))
-            .transpose()?
-            .unwrap_or(false);
+        let permissions = fields
+            .get("permissions")
+            .map_or(
+                Ok(crate::runtime::launch::config::GuestPermissions::default()),
+                |value| value.parse(),
+            )
+            .map_err(anyhow::Error::msg)?;
         let mounts = parse_mounts(&fields, mounts)?;
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
@@ -466,8 +459,7 @@ impl LaunchConfig {
             log_level,
             network_mode,
             gpu_mode,
-            io_uring,
-            perf,
+            permissions,
             publish: publish.into_values().collect(),
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,

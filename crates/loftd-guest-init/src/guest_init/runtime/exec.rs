@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use crate::guest_init::components::env::GuestPermissions;
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::waypipe::WaypipeService;
 use crate::guest_init::process;
@@ -25,6 +26,7 @@ pub(in crate::guest_init) struct ExecConfig {
 pub(in crate::guest_init) fn start(
     config: ExecConfig,
     identity: DevIdentity,
+    permissions: GuestPermissions,
     waypipe: Option<WaypipeService>,
 ) -> Result<thread::JoinHandle<()>> {
     if config.protocol_version != PROTOCOL_VERSION {
@@ -46,9 +48,13 @@ pub(in crate::guest_init) fn start(
             let identity = identity.clone();
             let waypipe = waypipe.clone();
             thread::spawn(move || {
-                if let Err(err) =
-                    handle_client(client, &identity, Path::new("/workspace"), waypipe.as_ref())
-                {
+                if let Err(err) = handle_client(
+                    client,
+                    &identity,
+                    permissions,
+                    Path::new("/workspace"),
+                    waypipe.as_ref(),
+                ) {
                     eprintln!("loftd-guest-init: exec request failed: {err:#}");
                 }
             });
@@ -59,6 +65,7 @@ pub(in crate::guest_init) fn start(
 fn handle_client(
     mut client: std::fs::File,
     identity: &DevIdentity,
+    permissions: GuestPermissions,
     workdir: &Path,
     waypipe: Option<&WaypipeService>,
 ) -> Result<()> {
@@ -113,7 +120,7 @@ fn handle_client(
                 return Err(std::io::Error::last_os_error());
             }
             if process::is_root() {
-                process::apply_dev_credentials(&identity)?;
+                process::apply_dev_credentials(&identity, permissions)?;
             }
             Ok(())
         });
@@ -306,7 +313,9 @@ mod tests {
         let (client, mut server) = UnixStream::pair().unwrap();
         let client = unsafe { std::fs::File::from_raw_fd(client.into_raw_fd()) };
         let temp = tempfile::tempdir().unwrap();
-        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path(), None));
+        let thread = thread::spawn(move || {
+            handle_client(client, &identity(), Default::default(), temp.path(), None)
+        });
 
         write_frame(
             &mut server,
@@ -337,7 +346,9 @@ mod tests {
         let (client, mut server) = UnixStream::pair().unwrap();
         let client = unsafe { std::fs::File::from_raw_fd(client.into_raw_fd()) };
         let temp = tempfile::tempdir().unwrap();
-        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path(), None));
+        let thread = thread::spawn(move || {
+            handle_client(client, &identity(), Default::default(), temp.path(), None)
+        });
 
         write_frame(
             &mut server,
@@ -365,7 +376,9 @@ mod tests {
         let (client, mut server) = UnixStream::pair().unwrap();
         let client = unsafe { std::fs::File::from_raw_fd(client.into_raw_fd()) };
         let temp = tempfile::tempdir().unwrap();
-        let thread = thread::spawn(move || handle_client(client, &identity(), temp.path(), None));
+        let thread = thread::spawn(move || {
+            handle_client(client, &identity(), Default::default(), temp.path(), None)
+        });
 
         write_frame(
             &mut server,

@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use crate::guest_init::runtime::attach_profile::{self, GuestAttachProfiler};
 use crate::guest_init::runtime::vsock::VsockListener;
 
+use crate::guest_init::components::env::GuestPermissions;
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::process;
 
@@ -49,6 +50,7 @@ pub(in crate::guest_init) struct ManagedSessionConfig {
 pub(in crate::guest_init) fn run(
     command: &[String],
     identity: &DevIdentity,
+    permissions: GuestPermissions,
     drop_to_identity: bool,
     config: ManagedSessionConfig,
 ) -> Result<()> {
@@ -68,6 +70,7 @@ pub(in crate::guest_init) fn run(
     run_pre_start_event_loop(
         command,
         identity,
+        permissions,
         drop_to_identity,
         listener,
         config.attach_profile,
@@ -84,6 +87,7 @@ fn managed_debug(message: &str) {
 fn run_pre_start_event_loop(
     command: &[String],
     identity: &DevIdentity,
+    permissions: GuestPermissions,
     drop_to_identity: bool,
     listener: VsockListener,
     attach_profile: bool,
@@ -114,13 +118,14 @@ fn run_pre_start_event_loop(
                             return Err(err);
                         }
                     };
-                let child = match spawn_pty_child(&pty, command, identity, drop_to_identity) {
-                    Ok(child) => child,
-                    Err(err) => {
-                        let _ = write_frame(&mut client, &Frame::Error(format!("{err:#}")));
-                        return Err(err);
-                    }
-                };
+                let child =
+                    match spawn_pty_child(&pty, command, identity, permissions, drop_to_identity) {
+                        Ok(child) => child,
+                        Err(err) => {
+                            let _ = write_frame(&mut client, &Frame::Error(format!("{err:#}")));
+                            return Err(err);
+                        }
+                    };
                 let mut terminal_state = TerminalState::new(effective_size);
                 match serve_attached_client(
                     &pty.master,
@@ -1169,6 +1174,7 @@ fn spawn_pty_child(
     pty: &Pty,
     command: &[String],
     identity: &DevIdentity,
+    permissions: GuestPermissions,
     drop_to_identity: bool,
 ) -> Result<libc::pid_t> {
     let pid = unsafe { libc::fork() };
@@ -1179,7 +1185,13 @@ fn spawn_pty_child(
         );
     }
     if pid == 0 {
-        let code = child_main(&pty.slave_path, command, identity, drop_to_identity);
+        let code = child_main(
+            &pty.slave_path,
+            command,
+            identity,
+            permissions,
+            drop_to_identity,
+        );
         std::process::exit(code);
     }
     Ok(pid)
@@ -1189,9 +1201,12 @@ fn child_main(
     slave_path: &str,
     command: &[String],
     identity: &DevIdentity,
+    permissions: GuestPermissions,
     drop_to_identity: bool,
 ) -> i32 {
-    if let Err(err) = child_main_result(slave_path, command, identity, drop_to_identity) {
+    if let Err(err) =
+        child_main_result(slave_path, command, identity, permissions, drop_to_identity)
+    {
         eprintln!("loftd-guest-init managed session child: {err:#}");
         127
     } else {
@@ -1203,6 +1218,7 @@ fn child_main_result(
     slave_path: &str,
     command: &[String],
     identity: &DevIdentity,
+    permissions: GuestPermissions,
     drop_to_identity: bool,
 ) -> Result<()> {
     if unsafe { libc::setsid() } < 0 {
@@ -1222,7 +1238,7 @@ fn child_main_result(
         }
     }
     if drop_to_identity {
-        process::drop_to_identity_and_exec(identity, command)
+        process::drop_to_identity_and_exec(identity, permissions, command)
     } else {
         process::exec_command(command)
     }

@@ -38,7 +38,10 @@ pub(in crate::guest_init) fn run(command: Vec<String>) -> Result<()> {
         resolve_materialized_dev_identity(&command, Path::new(PASSWD_PATH), Path::new(GROUP_PATH))?;
     let shell_env = crate::guest_init::components::shell::env::derive(&identity, false, None);
     crate::guest_init::components::shell::env::export(&shell_env);
-    process::drop_to_identity_and_exec(&identity, &command)
+    let permissions = std::env::var("LOFTD_PERMISSIONS")
+        .ok()
+        .map_or(Ok(Default::default()), |value| value.parse())?;
+    process::drop_to_identity_and_exec(&identity, permissions, &command)
 }
 
 fn resolve_materialized_dev_identity(

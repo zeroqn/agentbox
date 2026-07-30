@@ -163,7 +163,7 @@ fn spawn_server(
     if process::is_root() {
         let identity = identity.clone();
         unsafe {
-            command.pre_exec(move || process::apply_dev_credentials(&identity));
+            command.pre_exec(move || process::apply_dev_credentials(&identity, Default::default()));
         }
     }
     command

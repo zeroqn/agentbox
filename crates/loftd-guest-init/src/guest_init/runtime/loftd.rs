@@ -170,7 +170,10 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     profiler.measure_result("configure-io-uring", || {
         if process::is_root() {
             crate::guest_init::components::hardening::io_uring::configure(
-                env_contract.loftd.io_uring,
+                env_contract
+                    .loftd
+                    .permissions
+                    .contains(crate::guest_init::components::env::GuestPermission::IoUring),
                 identity.gid,
             )?;
         }
@@ -178,7 +181,12 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     })?;
     profiler.measure_result("configure-perf", || {
         if process::is_root() {
-            crate::guest_init::components::hardening::perf::configure(env_contract.loftd.perf)?;
+            crate::guest_init::components::hardening::perf::configure(
+                env_contract
+                    .loftd
+                    .permissions
+                    .contains(crate::guest_init::components::env::GuestPermission::Perf),
+            )?;
         }
         Ok(())
     })?;
@@ -222,16 +230,29 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
         .transpose()?;
     let _exec = env_contract
         .exec
-        .map(|config| super::exec::start(config, identity.clone(), waypipe.clone()))
+        .map(|config| {
+            super::exec::start(
+                config,
+                identity.clone(),
+                env_contract.loftd.permissions,
+                waypipe.clone(),
+            )
+        })
         .transpose()?;
     let drop_to_identity = should_drop_to_identity(process::is_root(), env_contract.enter_as_root);
     if let Some(managed_session) = env_contract.managed_session {
         debug_breadcrumb("managed session starting");
-        return session::run(&command, &identity, drop_to_identity, managed_session);
+        return session::run(
+            &command,
+            &identity,
+            env_contract.loftd.permissions,
+            drop_to_identity,
+            managed_session,
+        );
     }
     debug_breadcrumb("final exec handoff starting");
     if drop_to_identity {
-        process::drop_to_identity_and_exec(&identity, &command)
+        process::drop_to_identity_and_exec(&identity, env_contract.loftd.permissions, &command)
     } else {
         process::exec_command(&command)
     }
@@ -327,8 +348,9 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
         )?,
         use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
         wayland: env_flag(env, "LOFTD_WAYLAND"),
-        io_uring: env_flag(env, "LOFTD_IO_URING"),
-        perf: env_flag(env, "LOFTD_PERF"),
+        permissions: env
+            .var("LOFTD_PERMISSIONS")
+            .map_or(Ok(Default::default()), |value| value.parse())?,
         enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
         host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
         host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,

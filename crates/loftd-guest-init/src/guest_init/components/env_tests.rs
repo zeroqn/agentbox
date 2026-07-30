@@ -101,56 +101,34 @@ fn internal_runtime_parses_authoritative_host_nix_overlay_marker() {
 }
 
 #[test]
-fn internal_runtime_disables_io_uring_when_marker_is_absent() {
+fn internal_runtime_parses_unified_permissions() {
     let _guard = ENV_LOCK.lock().expect("env test lock");
-    // SAFETY: test mutates process env in a small single-threaded assertion.
     unsafe {
-        std::env::remove_var("LOFTD_IO_URING");
+        std::env::set_var("LOFTD_PERMISSIONS", "perf,bpf,io-uring,net-admin,bpf");
     }
 
     let parsed = LoftdEnv::from_process_env().expect("env should parse");
 
-    assert!(!parsed.io_uring);
+    assert_eq!(
+        parsed.permissions.to_string(),
+        "io-uring,net-admin,bpf,perf"
+    );
+    unsafe {
+        std::env::remove_var("LOFTD_PERMISSIONS");
+    }
 }
 
 #[test]
-fn internal_runtime_enables_io_uring_from_marker() {
+fn internal_runtime_rejects_invalid_permissions() {
     let _guard = ENV_LOCK.lock().expect("env test lock");
-    // SAFETY: test mutates process env in a small single-threaded assertion.
-    unsafe {
-        std::env::set_var("LOFTD_IO_URING", "1");
+    for value in ["", "io-uring,,perf", "sys-admin"] {
+        unsafe {
+            std::env::set_var("LOFTD_PERMISSIONS", value);
+        }
+        let error = LoftdEnv::from_process_env().expect_err("invalid permissions should fail");
+        assert!(format!("{error:#}").contains("LOFTD_PERMISSIONS"));
     }
-    let parsed = LoftdEnv::from_process_env().expect("env should parse");
     unsafe {
-        std::env::remove_var("LOFTD_IO_URING");
+        std::env::remove_var("LOFTD_PERMISSIONS");
     }
-
-    assert!(parsed.io_uring);
-}
-
-#[test]
-fn internal_runtime_disables_perf_when_marker_is_absent() {
-    let _guard = ENV_LOCK.lock().expect("env test lock");
-    // SAFETY: test mutates process env in a small single-threaded assertion.
-    unsafe {
-        std::env::remove_var("LOFTD_PERF");
-    }
-    let parsed = LoftdEnv::from_process_env().expect("env should parse");
-
-    assert!(!parsed.perf);
-}
-
-#[test]
-fn internal_runtime_enables_perf_from_marker() {
-    let _guard = ENV_LOCK.lock().expect("env test lock");
-    // SAFETY: test mutates process env in a small single-threaded assertion.
-    unsafe {
-        std::env::set_var("LOFTD_PERF", "1");
-    }
-    let parsed = LoftdEnv::from_process_env().expect("env should parse");
-    unsafe {
-        std::env::remove_var("LOFTD_PERF");
-    }
-
-    assert!(parsed.perf);
 }

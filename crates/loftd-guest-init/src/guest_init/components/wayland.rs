@@ -78,7 +78,7 @@ fn spawn_proxy_command(
     if proxy_credential_plan(starting_uid, identity).is_some() {
         let identity = identity.clone();
         unsafe {
-            command.pre_exec(move || process::apply_dev_credentials(&identity));
+            command.pre_exec(move || process::apply_dev_credentials(&identity, Default::default()));
         }
     }
     command
