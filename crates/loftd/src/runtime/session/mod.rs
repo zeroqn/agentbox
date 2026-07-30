@@ -16,6 +16,7 @@ mod managed_attach_socket;
 pub(crate) mod nix_overlay;
 mod profile;
 mod pty_raw_passthrough;
+mod pulse_bridge;
 pub(crate) mod rootfs;
 pub(crate) mod supervisor;
 pub(crate) mod task_control;
@@ -24,8 +25,8 @@ mod waypipe_broker;
 
 use crate::runtime::RuntimeProfileScope;
 use crate::runtime::launch::config::{
-    self, DEFAULT_WAYPIPE_PORT, ExecConfig, LaunchConfig, LaunchSpec, ManagedSessionConfig,
-    WaypipeConfig,
+    self, DEFAULT_PULSE_BRIDGE_PORT, DEFAULT_WAYPIPE_PORT, ExecConfig, LaunchConfig, LaunchSpec,
+    ManagedSessionConfig, PulseBridgeConfig, WaypipeConfig,
 };
 use crate::runtime::launch::{HostPersistentDiskPreparer, LaunchPlan, PersistentDiskPreparer};
 use attach::AttachInputPolicy;
@@ -232,6 +233,21 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                             lease.handle().task_dir(),
                         )
                         .context("failed to allocate loftd exec socket")?;
+                        let pulse_bridge = if let Some(host_port) =
+                            plan.pulse.and_then(|pulse| pulse.host_loopback_port())
+                        {
+                            Some(PulseBridgeConfig {
+                                socket: managed_attach_socket::allocate_pulse_bridge(
+                                    lease.handle().task_id(),
+                                    lease.handle().task_dir(),
+                                )
+                                .context("failed to allocate loftd Pulse bridge socket")?,
+                                guest_port: DEFAULT_PULSE_BRIDGE_PORT,
+                                host_port,
+                            })
+                        } else {
+                            None
+                        };
                         let waypipe = if plan.waypipe {
                             Some((
                                 managed_attach_socket::allocate_waypipe_data(
@@ -308,6 +324,7 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                                     env
                                 },
                                 host_nix_overlay: Some(nix_overlay_lease.intent().clone()),
+                                pulse_bridge,
                                 waypipe: waypipe.as_ref().map(|(socket, _)| WaypipeConfig {
                                     socket: socket.clone(),
                                     guest_port: DEFAULT_WAYPIPE_PORT,

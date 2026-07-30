@@ -10,12 +10,13 @@ pub(crate) use components::mounts::validate_mounts;
 pub(crate) use components::resources::resolve_cpu_count;
 pub(crate) use model::{
     AllocatorMode, BindMount, BindMountSourceKind, CARGO_TAG, CARGO_TARGET, CODEX_TAG,
-    CODEX_TARGET, DEFAULT_WAYPIPE_PORT, DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG,
-    DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET, DiskAttachment, ExecConfig,
-    GuestInitOverrideMount, GuestPermissions, HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig,
-    LaunchSpec, ManagedSessionConfig, NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG,
-    PI_TARGET, PulseServer, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
-    WaypipeConfig, canonical_mount_target,
+    CODEX_TARGET, DEFAULT_PULSE_BRIDGE_PORT, DEFAULT_WAYPIPE_PORT, DIRGE_CONFIG_TAG,
+    DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET,
+    DiskAttachment, ExecConfig, GuestInitOverrideMount, GuestPermissions, HostNixOverlay,
+    LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, ManagedSessionConfig, NIX_TARGET,
+    NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, PulseBridgeConfig, PulseServer,
+    SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, WaypipeConfig,
+    canonical_mount_target,
 };
 
 #[cfg(test)]
@@ -57,11 +58,16 @@ impl LaunchConfig {
             spec.allocator.as_env_value(),
         );
         components::network::contribute_guest_env(&mut guest_config_env, spec.network_mode);
-        if let Some(pulse) = spec.pulse {
+        if let Some(pulse) = spec.pulse
+            && let Some(value) = pulse.direct_env_value()
+        {
+            guest_env::insert_env(&mut guest_config_env, model::GUEST_PULSE_SERVER_ENV, &value);
+        }
+        if let Some(pulse_bridge) = &spec.pulse_bridge {
             guest_env::insert_env(
                 &mut guest_config_env,
-                model::GUEST_PULSE_SERVER_ENV,
-                &pulse.as_env_value(),
+                model::GUEST_PULSE_BRIDGE_PORT_ENV,
+                &pulse_bridge.guest_port.to_string(),
             );
         }
         if spec.wayland {
@@ -138,6 +144,7 @@ impl LaunchConfig {
             )],
             guest_config_env: guest_config_env.into_iter().collect(),
             passt_fd: None,
+            pulse_bridge: spec.pulse_bridge,
             waypipe: spec.waypipe,
             exec: spec.exec,
             managed_session: spec.managed_session,

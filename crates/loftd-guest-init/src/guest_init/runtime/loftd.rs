@@ -25,6 +25,7 @@ const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
 const ATTACH_PROFILE_ENV: &str = "LOFTD_ATTACH_PROFILE";
 const WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
 const PULSE_SERVER_ENV: &str = "LOFTD_PULSE_SERVER";
+const PULSE_BRIDGE_PORT_ENV: &str = "LOFTD_PULSE_BRIDGE_PORT";
 const PREPARED_ROOT_TARGETS: &[&str] = &[
     "/workspace",
     "/home/dev/.codex",
@@ -88,12 +89,18 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum PulseEndpoint {
+    Direct(String),
+    Bridge { port: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct EnterEnv {
     enter_as_root: bool,
     host_uid: Option<u32>,
     host_gid: Option<u32>,
     loftd: LoftdEnv,
-    pulse_server: Option<String>,
+    pulse: Option<PulseEndpoint>,
     waypipe_port: Option<u32>,
     exec: Option<ExecConfig>,
     managed_session: Option<ManagedSessionConfig>,
@@ -143,11 +150,17 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
         )
     })?;
     debug_breadcrumb("resolve-identity complete");
+    let pulse_server = env_contract.pulse.as_ref().map(|pulse| match pulse {
+        PulseEndpoint::Direct(value) => value.clone(),
+        PulseEndpoint::Bridge { .. } => {
+            crate::guest_init::components::pulse::server_value(&identity)
+        }
+    });
     let shell_env = profiler.measure("derive-shell-env", || {
         crate::guest_init::components::shell::env::derive(
             &identity,
             env_contract.loftd.containers_storage,
-            env_contract.pulse_server.as_deref(),
+            pulse_server.as_deref(),
         )
     });
     profiler.measure("export-shell-env", || {
@@ -224,6 +237,13 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 
     profile::clear_guest_profile_env();
     profiler.report_before_exec()?;
+    let _pulse = match env_contract.pulse.as_ref() {
+        Some(PulseEndpoint::Bridge { port }) => Some(
+            crate::guest_init::components::pulse::start(*port, &identity)
+                .context("failed to start guest Pulse bridge")?,
+        ),
+        _ => None,
+    };
     let waypipe = env_contract
         .waypipe_port
         .map(|port| crate::guest_init::components::waypipe::start(port, &identity))
@@ -265,11 +285,25 @@ impl EnterEnv {
             host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
             host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
-            pulse_server: parse_pulse_server(env)?,
+            pulse: parse_pulse_endpoint(env)?,
             waypipe_port: parse_optional_u32(env, WAYPIPE_PORT_ENV)?,
             exec: exec_from_env(env)?,
             managed_session: managed_session_from_env(env)?,
         })
+    }
+}
+
+fn parse_pulse_endpoint(env: &impl EnvSource) -> Result<Option<PulseEndpoint>> {
+    let direct = parse_pulse_server(env)?;
+    let bridge = parse_optional_u32(env, PULSE_BRIDGE_PORT_ENV)?;
+    match (direct, bridge) {
+        (Some(value), None) => Ok(Some(PulseEndpoint::Direct(value))),
+        (None, Some(0)) => bail!("{PULSE_BRIDGE_PORT_ENV} must be nonzero"),
+        (None, Some(port)) => Ok(Some(PulseEndpoint::Bridge { port })),
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => {
+            bail!("{PULSE_SERVER_ENV} and {PULSE_BRIDGE_PORT_ENV} cannot both be configured")
+        }
     }
 }
 
@@ -635,7 +669,7 @@ mod tests {
         assert!(!parsed.enter_as_root);
         assert_eq!(parsed.host_uid, None);
         assert_eq!(parsed.host_gid, None);
-        assert_eq!(parsed.pulse_server, None);
+        assert_eq!(parsed.pulse, None);
         assert_eq!(parsed.waypipe_port, None);
         assert_eq!(parsed.exec, None);
     }
@@ -646,8 +680,8 @@ mod tests {
             .expect("Pulse endpoint should parse");
 
         assert_eq!(
-            parsed.pulse_server.as_deref(),
-            Some("tcp:[2001:db8::10]:4713")
+            parsed.pulse,
+            Some(PulseEndpoint::Direct("tcp:[2001:db8::10]:4713".to_owned()))
         );
     }
 
@@ -664,6 +698,20 @@ mod tests {
 
             assert!(format!("{error:#}").contains(PULSE_SERVER_ENV));
         }
+    }
+
+    #[test]
+    fn pulse_bridge_port_is_parsed_and_conflicts_with_direct_endpoint() {
+        let parsed = EnterEnv::from_env(&env(&[(PULSE_BRIDGE_PORT_ENV, "50429")]))
+            .expect("Pulse bridge port should parse");
+        assert_eq!(parsed.pulse, Some(PulseEndpoint::Bridge { port: 50_429 }));
+
+        let error = EnterEnv::from_env(&env(&[
+            (PULSE_SERVER_ENV, "tcp:192.0.2.10:4713"),
+            (PULSE_BRIDGE_PORT_ENV, "50429"),
+        ]))
+        .expect_err("direct and bridged Pulse endpoints should conflict");
+        assert!(format!("{error:#}").contains("cannot both be configured"));
     }
 
     #[test]

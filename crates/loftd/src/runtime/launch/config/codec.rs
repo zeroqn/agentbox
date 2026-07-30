@@ -15,7 +15,7 @@ use super::guest_env::guest_config_json;
 use super::model::{
     BindMount, BindMountSourceKind, DiskAttachment, ExecConfig, GuestInitOverrideMount,
     HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, ManagedSessionConfig, NetworkMode,
-    WaypipeConfig,
+    PulseBridgeConfig, WaypipeConfig,
 };
 
 impl LaunchConfig {
@@ -161,6 +161,23 @@ impl LaunchConfig {
         }
         push_field(&mut out, "workdir", &self.workdir);
         push_field(&mut out, "exec_path", &self.exec_path);
+        if let Some(pulse_bridge) = &self.pulse_bridge {
+            push_field(
+                &mut out,
+                "pulse_bridge.socket",
+                &pulse_bridge.socket.display().to_string(),
+            );
+            push_field(
+                &mut out,
+                "pulse_bridge.guest_port",
+                &pulse_bridge.guest_port.to_string(),
+            );
+            push_field(
+                &mut out,
+                "pulse_bridge.host_port",
+                &pulse_bridge.host_port.to_string(),
+            );
+        }
         if let Some(waypipe) = &self.waypipe {
             push_field(
                 &mut out,
@@ -369,6 +386,9 @@ impl LaunchConfig {
                     | "permissions"
                     | "workdir"
                     | "exec_path"
+                    | "pulse_bridge.socket"
+                    | "pulse_bridge.guest_port"
+                    | "pulse_bridge.host_port"
                     | "waypipe.socket"
                     | "waypipe.guest_port"
                     | "exec.socket"
@@ -429,6 +449,7 @@ impl LaunchConfig {
         let guest_init_override =
             parse_guest_init_override_mount(&fields, required("exec_path")?.as_str())?;
         let host_nix_overlay = parse_host_nix_overlay(&fields)?;
+        let pulse_bridge = parse_pulse_bridge(&fields)?;
         let waypipe = parse_waypipe(&fields)?;
         let exec = parse_exec(&fields)?;
         let managed_session = parse_managed_session(&fields)?;
@@ -467,6 +488,7 @@ impl LaunchConfig {
             env: env.into_values().collect(),
             guest_config_env: guest_config_env.into_values().collect(),
             passt_fd: None,
+            pulse_bridge,
             waypipe,
             exec,
             managed_session,
@@ -474,6 +496,32 @@ impl LaunchConfig {
             landlock,
         })
     }
+}
+
+fn parse_pulse_bridge(fields: &BTreeMap<String, String>) -> Result<Option<PulseBridgeConfig>> {
+    let keys = [
+        "pulse_bridge.socket",
+        "pulse_bridge.guest_port",
+        "pulse_bridge.host_port",
+    ];
+    if !keys.iter().any(|key| fields.contains_key(*key)) {
+        return Ok(None);
+    }
+
+    let host_port = required_field(fields, "pulse_bridge.host_port")?
+        .parse::<u16>()
+        .context("loftd launch config pulse_bridge.host_port is invalid")?;
+    if host_port == 0 {
+        anyhow::bail!("loftd launch config pulse_bridge.host_port must be nonzero");
+    }
+
+    Ok(Some(PulseBridgeConfig {
+        socket: PathBuf::from(required_field(fields, "pulse_bridge.socket")?),
+        guest_port: required_field(fields, "pulse_bridge.guest_port")?
+            .parse::<u32>()
+            .context("loftd launch config pulse_bridge.guest_port is invalid")?,
+        host_port,
+    }))
 }
 
 fn parse_waypipe(fields: &BTreeMap<String, String>) -> Result<Option<WaypipeConfig>> {

@@ -255,8 +255,8 @@ pub(crate) struct Cli {
 
     #[arg(
         long = "pulse",
-        value_name = "tcp:IP:PORT",
-        help = "Direct guest PulseAudio-compatible clients to a host Pulse TCP server"
+        value_name = "tcp:HOST:PORT",
+        help = "Direct guest Pulse clients to a TCP endpoint or bridge localhost to host loopback"
     )]
     pulse: Option<PulseServer>,
 
@@ -1473,15 +1473,33 @@ mod tests {
         assert_eq!(
             ipv4.pulse
                 .expect("Pulse endpoint should be present")
-                .as_env_value(),
-            "tcp:192.0.2.10:4713"
+                .direct_env_value()
+                .as_deref(),
+            Some("tcp:192.0.2.10:4713")
         );
         assert_eq!(
             ipv6.pulse
                 .expect("Pulse endpoint should be present")
-                .as_env_value(),
-            "tcp:[2001:db8::10]:4713"
+                .direct_env_value()
+                .as_deref(),
+            Some("tcp:[2001:db8::10]:4713")
         );
+    }
+
+    #[test]
+    fn pulse_server_accepts_host_loopback_bridge_spellings() {
+        for value in ["tcp:localhost:4714", "tcp:127.0.0.1:4714"] {
+            let options = Cli::try_parse_from(["loftd", &format!("--pulse={value}")])
+                .expect("host-loopback Pulse endpoint should parse")
+                .into_runtime_options();
+            assert_eq!(
+                options
+                    .pulse
+                    .expect("Pulse endpoint should be present")
+                    .host_loopback_port(),
+                Some(4714)
+            );
+        }
     }
 
     #[test]
@@ -1495,8 +1513,8 @@ mod tests {
             options
                 .pulse
                 .expect("Pulse endpoint should be present")
-                .as_env_value(),
-            "tcp:127.0.0.1:4713"
+                .host_loopback_port(),
+            Some(4713)
         );
     }
 

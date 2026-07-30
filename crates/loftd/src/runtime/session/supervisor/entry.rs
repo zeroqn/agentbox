@@ -8,6 +8,7 @@ use crate::logging::{self, LogSettings};
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
 use crate::runtime::seccomp::{self, SeccompMode};
 use crate::runtime::session::profile::LoftdHostProfiler;
+use crate::runtime::session::pulse_bridge::PulseBridge;
 use crate::runtime::session::rootfs::task::{UnsharedBtrfsRootfsCommands, cleanup_task_rootfs_dir};
 use crate::runtime::session::supervisor::identity;
 use crate::runtime::session::supervisor::managed_exit_marker;
@@ -112,6 +113,12 @@ fn run_helper_profiled_inner(
         None
     };
     let passt_fd = passt_session.as_ref().map(PasstWorkerSession::fd);
+    let _pulse_bridge = config
+        .pulse_bridge
+        .as_ref()
+        .map(|bridge| PulseBridge::start(bridge.socket.clone(), bridge.host_port))
+        .transpose()
+        .context("failed to start loftd host Pulse bridge")?;
     let mut worker = profiler.measure_result("helper_vm_worker_start", || {
         vm_child::start_vm_worker(
             config_path,
@@ -486,6 +493,7 @@ mod tests {
             env: Vec::new(),
             guest_config_env: Vec::new(),
             passt_fd: None,
+            pulse_bridge: None,
             waypipe: None,
             exec: None,
             managed_session: Some(ManagedSessionConfig {

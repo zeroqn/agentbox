@@ -207,6 +207,7 @@ mod tests {
             env: Vec::new(),
             guest_config_env: Vec::new(),
             passt_fd: None,
+            pulse_bridge: None,
             waypipe: None,
             exec: None,
             managed_session: None,

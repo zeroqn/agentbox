@@ -9,7 +9,7 @@ mod attach_profile;
 mod exec;
 pub(in crate::guest_init) mod loftd;
 mod session;
-mod vsock;
+pub(in crate::guest_init) mod vsock;
 
 pub(in crate::guest_init) fn run(command: GuestInitCommand) -> Result<()> {
     match command {
@@ -33,6 +33,9 @@ pub(in crate::guest_init) fn run(command: GuestInitCommand) -> Result<()> {
                     crate::guest_init::components::podman::user::wait_for_service()
                 }
             },
+            InternalSubcommand::Pulse(pulse) => {
+                crate::guest_init::components::pulse::run(pulse.port, pulse.uid, pulse.gid)
+            }
             InternalSubcommand::Resize(resize) => {
                 crate::guest_init::components::disk::resize::run(resize.target)
             }

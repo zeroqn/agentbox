@@ -3,8 +3,8 @@ use crate::runtime::launch::config::{
     BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DIRGE_CONFIG_TAG,
     DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET,
     DiskAttachment, LaunchConfig, LaunchSpec, ManagedSessionConfig, NetworkMode, OMP_TAG,
-    OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
-    WaypipeConfig,
+    OMP_TARGET, PI_TAG, PI_TARGET, PulseBridgeConfig, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
+    WORKSPACE_TARGET, WaypipeConfig,
 };
 use crate::runtime::seccomp::{AuditMode, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
@@ -307,6 +307,7 @@ fn config() -> LaunchConfig {
         ],
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -639,6 +640,30 @@ fn nested_virt_check_unsupported_failure_or_absent_still_sets_nested_virt() {
         assert!(check_index < set_index);
         assert!(set_index < start_index);
     }
+}
+
+#[test]
+fn pulse_bridge_adds_guest_to_host_vsock_connector() {
+    let dir = tempfile::tempdir().expect("tempdir should be created");
+    let socket = dir.path().join("pulse.sock");
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut config = config();
+    config.pulse_bridge = Some(PulseBridgeConfig {
+        socket: socket.clone(),
+        guest_port: 50_429,
+        host_port: 4714,
+    });
+
+    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+        .start_enter(&config)
+        .expect("Pulse bridge launch should succeed");
+
+    assert!(calls.borrow().contains(&Call::AddVsockPort(
+        7,
+        50_429,
+        socket.display().to_string(),
+        false,
+    )));
 }
 
 #[test]

@@ -17,6 +17,10 @@ pub(crate) fn allocate_exec(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
     allocate_named(task_id, task_dir, "e")
 }
 
+pub(crate) fn allocate_pulse_bridge(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
+    allocate_named(task_id, task_dir, "pulse")
+}
+
 pub(crate) fn allocate_waypipe_data(task_id: &str, task_dir: &Path) -> Result<PathBuf> {
     allocate_named(task_id, task_dir, "wd")
 }

@@ -168,6 +168,7 @@ fn maintenance_launch_config(
         env,
         guest_config_env: Vec::new(),
         passt_fd: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,

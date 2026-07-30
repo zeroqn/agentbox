@@ -828,8 +828,9 @@ mod tests {
         assert_eq!(
             plan.pulse
                 .expect("Pulse endpoint should be preserved")
-                .as_env_value(),
-            "tcp:[2001:db8::10]:4713"
+                .direct_env_value()
+                .as_deref(),
+            Some("tcp:[2001:db8::10]:4713")
         );
         assert_eq!(plan.guest_command, ["bash", "-lc", "echo ok"]);
         assert!(plan.debug);

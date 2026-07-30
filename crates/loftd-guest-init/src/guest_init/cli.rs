@@ -63,7 +63,15 @@ pub(in crate::guest_init) struct InternalCommand {
 pub(in crate::guest_init) enum InternalSubcommand {
     Nix(NixCommand),
     Podman(PodmanCommand),
+    Pulse(PulseCommand),
     Resize(ResizeCommand),
+}
+
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) struct PulseCommand {
+    pub(in crate::guest_init) port: u32,
+    pub(in crate::guest_init) uid: u32,
+    pub(in crate::guest_init) gid: u32,
 }
 
 #[derive(Debug, Args, Clone, PartialEq, Eq)]

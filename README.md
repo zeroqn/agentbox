@@ -911,23 +911,35 @@ pulse.properties = {
 }
 ```
 
-Restart the host `pipewire-pulse` user service after adding the drop-in, then
-launch a new task with `--pulse=tcp:IP:PORT`. Loftd accepts IPv4 and bracketed
-IPv6 socket addresses, uses the address literally, and exports the canonical
-value as `PULSE_SERVER` for PulseAudio-compatible guest applications. It does
-not start guest `pipewire` or `pipewire-pulse`, create a guest-local Pulse
-socket, proxy native PipeWire `pipewire-0`, forward a Pulse cookie, or test the
-connection before launch. `loftd exec` inherits the endpoint selected when the
-task was launched and cannot change it.
+Restart the host `pipewire-pulse` user service after adding the drop-in. Use
+`--pulse=tcp:localhost:PORT` or `--pulse=tcp:127.0.0.1:PORT` to create a
+private per-task bridge to the selected host IPv4-loopback listener. The guest
+receives `PULSE_SERVER=unix:/run/user/<uid>/loftd-pulse`; each guest Pulse
+connection crosses a dedicated libkrun vsock channel and connects only to the
+configured host `127.0.0.1:PORT`. Loftd does not enable passt host-loopback
+mapping or expose other host-loopback ports. Task launch succeeds if the host
+listener is unavailable, and a later guest connection can succeed after the
+host service starts or restarts.
 
-With `--tsi`, a host-loopback listener such as `tcp:127.0.0.1:4713` can be used
-through the existing TSI host network context. With default passt networking,
-the listener must bind an address reachable from the guest and the same address
-must be supplied to `--pulse`; loftd does not rewrite loopback or discover that
-address. Host `pipewire-pulse` configuration owns authorization and network
-exposure. A permitted client may gain playback, capture, stream inspection, or
-server-control access, so restrict the listener with host ACL or anonymous-access
-policy and firewall/network isolation appropriate to the chosen bind address.
+Other literal IPv4 and bracketed IPv6 endpoints remain direct guest TCP
+endpoints and are exported canonically as `PULSE_SERVER=tcp:IP:PORT`. Loftd
+does not start host or guest `pipewire`/`pipewire-pulse`, proxy native PipeWire
+`pipewire-0`, forward a Pulse cookie, or test the connection before launch.
+`loftd exec` inherits the endpoint selected when the task was launched and
+cannot change it.
+
+Host `pipewire-pulse` configuration owns authorization. A permitted Pulse
+client may gain playback, capture, stream inspection, or server-control access,
+so configure the listener's access policy for the trust granted to the task.
+For combined software-only Waypipe playback, mpv 0.41.0 also needs
+`--gpu-sw=yes`, for example:
+
+```bash
+./result/bin/loftd \
+  --waypipe=/tmp/loftd-waypipe.sock \
+  --pulse=tcp:localhost:4713 \
+  -- mpv --gpu-sw=yes '/workspace/'*.mp4
+```
 
 Remote Waypipe launch:
 

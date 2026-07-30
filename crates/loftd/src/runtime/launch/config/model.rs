@@ -9,6 +9,7 @@ use crate::runtime::seccomp::SeccompMode;
 use crate::runtime::session::rootfs::image_source::OciProcessConfig;
 use crate::runtime::vm::gpu::GpuMode;
 
+pub(crate) const DEFAULT_PULSE_BRIDGE_PORT: u32 = 50_429;
 pub(crate) const DEFAULT_WAYPIPE_PORT: u32 = 50_427;
 pub(crate) const WORKSPACE_TAG: &str = "loftd-workspace";
 pub(crate) const WORKSPACE_TARGET: &str = "/workspace";
@@ -41,6 +42,7 @@ pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
 pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
 pub(super) const GUEST_WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
 pub(super) const GUEST_PULSE_SERVER_ENV: &str = "LOFTD_PULSE_SERVER";
+pub(super) const GUEST_PULSE_BRIDGE_PORT_ENV: &str = "LOFTD_PULSE_BRIDGE_PORT";
 pub(super) const GUEST_EXEC_PORT_ENV: &str = "LOFTD_EXEC_PORT";
 pub(super) const GUEST_EXEC_PROTOCOL_VERSION_ENV: &str = "LOFTD_EXEC_PROTOCOL_VERSION";
 pub(super) const GUEST_PERMISSIONS_ENV: &str = "LOFTD_PERMISSIONS";
@@ -312,13 +314,24 @@ impl NetworkMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PulseServer {
-    address: SocketAddr,
+pub(crate) enum PulseServer {
+    Direct(SocketAddr),
+    HostLoopback { port: u16 },
 }
 
 impl PulseServer {
-    pub(crate) fn as_env_value(self) -> String {
-        format!("tcp:{}", self.address)
+    pub(crate) fn direct_env_value(self) -> Option<String> {
+        match self {
+            Self::Direct(address) => Some(format!("tcp:{address}")),
+            Self::HostLoopback { .. } => None,
+        }
+    }
+
+    pub(crate) fn host_loopback_port(self) -> Option<u16> {
+        match self {
+            Self::Direct(_) => None,
+            Self::HostLoopback { port } => Some(port),
+        }
     }
 }
 
@@ -326,16 +339,35 @@ impl FromStr for PulseServer {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let address = value
+        let endpoint = value
             .strip_prefix("tcp:")
-            .ok_or_else(|| "pulse server must use tcp:IP:PORT".to_owned())?
-            .parse::<SocketAddr>()
-            .map_err(|_| "pulse server must use tcp:IP:PORT with a valid IP address".to_owned())?;
+            .ok_or_else(|| "pulse server must use tcp:HOST:PORT".to_owned())?;
+
+        if let Some(port) = endpoint.strip_prefix("localhost:") {
+            let port = port
+                .parse::<u16>()
+                .map_err(|_| "pulse server must contain a valid nonzero port".to_owned())?;
+            if port == 0 {
+                return Err("pulse server port must be nonzero".to_owned());
+            }
+            return Ok(Self::HostLoopback { port });
+        }
+
+        let address = endpoint.parse::<SocketAddr>().map_err(|_| {
+            "pulse server must use localhost or a valid literal IP address and port".to_owned()
+        })?;
         if address.port() == 0 {
             return Err("pulse server port must be nonzero".to_owned());
         }
 
-        Ok(Self { address })
+        match address {
+            SocketAddr::V4(address) if *address.ip() == std::net::Ipv4Addr::LOCALHOST => {
+                Ok(Self::HostLoopback {
+                    port: address.port(),
+                })
+            }
+            address => Ok(Self::Direct(address)),
+        }
     }
 }
 
@@ -365,6 +397,7 @@ pub(crate) struct LaunchSpec<'a> {
     pub(crate) disks: Vec<DiskAttachment>,
     pub(crate) extra_env: Vec<(String, String)>,
     pub(crate) host_nix_overlay: Option<HostNixOverlay>,
+    pub(crate) pulse_bridge: Option<PulseBridgeConfig>,
     pub(crate) waypipe: Option<WaypipeConfig>,
     pub(crate) exec: Option<ExecConfig>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,
@@ -374,6 +407,13 @@ pub(crate) struct LaunchSpec<'a> {
 ///
 /// `LaunchConfig` is derived from a resolved launch plan plus materialized task
 /// rootfs data and is written into the task rootfs for the helper process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PulseBridgeConfig {
+    pub(crate) socket: PathBuf,
+    pub(crate) guest_port: u32,
+    pub(crate) host_port: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WaypipeConfig {
     pub(crate) socket: PathBuf,
@@ -420,6 +460,7 @@ pub(crate) struct LaunchConfig {
     pub(crate) env: Vec<(String, String)>,
     pub(crate) guest_config_env: Vec<(String, String)>,
     pub(crate) passt_fd: Option<i32>,
+    pub(crate) pulse_bridge: Option<PulseBridgeConfig>,
     pub(crate) waypipe: Option<WaypipeConfig>,
     pub(crate) exec: Option<ExecConfig>,
     pub(crate) managed_session: Option<ManagedSessionConfig>,

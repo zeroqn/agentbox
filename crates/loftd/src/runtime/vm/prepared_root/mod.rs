@@ -519,6 +519,7 @@ mod tests {
             disks: Vec::new(),
             extra_env: Vec::new(),
             host_nix_overlay: None,
+            pulse_bridge: None,
             waypipe: None,
             exec: None,
             managed_session: None,

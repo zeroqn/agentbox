@@ -74,6 +74,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -157,6 +158,7 @@ fn launch_config_uses_explicit_guest_command() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -225,6 +227,7 @@ fn launch_config_round_trips_through_hex_line_format() {
         ],
         extra_env: vec![("LOFTD_CONTAINERS_STORAGE".to_owned(), "1".to_owned())],
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -261,6 +264,62 @@ fn launch_config_round_trips_through_hex_line_format() {
 }
 
 #[test]
+fn launch_config_round_trips_pulse_bridge_and_exports_guest_port() {
+    let image_process_config = OciProcessConfig::default();
+    let bridge = PulseBridgeConfig {
+        socket: Path::new("/tmp/loftd-1000/pulse.sock").to_path_buf(),
+        guest_port: 50_429,
+        host_port: 4714,
+    };
+    let config = LaunchConfig::build_for_task(LaunchSpec {
+        task_rootfs: Path::new("/state/task/rootfs"),
+        hostname: "loftd-workspace",
+        mounts: &test_mounts(),
+        guest_init_override: None,
+        guest_init_exec: "/nix/store/hash-loftd/bin/loftd-guest-init",
+        guest_command: &[],
+        image_process_config: &image_process_config,
+        mem_gib: Some(4),
+        log_level: LogLevel::Off,
+        network_mode: NetworkMode::Passt,
+        pulse: Some(
+            "tcp:localhost:4714"
+                .parse()
+                .expect("Pulse endpoint should parse"),
+        ),
+        gpu_mode: GpuMode::Off,
+        wayland: false,
+        permissions: GuestPermissions::default(),
+        publish: &[],
+        profile: false,
+        root: false,
+        allocator: AllocatorMode::Mimalloc,
+        host_uid: 1000,
+        host_gid: 1001,
+        vcpus: 2,
+        disks: Vec::new(),
+        extra_env: Vec::new(),
+        host_nix_overlay: None,
+        pulse_bridge: Some(bridge.clone()),
+        waypipe: None,
+        exec: None,
+        managed_session: None,
+    })
+    .expect("launch config should build");
+
+    assert!(config.guest_config_env_contains("LOFTD_PULSE_BRIDGE_PORT", "50429"));
+    assert!(
+        config
+            .guest_config_env
+            .iter()
+            .all(|(key, _)| key != "LOFTD_PULSE_SERVER")
+    );
+    let parsed = LaunchConfig::parse(&config.serialize()).expect("config should parse");
+    assert_eq!(parsed.pulse_bridge, Some(bridge));
+    assert_eq!(parsed, config);
+}
+
+#[test]
 fn launch_config_round_trips_managed_session_contract() {
     let image_process_config = OciProcessConfig::default();
     let config = LaunchConfig::build_for_task(LaunchSpec {
@@ -288,6 +347,7 @@ fn launch_config_round_trips_managed_session_contract() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         exec: Some(ExecConfig {
             socket: Path::new("/state/task/exec.sock").to_path_buf(),
             guest_port: 50_428,
@@ -355,6 +415,7 @@ fn managed_session_extra_env_terminal_vars_are_guest_visible() {
             ("TERM_PROGRAM_VERSION".to_owned(), "1.2.3".to_owned()),
         ],
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: Some(ExecConfig {
             socket: Path::new("/state/task/exec.sock").to_path_buf(),
@@ -418,6 +479,7 @@ fn non_managed_launch_does_not_allow_terminal_identity_from_image_env() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -458,6 +520,7 @@ fn launch_config_round_trips_seccomp_modes() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -513,6 +576,7 @@ fn launch_config_round_trips_landlock_modes() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -560,6 +624,7 @@ fn launch_config_legacy_missing_landlock_mode_defaults_to_relax() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -608,6 +673,7 @@ fn launch_config_legacy_missing_perf_defaults_to_false() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -651,6 +717,7 @@ fn launch_config_rejects_legacy_enforce_landlock_mode() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -692,6 +759,7 @@ fn launch_config_refuses_to_serialize_unresolved_default_gap_audit() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -738,6 +806,7 @@ fn launch_config_rejects_inconsistent_seccomp_fields() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -820,6 +889,7 @@ fn launch_config_round_trips_volume_source_kind_and_access_mode() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -877,6 +947,7 @@ fn launch_config_carries_host_nix_overlay_and_adds_reserved_nix_mount() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: Some(overlay.clone()),
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -936,6 +1007,7 @@ fn launch_config_rejects_user_mount_that_collides_with_host_nix_overlay() {
             workdir: Path::new("/state/nix-overlay/work").to_path_buf(),
             mergeddir: Path::new("/state/nix-overlay/merged").to_path_buf(),
         }),
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -985,6 +1057,7 @@ fn launch_config_rejects_noncanonical_reserved_target_aliases() {
                 workdir: Path::new("/state/nix-overlay/work").to_path_buf(),
                 mergeddir: Path::new("/state/nix-overlay/merged").to_path_buf(),
             }),
+            pulse_bridge: None,
             waypipe: None,
             exec: None,
             managed_session: None,
@@ -1027,6 +1100,7 @@ fn launch_config_carries_publish_specs_from_launch_spec() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1166,6 +1240,7 @@ fn launch_config_rejects_config_codex_mounts() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1208,6 +1283,7 @@ fn launch_config_requires_guest_init_override_to_be_read_only() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1358,6 +1434,7 @@ fn libkrun_envp_stays_tiny_while_guest_config_env_is_allowlisted() {
         disks: Vec::new(),
         extra_env: vec![("LOFTD_CONTAINERS_STORAGE".to_owned(), "disk".to_owned())],
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1452,6 +1529,7 @@ fn launch_config_emits_allocator_selector() {
             disks: Vec::new(),
             extra_env: Vec::new(),
             host_nix_overlay: None,
+            pulse_bridge: None,
             waypipe: None,
             exec: None,
             managed_session: None,
@@ -1503,6 +1581,7 @@ fn guest_debug_env_follows_effective_log_level() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1535,6 +1614,7 @@ fn guest_debug_env_follows_effective_log_level() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1571,6 +1651,7 @@ fn profile_env_does_not_raise_guest_debug_level() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1609,6 +1690,7 @@ fn passt_mode_sets_guest_passt_dns_gate() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1657,6 +1739,7 @@ fn writes_loftd_config_json_under_task_rootfs() {
             "line\nslash\\tab\t".to_owned(),
         )],
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,
@@ -1713,6 +1796,7 @@ fn malformed_image_env_is_rejected() {
             disks: Vec::new(),
             extra_env: Vec::new(),
             host_nix_overlay: None,
+            pulse_bridge: None,
             waypipe: None,
             exec: None,
             managed_session: None,
@@ -1753,6 +1837,7 @@ fn image_cmd_is_used_before_default_shell_when_guest_command_is_empty() {
         disks: Vec::new(),
         extra_env: Vec::new(),
         host_nix_overlay: None,
+        pulse_bridge: None,
         waypipe: None,
         exec: None,
         managed_session: None,

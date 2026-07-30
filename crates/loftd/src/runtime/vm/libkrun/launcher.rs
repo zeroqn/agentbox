@@ -181,6 +181,25 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             check_setup("krun_add_disk", rc)?;
             tracing::debug!(ctx_id, disk_id = %disk.id, "krun_add_disk: complete");
         }
+        if let Some(pulse_bridge) = &config.pulse_bridge {
+            tracing::debug!(
+                ctx_id,
+                guest_port = pulse_bridge.guest_port,
+                socket = %pulse_bridge.socket.display(),
+                "krun_add_vsock_port2: Pulse bridge begin"
+            );
+            let rc = self.api.add_vsock_port(
+                ctx_id,
+                pulse_bridge.guest_port,
+                &pulse_bridge.socket,
+                false,
+            )?;
+            check_setup("krun_add_vsock_port2 Pulse bridge", rc)?;
+            tracing::debug!(
+                ctx_id,
+                "krun_add_vsock_port2: Pulse bridge mapping registered"
+            );
+        }
         if let Some(waypipe) = &config.waypipe {
             tracing::debug!(
                 ctx_id,
