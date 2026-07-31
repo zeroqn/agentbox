@@ -747,7 +747,7 @@ mod tests {
             log_level: LogLevel::Off,
             network_mode: NetworkMode::Tsi,
             gpu_mode: GpuMode::Off,
-            permissions: crate::runtime::launch::config::GuestPermissions::default(),
+            new_perms: crate::runtime::launch::config::GuestPermissions::default(),
             publish: Vec::new(),
             workdir: "/workspace".to_owned(),
             exec_path: "/loftd-guest-init".to_owned(),

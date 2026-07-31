@@ -156,7 +156,7 @@ fn maintenance_launch_config(
         log_level: options.log_settings.level,
         network_mode: NetworkMode::Tsi,
         gpu_mode: GpuMode::Off,
-        permissions: crate::runtime::launch::config::GuestPermissions::default(),
+        new_perms: crate::runtime::launch::config::GuestPermissions::default(),
         publish: Vec::new(),
         workdir: "/".to_owned(),
         exec_path: guest_init_exec.to_owned(),

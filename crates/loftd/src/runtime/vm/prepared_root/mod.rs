@@ -508,7 +508,7 @@ mod tests {
             pulse: None,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
             wayland: false,
-            permissions: crate::runtime::launch::config::GuestPermissions::default(),
+            new_perms: crate::runtime::launch::config::GuestPermissions::default(),
             publish: &[],
             profile: false,
             root: false,

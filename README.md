@@ -873,7 +873,7 @@ Run/help:
 ./result/bin/loftd seccomp extend --policy loftd-seccomp.policy.json --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd seccomp extend --default-policy --trace loftd-seccomp.denied.jsonl --output loftd-seccomp.updated.json
 ./result/bin/loftd --seccomp=enforce:loftd-seccomp.updated.json -- bash -lc 'echo ok'
-./result/bin/loftd --permissions=io-uring -- bash -lc 'echo ok'
+./result/bin/loftd --new-perms=io-uring -- bash -lc 'echo ok'
 ./result/bin/loftd --tsi -- bash -lc 'echo ok'
 ./result/bin/loftd --tsi --pulse=tcp:127.0.0.1:4713 -- bash -lc 'printf "%s\n" "$PULSE_SERVER"'
 ./result/bin/loftd --pulse=tcp:192.0.2.10:4713 -- paplay sample.wav
@@ -1189,15 +1189,17 @@ Seccomp behavior:
 Guest permissions:
 
 ```bash
-./result/bin/loftd --permissions=io-uring
-./result/bin/loftd --permissions=perf
-./result/bin/loftd --permissions=io-uring,net-admin,net-raw,bpf,perf
+./result/bin/loftd --new-perms=io-uring
+./result/bin/loftd --new-perms=perf
+./result/bin/loftd --new-perms=io-uring,net-admin,net-raw,bpf,perf
 ```
 
-- `--permissions` accepts the comma-separated values `io-uring`, `net-admin`,
+- `--new-perms` grants the comma-separated additional permissions `io-uring`, `net-admin`,
   `net-raw`, `bpf`, and `perf`. Values are order-independent and duplicates are ignored.
-  The former `--io-uring` and `--perf` flags have been removed.
-- No optional permission is enabled by default.
+  The former `--permissions`, `--io-uring`, and `--perf` flags have been removed.
+- No optional permission is enabled by default. Loftd keeps `CAP_SETUID` and `CAP_SETGID`
+  in the guest capability bounding set only for its root-owned setuid rootless-container
+  mapping helpers; ordinary `dev` workloads do not receive either capability.
 - Without `io-uring`, loftd disables creation of new io_uring instances
   guest-wide by setting `kernel.io_uring_disabled=2` during root guest
   initialization. This happens before Nix and Podman preparation, Wayland

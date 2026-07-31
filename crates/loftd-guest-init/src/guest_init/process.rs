@@ -8,8 +8,13 @@ use crate::guest_init::components::home::identity::DevIdentity;
 const CAP_NET_ADMIN: u32 = 12;
 const CAP_NET_RAW: u32 = 13;
 const CAP_BPF: u32 = 39;
+#[cfg(test)]
+const CAP_SYS_ADMIN: u32 = 21;
 const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 const PR_CAP_AMBIENT: libc::c_int = 47;
+const CAP_SETUID: u32 = 7;
+const CAP_SETGID: u32 = 6;
+const ROOTLESS_IDMAP_CAPABILITIES: [u32; 2] = [CAP_SETUID, CAP_SETGID];
 const PR_CAP_AMBIENT_RAISE: libc::c_ulong = 2;
 
 const VIDEO_GID: libc::gid_t = 44;
@@ -41,24 +46,28 @@ impl WorkloadCapabilities {
         &self.values[..self.len]
     }
 
+    fn contains(&self, capability: u32) -> bool {
+        self.as_slice().contains(&capability)
+    }
+
     fn is_empty(self) -> bool {
         self.len == 0
     }
 }
 
 pub(in crate::guest_init) fn workload_capability_plan(
-    permissions: GuestPermissions,
+    new_permissions: GuestPermissions,
 ) -> WorkloadCapabilities {
     let mut capabilities = WorkloadCapabilities::default();
-    if permissions.contains(GuestPermission::NetAdmin) {
+    if new_permissions.contains(GuestPermission::NetAdmin) {
         capabilities.values[capabilities.len] = CAP_NET_ADMIN;
         capabilities.len += 1;
     }
-    if permissions.contains(GuestPermission::NetRaw) {
+    if new_permissions.contains(GuestPermission::NetRaw) {
         capabilities.values[capabilities.len] = CAP_NET_RAW;
         capabilities.len += 1;
     }
-    if permissions.contains(GuestPermission::Bpf) {
+    if new_permissions.contains(GuestPermission::Bpf) {
         capabilities.values[capabilities.len] = CAP_BPF;
         capabilities.len += 1;
     }
@@ -73,17 +82,21 @@ fn capability_mask(capabilities: WorkloadCapabilities) -> [u32; 2] {
     mask
 }
 
-fn restrict_capability_bounding_set(capabilities: WorkloadCapabilities) -> io::Result<()> {
+fn retains_bounding_capability(capability: u32, new_capabilities: WorkloadCapabilities) -> bool {
+    ROOTLESS_IDMAP_CAPABILITIES.contains(&capability) || new_capabilities.contains(capability)
+}
+
+fn restrict_capability_bounding_set(new_capabilities: WorkloadCapabilities) -> io::Result<()> {
     const CAP_SETPCAP: u32 = 8;
     for capability in (0..=40).filter(|capability| *capability != CAP_SETPCAP) {
-        if capabilities.as_slice().contains(&capability) {
+        if retains_bounding_capability(capability, new_capabilities) {
             continue;
         }
         if unsafe { libc::prctl(libc::PR_CAPBSET_DROP, capability, 0, 0, 0) } != 0 {
             return Err(io::Error::last_os_error());
         }
     }
-    if !capabilities.as_slice().contains(&CAP_SETPCAP)
+    if !retains_bounding_capability(CAP_SETPCAP, new_capabilities)
         && unsafe { libc::prctl(libc::PR_CAPBSET_DROP, CAP_SETPCAP, 0, 0, 0) } != 0
     {
         return Err(io::Error::last_os_error());
@@ -141,7 +154,6 @@ pub(in crate::guest_init) enum CredentialOperation {
     SupplementaryGroups(&'static [libc::gid_t]),
     PrimaryGid(libc::gid_t),
     Uid(libc::uid_t),
-    RestoreDumpability,
 }
 
 impl CredentialOperation {
@@ -150,17 +162,15 @@ impl CredentialOperation {
             Self::SupplementaryGroups(_) => "failed to set dev supplementary groups".to_owned(),
             Self::PrimaryGid(gid) => format!("failed to set gid {gid}"),
             Self::Uid(uid) => format!("failed to set uid {uid}"),
-            Self::RestoreDumpability => "failed to restore dumpability".to_owned(),
         }
     }
 }
 
-pub(in crate::guest_init) fn credential_plan(identity: &DevIdentity) -> [CredentialOperation; 4] {
+pub(in crate::guest_init) fn credential_plan(identity: &DevIdentity) -> [CredentialOperation; 3] {
     [
         CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
         CredentialOperation::PrimaryGid(identity.gid),
         CredentialOperation::Uid(identity.uid),
-        CredentialOperation::RestoreDumpability,
     ]
 }
 
@@ -174,9 +184,9 @@ enum CredentialTransitionOperation {
 
 fn credential_transition_plan(
     identity: &DevIdentity,
-    permissions: GuestPermissions,
+    new_permissions: GuestPermissions,
 ) -> Vec<CredentialTransitionOperation> {
-    let capabilities = workload_capability_plan(permissions);
+    let capabilities = workload_capability_plan(new_permissions);
     let mut operations =
         vec![CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities)];
     if !capabilities.is_empty() {
@@ -197,9 +207,9 @@ fn credential_transition_plan(
 
 pub(in crate::guest_init) fn apply_dev_credentials(
     identity: &DevIdentity,
-    permissions: GuestPermissions,
+    new_permissions: GuestPermissions,
 ) -> io::Result<()> {
-    for operation in credential_transition_plan(identity, permissions) {
+    for operation in credential_transition_plan(identity, new_permissions) {
         let result = match operation {
             CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities) => {
                 restrict_capability_bounding_set(capabilities)
@@ -219,9 +229,6 @@ pub(in crate::guest_init) fn apply_dev_credentials(
                     },
                     CredentialOperation::PrimaryGid(gid) => unsafe { libc::setgid(gid) },
                     CredentialOperation::Uid(uid) => unsafe { libc::setuid(uid) },
-                    CredentialOperation::RestoreDumpability => unsafe {
-                        libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0)
-                    },
                 };
                 if rc == 0 {
                     Ok(())
@@ -450,12 +457,37 @@ mod tests {
     }
 
     #[test]
+    fn rootless_idmap_capabilities_are_retained_only_in_the_bounding_set() {
+        let new_capabilities = workload_capability_plan(Default::default());
+
+        assert!(retains_bounding_capability(CAP_SETUID, new_capabilities));
+        assert!(retains_bounding_capability(CAP_SETGID, new_capabilities));
+        assert!(!new_capabilities.contains(CAP_SETUID));
+        assert!(!new_capabilities.contains(CAP_SETGID));
+        assert!(!retains_bounding_capability(
+            CAP_SYS_ADMIN,
+            new_capabilities
+        ));
+    }
+
+    #[test]
+    fn new_permissions_extend_the_rootless_idmap_bounding_set() {
+        let new_permissions = "net-raw".parse().expect("net-raw permission should parse");
+        let new_capabilities = workload_capability_plan(new_permissions);
+
+        assert!(retains_bounding_capability(CAP_SETUID, new_capabilities));
+        assert!(retains_bounding_capability(CAP_SETGID, new_capabilities));
+        assert!(retains_bounding_capability(CAP_NET_RAW, new_capabilities));
+        assert!(new_capabilities.contains(CAP_NET_RAW));
+    }
+
+    #[test]
     fn dev_supplementary_groups_include_wayland_device_groups() {
         assert_eq!(DEV_SUPPLEMENTARY_GROUPS, &[VIDEO_GID, RENDER_GID]);
     }
 
     #[test]
-    fn credential_transition_restores_dumpability_before_workload_capabilities() {
+    fn credential_transition_applies_new_permissions_after_privilege_drop() {
         let identity = DevIdentity::new(1000, 1000, "/bin/sh".into());
         let permissions = "net-raw".parse().expect("net-raw permission should parse");
         let capabilities = workload_capability_plan(permissions);
@@ -470,7 +502,6 @@ mod tests {
                 ),
                 CredentialTransitionOperation::Credential(CredentialOperation::PrimaryGid(1000)),
                 CredentialTransitionOperation::Credential(CredentialOperation::Uid(1000)),
-                CredentialTransitionOperation::Credential(CredentialOperation::RestoreDumpability),
                 CredentialTransitionOperation::SetWorkloadCapabilities(capabilities),
             ]
         );
@@ -486,7 +517,6 @@ mod tests {
                 CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
                 CredentialOperation::PrimaryGid(identity.gid),
                 CredentialOperation::Uid(identity.uid),
-                CredentialOperation::RestoreDumpability,
             ]
         );
     }
@@ -501,7 +531,6 @@ mod tests {
                 "failed to set dev supplementary groups".to_owned(),
                 "failed to set gid 1000".to_owned(),
                 "failed to set uid 1000".to_owned(),
-                "failed to restore dumpability".to_owned(),
             ]
         );
     }

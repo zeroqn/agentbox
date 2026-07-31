@@ -485,7 +485,7 @@ mod tests {
             log_level: LogLevel::Info,
             network_mode: NetworkMode::Tsi,
             gpu_mode: crate::runtime::vm::gpu::GpuMode::Off,
-            permissions: crate::runtime::launch::config::GuestPermissions::default(),
+            new_perms: crate::runtime::launch::config::GuestPermissions::default(),
             publish: Vec::new(),
             workdir: "/workspace".to_owned(),
             exec_path: "/bin/sh".to_owned(),

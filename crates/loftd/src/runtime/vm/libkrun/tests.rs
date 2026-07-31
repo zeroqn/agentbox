@@ -285,7 +285,7 @@ fn config() -> LaunchConfig {
         pulse: None,
         gpu_mode: GpuMode::Off,
         wayland: false,
-        permissions: crate::runtime::launch::config::GuestPermissions::default(),
+        new_perms: crate::runtime::launch::config::GuestPermissions::default(),
         publish: &[],
         profile: false,
         root: false,

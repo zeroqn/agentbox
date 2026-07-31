@@ -73,11 +73,11 @@ impl LaunchConfig {
         if spec.wayland {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_WAYLAND_ENV, "1");
         }
-        if !spec.permissions.is_empty() {
+        if !spec.new_perms.is_empty() {
             guest_env::insert_env(
                 &mut guest_config_env,
                 model::GUEST_PERMISSIONS_ENV,
-                &spec.permissions.to_string(),
+                &spec.new_perms.to_string(),
             );
         }
         if let Some(waypipe) = &spec.waypipe {
@@ -128,7 +128,7 @@ impl LaunchConfig {
             log_level: spec.log_level,
             network_mode: spec.network_mode,
             gpu_mode: spec.gpu_mode,
-            permissions: spec.permissions,
+            new_perms: spec.new_perms,
             publish: spec.publish.to_vec(),
             workdir: components::process::workdir_from_image(
                 spec.image_process_config.working_dir.as_deref(),

@@ -153,8 +153,8 @@ impl LaunchConfig {
             self.network_mode.as_config_value(),
         );
         push_field(&mut out, "gpu_mode", self.gpu_mode.as_config_value());
-        if !self.permissions.is_empty() {
-            push_field(&mut out, "permissions", &self.permissions.to_string());
+        if !self.new_perms.is_empty() {
+            push_field(&mut out, "permissions", &self.new_perms.to_string());
         }
         for (index, spec) in self.publish.iter().enumerate() {
             push_field(&mut out, &format!("publish.{index}"), spec);
@@ -438,7 +438,7 @@ impl LaunchConfig {
                 .map(String::as_str)
                 .unwrap_or(GpuMode::Off.as_config_value()),
         )?;
-        let permissions = fields
+        let new_perms = fields
             .get("permissions")
             .map_or(
                 Ok(crate::runtime::launch::config::GuestPermissions::default()),
@@ -480,7 +480,7 @@ impl LaunchConfig {
             log_level,
             network_mode,
             gpu_mode,
-            permissions,
+            new_perms,
             publish: publish.into_values().collect(),
             workdir: required("workdir")?,
             exec_path: required("exec_path")?,

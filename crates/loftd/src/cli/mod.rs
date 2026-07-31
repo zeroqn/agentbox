@@ -193,13 +193,13 @@ pub(crate) struct Cli {
     landlock: Option<LandlockMode>,
 
     #[arg(
-        long,
+        long = "new-perms",
         value_name = "PERMISSION[,PERMISSION...]",
         value_parser = parse_permissions_arg,
-        help = "Grant optional permissions inside the guest VM",
-        long_help = "Grant comma-separated optional permissions inside the guest VM. Allowed values are io-uring, net-admin, net-raw, bpf, and perf. io-uring and perf relax their existing guest kernel policies; net-admin grants CAP_NET_ADMIN, net-raw grants CAP_NET_RAW, and bpf grants CAP_BPF to guest dev workloads. No permission is enabled by default."
+        help = "Grant additional optional permissions inside the guest VM",
+        long_help = "Grant comma-separated additional permissions inside the guest VM. Allowed values are io-uring, net-admin, net-raw, bpf, and perf. io-uring and perf relax their existing guest kernel policies; net-admin grants CAP_NET_ADMIN, net-raw grants CAP_NET_RAW, and bpf grants CAP_BPF to guest dev workloads. No optional permission is enabled by default."
     )]
-    permissions: Option<GuestPermissions>,
+    new_perms: Option<GuestPermissions>,
 
     #[arg(
         long = "alloc",
@@ -565,7 +565,7 @@ impl Cli {
             pty: self.pty.unwrap_or(PtyOptions::DEFAULT),
             seccomp: self.seccomp,
             landlock: self.landlock,
-            permissions: self.permissions.unwrap_or_default(),
+            new_perms: self.new_perms.unwrap_or_default(),
             allocator: self.alloc.into(),
             rootfs_backend: self.rootfs_backend,
             container_store_backend: self.container_store_backend,
@@ -614,7 +614,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) pty: PtyOptions,
     pub(crate) seccomp: Option<SeccompMode>,
     pub(crate) landlock: Option<LandlockMode>,
-    pub(crate) permissions: GuestPermissions,
+    pub(crate) new_perms: GuestPermissions,
     pub(crate) allocator: AllocatorMode,
     pub(crate) rootfs_backend: Option<TaskRootfsBackend>,
     pub(crate) container_store_backend: Option<ContainerStoreBackend>,
@@ -881,7 +881,7 @@ mod tests {
         assert!(!options.daemon);
         assert_eq!(options.seccomp, None);
         assert_eq!(options.landlock, None);
-        assert!(options.permissions.is_empty());
+        assert!(options.new_perms.is_empty());
         assert!(options.profile);
         assert!(options.debug);
         assert_eq!(options.pty, PtyOptions::DEFAULT);
@@ -1544,28 +1544,36 @@ mod tests {
     }
 
     #[test]
-    fn permissions_flag_parses_supported_values() {
+    fn new_perms_flag_parses_supported_values() {
         let cli = Cli::try_parse_from([
             "loftd",
-            "--permissions=perf,bpf,io-uring,net-admin,net-raw,bpf",
+            "--new-perms=perf,bpf,io-uring,net-admin,net-raw,bpf",
         ])
-        .expect("permissions should parse");
+        .expect("new permissions should parse");
         let options = cli.into_runtime_options();
 
         assert_eq!(
-            options.permissions.to_string(),
+            options.new_perms.to_string(),
             "io-uring,net-admin,net-raw,bpf,perf"
         );
     }
 
     #[test]
-    fn permissions_flag_rejects_unknown_and_empty_values() {
+    fn new_perms_flag_rejects_unknown_and_empty_values() {
         for value in ["", "io-uring,,perf", "sys-admin"] {
-            let error = Cli::try_parse_from(["loftd", &format!("--permissions={value}")])
-                .expect_err("invalid permissions should fail");
+            let error = Cli::try_parse_from(["loftd", &format!("--new-perms={value}")])
+                .expect_err("invalid new permissions should fail");
 
             assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
         }
+    }
+
+    #[test]
+    fn permissions_flag_is_rejected() {
+        let error = Cli::try_parse_from(["loftd", "--permissions=net-raw"])
+            .expect_err("removed permissions flag should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]
