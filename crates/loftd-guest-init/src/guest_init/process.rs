@@ -141,6 +141,7 @@ pub(in crate::guest_init) enum CredentialOperation {
     SupplementaryGroups(&'static [libc::gid_t]),
     PrimaryGid(libc::gid_t),
     Uid(libc::uid_t),
+    RestoreDumpability,
 }
 
 impl CredentialOperation {
@@ -149,48 +150,97 @@ impl CredentialOperation {
             Self::SupplementaryGroups(_) => "failed to set dev supplementary groups".to_owned(),
             Self::PrimaryGid(gid) => format!("failed to set gid {gid}"),
             Self::Uid(uid) => format!("failed to set uid {uid}"),
+            Self::RestoreDumpability => "failed to restore dumpability".to_owned(),
         }
     }
 }
 
-pub(in crate::guest_init) fn credential_plan(identity: &DevIdentity) -> [CredentialOperation; 3] {
+pub(in crate::guest_init) fn credential_plan(identity: &DevIdentity) -> [CredentialOperation; 4] {
     [
         CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
         CredentialOperation::PrimaryGid(identity.gid),
         CredentialOperation::Uid(identity.uid),
+        CredentialOperation::RestoreDumpability,
     ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CredentialTransitionOperation {
+    RestrictCapabilityBoundingSet(WorkloadCapabilities),
+    SetKeepCaps,
+    Credential(CredentialOperation),
+    SetWorkloadCapabilities(WorkloadCapabilities),
+}
+
+fn credential_transition_plan(
+    identity: &DevIdentity,
+    permissions: GuestPermissions,
+) -> Vec<CredentialTransitionOperation> {
+    let capabilities = workload_capability_plan(permissions);
+    let mut operations =
+        vec![CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities)];
+    if !capabilities.is_empty() {
+        operations.push(CredentialTransitionOperation::SetKeepCaps);
+    }
+    operations.extend(
+        credential_plan(identity)
+            .into_iter()
+            .map(CredentialTransitionOperation::Credential),
+    );
+    if !capabilities.is_empty() {
+        operations.push(CredentialTransitionOperation::SetWorkloadCapabilities(
+            capabilities,
+        ));
+    }
+    operations
 }
 
 pub(in crate::guest_init) fn apply_dev_credentials(
     identity: &DevIdentity,
     permissions: GuestPermissions,
 ) -> io::Result<()> {
-    let capabilities = workload_capability_plan(permissions);
-    restrict_capability_bounding_set(capabilities)?;
-    if !capabilities.is_empty() {
-        let rc = unsafe { libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) };
-        if rc != 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    for operation in credential_plan(identity) {
-        let rc = match operation {
-            CredentialOperation::SupplementaryGroups(groups) => unsafe {
-                libc::setgroups(groups.len(), groups.as_ptr())
-            },
-            CredentialOperation::PrimaryGid(gid) => unsafe { libc::setgid(gid) },
-            CredentialOperation::Uid(uid) => unsafe { libc::setuid(uid) },
+    for operation in credential_transition_plan(identity, permissions) {
+        let result = match operation {
+            CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities) => {
+                restrict_capability_bounding_set(capabilities)
+            }
+            CredentialTransitionOperation::SetKeepCaps => {
+                let rc = unsafe { libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) };
+                if rc == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            }
+            CredentialTransitionOperation::Credential(credential) => {
+                let rc = match credential {
+                    CredentialOperation::SupplementaryGroups(groups) => unsafe {
+                        libc::setgroups(groups.len(), groups.as_ptr())
+                    },
+                    CredentialOperation::PrimaryGid(gid) => unsafe { libc::setgid(gid) },
+                    CredentialOperation::Uid(uid) => unsafe { libc::setuid(uid) },
+                    CredentialOperation::RestoreDumpability => unsafe {
+                        libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0)
+                    },
+                };
+                if rc == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::new(
+                        io::Error::last_os_error().kind(),
+                        format!(
+                            "{}: {}",
+                            credential.error_context(),
+                            io::Error::last_os_error()
+                        ),
+                    ))
+                }
+            }
+            CredentialTransitionOperation::SetWorkloadCapabilities(capabilities) => {
+                set_workload_capabilities(capabilities)
+            }
         };
-        if rc != 0 {
-            let error = io::Error::last_os_error();
-            return Err(io::Error::new(
-                error.kind(),
-                format!("{}: {error}", operation.error_context()),
-            ));
-        }
-    }
-    if !capabilities.is_empty() {
-        set_workload_capabilities(capabilities)?;
+        result?;
     }
     Ok(())
 }
@@ -405,6 +455,28 @@ mod tests {
     }
 
     #[test]
+    fn credential_transition_restores_dumpability_before_workload_capabilities() {
+        let identity = DevIdentity::new(1000, 1000, "/bin/sh".into());
+        let permissions = "net-raw".parse().expect("net-raw permission should parse");
+        let capabilities = workload_capability_plan(permissions);
+
+        assert_eq!(
+            credential_transition_plan(&identity, permissions),
+            [
+                CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities),
+                CredentialTransitionOperation::SetKeepCaps,
+                CredentialTransitionOperation::Credential(
+                    CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
+                ),
+                CredentialTransitionOperation::Credential(CredentialOperation::PrimaryGid(1000)),
+                CredentialTransitionOperation::Credential(CredentialOperation::Uid(1000)),
+                CredentialTransitionOperation::Credential(CredentialOperation::RestoreDumpability),
+                CredentialTransitionOperation::SetWorkloadCapabilities(capabilities),
+            ]
+        );
+    }
+
+    #[test]
     fn dev_credential_plan_preserves_privilege_drop_order() {
         let identity = DevIdentity::new(1000, 1000, "/bin/sh".into());
 
@@ -414,6 +486,7 @@ mod tests {
                 CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
                 CredentialOperation::PrimaryGid(identity.gid),
                 CredentialOperation::Uid(identity.uid),
+                CredentialOperation::RestoreDumpability,
             ]
         );
     }
@@ -428,6 +501,7 @@ mod tests {
                 "failed to set dev supplementary groups".to_owned(),
                 "failed to set gid 1000".to_owned(),
                 "failed to set uid 1000".to_owned(),
+                "failed to restore dumpability".to_owned(),
             ]
         );
     }

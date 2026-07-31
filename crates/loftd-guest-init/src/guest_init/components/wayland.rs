@@ -56,7 +56,7 @@ fn spawn_proxy(runtime_dir: &Path, wayland_display: &str, identity: &DevIdentity
 fn proxy_credential_plan(
     starting_uid: u32,
     identity: &DevIdentity,
-) -> Option<[process::CredentialOperation; 3]> {
+) -> Option<[process::CredentialOperation; 4]> {
     (starting_uid == ROOT_UID).then(|| process::credential_plan(identity))
 }
 
