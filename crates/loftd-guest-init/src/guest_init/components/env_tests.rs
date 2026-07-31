@@ -104,14 +104,17 @@ fn internal_runtime_parses_authoritative_host_nix_overlay_marker() {
 fn internal_runtime_parses_unified_permissions() {
     let _guard = ENV_LOCK.lock().expect("env test lock");
     unsafe {
-        std::env::set_var("LOFTD_PERMISSIONS", "perf,bpf,io-uring,net-admin,bpf");
+        std::env::set_var(
+            "LOFTD_PERMISSIONS",
+            "perf,bpf,io-uring,net-admin,net-raw,bpf",
+        );
     }
 
     let parsed = LoftdEnv::from_process_env().expect("env should parse");
 
     assert_eq!(
         parsed.permissions.to_string(),
-        "io-uring,net-admin,bpf,perf"
+        "io-uring,net-admin,net-raw,bpf,perf"
     );
     unsafe {
         std::env::remove_var("LOFTD_PERMISSIONS");

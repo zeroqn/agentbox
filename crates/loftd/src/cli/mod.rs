@@ -197,7 +197,7 @@ pub(crate) struct Cli {
         value_name = "PERMISSION[,PERMISSION...]",
         value_parser = parse_permissions_arg,
         help = "Grant optional permissions inside the guest VM",
-        long_help = "Grant comma-separated optional permissions inside the guest VM. Allowed values are io-uring, net-admin, bpf, and perf. io-uring and perf relax their existing guest kernel policies; net-admin and bpf grant CAP_NET_ADMIN and CAP_BPF to guest dev workloads. No permission is enabled by default."
+        long_help = "Grant comma-separated optional permissions inside the guest VM. Allowed values are io-uring, net-admin, net-raw, bpf, and perf. io-uring and perf relax their existing guest kernel policies; net-admin grants CAP_NET_ADMIN, net-raw grants CAP_NET_RAW, and bpf grants CAP_BPF to guest dev workloads. No permission is enabled by default."
     )]
     permissions: Option<GuestPermissions>,
 
@@ -1545,13 +1545,16 @@ mod tests {
 
     #[test]
     fn permissions_flag_parses_supported_values() {
-        let cli = Cli::try_parse_from(["loftd", "--permissions=perf,bpf,io-uring,net-admin,bpf"])
-            .expect("permissions should parse");
+        let cli = Cli::try_parse_from([
+            "loftd",
+            "--permissions=perf,bpf,io-uring,net-admin,net-raw,bpf",
+        ])
+        .expect("permissions should parse");
         let options = cli.into_runtime_options();
 
         assert_eq!(
             options.permissions.to_string(),
-            "io-uring,net-admin,bpf,perf"
+            "io-uring,net-admin,net-raw,bpf,perf"
         );
     }
 

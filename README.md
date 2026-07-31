@@ -1191,11 +1191,11 @@ Guest permissions:
 ```bash
 ./result/bin/loftd --permissions=io-uring
 ./result/bin/loftd --permissions=perf
-./result/bin/loftd --permissions=io-uring,net-admin,bpf,perf
+./result/bin/loftd --permissions=io-uring,net-admin,net-raw,bpf,perf
 ```
 
 - `--permissions` accepts the comma-separated values `io-uring`, `net-admin`,
-  `bpf`, and `perf`. Values are order-independent and duplicates are ignored.
+  `net-raw`, `bpf`, and `perf`. Values are order-independent and duplicates are ignored.
   The former `--io-uring` and `--perf` flags have been removed.
 - No optional permission is enabled by default.
 - Without `io-uring`, loftd disables creation of new io_uring instances
@@ -1212,6 +1212,8 @@ Guest permissions:
   initial command, managed PTY command, hidden `as-dev` path, and later
   `loftd exec` commands. This permits powerful guest-only networking changes
   such as interface, route, nftables, policy-routing, and TPROXY configuration.
+- `net-raw` grants those same guest `dev` workload paths `CAP_NET_RAW`. It does
+  not imply `net-admin` or any other optional permission.
 - `bpf` grants those same guest `dev` workload paths `CAP_BPF`. It does not
   imply `net-admin`, `perf`, `CAP_PERFMON`, or `CAP_SYS_ADMIN`; BPF operations
   requiring another capability still require that permission separately.

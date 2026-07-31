@@ -49,17 +49,25 @@ impl ContainerStoreBackend {
 pub(in crate::guest_init) enum GuestPermission {
     IoUring,
     NetAdmin,
+    NetRaw,
     Bpf,
     Perf,
 }
 
 impl GuestPermission {
-    const ALL: [Self; 4] = [Self::IoUring, Self::NetAdmin, Self::Bpf, Self::Perf];
+    const ALL: [Self; 5] = [
+        Self::IoUring,
+        Self::NetAdmin,
+        Self::NetRaw,
+        Self::Bpf,
+        Self::Perf,
+    ];
 
     pub(in crate::guest_init) const fn as_str(self) -> &'static str {
         match self {
             Self::IoUring => "io-uring",
             Self::NetAdmin => "net-admin",
+            Self::NetRaw => "net-raw",
             Self::Bpf => "bpf",
             Self::Perf => "perf",
         }
@@ -69,8 +77,9 @@ impl GuestPermission {
         match self {
             Self::IoUring => 1 << 0,
             Self::NetAdmin => 1 << 1,
-            Self::Bpf => 1 << 2,
-            Self::Perf => 1 << 3,
+            Self::NetRaw => 1 << 2,
+            Self::Bpf => 1 << 3,
+            Self::Perf => 1 << 4,
         }
     }
 }
@@ -96,6 +105,7 @@ impl FromStr for GuestPermissions {
             let permission = match token {
                 "io-uring" => GuestPermission::IoUring,
                 "net-admin" => GuestPermission::NetAdmin,
+                "net-raw" => GuestPermission::NetRaw,
                 "bpf" => GuestPermission::Bpf,
                 "perf" => GuestPermission::Perf,
                 "" => anyhow::bail!("LOFTD_PERMISSIONS must not contain empty values"),

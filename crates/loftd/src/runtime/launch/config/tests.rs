@@ -63,7 +63,9 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         pulse: None,
         gpu_mode: GpuMode::Off,
         wayland: false,
-        permissions: "io-uring,perf".parse().expect("permissions should parse"),
+        permissions: "io-uring,net-raw,perf"
+            .parse()
+            .expect("permissions should parse"),
         publish: &[],
         profile: true,
         root: false,
@@ -118,7 +120,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     assert!(config.guest_config_env_contains("SCCACHE_DIR", "/home/dev/.cache/sccache"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
-    assert!(config.guest_config_env_contains("LOFTD_PERMISSIONS", "io-uring,perf"));
+    assert!(config.guest_config_env_contains("LOFTD_PERMISSIONS", "io-uring,net-raw,perf"));
     assert!(
         config
             .guest_config_env

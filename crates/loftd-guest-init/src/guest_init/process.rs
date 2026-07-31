@@ -6,6 +6,7 @@ use crate::guest_init::components::env::{GuestPermission, GuestPermissions};
 use crate::guest_init::components::home::identity::DevIdentity;
 
 const CAP_NET_ADMIN: u32 = 12;
+const CAP_NET_RAW: u32 = 13;
 const CAP_BPF: u32 = 39;
 const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 const PR_CAP_AMBIENT: libc::c_int = 47;
@@ -31,7 +32,7 @@ struct CapUserData {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::guest_init) struct WorkloadCapabilities {
-    values: [u32; 2],
+    values: [u32; 3],
     len: usize,
 }
 
@@ -51,6 +52,10 @@ pub(in crate::guest_init) fn workload_capability_plan(
     let mut capabilities = WorkloadCapabilities::default();
     if permissions.contains(GuestPermission::NetAdmin) {
         capabilities.values[capabilities.len] = CAP_NET_ADMIN;
+        capabilities.len += 1;
+    }
+    if permissions.contains(GuestPermission::NetRaw) {
+        capabilities.values[capabilities.len] = CAP_NET_RAW;
         capabilities.len += 1;
     }
     if permissions.contains(GuestPermission::Bpf) {
@@ -379,9 +384,13 @@ mod tests {
     #[test]
     fn selected_workload_capabilities_map_exactly() {
         assert_eq!(
-            workload_capability_plan("net-admin,bpf".parse().expect("permissions should parse"))
-                .as_slice(),
-            [CAP_NET_ADMIN, CAP_BPF]
+            workload_capability_plan(
+                "net-admin,net-raw,bpf"
+                    .parse()
+                    .expect("permissions should parse"),
+            )
+            .as_slice(),
+            [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF]
         );
     }
 

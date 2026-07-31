@@ -72,17 +72,25 @@ pub(super) const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
 pub(crate) enum GuestPermission {
     IoUring,
     NetAdmin,
+    NetRaw,
     Bpf,
     Perf,
 }
 
 impl GuestPermission {
-    const ALL: [Self; 4] = [Self::IoUring, Self::NetAdmin, Self::Bpf, Self::Perf];
+    const ALL: [Self; 5] = [
+        Self::IoUring,
+        Self::NetAdmin,
+        Self::NetRaw,
+        Self::Bpf,
+        Self::Perf,
+    ];
 
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::IoUring => "io-uring",
             Self::NetAdmin => "net-admin",
+            Self::NetRaw => "net-raw",
             Self::Bpf => "bpf",
             Self::Perf => "perf",
         }
@@ -92,8 +100,9 @@ impl GuestPermission {
         match self {
             Self::IoUring => 1 << 0,
             Self::NetAdmin => 1 << 1,
-            Self::Bpf => 1 << 2,
-            Self::Perf => 1 << 3,
+            Self::NetRaw => 1 << 2,
+            Self::Bpf => 1 << 3,
+            Self::Perf => 1 << 4,
         }
     }
 }
@@ -124,12 +133,13 @@ impl FromStr for GuestPermissions {
             let permission = match token {
                 "io-uring" => GuestPermission::IoUring,
                 "net-admin" => GuestPermission::NetAdmin,
+                "net-raw" => GuestPermission::NetRaw,
                 "bpf" => GuestPermission::Bpf,
                 "perf" => GuestPermission::Perf,
                 "" => return Err("permissions must not contain empty values".to_owned()),
                 other => {
                     return Err(format!(
-                        "unsupported permission '{other}'; use io-uring, net-admin, bpf, or perf"
+                        "unsupported permission '{other}'; use io-uring, net-admin, net-raw, bpf, or perf"
                     ));
                 }
             };
