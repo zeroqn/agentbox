@@ -292,7 +292,7 @@ pub(crate) struct Cli {
         value_parser = parse_waypipe_arg,
         num_args = 0..=1,
         require_equals = true,
-        conflicts_with_all = ["wayland","gpu"],
+        conflicts_with_all = ["wayland"],
         help = "Enable persistent remote Waypipe forwarding, optionally activating an existing SSH-forwarded socket"
     )]
     waypipe: Option<Option<PathBuf>>,
@@ -1624,15 +1624,20 @@ mod tests {
 }
 
 #[test]
-fn waypipe_flag_conflicts_with_local_wayland_and_drm() {
-    for args in [
-        ["loftd", "--waypipe=/tmp/waypipe.sock", "--wayland"],
-        ["loftd", "--waypipe=/tmp/waypipe.sock", "--gpu=drm"],
-    ] {
-        let err = Cli::try_parse_from(args).expect_err("waypipe conflict should fail");
+fn waypipe_flag_conflicts_with_local_wayland_but_accepts_drm() {
+    let err = Cli::try_parse_from(["loftd", "--waypipe=/tmp/waypipe.sock", "--wayland"])
+        .expect_err("waypipe and local Wayland should conflict");
+    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
-    }
+    let cli = Cli::try_parse_from(["loftd", "--waypipe=/tmp/waypipe.sock", "--gpu=drm"])
+        .expect("waypipe and DRM should parse");
+    let options = cli.into_runtime_options();
+
+    assert_eq!(options.gpu_mode, GpuMode::Drm);
+    assert_eq!(
+        options.waypipe,
+        Some(Some(PathBuf::from("/tmp/waypipe.sock")))
+    );
 }
 
 #[test]
