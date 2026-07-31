@@ -44,7 +44,7 @@ jobs:
         run: |
           nix build \
             --option extra-sandbox-paths "/nix/var/cache/sccache=/tmp/agentbox-ci-sccache-${{ matrix.image_name }}" \
-            ".?submodules=1#${{ matrix.flake_attr }}" \
+            ".#${{ matrix.flake_attr }}" \
             -o "result-${{ matrix.image_name }}-container" \
             --print-out-paths > "${{ matrix.image_name }}-container-path.txt"
       - name: Normalize ${{ matrix.image_name }} sccache permissions

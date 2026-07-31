@@ -6,7 +6,3 @@
 	path = deps/libkrunfw
 	url = https://github.com/zeroqn/libkrunfw.git
 	branch = agentbox
-[submodule "deps/wl-cross-domain-proxy"]
-	path = deps/wl-cross-domain-proxy
-	url = https://codeberg.org/drakulix/wl-cross-domain-proxy.git
-	branch = main
