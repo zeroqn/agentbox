@@ -25,6 +25,7 @@ pub(in crate::guest_init) enum PodmanPrepOperation {
     InstallIdmapHelpers,
     MountContainerStorage,
     WriteConfig,
+    VerifyRootlessPodman,
     WriteReadyStatus,
 }
 
@@ -39,6 +40,7 @@ pub(in crate::guest_init) fn planned_operations() -> Vec<PodmanPrepOperation> {
         PodmanPrepOperation::InstallIdmapHelpers,
         PodmanPrepOperation::MountContainerStorage,
         PodmanPrepOperation::WriteConfig,
+        PodmanPrepOperation::VerifyRootlessPodman,
         PodmanPrepOperation::WriteReadyStatus,
     ]
 }
@@ -128,7 +130,8 @@ pub(in crate::guest_init) fn run_prep(
     let tool_paths = PodmanToolPaths::discover()?;
     crate::guest_init::components::podman::kernel::prepare()?;
     crate::guest_init::components::podman::idmap::prepare(identity)?;
-    crate::guest_init::components::podman::storage::bootstrap(identity, env_contract, &tool_paths)
+    crate::guest_init::components::podman::storage::bootstrap(identity, env_contract, &tool_paths)?;
+    crate::guest_init::components::podman::service::verify_rootless_info(identity)
 }
 
 fn required_tools() -> &'static [&'static str] {

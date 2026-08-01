@@ -61,6 +61,140 @@ pub(in crate::guest_init) fn docker_host_uri(identity: &DevIdentity) -> String {
     PodmanServicePaths::for_identity(identity).socket_uri
 }
 
+const ROOTLESS_INFO_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_ROOTLESS_INFO_STDERR: usize = 64 * 1024;
+
+pub(in crate::guest_init) fn verify_rootless_info(identity: &DevIdentity) -> Result<()> {
+    let env = PodmanServiceEnv::from_process();
+    verify_rootless_info_with_env_and_timeout(identity, &env, ROOTLESS_INFO_TIMEOUT)
+}
+
+fn verify_rootless_info_with_env_and_timeout(
+    identity: &DevIdentity,
+    env: &PodmanServiceEnv,
+    timeout: Duration,
+) -> Result<()> {
+    let paths = PodmanServicePaths::for_identity(identity);
+    let program = resolve_real_podman_with_env(env)?;
+    let mut command = Command::new(&program);
+    command
+        .arg("info")
+        .env_clear()
+        .envs(service_environment_with_env(identity, &paths, env))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let uid = identity.uid;
+    let gid = identity.gid;
+    let starts_as_root = process::is_root();
+    unsafe {
+        command.pre_exec(move || {
+            if starts_as_root {
+                if libc::setgroups(0, std::ptr::null()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setgid(gid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(uid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to run {} info as {DEV_USER}", program.display()))?;
+    let mut stderr = child.stderr.take().expect("Podman info stderr is piped");
+    let stderr_flags = unsafe { libc::fcntl(stderr.as_raw_fd(), libc::F_GETFL) };
+    if stderr_flags == -1
+        || unsafe {
+            libc::fcntl(
+                stderr.as_raw_fd(),
+                libc::F_SETFL,
+                stderr_flags | libc::O_NONBLOCK,
+            )
+        } == -1
+    {
+        let err = std::io::Error::last_os_error();
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(err).context("failed to make Podman info stderr nonblocking");
+    }
+    let deadline = Instant::now() + timeout;
+    let mut stderr_output = Vec::new();
+    let status = loop {
+        if let Err(err) = drain_nonblocking(&mut stderr, &mut stderr_output) {
+            let _ = terminate_and_reap(&mut child);
+            return Err(err)
+                .with_context(|| format!("failed to read {} info stderr", program.display()));
+        }
+        let child_status = match child.try_wait() {
+            Ok(status) => status,
+            Err(err) => {
+                let _ = terminate_and_reap(&mut child);
+                return Err(err).with_context(|| {
+                    format!(
+                        "failed to wait for {} info as {DEV_USER}",
+                        program.display()
+                    )
+                });
+            }
+        };
+        if let Some(status) = child_status {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            terminate_and_reap(&mut child).with_context(|| {
+                format!("failed to terminate timed-out {} info", program.display())
+            })?;
+            bail!("rootless Podman info timed out after {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    drain_nonblocking(&mut stderr, &mut stderr_output)
+        .with_context(|| format!("failed to read {} info stderr", program.display()))?;
+    let stderr = String::from_utf8_lossy(&stderr_output);
+    if status.success() {
+        return Ok(());
+    }
+    let stderr = stderr.trim();
+    let detail = if stderr.is_empty() {
+        String::new()
+    } else {
+        format!(": {stderr}")
+    };
+    bail!("rootless Podman info failed with status {status}{detail}")
+}
+
+fn terminate_and_reap(child: &mut std::process::Child) -> std::io::Result<()> {
+    let kill_result = child.kill();
+    let wait_result = child.wait();
+    if let Err(err) = kill_result
+        && err.raw_os_error() != Some(libc::ESRCH)
+    {
+        return Err(err);
+    }
+    wait_result.map(|_| ())
+}
+
+fn drain_nonblocking(reader: &mut impl Read, output: &mut Vec<u8>) -> std::io::Result<()> {
+    let mut buffer = [0; 8192];
+    for _ in 0..8 {
+        match reader.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(read) => {
+                let retained = MAX_ROOTLESS_INFO_STDERR.saturating_sub(output.len());
+                output.extend_from_slice(&buffer[..read.min(retained)]);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
 pub(in crate::guest_init) fn ensure_started(
     identity: &DevIdentity,
     timeout: Duration,

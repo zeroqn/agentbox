@@ -1,15 +1,164 @@
-use super::{PodmanServiceEnv, PodmanServiceLock, command_plan_with_env};
+use super::{
+    MAX_ROOTLESS_INFO_STDERR, PodmanServiceEnv, PodmanServiceLock, command_plan_with_env,
+    drain_nonblocking, terminate_and_reap, verify_rootless_info_with_env_and_timeout,
+};
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::components::podman::service::{
     PodmanServicePaths, docker_host_uri, socket_is_live, wait_for_socket,
 };
 use std::ffi::OsString;
 use std::fs;
+use std::io::Cursor;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+fn verification_fixture(contents: &str) -> (tempfile::TempDir, PodmanServiceEnv) {
+    let temp = tempdir().unwrap();
+    fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    let podman = executable_fixture(temp.path().join("podman"), contents);
+    let env = PodmanServiceEnv {
+        real_podman: Some(podman.display().to_string()),
+        search_path: None,
+        service_path: "/usr/bin:/bin".to_owned(),
+        ssl_cert_file: None,
+        nix_ssl_cert_file: None,
+    };
+    (temp, env)
+}
+
+fn verification_identity() -> DevIdentity {
+    let uid = unsafe { libc::geteuid() };
+    let gid = unsafe { libc::getegid() };
+    DevIdentity::new(uid, gid, PathBuf::from("/bin/sh"))
+}
+
+#[test]
+fn rootless_info_verification_accepts_success() {
+    let (_temp, env) = verification_fixture("#!/bin/sh\nexit 0\n");
+
+    verify_rootless_info_with_env_and_timeout(
+        &verification_identity(),
+        &env,
+        Duration::from_secs(1),
+    )
+    .unwrap();
+}
+
+#[test]
+fn rootless_info_verification_preserves_failure_stderr() {
+    let (_temp, env) = verification_fixture("#!/bin/sh\necho 'idmap setup failed' >&2\nexit 1\n");
+
+    let err = verify_rootless_info_with_env_and_timeout(
+        &verification_identity(),
+        &env,
+        Duration::from_secs(1),
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("idmap setup failed"));
+}
+
+#[test]
+fn rootless_info_verification_uses_dev_identity() {
+    let identity = verification_identity();
+    let script = format!(
+        "#!/bin/sh\n[ \"$(id -u)\" = \"{}\" ] && [ \"$(id -g)\" = \"{}\" ]\n",
+        identity.uid, identity.gid
+    );
+    let (_temp, env) = verification_fixture(&script);
+
+    verify_rootless_info_with_env_and_timeout(&identity, &env, Duration::from_secs(1)).unwrap();
+}
+
+#[test]
+fn rootless_info_verification_transitions_from_root_to_dev_identity() {
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let identity = DevIdentity::new(65534, 65534, PathBuf::from("/bin/sh"));
+    let (_temp, env) = verification_fixture(
+        "#!/bin/sh\n[ \"$(id -u)\" = \"65534\" ] && [ \"$(id -g)\" = \"65534\" ]\n",
+    );
+
+    verify_rootless_info_with_env_and_timeout(&identity, &env, Duration::from_secs(1)).unwrap();
+}
+
+#[test]
+fn rootless_info_verification_times_out_and_reaps_child() {
+    let (_temp, env) = verification_fixture("#!/bin/sh\nwhile :; do :; done\n");
+    let started = Instant::now();
+
+    let err = verify_rootless_info_with_env_and_timeout(
+        &verification_identity(),
+        &env,
+        Duration::from_millis(20),
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("timed out"));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn rootless_info_verification_does_not_wait_for_inherited_stderr() {
+    let (_temp, env) = verification_fixture("#!/bin/sh\nsleep 2 &\necho failed >&2\nexit 1\n");
+    let started = Instant::now();
+
+    let err = verify_rootless_info_with_env_and_timeout(
+        &verification_identity(),
+        &env,
+        Duration::from_secs(1),
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("failed"));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn rootless_info_verification_handles_timeout_exit_races() {
+    let (_temp, env) = verification_fixture("#!/bin/sh\nexit 0\n");
+
+    for _ in 0..100 {
+        let result = verify_rootless_info_with_env_and_timeout(
+            &verification_identity(),
+            &env,
+            Duration::ZERO,
+        );
+        if let Err(err) = result {
+            assert!(err.to_string().contains("timed out"), "{err:#}");
+        }
+    }
+}
+#[test]
+fn rootless_info_stderr_capture_is_bounded() {
+    let input = vec![b'x'; MAX_ROOTLESS_INFO_STDERR * 2];
+    let mut reader = Cursor::new(input);
+    let mut output = Vec::new();
+
+    drain_nonblocking(&mut reader, &mut output).unwrap();
+
+    assert_eq!(output.len(), MAX_ROOTLESS_INFO_STDERR);
+}
+
+#[test]
+fn child_cleanup_handles_an_already_exited_child() {
+    let mut child = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("exit 0")
+        .spawn()
+        .unwrap();
+    while child.try_wait().unwrap().is_none() {
+        std::thread::yield_now();
+    }
+
+    terminate_and_reap(&mut child).unwrap();
+
+    assert!(child.try_wait().unwrap().is_some());
+}
 
 #[test]
 fn podman_service_paths_are_uid_derived() {

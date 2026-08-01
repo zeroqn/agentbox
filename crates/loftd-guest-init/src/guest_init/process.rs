@@ -14,7 +14,8 @@ const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 const PR_CAP_AMBIENT: libc::c_int = 47;
 const CAP_SETUID: u32 = 7;
 const CAP_SETGID: u32 = 6;
-const ROOTLESS_IDMAP_CAPABILITIES: [u32; 2] = [CAP_SETUID, CAP_SETGID];
+const CAP_DAC_OVERRIDE: u32 = 1;
+const ROOTLESS_IDMAP_CAPABILITIES: [u32; 3] = [CAP_SETUID, CAP_SETGID, CAP_DAC_OVERRIDE];
 const PR_CAP_AMBIENT_RAISE: libc::c_ulong = 2;
 
 const VIDEO_GID: libc::gid_t = 44;
@@ -462,8 +463,13 @@ mod tests {
 
         assert!(retains_bounding_capability(CAP_SETUID, new_capabilities));
         assert!(retains_bounding_capability(CAP_SETGID, new_capabilities));
+        assert!(retains_bounding_capability(
+            CAP_DAC_OVERRIDE,
+            new_capabilities
+        ));
         assert!(!new_capabilities.contains(CAP_SETUID));
         assert!(!new_capabilities.contains(CAP_SETGID));
+        assert!(!new_capabilities.contains(CAP_DAC_OVERRIDE));
         assert!(!retains_bounding_capability(
             CAP_SYS_ADMIN,
             new_capabilities
@@ -477,6 +483,10 @@ mod tests {
 
         assert!(retains_bounding_capability(CAP_SETUID, new_capabilities));
         assert!(retains_bounding_capability(CAP_SETGID, new_capabilities));
+        assert!(retains_bounding_capability(
+            CAP_DAC_OVERRIDE,
+            new_capabilities
+        ));
         assert!(retains_bounding_capability(CAP_NET_RAW, new_capabilities));
         assert!(new_capabilities.contains(CAP_NET_RAW));
     }

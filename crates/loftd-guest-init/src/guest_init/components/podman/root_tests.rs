@@ -13,7 +13,10 @@ fn podman_prep_operation_order_keeps_root_setup_before_configs() {
     assert!(
         pos(PodmanPrepOperation::MountContainerStorage) < pos(PodmanPrepOperation::WriteConfig)
     );
-    assert!(pos(PodmanPrepOperation::WriteConfig) < pos(PodmanPrepOperation::WriteReadyStatus));
+    assert!(pos(PodmanPrepOperation::WriteConfig) < pos(PodmanPrepOperation::VerifyRootlessPodman));
+    assert!(
+        pos(PodmanPrepOperation::VerifyRootlessPodman) < pos(PodmanPrepOperation::WriteReadyStatus)
+    );
 }
 
 #[test]
