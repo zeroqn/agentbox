@@ -65,7 +65,7 @@ fn rootless_info_verification_preserves_failure_stderr() {
 fn rootless_info_verification_uses_dev_identity() {
     let identity = verification_identity();
     let script = format!(
-        "#!/bin/sh\n[ \"$(id -u)\" = \"{}\" ] && [ \"$(id -g)\" = \"{}\" ]\n",
+        "#!/bin/sh\nuid=\ngid=\nwhile read -r key real effective saved fs; do\n    case \"$key\" in\n        Uid:) uid=$effective ;;\n        Gid:) gid=$effective ;;\n    esac\ndone < /proc/self/status\n[ \"$uid\" = \"{}\" ] && [ \"$gid\" = \"{}\" ]\n",
         identity.uid, identity.gid
     );
     let (_temp, env) = verification_fixture(&script);
@@ -80,7 +80,7 @@ fn rootless_info_verification_transitions_from_root_to_dev_identity() {
     }
     let identity = DevIdentity::new(65534, 65534, PathBuf::from("/bin/sh"));
     let (_temp, env) = verification_fixture(
-        "#!/bin/sh\n[ \"$(id -u)\" = \"65534\" ] && [ \"$(id -g)\" = \"65534\" ]\n",
+        "#!/bin/sh\nuid=\ngid=\nwhile read -r key real effective saved fs; do\n    case \"$key\" in\n        Uid:) uid=$effective ;;\n        Gid:) gid=$effective ;;\n    esac\ndone < /proc/self/status\n[ \"$uid\" = \"65534\" ] && [ \"$gid\" = \"65534\" ]\n",
     );
 
     verify_rootless_info_with_env_and_timeout(&identity, &env, Duration::from_secs(1)).unwrap();
