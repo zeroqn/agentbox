@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agentbox-guest-init"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -14,7 +14,7 @@ dependencies = [
 
 [[package]]
 name = "agentbox-host"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -247,7 +247,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "loftd"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -265,21 +265,21 @@ dependencies = [
 
 [[package]]
 name = "loftd-attach-protocol"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "loftd-exec-protocol"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "loftd-guest-init"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "loftd-repository-tests"
-version = "0.6.2"
+version = "0.6.3"
 
 [[package]]
 name = "matchers"
