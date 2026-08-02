@@ -70,6 +70,9 @@ impl LaunchConfig {
                 &pulse_bridge.guest_port.to_string(),
             );
         }
+        if spec.gpu_mode == crate::runtime::vm::gpu::GpuMode::Drm {
+            guest_env::insert_env(&mut guest_config_env, model::GUEST_GPU_DRM_ENV, "1");
+        }
         if spec.wayland {
             guest_env::insert_env(&mut guest_config_env, model::GUEST_WAYLAND_ENV, "1");
         }

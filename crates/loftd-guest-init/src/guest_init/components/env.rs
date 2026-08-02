@@ -142,6 +142,7 @@ pub(in crate::guest_init) struct LoftdEnv {
     pub(in crate::guest_init) containers_storage: bool,
     pub(in crate::guest_init) container_store_backend: ContainerStoreBackend,
     pub(in crate::guest_init) use_passt: bool,
+    pub(in crate::guest_init) gpu_drm: bool,
     pub(in crate::guest_init) wayland: bool,
     pub(in crate::guest_init) permissions: GuestPermissions,
     pub(in crate::guest_init) enter_as_root: bool,
@@ -168,6 +169,7 @@ impl LoftdEnv {
                     .filter(|value| !value.is_empty()),
             )?,
             use_passt: env_flag_any("LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
+            gpu_drm: env_flag("LOFTD_GPU_DRM"),
             wayland: env_flag("LOFTD_WAYLAND"),
             permissions: env::var("LOFTD_PERMISSIONS")
                 .ok()

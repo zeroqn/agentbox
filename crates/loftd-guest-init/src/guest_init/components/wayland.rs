@@ -17,18 +17,47 @@ const VIDEO_GID: u32 = 44;
 const RENDER_GID: u32 = 107;
 
 pub(in crate::guest_init) fn start_if_enabled(
-    enabled: bool,
+    wayland_enabled: bool,
+    gpu_drm_enabled: bool,
     identity: &DevIdentity,
 ) -> Result<Option<Child>> {
-    if !enabled {
+    prepare_drm_devices_for_start(wayland_enabled, gpu_drm_enabled, Path::new(DRI_DIR))?;
+    if !wayland_enabled {
         return Ok(None);
     }
     let runtime_dir = ensure_user_runtime_dir(identity)?;
-    prepare_drm_devices()?;
     export_guest_env(&runtime_dir);
     let child = spawn_proxy(&runtime_dir, WAYLAND_DISPLAY, identity)
         .context("failed to start guest Wayland cross-domain proxy")?;
     Ok(Some(child))
+}
+
+fn prepare_drm_devices_for_start(
+    wayland_enabled: bool,
+    gpu_drm_enabled: bool,
+    dri_dir: &Path,
+) -> Result<()> {
+    prepare_drm_devices_for_start_with(
+        wayland_enabled,
+        gpu_drm_enabled,
+        dri_dir,
+        &mut |path, permissions| {
+            guest_fs::chown(path, ROOT_UID, permissions.gid)?;
+            guest_fs::chmod(path, permissions.mode)
+        },
+    )
+}
+
+fn prepare_drm_devices_for_start_with(
+    wayland_enabled: bool,
+    gpu_drm_enabled: bool,
+    dri_dir: &Path,
+    apply: &mut impl FnMut(&Path, DrmDevicePermissions) -> Result<()>,
+) -> Result<()> {
+    if wayland_enabled || gpu_drm_enabled {
+        prepare_drm_devices_under_with(dri_dir, apply)?;
+    }
+    Ok(())
 }
 
 fn export_guest_env(runtime_dir: &Path) {
@@ -84,11 +113,10 @@ fn spawn_proxy_command(
     command
 }
 
-fn prepare_drm_devices() -> Result<()> {
-    prepare_drm_devices_under(Path::new(DRI_DIR))
-}
-
-fn prepare_drm_devices_under(dri_dir: &Path) -> Result<()> {
+fn prepare_drm_devices_under_with(
+    dri_dir: &Path,
+    apply: &mut impl FnMut(&Path, DrmDevicePermissions) -> Result<()>,
+) -> Result<()> {
     let Ok(entries) = fs::read_dir(dri_dir) else {
         return Ok(());
     };
@@ -97,8 +125,7 @@ fn prepare_drm_devices_under(dri_dir: &Path) -> Result<()> {
             entry.with_context(|| format!("failed to read entry under {}", dri_dir.display()))?;
         let path = entry.path();
         if let Some(permissions) = drm_device_permissions(&path) {
-            guest_fs::chown(&path, ROOT_UID, permissions.gid)?;
-            guest_fs::chmod(&path, permissions.mode)?;
+            apply(&path, permissions)?;
         }
     }
     Ok(())
@@ -172,6 +199,45 @@ mod tests {
             Some(process::credential_plan(&identity))
         );
         assert_eq!(proxy_credential_plan(identity.uid, &identity), None);
+    }
+
+    #[test]
+    fn drm_preparation_runs_without_wayland_when_gpu_drm_is_enabled() {
+        let temp = tempfile::tempdir().expect("temporary directory should be created");
+        let card = temp.path().join("card0");
+        let render = temp.path().join("renderD128");
+        let unrelated = temp.path().join("by-path");
+        fs::write(&card, "").expect("card node should be created");
+        fs::write(&render, "").expect("render node should be created");
+        fs::write(&unrelated, "").expect("unrelated entry should be created");
+        let mut applied = Vec::new();
+
+        prepare_drm_devices_for_start_with(false, true, temp.path(), &mut |path, permissions| {
+            applied.push((path.to_path_buf(), permissions));
+            Ok(())
+        })
+        .expect("DRM preparation should succeed without Wayland");
+
+        applied.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(
+            applied,
+            [
+                (
+                    card,
+                    DrmDevicePermissions {
+                        gid: VIDEO_GID,
+                        mode: 0o660,
+                    },
+                ),
+                (
+                    render,
+                    DrmDevicePermissions {
+                        gid: RENDER_GID,
+                        mode: 0o666,
+                    },
+                ),
+            ]
+        );
     }
 
     #[test]

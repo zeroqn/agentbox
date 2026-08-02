@@ -230,6 +230,7 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     profiler.measure_result("start-wayland-proxy", || {
         crate::guest_init::components::wayland::start_if_enabled(
             env_contract.loftd.wayland,
+            env_contract.loftd.gpu_drm,
             &identity,
         )
     })?;
@@ -381,6 +382,7 @@ fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
             env.var(CONTAINERS_STORE_ENV),
         )?,
         use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
+        gpu_drm: env_flag(env, "LOFTD_GPU_DRM"),
         wayland: env_flag(env, "LOFTD_WAYLAND"),
         permissions: env
             .var("LOFTD_PERMISSIONS")
@@ -712,6 +714,15 @@ mod tests {
         ]))
         .expect_err("direct and bridged Pulse endpoints should conflict");
         assert!(format!("{error:#}").contains("cannot both be configured"));
+    }
+
+    #[test]
+    fn gpu_drm_is_forwarded_independently_from_wayland() {
+        let parsed =
+            EnterEnv::from_env(&env(&[("LOFTD_GPU_DRM", "1")])).expect("DRM env should parse");
+
+        assert!(parsed.loftd.gpu_drm);
+        assert!(!parsed.loftd.wayland);
     }
 
     #[test]

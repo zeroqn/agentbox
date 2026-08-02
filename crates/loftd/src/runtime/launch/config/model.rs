@@ -39,6 +39,7 @@ pub(super) const GUEST_PROFILE_ENV: &str = "LOFTD_GUEST_PROFILE";
 pub(super) const GUEST_DEBUG_ENV: &str = "LOFTD_GUEST_DEBUG";
 pub(super) const NIX_ALLOCATOR_ENV: &str = "LOFTD_NIX_ALLOCATOR";
 pub(super) const GUEST_USE_PASST_ENV: &str = "LOFTD_USE_PASST";
+pub(super) const GUEST_GPU_DRM_ENV: &str = "LOFTD_GPU_DRM";
 pub(super) const GUEST_WAYLAND_ENV: &str = "LOFTD_WAYLAND";
 pub(super) const GUEST_WAYPIPE_PORT_ENV: &str = "LOFTD_WAYPIPE_PORT";
 pub(super) const GUEST_PULSE_SERVER_ENV: &str = "LOFTD_PULSE_SERVER";

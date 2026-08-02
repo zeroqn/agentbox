@@ -61,7 +61,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         log_level: LogLevel::Debug,
         network_mode: NetworkMode::Tsi,
         pulse: None,
-        gpu_mode: GpuMode::Off,
+        gpu_mode: GpuMode::Drm,
         wayland: false,
         new_perms: "io-uring,net-raw,perf"
             .parse()
@@ -120,6 +120,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     assert!(config.guest_config_env_contains("SCCACHE_DIR", "/home/dev/.cache/sccache"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
+    assert!(config.guest_config_env_contains("LOFTD_GPU_DRM", "1"));
     assert!(config.guest_config_env_contains("LOFTD_PERMISSIONS", "io-uring,net-raw,perf"));
     assert!(
         config
@@ -169,6 +170,7 @@ fn launch_config_uses_explicit_guest_command() {
 
     assert_eq!(config.argv, ["enter", "bash", "-lc", "echo ok"]);
     assert_ne!(config.argv.get(1).map(String::as_str), Some("--"));
+    assert!(!config.guest_config_env_contains("LOFTD_GPU_DRM", "1"));
     assert!(
         config
             .guest_config_env

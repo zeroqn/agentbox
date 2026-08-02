@@ -122,6 +122,23 @@ fn internal_runtime_parses_unified_permissions() {
 }
 
 #[test]
+fn internal_runtime_parses_gpu_drm_independently_from_wayland() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::set_var("LOFTD_GPU_DRM", "1");
+        std::env::remove_var("LOFTD_WAYLAND");
+    }
+    let parsed = LoftdEnv::from_process_env().expect("env should parse");
+    unsafe {
+        std::env::remove_var("LOFTD_GPU_DRM");
+    }
+
+    assert!(parsed.gpu_drm);
+    assert!(!parsed.wayland);
+}
+
+#[test]
 fn internal_runtime_rejects_invalid_permissions() {
     let _guard = ENV_LOCK.lock().expect("env test lock");
     for value in ["", "io-uring,,perf", "sys-admin"] {
