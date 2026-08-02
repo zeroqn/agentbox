@@ -11,10 +11,31 @@ use crate::guest_init::process;
 
 pub(in crate::guest_init) const WAYLAND_DISPLAY: &str = "wayland-0";
 pub(in crate::guest_init) const PROXY_BIN: &str = "wl-cross-domain-proxy";
+const MESA_ENV: &[(&str, &str)] = &[
+    ("LIBGL_DRIVERS_PATH", "/usr/lib/loftd-mesa-runtime/lib/dri"),
+    (
+        "__EGL_VENDOR_LIBRARY_FILENAMES",
+        "/usr/lib/loftd-mesa-runtime/share/glvnd/egl_vendor.d/50_mesa.json",
+    ),
+    (
+        "VK_DRIVER_FILES",
+        "/usr/lib/loftd-mesa-runtime/share/vulkan/icd.d/virtio_icd.x86_64.json",
+    ),
+];
 const DRI_DIR: &str = "/dev/dri";
 const ROOT_UID: u32 = 0;
 const VIDEO_GID: u32 = 44;
 const RENDER_GID: u32 = 107;
+
+pub(in crate::guest_init) fn export_mesa_if_enabled(enabled: bool) {
+    if !enabled {
+        return;
+    }
+
+    for (name, value) in MESA_ENV {
+        unsafe { std::env::set_var(name, value) };
+    }
+}
 
 pub(in crate::guest_init) fn start_if_enabled(
     wayland_enabled: bool,
@@ -157,7 +178,46 @@ fn drm_device_permissions(path: &Path) -> Option<DrmDevicePermissions> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn drm_mode_exports_hardware_mesa_discovery_without_forcing_software() {
+        let _guard = ENV_LOCK.lock().expect("env test lock");
+        unsafe {
+            std::env::remove_var("LIBGL_ALWAYS_SOFTWARE");
+            for (name, _) in MESA_ENV {
+                std::env::remove_var(name);
+            }
+        }
+
+        export_mesa_if_enabled(true);
+
+        for (name, value) in MESA_ENV {
+            assert_eq!(std::env::var(name).as_deref(), Ok(*value));
+            assert!(value.starts_with("/usr/lib/loftd-mesa-runtime"));
+        }
+        assert!(std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none());
+
+        for (name, _) in MESA_ENV {
+            unsafe { std::env::remove_var(name) };
+        }
+    }
+
+    #[test]
+    fn disabled_drm_mode_does_not_export_mesa_discovery() {
+        let _guard = ENV_LOCK.lock().expect("env test lock");
+        for (name, _) in MESA_ENV {
+            unsafe { std::env::remove_var(name) };
+        }
+
+        export_mesa_if_enabled(false);
+
+        for (name, _) in MESA_ENV {
+            assert!(std::env::var_os(name).is_none());
+        }
+    }
     #[test]
     fn proxy_constants_match_guest_env_contract() {
         assert_eq!(WAYLAND_DISPLAY, "wayland-0");

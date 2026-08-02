@@ -75,6 +75,10 @@ managed sidecar.
   listener, typically provided by `pipewire-pulse`. Loftd exports the endpoint to
   guest PulseAudio-compatible clients but does not configure or start the host
   service.
+- `loftd --gpu=drm` enables libkrun virtio-GPU DRM nodes and exposes the loftd
+  image's Mesa OpenGL/EGL and Vulkan drivers to the guest command. Mesa selects
+  the driver compatible with the virtual DRM device; this mode does not force
+  llvmpipe or lavapipe.
 - `loftd --wayland` enables guest Wayland passthrough through
   `wl-cross-domain-proxy` and libkrun virtio-gpu DRM native contexts. The loftd
   image includes the guest proxy binary and guest-init exports

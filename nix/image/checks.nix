@@ -256,10 +256,14 @@ let
               test -x ${pkgs.perf}/bin/perf
               test -x ${pkgs.strace}/bin/strace
               test -f ${pkgs.mesa}/lib/dri/swrast_dri.so
+              test -f ${pkgs.mesa}/lib/dri/virtio_gpu_dri.so
               test -f ${pkgs.mesa}/lib/libvulkan_lvp.so
               test -f ${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json
               test -f ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json
+              test -f ${pkgs.mesa}/share/vulkan/icd.d/virtio_icd.x86_64.json
               grep -F 'pkgs.mesa' ${layersSourceFile}
+              grep -F './usr/lib/loftd-mesa-runtime' ${containerSourceFile}
+              grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/loftd-mesa-runtime' ${containerSourceFile}
               grep -F './usr/lib/loftd-software-renderer' ${containerSourceFile}
               grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/loftd-software-renderer' ${containerSourceFile}
               ${pkgs.lib.optionalString (rioBin != null) ''

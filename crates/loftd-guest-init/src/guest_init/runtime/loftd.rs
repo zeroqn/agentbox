@@ -166,6 +166,9 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     profiler.measure("export-shell-env", || {
         crate::guest_init::components::shell::env::export(&shell_env)
     });
+    profiler.measure("export-gpu-env", || {
+        crate::guest_init::components::wayland::export_mesa_if_enabled(env_contract.loftd.gpu_drm)
+    });
     profiler.measure_result("materialize-home", || {
         crate::guest_init::components::home::root::materialize(&identity)
     })?;

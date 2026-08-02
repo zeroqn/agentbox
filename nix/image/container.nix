@@ -159,6 +159,7 @@ let
       chmod 0644 ./home/dev/.terminfo/x/xterm-ghostty
       ${pkgs.lib.optionalString (imageVariant == "loftd") ''
         mkdir -p ./usr/lib
+        ln -s ${pkgs.mesa} ./usr/lib/loftd-mesa-runtime
         ln -s ${pkgs.mesa} ./usr/lib/loftd-software-renderer
       ''}
       ${pkgs.lib.optionalString (imageVariant == "loftd" && rioBin != null) ''
