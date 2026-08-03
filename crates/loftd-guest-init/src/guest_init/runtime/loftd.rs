@@ -250,7 +250,13 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     };
     let waypipe = env_contract
         .waypipe_port
-        .map(|port| crate::guest_init::components::waypipe::start(port, &identity))
+        .map(|port| {
+            crate::guest_init::components::waypipe::start(
+                port,
+                &identity,
+                env_contract.loftd.gpu_drm,
+            )
+        })
         .transpose()?;
     let _exec = env_contract
         .exec

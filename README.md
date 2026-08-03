@@ -87,16 +87,17 @@ managed sidecar.
   `krun_set_gpu_options2` support; `--wayland` automatically selects
   `--gpu=drm`.
 - `loftd [--workspace=WORKSPACE] --waypipe[=SOCKET] [-- COMMAND...]` launches a
-  Waypipe-capable task with a software-only guest Waypipe server. An optional
-  absolute SSH-forwarded Unix `SOCKET` activates the initial target; valueless
-  `--waypipe` starts the capability without a target. Later,
-  `loftd --waypipe exec TASK -- COMMAND...` reuses the running server, while
-  `loftd --waypipe=SOCKET exec TASK -- COMMAND...` replaces the target and
-  restarts the server before running the command. Restarting drops existing GUI
-  applications connected to that Waypipe display. OpenGL/EGL clients use Mesa
-  llvmpipe and Vulkan clients use Mesa lavapipe, with rendering performed on the
-  guest CPU. This mode is separate from `--wayland`, conflicts with `--wayland`
-  and `--gpu`, and requires the loftd image's guest `waypipe` binary.
+  Waypipe-capable task. An optional absolute SSH-forwarded Unix `SOCKET`
+  activates the initial target; valueless `--waypipe` starts the capability
+  without a target. Later, `loftd --waypipe exec TASK -- COMMAND...` reuses the
+  running server, while `loftd --waypipe=SOCKET exec TASK -- COMMAND...`
+  replaces the target and restarts the server before running the command.
+  Restarting drops existing GUI applications connected to that Waypipe display.
+  Without `--gpu=drm`, Waypipe uses `--no-gpu`; OpenGL/EGL clients use Mesa
+  llvmpipe and Vulkan clients use Mesa lavapipe on the guest CPU. With
+  `--gpu=drm`, Waypipe keeps GPU support enabled and clients inherit the DRM Mesa
+  environment. Waypipe remains mutually exclusive with `--wayland` and requires
+  the loftd image's guest `waypipe` binary.
 - Linux Landlock enabled in the host kernel for default `loftd` task launches.
   Ordinary launches now use host-side Landlock `relax` mode by default; use
   `--landlock=all` for stricter TCP bind handling,
@@ -979,11 +980,13 @@ reconnection: existing GUI applications connected to the old server lose their
 Wayland connection and normally exit. If `--workspace` is omitted, loftd uses
 the current working directory. loftd does not start SSH or the workstation
 Waypipe client and does not create, unlink, or clean up the forwarded socket.
-The mode uses `--no-gpu` and is mutually exclusive with `--wayland` and `--gpu`.
-The loftd guest image provides Mesa software rendering for this mode:
-OpenGL/EGL applications use llvmpipe and Vulkan applications use lavapipe.
-Rendering occurs on the guest CPU and does not enable libkrun virtio-GPU
-acceleration.
+Without `--gpu=drm`, the mode passes `--no-gpu` to Waypipe. The loftd guest
+image provides Mesa software rendering for this path: OpenGL/EGL applications
+use llvmpipe and Vulkan applications use lavapipe on the guest CPU. When
+`--gpu=drm` is also selected, guest-init omits Waypipe's `--no-gpu`, does not
+force the software-renderer environment, and preserves the DRM-scoped Mesa
+OpenGL/EGL and Vulkan discovery paths. `--waypipe` remains mutually exclusive
+with `--wayland`.
 
 Detach/attach behavior:
 

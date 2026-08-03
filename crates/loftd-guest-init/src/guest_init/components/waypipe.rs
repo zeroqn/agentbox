@@ -40,6 +40,7 @@ struct WaypipeServiceInner {
     identity: DevIdentity,
     runtime_dir: std::path::PathBuf,
     socket_path: std::path::PathBuf,
+    gpu_drm_enabled: bool,
     child: Option<Child>,
 }
 
@@ -76,6 +77,7 @@ impl WaypipeService {
             inner.port,
             &inner.identity,
             &inner.runtime_dir,
+            inner.gpu_drm_enabled,
         )?;
         wait_ready(&mut child, &inner.socket_path)?;
         inner.child = Some(child);
@@ -83,14 +85,18 @@ impl WaypipeService {
     }
 }
 
-pub(in crate::guest_init) fn start(port: u32, identity: &DevIdentity) -> Result<WaypipeService> {
+pub(in crate::guest_init) fn start(
+    port: u32,
+    identity: &DevIdentity,
+    gpu_drm_enabled: bool,
+) -> Result<WaypipeService> {
     let runtime_dir = ensure_user_runtime_dir(identity)?;
     let socket_path = runtime_dir.join(WAYLAND_DISPLAY);
     remove_display(&socket_path)?;
     let program = std::path::PathBuf::from("waypipe");
-    let mut child = spawn_server(&program, port, identity, &runtime_dir)?;
+    let mut child = spawn_server(&program, port, identity, &runtime_dir, gpu_drm_enabled)?;
     wait_ready(&mut child, &socket_path)?;
-    export_env(&runtime_dir);
+    export_env(&runtime_dir, gpu_drm_enabled);
 
     let inner = Arc::new(Mutex::new(WaypipeServiceInner {
         program,
@@ -98,6 +104,7 @@ pub(in crate::guest_init) fn start(port: u32, identity: &DevIdentity) -> Result<
         identity: identity.clone(),
         runtime_dir,
         socket_path,
+        gpu_drm_enabled,
         child: Some(child),
     }));
     let monitor = Arc::clone(&inner);
@@ -135,16 +142,18 @@ pub(in crate::guest_init) fn start(port: u32, identity: &DevIdentity) -> Result<
     Ok(WaypipeService { inner })
 }
 
-fn spawn_server(
+fn server_command(
     program: &std::path::Path,
     port: u32,
-    identity: &DevIdentity,
     runtime_dir: &std::path::Path,
-) -> Result<Child> {
+    gpu_drm_enabled: bool,
+) -> Command {
     let mut command = Command::new(program);
+    if !gpu_drm_enabled {
+        command.arg("--no-gpu");
+    }
     command
         .args([
-            "--no-gpu",
             "--vsock",
             "--socket",
             &port.to_string(),
@@ -156,10 +165,23 @@ fn spawn_server(
             "infinity",
         ])
         .env("XDG_RUNTIME_DIR", runtime_dir)
-        .envs(SOFTWARE_RENDERER_ENV.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    if !gpu_drm_enabled {
+        command.envs(SOFTWARE_RENDERER_ENV.iter().copied());
+    }
+    command
+}
+
+fn spawn_server(
+    program: &std::path::Path,
+    port: u32,
+    identity: &DevIdentity,
+    runtime_dir: &std::path::Path,
+    gpu_drm_enabled: bool,
+) -> Result<Child> {
+    let mut command = server_command(program, port, runtime_dir, gpu_drm_enabled);
     if process::is_root() {
         let identity = identity.clone();
         unsafe {
@@ -205,12 +227,14 @@ fn remove_display(socket_path: &std::path::Path) -> Result<()> {
     }
 }
 
-fn export_env(runtime_dir: &std::path::Path) {
+fn export_env(runtime_dir: &std::path::Path, gpu_drm_enabled: bool) {
     unsafe {
         std::env::set_var("XDG_RUNTIME_DIR", runtime_dir);
         std::env::set_var("WAYLAND_DISPLAY", WAYLAND_DISPLAY);
-        for (name, value) in SOFTWARE_RENDERER_ENV {
-            std::env::set_var(name, value);
+        if !gpu_drm_enabled {
+            for (name, value) in SOFTWARE_RENDERER_ENV {
+                std::env::set_var(name, value);
+            }
         }
     }
 }
@@ -218,8 +242,47 @@ fn export_env(runtime_dir: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn software_mode_disables_waypipe_gpu_and_forces_software_renderers() {
+        let command = server_command(
+            Path::new("waypipe"),
+            50_427,
+            Path::new("/run/user/1000"),
+            false,
+        );
+        let args: Vec<_> = command.get_args().collect();
+
+        assert!(args.contains(&OsStr::new("--no-gpu")));
+        for (name, value) in SOFTWARE_RENDERER_ENV {
+            assert!(command.get_envs().any(|(actual_name, actual_value)| {
+                actual_name == OsStr::new(name) && actual_value == Some(OsStr::new(value))
+            }));
+        }
+    }
+
+    #[test]
+    fn drm_mode_keeps_waypipe_gpu_enabled_and_inherits_mesa_environment() {
+        let command = server_command(
+            Path::new("waypipe"),
+            50_427,
+            Path::new("/run/user/1000"),
+            true,
+        );
+        let args: Vec<_> = command.get_args().collect();
+
+        assert!(!args.contains(&OsStr::new("--no-gpu")));
+        for (name, _) in SOFTWARE_RENDERER_ENV {
+            assert!(
+                command
+                    .get_envs()
+                    .all(|(actual_name, _)| actual_name != OsStr::new(name))
+            );
+        }
+    }
 
     #[test]
     fn failed_replacement_can_be_retried() {
@@ -242,7 +305,8 @@ mod tests {
             PathBuf::from("/bin/sh"),
         );
         let socket_path = dir.path().join(WAYLAND_DISPLAY);
-        let mut child = spawn_server(&program, 50_427, &identity, dir.path()).expect("start");
+        let mut child =
+            spawn_server(&program, 50_427, &identity, dir.path(), false).expect("start");
         wait_ready(&mut child, &socket_path).expect("ready");
         let service = WaypipeService {
             inner: Arc::new(Mutex::new(WaypipeServiceInner {
@@ -251,6 +315,7 @@ mod tests {
                 identity,
                 runtime_dir: dir.path().to_path_buf(),
                 socket_path: socket_path.clone(),
+                gpu_drm_enabled: false,
                 child: Some(child),
             })),
         };
