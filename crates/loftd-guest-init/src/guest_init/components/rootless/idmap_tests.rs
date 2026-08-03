@@ -5,8 +5,23 @@ use std::os::unix::fs::PermissionsExt;
 use tempfile::tempdir;
 
 use crate::guest_init::components::rootless::idmap::{
-    WRAPPER_BIN_DIR, helper_metadata_is_ready, installed_helper_is_ready, source_helper_in_path,
+    WRAPPER_BIN_DIR, file_capability_value, helper_metadata_is_ready, installed_helper_is_ready,
+    source_helper_in_path,
 };
+
+#[test]
+fn granted_helper_file_capability_value_encodes_authorized_sets_exactly() {
+    let value = file_capability_value(&[12, 13, 39]);
+
+    assert_eq!(
+        u32::from_le_bytes(value[0..4].try_into().unwrap()),
+        0x0200_0001
+    );
+    assert_eq!(u32::from_le_bytes(value[4..8].try_into().unwrap()), 0x3000);
+    assert_eq!(u32::from_le_bytes(value[8..12].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(value[12..16].try_into().unwrap()), 0x80);
+    assert_eq!(u32::from_le_bytes(value[16..20].try_into().unwrap()), 0);
+}
 
 #[test]
 fn idmap_source_lookup_skips_installed_helper_dir_when_alternate_exists() {

@@ -4,17 +4,24 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::guest_init::command;
+use crate::guest_init::components::env::GuestPermissions;
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::fs;
+use crate::guest_init::process;
 
 const SUBID_START: u32 = 100_000;
 const SUBID_COUNT: u32 = 65_536;
 pub(in crate::guest_init) const WRAPPER_BIN_DIR: &str = "/run/loftd/wrappers/bin";
 
-pub(in crate::guest_init) fn prepare(identity: &DevIdentity) -> Result<()> {
+pub(in crate::guest_init) fn prepare(
+    identity: &DevIdentity,
+    permissions: GuestPermissions,
+) -> Result<()> {
     materialize_subid_files(identity)?;
     install_helper("newuidmap")?;
-    install_helper("newgidmap")
+    install_helper("newgidmap")?;
+    install_granted_helper(permissions)?;
+    seal_wrapper_tree()
 }
 
 fn materialize_subid_files(identity: &DevIdentity) -> Result<()> {
@@ -45,6 +52,129 @@ fn reject_subid_overlap(candidate: u32, name: &str) -> Result<()> {
     let end = SUBID_START + SUBID_COUNT - 1;
     if (SUBID_START..=end).contains(&candidate) {
         bail!("subordinate ID range {SUBID_START}:{SUBID_COUNT} overlaps {name} id {candidate}");
+    }
+    Ok(())
+}
+
+fn install_granted_helper(permissions: GuestPermissions) -> Result<()> {
+    let wrapper_dir = Path::new(WRAPPER_BIN_DIR);
+    fs::create_dir_all(wrapper_dir)?;
+    let dst = wrapper_dir.join("loftd-granted");
+    let src = source_helper_on_path("loftd-granted", wrapper_dir)?;
+    command::run(
+        "install",
+        &[
+            "-m",
+            "0555",
+            "-o",
+            "0",
+            "-g",
+            "0",
+            path_str(&src)?,
+            path_str(&dst)?,
+        ],
+    )
+    .context("failed to install root-owned loftd-granted helper")?;
+
+    let capabilities = process::workload_capability_plan(permissions);
+    set_file_capabilities(&dst, capabilities.as_slice())?;
+    verify_granted_helper(&dst, capabilities.as_slice())
+}
+
+fn file_capability_value(capabilities: &[u32]) -> [u8; 20] {
+    const VFS_CAP_REVISION_2: u32 = 0x0200_0000;
+    const VFS_CAP_FLAGS_EFFECTIVE: u32 = 1;
+
+    let mut permitted = [0_u32; 2];
+    for capability in capabilities {
+        permitted[(*capability / 32) as usize] |= 1 << (*capability % 32);
+    }
+    let mut value = [0_u8; 20];
+    value[0..4].copy_from_slice(&(VFS_CAP_REVISION_2 | VFS_CAP_FLAGS_EFFECTIVE).to_le_bytes());
+    value[4..8].copy_from_slice(&permitted[0].to_le_bytes());
+    value[12..16].copy_from_slice(&permitted[1].to_le_bytes());
+    value
+}
+
+fn set_file_capabilities(path: &Path, capabilities: &[u32]) -> Result<()> {
+    let value = file_capability_value(capabilities);
+    let path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())?;
+    if unsafe {
+        libc::setxattr(
+            path.as_ptr(),
+            c"security.capability".as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to set loftd-granted file capabilities");
+    }
+    Ok(())
+}
+
+fn verify_granted_helper(path: &Path, capabilities: &[u32]) -> Result<()> {
+    let metadata = path
+        .metadata()
+        .with_context(|| format!("failed to stat {}", path.display()))?;
+    if !metadata.is_file()
+        || metadata.uid() != 0
+        || metadata.gid() != 0
+        || metadata.permissions().mode() & 0o7777 != 0o555
+    {
+        bail!("unexpected loftd-granted ownership or mode");
+    }
+
+    let path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())?;
+    let mut value = [0_u8; 24];
+    let size = unsafe {
+        libc::getxattr(
+            path.as_ptr(),
+            c"security.capability".as_ptr(),
+            value.as_mut_ptr().cast(),
+            value.len(),
+        )
+    };
+    if size < 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to verify loftd-granted file capabilities");
+    }
+
+    let expected = file_capability_value(capabilities);
+    if size != expected.len() as isize || value[..expected.len()] != expected {
+        bail!("installed loftd-granted capabilities differ from the authorized set");
+    }
+    Ok(())
+}
+
+fn seal_wrapper_tree() -> Result<()> {
+    let wrappers = std::ffi::CString::new("/run/loftd/wrappers")?;
+    if unsafe {
+        libc::mount(
+            wrappers.as_ptr(),
+            wrappers.as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND,
+            std::ptr::null(),
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error()).context("failed to bind-mount loftd wrappers");
+    }
+    if unsafe {
+        libc::mount(
+            std::ptr::null(),
+            wrappers.as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+            std::ptr::null(),
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error())
+            .context("failed to remount loftd wrappers read-only");
     }
     Ok(())
 }

@@ -1204,9 +1204,10 @@ Guest permissions:
 - `--new-perms` grants the comma-separated additional permissions `io-uring`, `net-admin`,
   `net-raw`, `bpf`, and `perf`. Values are order-independent and duplicates are ignored.
   The former `--permissions`, `--io-uring`, and `--perf` flags have been removed.
-- No optional permission is enabled by default. Loftd keeps `CAP_SETUID` and `CAP_SETGID`
-  in the guest capability bounding set only for its root-owned setuid rootless-container
-  mapping helpers; ordinary `dev` workloads do not receive either capability.
+- No optional permission is enabled by default. Normal initial commands, managed PTY
+  commands, hidden `as-dev` commands, and later `loftd exec` commands run without
+  effective, permitted, inheritable, or ambient capabilities. Loftd retains only the
+  required rootless-ID-map and authorized grant capabilities in the guest bounding set.
 - Without `io-uring`, loftd disables creation of new io_uring instances
   guest-wide by setting `kernel.io_uring_disabled=2` during root guest
   initialization. This happens before Nix and Podman preparation, Wayland
@@ -1217,15 +1218,20 @@ Guest permissions:
   `kernel.io_uring_group` and keeps `kernel.io_uring_disabled=1`; processes
   outside that group remain denied unless permitted by the kernel's
   `CAP_SYS_ADMIN` exception.
-- `net-admin` grants guest `dev` workloads `CAP_NET_ADMIN`, including the
-  initial command, managed PTY command, hidden `as-dev` path, and later
-  `loftd exec` commands. This permits powerful guest-only networking changes
-  such as interface, route, nftables, policy-routing, and TPROXY configuration.
-- `net-raw` grants those same guest `dev` workload paths `CAP_NET_RAW`. It does
-  not imply `net-admin` or any other optional permission.
-- `bpf` grants those same guest `dev` workload paths `CAP_BPF`. It does not
-  imply `net-admin`, `perf`, `CAP_PERFMON`, or `CAP_SYS_ADMIN`; BPF operations
-  requiring another capability still require that permission separately.
+- `net-admin`, `net-raw`, and `bpf` authorize `CAP_NET_ADMIN`, `CAP_NET_RAW`, and
+  `CAP_BPF`, respectively, for the explicit `loftd-granted COMMAND [ARG ...]` helper.
+  Every helper invocation receives all capability-bearing permissions authorized for
+  the task; the helper refuses to run when none were authorized. For example:
+
+  ```bash
+  ./result/bin/loftd --new-perms=net-admin -- loftd-granted fish
+  ```
+
+  The helper is installed root-owned with the exact authorized file capabilities under
+  the read-only `/run/loftd/wrappers` tree. It does not read grants from its arguments,
+  environment, or a policy file. A capability-bearing subtree still needs to drop its
+  capabilities before invoking programs such as Bubblewrap that reject unexpected
+  permitted capabilities.
 - The loftd guest image includes `perf` and `strace` on `PATH`. Without `perf`,
   loftd leaves the guest kernel's hardened `kernel.perf_event_paranoid=3`
   setting unchanged. `perf` sets `kernel.perf_event_paranoid=-1` and

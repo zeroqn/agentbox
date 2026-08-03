@@ -150,6 +150,15 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
         )
     })?;
     debug_breadcrumb("resolve-identity complete");
+    profiler.measure_result("prepare-wrappers", || {
+        if process::is_root() {
+            crate::guest_init::components::rootless::idmap::prepare(
+                &identity,
+                env_contract.loftd.permissions,
+            )?;
+        }
+        Ok(())
+    })?;
     let pulse_server = env_contract.pulse.as_ref().map(|pulse| match pulse {
         PulseEndpoint::Direct(value) => value.clone(),
         PulseEndpoint::Bridge { .. } => {

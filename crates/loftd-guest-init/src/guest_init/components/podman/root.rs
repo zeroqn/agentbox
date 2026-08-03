@@ -129,7 +129,6 @@ pub(in crate::guest_init) fn run_prep(
     }
     let tool_paths = PodmanToolPaths::discover()?;
     crate::guest_init::components::podman::kernel::prepare()?;
-    crate::guest_init::components::podman::idmap::prepare(identity)?;
     crate::guest_init::components::podman::storage::bootstrap(identity, env_contract, &tool_paths)?;
     crate::guest_init::components::podman::service::verify_rootless_info(identity)
 }

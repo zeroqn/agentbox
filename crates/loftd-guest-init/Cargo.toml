@@ -8,6 +8,10 @@ publish = false
 name = "loftd-guest-init"
 path = "src/main.rs"
 
+[[bin]]
+name = "loftd-granted"
+path = "src/bin/loftd-granted.rs"
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true

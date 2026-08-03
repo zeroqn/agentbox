@@ -10,31 +10,14 @@ const CAP_NET_RAW: u32 = 13;
 const CAP_BPF: u32 = 39;
 #[cfg(test)]
 const CAP_SYS_ADMIN: u32 = 21;
-const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
-const PR_CAP_AMBIENT: libc::c_int = 47;
 const CAP_SETUID: u32 = 7;
 const CAP_SETGID: u32 = 6;
 const CAP_DAC_OVERRIDE: u32 = 1;
 const ROOTLESS_IDMAP_CAPABILITIES: [u32; 3] = [CAP_SETUID, CAP_SETGID, CAP_DAC_OVERRIDE];
-const PR_CAP_AMBIENT_RAISE: libc::c_ulong = 2;
 
 const VIDEO_GID: libc::gid_t = 44;
 const RENDER_GID: libc::gid_t = 107;
 const DEV_SUPPLEMENTARY_GROUPS: &[libc::gid_t] = &[VIDEO_GID, RENDER_GID];
-
-#[repr(C)]
-struct CapUserHeader {
-    version: u32,
-    pid: i32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CapUserData {
-    effective: u32,
-    permitted: u32,
-    inheritable: u32,
-}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::guest_init) struct WorkloadCapabilities {
@@ -43,7 +26,7 @@ pub(in crate::guest_init) struct WorkloadCapabilities {
 }
 
 impl WorkloadCapabilities {
-    fn as_slice(&self) -> &[u32] {
+    pub(in crate::guest_init) fn as_slice(&self) -> &[u32] {
         &self.values[..self.len]
     }
 
@@ -51,6 +34,7 @@ impl WorkloadCapabilities {
         self.as_slice().contains(&capability)
     }
 
+    #[cfg(test)]
     fn is_empty(self) -> bool {
         self.len == 0
     }
@@ -75,14 +59,6 @@ pub(in crate::guest_init) fn workload_capability_plan(
     capabilities
 }
 
-fn capability_mask(capabilities: WorkloadCapabilities) -> [u32; 2] {
-    let mut mask = [0; 2];
-    for capability in capabilities.as_slice() {
-        mask[(*capability / 32) as usize] |= 1 << (*capability % 32);
-    }
-    mask
-}
-
 fn retains_bounding_capability(capability: u32, new_capabilities: WorkloadCapabilities) -> bool {
     ROOTLESS_IDMAP_CAPABILITIES.contains(&capability) || new_capabilities.contains(capability)
 }
@@ -101,51 +77,6 @@ fn restrict_capability_bounding_set(new_capabilities: WorkloadCapabilities) -> i
         && unsafe { libc::prctl(libc::PR_CAPBSET_DROP, CAP_SETPCAP, 0, 0, 0) } != 0
     {
         return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-fn set_workload_capabilities(capabilities: WorkloadCapabilities) -> io::Result<()> {
-    let mask = capability_mask(capabilities);
-    let mut header = CapUserHeader {
-        version: LINUX_CAPABILITY_VERSION_3,
-        pid: 0,
-    };
-    let data = [
-        CapUserData {
-            effective: mask[0],
-            permitted: mask[0],
-            inheritable: mask[0],
-        },
-        CapUserData {
-            effective: mask[1],
-            permitted: mask[1],
-            inheritable: mask[1],
-        },
-    ];
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_capset,
-            &mut header as *mut CapUserHeader,
-            data.as_ptr(),
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    for capability in capabilities.as_slice() {
-        let rc = unsafe {
-            libc::prctl(
-                PR_CAP_AMBIENT,
-                PR_CAP_AMBIENT_RAISE,
-                libc::c_ulong::from(*capability),
-                0,
-                0,
-            )
-        };
-        if rc != 0 {
-            return Err(io::Error::last_os_error());
-        }
     }
     Ok(())
 }
@@ -178,9 +109,7 @@ pub(in crate::guest_init) fn credential_plan(identity: &DevIdentity) -> [Credent
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CredentialTransitionOperation {
     RestrictCapabilityBoundingSet(WorkloadCapabilities),
-    SetKeepCaps,
     Credential(CredentialOperation),
-    SetWorkloadCapabilities(WorkloadCapabilities),
 }
 
 fn credential_transition_plan(
@@ -190,19 +119,11 @@ fn credential_transition_plan(
     let capabilities = workload_capability_plan(new_permissions);
     let mut operations =
         vec![CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities)];
-    if !capabilities.is_empty() {
-        operations.push(CredentialTransitionOperation::SetKeepCaps);
-    }
     operations.extend(
         credential_plan(identity)
             .into_iter()
             .map(CredentialTransitionOperation::Credential),
     );
-    if !capabilities.is_empty() {
-        operations.push(CredentialTransitionOperation::SetWorkloadCapabilities(
-            capabilities,
-        ));
-    }
     operations
 }
 
@@ -214,14 +135,6 @@ pub(in crate::guest_init) fn apply_dev_credentials(
         let result = match operation {
             CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities) => {
                 restrict_capability_bounding_set(capabilities)
-            }
-            CredentialTransitionOperation::SetKeepCaps => {
-                let rc = unsafe { libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) };
-                if rc == 0 {
-                    Ok(())
-                } else {
-                    Err(io::Error::last_os_error())
-                }
             }
             CredentialTransitionOperation::Credential(credential) => {
                 let rc = match credential {
@@ -243,9 +156,6 @@ pub(in crate::guest_init) fn apply_dev_credentials(
                         ),
                     ))
                 }
-            }
-            CredentialTransitionOperation::SetWorkloadCapabilities(capabilities) => {
-                set_workload_capabilities(capabilities)
             }
         };
         result?;
@@ -497,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn credential_transition_applies_new_permissions_after_privilege_drop() {
+    fn credential_transition_keeps_new_permissions_out_of_active_workload_sets() {
         let identity = DevIdentity::new(1000, 1000, "/bin/sh".into());
         let permissions = "net-raw".parse().expect("net-raw permission should parse");
         let capabilities = workload_capability_plan(permissions);
@@ -506,13 +416,11 @@ mod tests {
             credential_transition_plan(&identity, permissions),
             [
                 CredentialTransitionOperation::RestrictCapabilityBoundingSet(capabilities),
-                CredentialTransitionOperation::SetKeepCaps,
                 CredentialTransitionOperation::Credential(
                     CredentialOperation::SupplementaryGroups(DEV_SUPPLEMENTARY_GROUPS),
                 ),
                 CredentialTransitionOperation::Credential(CredentialOperation::PrimaryGid(1000)),
                 CredentialTransitionOperation::Credential(CredentialOperation::Uid(1000)),
-                CredentialTransitionOperation::SetWorkloadCapabilities(capabilities),
             ]
         );
     }
