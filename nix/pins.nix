@@ -15,11 +15,11 @@ in
   };
 
   dirge = {
-    version = "0.21.3";
+    version = "0.21.5";
     owner = "dirge-code";
     repo = "dirge";
-    rev = "v0.21.3";
-    srcHash = "sha256-sEqkaxqP4kDq+/5nc8WE/SUvzZhyPTRSDtbo9N6Nnd0=";
+    rev = "v0.21.5";
+    srcHash = "sha256-OGmxhgFMy9573z9HA+wHpoh7UhSAVBeJrkWWinIgnis=";
   };
 
   ompPrebuiltRelease = {
@@ -118,11 +118,11 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-f75d02426881";
+    tag = "sha-1a4cf2c49269";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-VjSZQ8Ux1s4KNogXo06FKMWgK3cKQBd8tLCr/8Sts9s=";
+        hash = "sha256-C8lle0vo9gmjcB11YmWaufLB3jr5Jion+2cZEcjdvB4=";
       };
     };
   };
@@ -130,12 +130,12 @@ in
   rtkPrebuiltRelease = {
     owner = "rtk-ai";
     repo = "rtk";
-    tag = "v0.44.1";
+    tag = "v0.44.2";
     systems = {
       x86_64-linux = {
         asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
         binary = "rtk";
-        hash = "sha256-mG8pcERps9EFHiR0EFxsdauLc2UQaNzWFhLB+zk4rZU=";
+        hash = "sha256-2UzCo+V/pTSJK1I1pybn7rdSPyBaX49I+FO/yue+fjM=";
       };
     };
   };
