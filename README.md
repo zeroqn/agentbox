@@ -1198,11 +1198,12 @@ Guest permissions:
 ```bash
 ./result/bin/loftd --new-perms=io-uring
 ./result/bin/loftd --new-perms=perf
-./result/bin/loftd --new-perms=io-uring,net-admin,net-raw,bpf,perf
+./result/bin/loftd --new-perms=io-uring,net-admin,net-raw,bpf,perf,sys-admin
 ```
 
 - `--new-perms` grants the comma-separated additional permissions `io-uring`, `net-admin`,
-  `net-raw`, `bpf`, and `perf`. Values are order-independent and duplicates are ignored.
+  `net-raw`, `bpf`, `perf`, and `sys-admin`. Values are order-independent and duplicates are
+  ignored.
   The former `--permissions`, `--io-uring`, and `--perf` flags have been removed.
 - No optional permission is enabled by default. Normal initial commands, managed PTY
   commands, hidden `as-dev` commands, and later `loftd exec` commands run without
@@ -1217,14 +1218,18 @@ Guest permissions:
   io_uring instances without `CAP_SYS_ADMIN`. Guest-init writes the `dev` GID to
   `kernel.io_uring_group` and keeps `kernel.io_uring_disabled=1`; processes
   outside that group remain denied unless permitted by the kernel's
-  `CAP_SYS_ADMIN` exception.
-- `net-admin`, `net-raw`, and `bpf` authorize `CAP_NET_ADMIN`, `CAP_NET_RAW`, and
-  `CAP_BPF`, respectively, for the explicit `loftd-granted COMMAND [ARG ...]` helper.
-  Every helper invocation receives all capability-bearing permissions authorized for
-  the task; the helper refuses to run when none were authorized. For example:
+  `CAP_SYS_ADMIN` exception. `io-uring` itself does not grant `CAP_SYS_ADMIN`;
+  an explicit `sys-admin` grant independently satisfies that exception for a
+  command launched through `loftd-granted`.
+- `net-admin`, `net-raw`, `bpf`, and `sys-admin` authorize `CAP_NET_ADMIN`,
+  `CAP_NET_RAW`, `CAP_BPF`, and `CAP_SYS_ADMIN`, respectively, for the explicit
+  `loftd-granted COMMAND [ARG ...]` helper. `CAP_SYS_ADMIN` is exceptionally broad;
+  it remains absent from normal guest commands and is granted only to commands launched
+  through this helper. Every helper invocation receives all capability-bearing permissions
+  authorized for the task; the helper refuses to run when none were authorized. For example:
 
   ```bash
-  ./result/bin/loftd --new-perms=net-admin -- loftd-granted fish
+  ./result/bin/loftd --new-perms=sys-admin -- loftd-granted fish
   ```
 
   The helper is installed root-owned with the exact authorized file capabilities under

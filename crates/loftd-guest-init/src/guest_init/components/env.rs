@@ -52,15 +52,17 @@ pub(in crate::guest_init) enum GuestPermission {
     NetRaw,
     Bpf,
     Perf,
+    SysAdmin,
 }
 
 impl GuestPermission {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::IoUring,
         Self::NetAdmin,
         Self::NetRaw,
         Self::Bpf,
         Self::Perf,
+        Self::SysAdmin,
     ];
 
     pub(in crate::guest_init) const fn as_str(self) -> &'static str {
@@ -70,6 +72,7 @@ impl GuestPermission {
             Self::NetRaw => "net-raw",
             Self::Bpf => "bpf",
             Self::Perf => "perf",
+            Self::SysAdmin => "sys-admin",
         }
     }
 
@@ -80,6 +83,7 @@ impl GuestPermission {
             Self::NetRaw => 1 << 2,
             Self::Bpf => 1 << 3,
             Self::Perf => 1 << 4,
+            Self::SysAdmin => 1 << 5,
         }
     }
 }
@@ -108,6 +112,7 @@ impl FromStr for GuestPermissions {
                 "net-raw" => GuestPermission::NetRaw,
                 "bpf" => GuestPermission::Bpf,
                 "perf" => GuestPermission::Perf,
+                "sys-admin" => GuestPermission::SysAdmin,
                 "" => anyhow::bail!("LOFTD_PERMISSIONS must not contain empty values"),
                 other => {
                     anyhow::bail!("LOFTD_PERMISSIONS contains unsupported permission '{other}'")

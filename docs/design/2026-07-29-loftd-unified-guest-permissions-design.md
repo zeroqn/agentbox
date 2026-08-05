@@ -27,8 +27,9 @@ This is an immediate CLI replacement. The removed `--io-uring` and `--perf` flag
 ## Non-goals
 
 - Grant host `CAP_NET_ADMIN`, `CAP_BPF`, or other host privileges.
-- Add `CAP_PERFMON`, `CAP_SYS_ADMIN`, or arbitrary Linux capability names.
-- Make `bpf` imply `net-admin`, `perf`, or any other permission.
+- Add `CAP_PERFMON` or arbitrary Linux capability names. `CAP_SYS_ADMIN` is available only
+  through the explicit independent `sys-admin` permission and `loftd-granted`.
+- Make `bpf` imply `net-admin`, `perf`, `sys-admin`, or any other permission.
 - Change nested Podman capability or seccomp defaults.
 - Automatically grant selected guest capabilities to processes inside nested containers.
 - Install BPF development tools, loaders, programs, nftables, or TPROXY tooling in the guest image.
@@ -48,8 +49,10 @@ Supported values are:
 
 - `io-uring`
 - `net-admin`
+- `net-raw`
 - `bpf`
 - `perf`
+- `sys-admin`
 
 Examples:
 
@@ -68,7 +71,7 @@ Parsing rules:
 - Empty entries fail CLI parsing.
 - An explicitly empty `--permissions=` value fails CLI parsing.
 - Omitting the option selects an empty permission set.
-- Serialization uses the stable canonical order `io-uring,net-admin,bpf,perf`, including only selected values.
+- Serialization uses the stable canonical order `io-uring,net-admin,net-raw,bpf,perf,sys-admin`, including only selected values.
 
 The existing `--io-uring` and `--perf` flags are removed immediately. Invocations that still use them fail as unknown options.
 
@@ -82,7 +85,10 @@ Without `io-uring`, guest-init writes `2` to `kernel.io_uring_disabled`, prevent
 
 With `io-uring`, guest-init writes the dynamic guest `dev` GID to `kernel.io_uring_group` and keeps `kernel.io_uring_disabled` in restricted mode `1`. Processes in the `dev` group may create io_uring instances without `CAP_SYS_ADMIN`; other processes remain denied unless they meet the guest kernel's capability exception.
 
-This permission does not grant a Linux capability.
+This permission does not grant a Linux capability. An independent explicit `sys-admin`
+grant gives commands launched through `loftd-granted` `CAP_SYS_ADMIN`, which satisfies
+the guest kernel's privileged io_uring exception without making `io-uring` imply that
+capability.
 
 ### `perf`
 
@@ -118,6 +124,14 @@ This permits privileged BPF operations governed by `CAP_BPF`. It does not imply 
 A BPF operation that requires another capability still requires the corresponding authority. Selecting both `bpf` and `net-admin` allows operations whose checks require both capabilities. Selecting `perf` changes the existing guest sysctls but does not add `CAP_PERFMON`.
 
 Guest and nested-container seccomp policies remain independently applicable to the `bpf()` syscall.
+
+### `sys-admin`
+
+Authorize `CAP_SYS_ADMIN` independently for commands explicitly launched through
+`loftd-granted`. This capability is exceptionally broad and remains absent from ordinary
+`dev` commands. Selecting `bpf` or `io-uring` does not imply `sys-admin`; selecting
+`sys-admin` independently satisfies kernel checks that accept `CAP_SYS_ADMIN`, including
+the privileged exception for restricted io_uring creation.
 
 ## Selected capability-delivery approach
 

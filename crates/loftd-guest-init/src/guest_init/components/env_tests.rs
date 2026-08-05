@@ -106,7 +106,7 @@ fn internal_runtime_parses_unified_permissions() {
     unsafe {
         std::env::set_var(
             "LOFTD_PERMISSIONS",
-            "perf,bpf,io-uring,net-admin,net-raw,bpf",
+            "perf,bpf,sys-admin,io-uring,net-admin,net-raw,bpf,sys-admin",
         );
     }
 
@@ -114,7 +114,7 @@ fn internal_runtime_parses_unified_permissions() {
 
     assert_eq!(
         parsed.permissions.to_string(),
-        "io-uring,net-admin,net-raw,bpf,perf"
+        "io-uring,net-admin,net-raw,bpf,perf,sys-admin"
     );
     unsafe {
         std::env::remove_var("LOFTD_PERMISSIONS");
@@ -141,7 +141,7 @@ fn internal_runtime_parses_gpu_drm_independently_from_wayland() {
 #[test]
 fn internal_runtime_rejects_invalid_permissions() {
     let _guard = ENV_LOCK.lock().expect("env test lock");
-    for value in ["", "io-uring,,perf", "sys-admin"] {
+    for value in ["", "io-uring,,perf", "mount-admin"] {
         unsafe {
             std::env::set_var("LOFTD_PERMISSIONS", value);
         }

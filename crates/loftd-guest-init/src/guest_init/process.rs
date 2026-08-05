@@ -8,7 +8,6 @@ use crate::guest_init::components::home::identity::DevIdentity;
 const CAP_NET_ADMIN: u32 = 12;
 const CAP_NET_RAW: u32 = 13;
 const CAP_BPF: u32 = 39;
-#[cfg(test)]
 const CAP_SYS_ADMIN: u32 = 21;
 const CAP_SETUID: u32 = 7;
 const CAP_SETGID: u32 = 6;
@@ -21,7 +20,7 @@ const DEV_SUPPLEMENTARY_GROUPS: &[libc::gid_t] = &[VIDEO_GID, RENDER_GID];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::guest_init) struct WorkloadCapabilities {
-    values: [u32; 3],
+    values: [u32; 4],
     len: usize,
 }
 
@@ -54,6 +53,10 @@ pub(in crate::guest_init) fn workload_capability_plan(
     }
     if new_permissions.contains(GuestPermission::Bpf) {
         capabilities.values[capabilities.len] = CAP_BPF;
+        capabilities.len += 1;
+    }
+    if new_permissions.contains(GuestPermission::SysAdmin) {
+        capabilities.values[capabilities.len] = CAP_SYS_ADMIN;
         capabilities.len += 1;
     }
     capabilities
@@ -352,13 +355,22 @@ mod tests {
     #[test]
     fn selected_workload_capabilities_map_exactly() {
         assert_eq!(
+            workload_capability_plan("sys-admin".parse().expect("permissions should parse"),)
+                .as_slice(),
+            [CAP_SYS_ADMIN]
+        );
+        assert_eq!(
             workload_capability_plan(
-                "net-admin,net-raw,bpf"
+                "net-admin,net-raw,bpf,sys-admin"
                     .parse()
                     .expect("permissions should parse"),
             )
             .as_slice(),
-            [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF]
+            [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_SYS_ADMIN]
+        );
+        assert_eq!(
+            workload_capability_plan("bpf".parse().expect("permission should parse")).as_slice(),
+            [CAP_BPF]
         );
     }
 
@@ -388,7 +400,9 @@ mod tests {
 
     #[test]
     fn new_permissions_extend_the_rootless_idmap_bounding_set() {
-        let new_permissions = "net-raw".parse().expect("net-raw permission should parse");
+        let new_permissions = "net-raw,sys-admin"
+            .parse()
+            .expect("permissions should parse");
         let new_capabilities = workload_capability_plan(new_permissions);
 
         assert!(retains_bounding_capability(CAP_SETUID, new_capabilities));
@@ -398,7 +412,16 @@ mod tests {
             new_capabilities
         ));
         assert!(retains_bounding_capability(CAP_NET_RAW, new_capabilities));
+        assert!(retains_bounding_capability(CAP_SYS_ADMIN, new_capabilities));
         assert!(new_capabilities.contains(CAP_NET_RAW));
+        assert!(new_capabilities.contains(CAP_SYS_ADMIN));
+
+        let bpf_capabilities =
+            workload_capability_plan("bpf".parse().expect("bpf permission should parse"));
+        assert!(!retains_bounding_capability(
+            CAP_SYS_ADMIN,
+            bpf_capabilities
+        ));
     }
 
     #[test]

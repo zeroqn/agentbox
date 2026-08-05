@@ -76,15 +76,17 @@ pub(crate) enum GuestPermission {
     NetRaw,
     Bpf,
     Perf,
+    SysAdmin,
 }
 
 impl GuestPermission {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::IoUring,
         Self::NetAdmin,
         Self::NetRaw,
         Self::Bpf,
         Self::Perf,
+        Self::SysAdmin,
     ];
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -94,6 +96,7 @@ impl GuestPermission {
             Self::NetRaw => "net-raw",
             Self::Bpf => "bpf",
             Self::Perf => "perf",
+            Self::SysAdmin => "sys-admin",
         }
     }
 
@@ -104,6 +107,7 @@ impl GuestPermission {
             Self::NetRaw => 1 << 2,
             Self::Bpf => 1 << 3,
             Self::Perf => 1 << 4,
+            Self::SysAdmin => 1 << 5,
         }
     }
 }
@@ -137,10 +141,11 @@ impl FromStr for GuestPermissions {
                 "net-raw" => GuestPermission::NetRaw,
                 "bpf" => GuestPermission::Bpf,
                 "perf" => GuestPermission::Perf,
+                "sys-admin" => GuestPermission::SysAdmin,
                 "" => return Err("permissions must not contain empty values".to_owned()),
                 other => {
                     return Err(format!(
-                        "unsupported permission '{other}'; use io-uring, net-admin, net-raw, bpf, or perf"
+                        "unsupported permission '{other}'; use io-uring, net-admin, net-raw, bpf, perf, or sys-admin"
                     ));
                 }
             };

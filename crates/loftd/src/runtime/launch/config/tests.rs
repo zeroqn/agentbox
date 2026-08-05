@@ -63,7 +63,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         pulse: None,
         gpu_mode: GpuMode::Drm,
         wayland: false,
-        new_perms: "io-uring,net-raw,perf"
+        new_perms: "perf,sys-admin,io-uring,net-raw"
             .parse()
             .expect("permissions should parse"),
         publish: &[],
@@ -121,7 +121,9 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     assert!(config.guest_config_env_contains("LOFTD_GUEST_PROFILE", "1"));
     assert!(config.guest_config_env_contains("LOFTD_GUEST_DEBUG", "1"));
     assert!(config.guest_config_env_contains("LOFTD_GPU_DRM", "1"));
-    assert!(config.guest_config_env_contains("LOFTD_PERMISSIONS", "io-uring,net-raw,perf"));
+    assert!(
+        config.guest_config_env_contains("LOFTD_PERMISSIONS", "io-uring,net-raw,perf,sys-admin")
+    );
     assert!(
         config
             .guest_config_env

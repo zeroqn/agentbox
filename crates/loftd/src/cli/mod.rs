@@ -197,7 +197,7 @@ pub(crate) struct Cli {
         value_name = "PERMISSION[,PERMISSION...]",
         value_parser = parse_permissions_arg,
         help = "Grant additional optional permissions inside the guest VM",
-        long_help = "Grant comma-separated additional permissions inside the guest VM. Allowed values are io-uring, net-admin, net-raw, bpf, and perf. io-uring and perf relax their existing guest kernel policies; net-admin grants CAP_NET_ADMIN, net-raw grants CAP_NET_RAW, and bpf grants CAP_BPF to guest dev workloads. No optional permission is enabled by default."
+        long_help = "Grant comma-separated additional permissions inside the guest VM. Allowed values are io-uring, net-admin, net-raw, bpf, perf, and sys-admin. io-uring and perf relax their existing guest kernel policies; net-admin authorizes CAP_NET_ADMIN, net-raw authorizes CAP_NET_RAW, bpf authorizes CAP_BPF, and sys-admin authorizes CAP_SYS_ADMIN for commands launched through loftd-granted. No optional permission is enabled by default."
     )]
     new_perms: Option<GuestPermissions>,
 
@@ -1547,20 +1547,20 @@ mod tests {
     fn new_perms_flag_parses_supported_values() {
         let cli = Cli::try_parse_from([
             "loftd",
-            "--new-perms=perf,bpf,io-uring,net-admin,net-raw,bpf",
+            "--new-perms=perf,bpf,sys-admin,io-uring,net-admin,net-raw,bpf,sys-admin",
         ])
         .expect("new permissions should parse");
         let options = cli.into_runtime_options();
 
         assert_eq!(
             options.new_perms.to_string(),
-            "io-uring,net-admin,net-raw,bpf,perf"
+            "io-uring,net-admin,net-raw,bpf,perf,sys-admin"
         );
     }
 
     #[test]
     fn new_perms_flag_rejects_unknown_and_empty_values() {
-        for value in ["", "io-uring,,perf", "sys-admin"] {
+        for value in ["", "io-uring,,perf", "mount-admin"] {
             let error = Cli::try_parse_from(["loftd", &format!("--new-perms={value}")])
                 .expect_err("invalid new permissions should fail");
 

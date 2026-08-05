@@ -5,7 +5,8 @@ use std::os::unix::ffi::OsStrExt;
 const CAP_NET_ADMIN: u32 = 12;
 const CAP_NET_RAW: u32 = 13;
 const CAP_BPF: u32 = 39;
-const ALLOWED_CAPABILITIES: [u32; 3] = [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF];
+const CAP_SYS_ADMIN: u32 = 21;
+const ALLOWED_CAPABILITIES: [u32; 4] = [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_SYS_ADMIN];
 const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 const PR_CAP_AMBIENT: libc::c_int = 47;
 const PR_CAP_AMBIENT_RAISE: libc::c_ulong = 2;
@@ -141,8 +142,8 @@ mod tests {
 
     #[test]
     fn allowlist_rejects_other_capabilities() {
-        let err = reject_unexpected_capabilities(capability_mask(&[21]))
-            .expect_err("CAP_SYS_ADMIN must be rejected");
+        let err = reject_unexpected_capabilities(capability_mask(&[22]))
+            .expect_err("CAP_SYS_BOOT must be rejected");
         assert!(
             err.to_string()
                 .contains("unexpected permitted capabilities")
