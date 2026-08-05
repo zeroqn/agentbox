@@ -41,15 +41,15 @@ in
   rmuxPrebuiltRelease = {
     owner = "Helvesec";
     repo = "rmux";
-    tag = "v0.9.1";
+    tag = "v0.10.0";
     systems = {
       x86_64-linux = {
-        asset = "rmux-0.9.1-linux-x86_64.tar.gz";
-        hash = "sha256-9+kbqpEulCwf0JC5v7MBQtUawdqLFC4Ijms6QXMh1Us=";
+        asset = "rmux-0.10.0-linux-x86_64.tar.gz";
+        hash = "sha256-G+wR7/CMMxPDpAAZbnqT0AuK1KJPge8T3rsDNVwmlsU=";
       };
       aarch64-linux = {
-        asset = "rmux-0.9.1-linux-aarch64.tar.gz";
-        hash = "sha256-3F/bElcVTBn1OmxqePsIVzVWuceR0kEcAT6BmGIxbbM=";
+        asset = "rmux-0.10.0-linux-aarch64.tar.gz";
+        hash = "sha256-fpFlYOoPuQhkuMJOXQ+BtOPgsBO4qtWrU4Odfo5eGSY=";
       };
     };
   };
