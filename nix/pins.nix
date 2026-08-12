@@ -81,11 +81,11 @@ in
   libkrunfwRelease = {
     owner = "zeroqn";
     repo = "libkrunfw";
-    tag = "agentbox-529642181201";
+    tag = "agentbox-e7e571ef6b03";
     systems = {
       x86_64-linux = {
         asset = "libkrunfw-x86_64-kvm-lto.tgz";
-        hash = "sha256-rk3APfqyUU7qFGjqVMMsxkkcvvLOXKDjZ1hyeBHMiBQ=";
+        hash = "sha256-Mrx6I4qcTlUlE2FFDx5XvVFcvojnXTtYxJtDEukkWHs=";
       };
       aarch64-linux = {
         asset = "libkrunfw-aarch64.tgz";
@@ -118,7 +118,7 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-82bb1ac1a8f6";
+    tag = "sha-dc6ec000facb";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
@@ -130,12 +130,12 @@ in
   rtkPrebuiltRelease = {
     owner = "rtk-ai";
     repo = "rtk";
-    tag = "v0.44.2";
+    tag = "v0.45.0";
     systems = {
       x86_64-linux = {
         asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
         binary = "rtk";
-        hash = "sha256-2UzCo+V/pTSJK1I1pybn7rdSPyBaX49I+FO/yue+fjM=";
+        hash = "sha256-xMA2+/GB/FXvMpeGyMF+DUJ5crBTuCWUTZaKaq/vG6Q=";
       };
     };
   };
