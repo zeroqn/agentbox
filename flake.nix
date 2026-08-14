@@ -2,24 +2,24 @@
   description = "Rust CLI for launching a Podman shell inside a Nix-based container";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
-    headless = {
-      url = "github:zeroqn/headless";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    headless.url = "github:zeroqn/headless";
   };
 
   outputs =
     {
       self,
       nixpkgs,
+      nixpkgs-unstable,
       headless,
 
     }:
     let
       systems = import ./nix/lib/systems.nix {
-        inherit nixpkgs;
+        inherit nixpkgs headless;
       };
       pins = import ./nix/pins.nix;
     in
@@ -27,6 +27,7 @@
       packages = systems.forAllSystems (
         { pkgs, system, ... }:
         let
+          codex = (import nixpkgs-unstable { inherit system; }).codex;
           rioBin = headless.packages.${system}.rio-bin or null;
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
@@ -116,6 +117,7 @@
                 podman
                 crun
                 wl-cross-domain-proxy
+                codex
                 imageVariant
                 ;
               dirge = dirgePackage;
@@ -183,11 +185,13 @@
           ...
         }:
         let
+          codex = (import nixpkgs-unstable { inherit system; }).codex;
           packages = self.packages.${system};
           mkImageChecks =
             imageVariant:
             import ./nix/image/checks.nix {
               inherit pkgs imageVariant;
+              codex = codex;
               piCodingAgent = packages.pi-coding-agent;
               rioBin = packages.rio-bin or null;
               dirge = packages.dirge;

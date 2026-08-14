@@ -1,4 +1,4 @@
-{ nixpkgs }:
+{ nixpkgs, headless }:
 let
   systems = [
     "x86_64-linux"
@@ -11,9 +11,15 @@ let
       system:
       f {
         inherit system;
-        pkgs = import nixpkgs {
-          inherit system;
-        };
+        pkgs =
+          (import nixpkgs {
+            inherit system;
+          }).extend
+            (
+              final: prev: {
+                mesa = headless.packages.${system}.mesa or prev.mesa;
+              }
+            );
       }
     );
 in

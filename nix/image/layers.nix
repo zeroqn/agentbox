@@ -9,6 +9,7 @@
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
+  codex,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
   agentboxMuslPackage,
@@ -367,7 +368,7 @@ let
   };
 
   agentImagePackages = [
-    pkgs.codex
+    codex
     pkgs.bubblewrap
     piCodingAgent
     dirge
