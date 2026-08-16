@@ -552,7 +552,6 @@ fn drm_gpu_mode_enables_native_context_renderer_flags_before_start() {
     const VIRGLRENDERER_THREAD_SYNC: u32 = 1 << 1;
     const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
     const VIRGLRENDERER_USE_ASYNC_FENCE_CB: u32 = 1 << 8;
-    const VIRGLRENDERER_RENDER_SERVER: u32 = 1 << 9;
     const VIRGLRENDERER_DRM: u32 = 1 << 10;
     const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -583,7 +582,6 @@ fn drm_gpu_mode_enables_native_context_renderer_flags_before_start() {
                 | VIRGLRENDERER_THREAD_SYNC
                 | VIRGLRENDERER_NO_VIRGL
                 | VIRGLRENDERER_USE_ASYNC_FENCE_CB
-                | VIRGLRENDERER_RENDER_SERVER
                 | VIRGLRENDERER_DRM,
             GPU_SHM_SIZE_BYTES,
         )
