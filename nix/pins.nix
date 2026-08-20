@@ -11,6 +11,7 @@ in
     rev = "v0.84.2";
     srcHash = "sha256-d29ft9otYxdHRWYIAX8KMHPpppToX9ME5LbPb1rPcYo=";
     npmDepsHash = "sha256-mX4B3AN3GD5JSKY4YXN348e5uB/VOkzcnA0Wh+9rpU8=";
+    aiNpmTarballHash = "sha256-AmJ4Wnaw6y7sWWzYp6su4j7vidLvG7EhHE8KGUTaz0E=";
   };
 
   dirge = {

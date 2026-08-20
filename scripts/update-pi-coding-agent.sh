@@ -52,8 +52,8 @@ Usage: update-pi-coding-agent.sh [--tag <release-tag>]
 Refresh the pinned Pi coding agent source/npm metadata in nix/pins.nix from
 https://github.com/earendil-works/pi/tree/main/packages/coding-agent. The script
 prefetches the source archive, regenerates a Nix-friendly package lock for the
-coding-agent workspace closure, and records the source and npm dependency
-fixed-output hashes.
+coding-agent workspace closure, and records the source, npm dependency, and
+@earendil-works/pi-ai tarball fixed-output hashes.
 
 Defaults:
   --tag     latest GitHub release tag
@@ -81,7 +81,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-for cmd in curl jq nix nix-prefetch-url npm python3; do
+for cmd in curl jq nix nix-prefetch-url npm python3 tar; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "missing required command: $cmd" >&2
     exit 1
@@ -151,10 +151,27 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
+# The package unpacks package/dist/providers/data from the published
+# @earendil-works/pi-ai tarball (see nix/pkgs/pi-coding-agent.nix postPatch), so
+# record its fixed-output hash here too and fail early if the layout changes.
+ai_tarball_url="https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-$version.tgz"
+mapfile -t ai_tarball_prefetch < <(nix-prefetch-url --print-path --type sha256 "$ai_tarball_url")
+if [ "${#ai_tarball_prefetch[@]}" -lt 2 ] || [ -z "${ai_tarball_prefetch[0]}" ] || [ -z "${ai_tarball_prefetch[1]}" ]; then
+  echo "failed to prefetch @earendil-works/pi-ai tarball: $ai_tarball_url" >&2
+  exit 1
+fi
+ai_tarball_hash_base32="${ai_tarball_prefetch[0]}"
+ai_tarball_store_path="${ai_tarball_prefetch[1]}"
+ai_tarball_hash_sri="$(nix hash convert --hash-algo sha256 --to sri "$ai_tarball_hash_base32")"
+if ! tar -tzf "$ai_tarball_store_path" | grep '^package/dist/providers/data/' >/dev/null; then
+  echo "pi-ai $version tarball no longer contains package/dist/providers/data; update the postPatch unpack in nix/pkgs/pi-coding-agent.nix" >&2
+  exit 1
+fi
+
 cp "$source_copy/package.json" "$package_json_file"
 cp "$source_copy/package-lock.json" "$package_lock_file"
 
-python3 - "$pins_file" "$version" "$owner" "$repo" "$rev" "$src_hash_sri" "$fake_hash" <<'PY'
+python3 - "$pins_file" "$version" "$owner" "$repo" "$rev" "$src_hash_sri" "$fake_hash" "$ai_tarball_hash_sri" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -166,6 +183,7 @@ repo = sys.argv[4]
 rev = sys.argv[5]
 src_hash = sys.argv[6]
 npm_deps_hash = sys.argv[7]
+ai_tarball_hash = sys.argv[8]
 
 replacement = "\n".join(
     [
@@ -176,6 +194,7 @@ replacement = "\n".join(
         f'    rev = "{rev}";',
         f'    srcHash = "{src_hash}";',
         f'    npmDepsHash = "{npm_deps_hash}";',
+        f'    aiNpmTarballHash = "{ai_tarball_hash}";',
         "  };",
     ]
 )
@@ -244,6 +263,7 @@ updated nix/pins.nix:
   piCodingAgent.rev = "$rev";
   piCodingAgent.srcHash = "$src_hash_sri";
   piCodingAgent.npmDepsHash = "$npm_deps_hash";
+  piCodingAgent.aiNpmTarballHash = "$ai_tarball_hash_sri";
 updated generated lock inputs:
   $package_json_file
   $package_lock_file
