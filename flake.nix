@@ -32,13 +32,17 @@
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
-          dirge = import ./nix/pkgs/dirge.nix {
+          dirgeSource = import ./nix/pkgs/dirge.nix {
             inherit pkgs pins;
           };
           dirgeCiSccache = import ./nix/pkgs/dirge.nix {
             inherit pkgs pins;
             enableCiSccache = true;
           };
+          dirgePrebuilt = import ./nix/pkgs/dirge-prebuilt.nix {
+            inherit pkgs pins libkrun;
+          };
+          dirge = if dirgePrebuilt != null then dirgePrebuilt else dirgeSource;
           ompPrebuilt = import ./nix/pkgs/omp-prebuilt.nix {
             inherit pkgs pins;
           };
@@ -134,7 +138,7 @@
             imageVariant:
             mkImageWith {
               inherit imageVariant;
-              dirgePackage = dirgeCiSccache;
+              dirgePackage = dirge;
               agentboxMuslPackage = rustPackagesCiSccache.agentboxMuslPackage;
             };
           loftdImage = mkImage "loftd";
@@ -174,6 +178,9 @@
         }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {
           rtk-prebuilt = rtkPrebuilt;
+        }
+        // pkgs.lib.optionalAttrs (dirgePrebuilt != null) {
+          dirge-prebuilt = dirgePrebuilt;
         }
       );
 

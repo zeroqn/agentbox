@@ -22,6 +22,18 @@ in
     srcHash = "sha256-bBVvelpQ3Iv0VayBgWk6Fz8azasTg6mylXQSouB26lk=";
   };
 
+  dirgeSandboxPrebuiltRelease = {
+    owner = "zeroqn";
+    repo = "dirge";
+    tag = "ds-sandbox";
+    systems = {
+      x86_64-linux = {
+        asset = "dirge-x86_64-unknown-linux-gnu-sandbox.tar.gz";
+        hash = "sha256-eed0Zlyvxe7tZnzCoL5q57hE221sJO5s+UyqV9oCA9c=";
+      };
+    };
+  };
+
   ompPrebuiltRelease = {
     owner = "can1357";
     repo = "oh-my-pi";

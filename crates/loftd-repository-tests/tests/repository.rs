@@ -93,6 +93,48 @@ fn flake_exposes_loftd_outputs() {
 }
 
 #[test]
+fn flake_uses_prebuilt_dirge_with_source_fallback() {
+    for required in [
+        "dirgeSource = import ./nix/pkgs/dirge.nix {",
+        "dirgePrebuilt = import ./nix/pkgs/dirge-prebuilt.nix {",
+        "dirge = if dirgePrebuilt != null then dirgePrebuilt else dirgeSource;",
+        "dirge-prebuilt = dirgePrebuilt;",
+    ] {
+        assert!(FLAKE_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn dirge_sandbox_prebuilt_pin_points_at_zeroqn_fork_release() {
+    for required in [
+        "dirgeSandboxPrebuiltRelease = {",
+        "owner = \"zeroqn\";",
+        "repo = \"dirge\";",
+        "tag = \"ds-sandbox\";",
+        "asset = \"dirge-x86_64-unknown-linux-gnu-sandbox.tar.gz\";",
+    ] {
+        assert!(PINS_NIX.contains(required), "missing {required}");
+    }
+}
+
+#[test]
+fn dirge_prebuilt_package_installs_sandbox_binaries() {
+    let package = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../nix/pkgs/dirge-prebuilt.nix"
+    ))
+    .expect("failed to read nix/pkgs/dirge-prebuilt.nix");
+    for required in [
+        "pkgs.fetchurl",
+        "autoPatchelfHook",
+        "$out/bin/dirge",
+        "$out/bin/dirge-microvm-runner",
+    ] {
+        assert!(package.contains(required), "missing {required}");
+    }
+}
+
+#[test]
 fn publish_image_workflows_publish_only_loftd() {
     for workflow in [PUBLISH_IMAGE_YML, PUBLISH_DEV_IMAGE_YML] {
         for required in [
