@@ -2084,6 +2084,14 @@ Refresh pinned Pi coding agent source/npm metadata in `nix/pins.nix` from `earen
 nix develop --command ./scripts/update-pi-coding-agent.sh
 ```
 
+Refresh pinned `dirgeSandboxPrebuiltRelease` metadata in `nix/pins.nix` from the
+newest `zeroqn/dirge` GitHub release containing the sandboxed dirge prebuilt
+asset:
+
+```bash
+nix develop --command ./scripts/update-dirge-sandbox-prebuilt.sh
+```
+
 Refresh pinned `omp` prebuilt release metadata in `nix/pins.nix` from `can1357/oh-my-pi`:
 
 ```bash

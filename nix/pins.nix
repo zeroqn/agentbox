@@ -10,7 +10,7 @@ in
     repo = "pi";
     rev = "v0.84.2";
     srcHash = "sha256-d29ft9otYxdHRWYIAX8KMHPpppToX9ME5LbPb1rPcYo=";
-    npmDepsHash = "sha256-mX4B3AN3GD5JSKY4YXN348e5uB/VOkzcnA0Wh+9rpU8=";
+    npmDepsHash = "sha256-cx1796NfsTUPWiKUsrvDbMryTWYLEF4svZZMUb31pzI=";
     aiNpmTarballHash = "sha256-AmJ4Wnaw6y7sWWzYp6su4j7vidLvG7EhHE8KGUTaz0E=";
   };
 
@@ -29,7 +29,7 @@ in
     systems = {
       x86_64-linux = {
         asset = "dirge-x86_64-unknown-linux-gnu-sandbox.tar.gz";
-        hash = "sha256-eed0Zlyvxe7tZnzCoL5q57hE221sJO5s+UyqV9oCA9c=";
+        hash = "sha256-tfVSt96Q3K3ZeiD15USmj+HletR48OsV/kgxV6gElJI=";
       };
     };
   };
