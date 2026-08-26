@@ -29,7 +29,7 @@ in
     systems = {
       x86_64-linux = {
         asset = "dirge-x86_64-unknown-linux-gnu-sandbox.tar.gz";
-        hash = "sha256-4lM6et0xpC84Y9NZzXXTSvhCsFvACvHUDTR2HbtQ2Ug=";
+        hash = "sha256-NBOD+o2aSt/WC79UfNWWcqAdAAYcME4WEMn87s1vCYk=";
       };
     };
   };
