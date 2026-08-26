@@ -4,11 +4,11 @@ Goal: Complete 5 issues in the bare libkrun VM probe pipeline.
 
 ## Pipeline order
 
-1. **drg-8b48** (in_progress) → Write `guest-probe.c` (in-guest Vulkan device enumeration + create)
-2. **drg-85a5** (open) → Write `guest-rootfs.nix` (init + glibc + mesa venus stack + baked probe binary)
-3. **drg-401f** (open) → Write `launcher.c` (bare libkrun VM: create_ctx, set_root, gpu_options2, start_enter)
-4. **drg-a904** (open) → Write `flake.nix`, `run.sh`, `README.md`, `.gitignore`
-5. **drg-f41b** (open) → Validate: compile launcher, build rootfs, boot VM and check guest verdict
+1. **drg-8b48** (done) → Write `guest-probe.c` (in-guest Vulkan device enumeration + create)
+2. **drg-85a5** (done) → Write `guest-rootfs.nix` (init + glibc + mesa venus stack + baked probe binary)
+3. **drg-401f** (done) → Write `launcher.c` (bare libkrun VM: create_ctx, set_root, gpu_options2, start_enter)
+4. **drg-a904** (done) → Write `flake.nix`, `run.sh`, `README.md`, `.gitignore`
+5. **drg-f41b** (done) → Validate: compile launcher, build rootfs, boot VM and check guest verdict
 
 ## Status
 
