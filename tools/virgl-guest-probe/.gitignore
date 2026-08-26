@@ -1,0 +1,7 @@
+# Build artifacts from this folder
+/result
+/guest-console.log
+launcher
+launcher-bin
+guest-probe
+guest-probe-bin

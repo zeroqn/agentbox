@@ -13,10 +13,10 @@ Goal: Complete 5 issues in the bare libkrun VM probe pipeline.
 ## Status
 
 - [x] drg-8b48: Write guest-probe.c (verified: gcc -Wall compile OK vs vulkan-headers 1.4.341.0)
-- [ ] drg-85a5: Write guest-rootfs.nix
-- [ ] drg-401f: Write launcher.c
-- [ ] drg-a904: Write flake.nix, run.sh, README.md, .gitignore
-- [ ] drg-f41b: Validate end-to-end
+- [x] drg-85a5: Write guest-rootfs.nix
+- [x] drg-401f: Write launcher.c
+- [x] drg-a904: Write flake.nix, run.sh, README.md, .gitignore (flake show evaluates all packages)
+- [ ] drg-f41b: Validate end-to-end (in progress)
 
 ## Bugs found
 
