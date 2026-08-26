@@ -12,11 +12,11 @@ Goal: Complete 5 issues in the bare libkrun VM probe pipeline.
 
 ## Status
 
-- [x] drg-8b48: Write guest-probe.c (verified: gcc -Wall compile OK vs vulkan-headers 1.4.341.0)
+- [x] drg-8b48: Write guest-probe.c
 - [x] drg-85a5: Write guest-rootfs.nix
 - [x] drg-401f: Write launcher.c
-- [x] drg-a904: Write flake.nix, run.sh, README.md, .gitignore (flake show evaluates all packages)
-- [x] drg-f41b: Validate end-to-end (done)
+- [x] drg-a904: Write flake.nix, run.sh, README.md, .gitignore
+- [x] drg-f41b: Validate end-to-end
 
 ## Validation results (drg-f41b)
 
@@ -50,3 +50,9 @@ This matches the known-unresolved L2 libkrun/guest GPU boundary.
   '/bin/sh'". Busybox applet symlinks added. FIXED.
 - flake.nix fileset list → nixos-26.05 needs fileset.unions. FIXED.
 - run.sh greps console for RESULT; the probe prints the verdict.
+
+---
+
+## Pipeline complete — all 5 issues done
+
+All five issues are confirmed `[done]` on the board. No further work needed.
