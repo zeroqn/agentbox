@@ -73,7 +73,7 @@
           # (and its fd exhaustion) is avoided.
           src = pkgs.lib.fileset.toSource {
             root = ./.;
-            fileset = [
+            fileset = pkgs.lib.fileset.unions [
               ./launcher.c
               ./run.sh
             ];

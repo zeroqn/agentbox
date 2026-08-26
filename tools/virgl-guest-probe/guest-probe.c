@@ -43,12 +43,15 @@ static PFN_vkCreateInstance g_CreateInstance = NULL;
 static PFN_vkDestroyInstance g_DestroyInstance = NULL;
 static PFN_vkGetInstanceProcAddr g_GetInstanceProcAddr = NULL;
 
-static void *load_instance_symbol(const char *name) {
-    /* g_GetInstanceProcAddr must be resolved first (via dlsym) to fetch the
-     * rest, because the loader can route instance symbols. */
+/* Fetch a function pointer from the loaded Vulkan loader.
+ * For global-level functions (vkGetInstanceProcAddr, vkCreateInstance) use
+ * a NULL instance.  For instance-level functions (vkEnumeratePhysicalDevices,
+ * vkCreateDevice, etc.) you MUST pass the created VkInstance — the loader
+ * does not return instance-level functions from vkGetInstanceProcAddr(NULL). */
+static void *get_proc_addr(VkInstance instance, const char *name) {
     if (!g_GetInstanceProcAddr)
         return NULL;
-    return (void *)g_GetInstanceProcAddr(VK_NULL_HANDLE, name);
+    return (void *)g_GetInstanceProcAddr(instance, name);
 }
 
 static int load_loader(void) {
@@ -64,7 +67,6 @@ static int load_loader(void) {
         printf("[guest-probe] loader missing vkCreateInstance/vkGetInstanceProcAddr\n");
         return 1;
     }
-    g_DestroyInstance = (PFN_vkDestroyInstance)load_instance_symbol("vkDestroyInstance");
     return 0;
 }
 
@@ -94,16 +96,20 @@ int main(void) {
     }
     printf("[guest-probe] vkCreateInstance => 0 (instance created)\n");
 
+    /* Instance-level dispatch must be resolved against the created instance
+     * (vkGetInstanceProcAddr(NULL, ...) only exposes global-level functions). */
+    g_DestroyInstance =
+        (PFN_vkDestroyInstance)get_proc_addr(instance, "vkDestroyInstance");
     PFN_vkEnumeratePhysicalDevices ePhys =
-        (PFN_vkEnumeratePhysicalDevices)load_instance_symbol("vkEnumeratePhysicalDevices");
+        (PFN_vkEnumeratePhysicalDevices)get_proc_addr(instance, "vkEnumeratePhysicalDevices");
     PFN_vkGetPhysicalDeviceProperties gProps =
-        (PFN_vkGetPhysicalDeviceProperties)load_instance_symbol(
-            "vkGetPhysicalDeviceProperties");
+        (PFN_vkGetPhysicalDeviceProperties)get_proc_addr(
+            instance, "vkGetPhysicalDeviceProperties");
     PFN_vkGetPhysicalDeviceQueueFamilyProperties gQF =
-        (PFN_vkGetPhysicalDeviceQueueFamilyProperties)load_instance_symbol(
-            "vkGetPhysicalDeviceQueueFamilyProperties");
+        (PFN_vkGetPhysicalDeviceQueueFamilyProperties)get_proc_addr(
+            instance, "vkGetPhysicalDeviceQueueFamilyProperties");
     PFN_vkCreateDevice createDev =
-        (PFN_vkCreateDevice)load_instance_symbol("vkCreateDevice");
+        (PFN_vkCreateDevice)get_proc_addr(instance, "vkCreateDevice");
 
     if (!ePhys || !gProps || !gQF || !createDev) {
         printf("[guest-probe] missing venus/virtio entry points (FAIL)\n");

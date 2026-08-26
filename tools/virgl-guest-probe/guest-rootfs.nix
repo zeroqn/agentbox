@@ -40,6 +40,13 @@ pkgs.stdenv.mkDerivation {
     BB=${pkgs.busybox}/bin/busybox
     MESA_ICD=${pkgs.mesa}/share/vulkan/icd.d/virtio_icd.x86_64.json
 
+    # Busybox is a single multi-call binary; the applets (/bin/sh etc.) are
+    # dispatched by argv[0].  The kernel resolves the /init shebang (#!/bin/sh)
+    # through /bin/sh, so a real symlink must exist inside the rootfs.
+    for applet in sh mount mkdir ls cat grep sed; do
+      ln -s "$BB" "$out/bin/$applet"
+    done
+
     cat > "$out/init" <<EOF
     #!/bin/sh
     # PID 1 in the guest: set up a usable /dev, /proc, /sys, then run the probe

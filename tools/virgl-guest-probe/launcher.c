@@ -6,9 +6,9 @@
  * console to a host file, and hands control to libkrun.
  *
  * Mirrors the product's libkrun call ordering (create_ctx -> set_vm_config ->
- * set_root -> set_gpu_options2 -> start_enter).  It intentionally does NOT use
- * krun_set_exec: the guest rootfs provides its own /init, which mounts /dev,
- * /proc, /sys, sets the Mesa venus discovery env, and runs guest-probe.
+ * set_root -> set_gpu_options2 -> set_exec -> start_enter).  krun_set_exec
+ * runs the rootfs /init, which mounts /dev, /proc, /sys, sets the Mesa venus
+ * discovery env, and runs guest-probe.
  *
  * krun_start_enter does not return on success -- it takes over the process and
  * exits with the guest's exit code.  The probe verdict is written to the guest
@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <libkrun.h>
 
@@ -71,6 +72,16 @@ int main(int argc, char **argv) {
      * be read back after the VM shuts down. */
     if ((rc = krun_set_console_output((uint32_t)ctx, console)) < 0)
         fail("krun_set_console_output", rc);
+
+    /* Tell the implicit init to run /init from the rootfs.  Without this the
+     * init defaults to /bin/sh, and the guest rootfs's own /init never runs.
+     * The argv array is the additional arguments only (not including the exec
+     * path); passing an empty array means no extra arguments. */
+    const char *guest_init_argv[] = { NULL };
+    const char *guest_init_envp[] = { NULL };
+    if ((rc = krun_set_exec((uint32_t)ctx, "/init",
+                            guest_init_argv, guest_init_envp)) < 0)
+        fail("krun_set_exec", rc);
 
     fprintf(stderr, "launcher: booting guest rootfs=%s gpu_flags=0x%x console=%s\n",
             rootfs, gpu_flags, console);
