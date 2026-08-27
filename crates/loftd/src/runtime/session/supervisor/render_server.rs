@@ -12,7 +12,7 @@
 use std::ffi::{CString, OsString};
 use std::os::fd::RawFd;
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 use tracing::warn;
@@ -34,8 +34,6 @@ const MESA_LIBDIR_ENV: &str = "LOFTD_MESA_LIBDIR";
 const MESA_ICD_ENV: &str = "LOFTD_MESA_ICD";
 const VULKAN_LOADER_LIBDIR_ENV: &str = "LOFTD_VULKAN_LOADER_LIBDIR";
 const RENDER_SERVER_POLICY_OVERRIDE_ENV: &str = "LOFTD_RENDER_SERVER_POLICY";
-
-const DEV_DRI_PATH: &str = "/dev/dri";
 
 /// Host store paths the venus render server loads, resolved from the loftd
 /// package closure by the launcher wrapper.
@@ -92,25 +90,6 @@ impl RenderServerEnv {
                 self.mesa_icd.clone().into_os_string(),
             ),
         ]
-    }
-
-    /// RO+Execute landlock roots: the Nix store path of each dependency, and
-    /// the device node the render server renders through.
-    pub(crate) fn store_roots(&self) -> Vec<PathBuf> {
-        // Nix store layout: <store>/lib/... and <store>/libexec/...; the
-        // package symlink for the render server binary is canonicalized so the
-        // landlock rules cover the real virglrenderer store root the exec
-        // resolves to, not just the loftd helper dir.
-        let mut roots = vec![
-            self.mesa_lib_dir.parent().map(Path::to_path_buf),
-            self.vulkan_loader_lib_dir.parent().map(Path::to_path_buf),
-        ];
-        if let Ok(exec) = std::fs::canonicalize(&self.exec_path)
-            && let Some(store_root) = exec.parent().and_then(Path::parent)
-        {
-            roots.push(Some(store_root.to_path_buf()));
-        }
-        roots.into_iter().flatten().collect()
     }
 }
 
@@ -216,7 +195,7 @@ fn run_render_server_child(
 
     // Landlock is defense in depth here; if the running kernel lacks support we
     // still enforce the seccomp allowlist below.
-    if let Err(err) = apply_render_server_rules(&env.store_roots(), Path::new(DEV_DRI_PATH)) {
+    if let Err(err) = apply_render_server_rules() {
         warn!(
             error = %err,
             "render server landlock rules not applied; seccomp filter still enforced"
@@ -301,41 +280,5 @@ mod tests {
             OsString::from(RENDER_SERVER_VK_DRIVER_FILES_ENV),
             OsString::from("/nix/store/mesa-mesa-26.1.8/share/vulkan/icd.d/radeon_icd.x86_64.json")
         )));
-    }
-
-    #[test]
-    fn render_server_store_roots_are_derived_from_lib_and_libexec_parents() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let base = temp.path().canonicalize().expect("canonicalize tempdir");
-        let mesa_root = base.join("mesa-26.1.8");
-        let vulkan_root = base.join("vulkan-loader-1.4.341.0");
-        let vgl_root = base.join("vgl-virglrenderer-1.3.0");
-        let loftd_root = base.join("loftd-agentbox");
-        let vgl_bin = vgl_root.join("libexec/virgl_render_server");
-        std::fs::create_dir_all(vgl_bin.parent().expect("vgl libexec dir")).expect("mkdir vgl");
-        std::fs::write(&vgl_bin, b"x").expect("write vgl binary");
-        std::fs::create_dir_all(mesa_root.join("lib")).expect("mkdir mesa lib");
-        std::fs::create_dir_all(vulkan_root.join("lib")).expect("mkdir vulkan lib");
-        std::fs::create_dir_all(loftd_root.join("libexec/loftd-helpers"))
-            .expect("mkdir loftd helpers");
-        std::os::unix::fs::symlink(
-            &vgl_bin,
-            loftd_root.join("libexec/loftd-helpers/virgl_render_server"),
-        )
-        .expect("symlink render server");
-
-        let env = RenderServerEnv {
-            exec_path: loftd_root.join("libexec/loftd-helpers/virgl_render_server"),
-            mesa_lib_dir: mesa_root.join("lib"),
-            mesa_icd: mesa_root.join("share/vulkan/icd.d/radeon_icd.x86_64.json"),
-            vulkan_loader_lib_dir: vulkan_root.join("lib"),
-        };
-        let roots = env.store_roots();
-        assert!(roots.contains(&mesa_root));
-        assert!(roots.contains(&vulkan_root));
-        // The exec symlink is canonicalized to the real virglrenderer store
-        // root, not the loftd helper dir it lives in.
-        assert!(roots.contains(&vgl_root));
-        assert!(!roots.contains(&loftd_root));
     }
 }

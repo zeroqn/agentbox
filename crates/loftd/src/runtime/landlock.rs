@@ -698,21 +698,30 @@ fn file_access_rights() -> landlock::BitFlags<AccessFs> {
     make_bitflags!(AccessFs::{ReadFile | WriteFile | Execute | Truncate | IoctlDev})
 }
 
-/// Landlock confinement for the standalone venus render-server runner: RO +
-/// Execute over the store paths it dlopens and a read/write device rule over
-/// `/dev/dri` so RADV reaches the host GPU through the DRM render node.
-pub(crate) fn apply_render_server_rules(store_roots: &[PathBuf], dev_dri: &Path) -> Result<()> {
+/// Landlock confinement for the standalone venus render-server runner.
+///
+/// The runner executes on the host filesystem (it is forked before the
+/// network-enter helper) and dlopens the full mesa/vulkan-loader/virglrenderer
+/// stack, whose transitive dependencies (libLLVM, libdrm, libxcb, ...) live in
+/// separate immutable Nix store paths.  The rules therefore grant RO+Execute on
+/// the whole `/nix/store` rather than trying to enumerate a closure, RW +
+/// device ioctl on `/dev` (dri render node, `/dev/shm` blobs, urandom, null),
+/// and RO on `/sys` and `/proc` (libdrm sysfs and loader inspection).
+pub(crate) fn apply_render_server_rules() -> Result<()> {
     let fs_access = AccessFs::from_all(ABI::V5);
     let mut ruleset = Ruleset::default().handle_access(fs_access)?.create()?;
     let read_execute = make_bitflags!(AccessFs::{Execute | ReadFile | ReadDir});
-    for root in store_roots {
-        let path_fd = PathFd::new(root)
-            .with_context(|| format!("failed to open Landlock rule {}", root.display()))?;
-        ruleset = ruleset.add_rule(PathBeneath::new(path_fd, read_execute))?;
+    let read = make_bitflags!(AccessFs::{ReadFile | ReadDir});
+    for (path, access) in [
+        (Path::new("/nix/store"), read_execute),
+        (Path::new("/dev"), file_access_rights()),
+        (Path::new("/sys"), read),
+        (Path::new("/proc"), read),
+    ] {
+        let path_fd = PathFd::new(path)
+            .with_context(|| format!("failed to open Landlock rule {}", path.display()))?;
+        ruleset = ruleset.add_rule(PathBeneath::new(path_fd, access))?;
     }
-    let dri_fd = PathFd::new(dev_dri)
-        .with_context(|| format!("failed to open Landlock device rule {}", dev_dri.display()))?;
-    ruleset = ruleset.add_rule(PathBeneath::new(dri_fd, file_access_rights()))?;
     let status = ruleset.restrict_self()?;
     tracing::debug!(?status, "render server Landlock restriction status");
     Ok(())
