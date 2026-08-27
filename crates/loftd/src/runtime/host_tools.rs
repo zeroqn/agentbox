@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 const HELPER_BINARY_DIR_ENV: &str = "LOFTD_HELPER_BINARY_DIR";
 const HELPER_BINARY_DIR: &str = "libexec/loftd-helpers";
 const DEFAULT_SECCOMP_POLICY: &str = "share/loftd/seccomp/default.json";
+const RENDER_SERVER_SECCOMP_POLICY: &str = "share/loftd/seccomp/render-server.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeTool {
@@ -20,6 +21,7 @@ pub(crate) enum RuntimeTool {
     Pasta,
     Passt,
     Strace,
+    VirglRenderServer,
 }
 
 impl RuntimeTool {
@@ -32,6 +34,7 @@ impl RuntimeTool {
             Self::Pasta => "pasta",
             Self::Passt => "passt",
             Self::Strace => "strace",
+            Self::VirglRenderServer => "virgl_render_server",
         }
     }
 
@@ -44,6 +47,7 @@ impl RuntimeTool {
             Self::Pasta => "LOFTD_PASTA",
             Self::Passt => "LOFTD_PASST",
             Self::Strace => "LOFTD_STRACE",
+            Self::VirglRenderServer => "LOFTD_VIRGL_RENDER_SERVER",
         }
     }
 }
@@ -99,6 +103,10 @@ pub(crate) fn default_seccomp_policy_path() -> Option<PathBuf> {
 
 pub(crate) fn package_default_seccomp_policy_path_for_exe(exe: &Path) -> Option<PathBuf> {
     package_root_from_exe(exe).map(|root| root.join(DEFAULT_SECCOMP_POLICY))
+}
+
+pub(crate) fn package_render_server_seccomp_policy_path_for_exe(exe: &Path) -> Option<PathBuf> {
+    package_root_from_exe(exe).map(|root| root.join(RENDER_SERVER_SECCOMP_POLICY))
 }
 
 pub(crate) fn package_root_from_exe(exe: &Path) -> Option<PathBuf> {

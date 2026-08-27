@@ -75,16 +75,18 @@ managed sidecar.
   listener, typically provided by `pipewire-pulse`. Loftd exports the endpoint to
   guest PulseAudio-compatible clients but does not configure or start the host
   service.
-- `loftd --gpu=drm` enables libkrun virtio-GPU DRM nodes and exposes the loftd
-  image's Mesa OpenGL/EGL and Vulkan drivers to the guest command. Mesa selects
-  the driver compatible with the virtual DRM device; this mode does not force
-  llvmpipe or lavapipe.
+- `loftd --gpu=drm` exposes a Venus Vulkan device to the guest through the
+  libkrun virtio-GPU DRM node. A standalone `virgl_render_server` runner process
+  is forked by the loftd launcher with its own Landlock and seccomp sandbox and
+  renders Vulkan on the host via RADV against `/dev/dri`; the guest command sees
+  a Vulkan device backed by the host GPU. This mode requires a libkrun build
+  with `krun_set_gpu_options3` support.
 - `loftd --wayland` enables guest Wayland passthrough through
-  `wl-cross-domain-proxy` and libkrun virtio-gpu DRM native contexts. The loftd
+  `wl-cross-domain-proxy` and libkrun virtio-gpu DRM. The loftd
   image includes the guest proxy binary and guest-init exports
   `XDG_RUNTIME_DIR=/run/user/<uid>` plus `WAYLAND_DISPLAY=wayland-0` before the
   task command starts. This mode requires a libkrun build with
-  `krun_set_gpu_options2` support; `--wayland` automatically selects
+  `krun_set_gpu_options3` support; `--wayland` automatically selects
   `--gpu=drm`.
 - `loftd [--workspace=WORKSPACE] --waypipe[=SOCKET] [-- COMMAND...]` launches a
   Waypipe-capable task. An optional absolute SSH-forwarded Unix `SOCKET`

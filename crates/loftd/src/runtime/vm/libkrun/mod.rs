@@ -8,6 +8,7 @@ mod launcher;
 pub(in crate::runtime::vm::libkrun) use api::LibkrunApi;
 pub(in crate::runtime) use dynamic::DynamicLibkrunApi;
 pub(in crate::runtime) use launcher::DirectLibkrunLauncher;
+pub(in crate::runtime) use launcher::RENDER_SERVER_FD_ENV;
 
 #[cfg(test)]
 use dynamic::{

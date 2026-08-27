@@ -29,7 +29,7 @@ const VIRGLRENDERER_VENUS_FLAGS: u32 =
 const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
 // Env var the supervisor sets on the VM worker carrying the parent end of the
 // SOCK_SEQPACKET socketpair connected to the render-server runner.
-const RENDER_SERVER_FD_ENV: &str = "LOFTD_RENDER_SERVER_FD";
+pub(crate) const RENDER_SERVER_FD_ENV: &str = "LOFTD_RENDER_SERVER_FD";
 
 #[cfg(test)]
 type AuditStartMarkerHook = Box<dyn FnMut() -> Result<()>>;

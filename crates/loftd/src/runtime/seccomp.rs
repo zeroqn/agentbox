@@ -1184,6 +1184,15 @@ mod tests {
     }
 
     #[test]
+    fn packaged_render_server_seccomp_policy_compiles() {
+        let policy = include_bytes!("../../assets/seccomp/render-server.json");
+        let arch = std::env::consts::ARCH.try_into().expect("supported arch");
+        let filters = seccompiler::compile_from_json(Cursor::new(policy), arch)
+            .expect("render-server seccomp policy should compile");
+        assert!(filters.contains_key("main_thread"));
+    }
+
+    #[test]
     fn packaged_default_seccomp_policy_excludes_post_vm_cleanup_syscalls() {
         let policy: serde_json::Value =
             serde_json::from_slice(include_bytes!("../../assets/seccomp/default.json"))

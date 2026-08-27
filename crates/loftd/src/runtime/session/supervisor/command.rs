@@ -19,11 +19,13 @@ use crate::runtime::session::supervisor::identity::KeepIdLauncher;
 use crate::runtime::session::supervisor::managed_exit_marker;
 use crate::runtime::session::supervisor::managed_ready;
 use crate::runtime::session::supervisor::readiness_pipe::{ParentReadyPipe, READY_FD_ENV};
+use crate::runtime::session::supervisor::render_server::{self, RenderServerEnv};
 use crate::runtime::session::supervisor::sigwinch::SigwinchForwarder;
 use crate::runtime::session::supervisor::{ChildStatus, LIBKRUN_ENTER_HELPER_ARG};
 use crate::runtime::session::task_control::{
     ActiveTaskSpec, ProcessIdentity, remove_active_task, write_active_task,
 };
+use crate::runtime::vm::gpu::GpuMode;
 
 pub(crate) fn run_helper_process(
     config: &LaunchConfig,
@@ -40,6 +42,11 @@ pub(crate) fn run_helper_process(
         None
     };
     let ready_fd = ready_pipe.as_ref().and_then(ParentReadyPipe::writer_fd);
+    let render_server = if config.gpu_mode == GpuMode::Drm {
+        Some(render_server::spawn_render_server()?)
+    } else {
+        None
+    };
     let spec = profiler.measure_result("helper_command_build", || {
         let executable = std::env::current_exe()
             .context("failed to resolve loftd executable for libkrun helper")?;
@@ -49,6 +56,7 @@ pub(crate) fn run_helper_process(
             config,
             host_profile_enabled,
             ready_fd,
+            render_server.as_ref().map(|guard| &guard.env),
         )
     })?;
     tracing::debug!(program = ?spec.program, args = ?spec.args, log_level = config.log_level.as_str(), "loftd libkrun helper command constructed");
@@ -609,6 +617,7 @@ fn build_helper_command(
     config: &LaunchConfig,
     host_profile_enabled: bool,
     managed_ready_fd: Option<i32>,
+    render_server_env: Option<&RenderServerEnv>,
 ) -> Result<HelperCommandSpec> {
     let launcher = KeepIdLauncher::from_current_system()?;
     tracing::debug!(summary = %launcher.diagnostic_summary(), "loftd libkrun helper keep-id namespace resolved");
@@ -618,6 +627,7 @@ fn build_helper_command(
         config.log_level,
         host_profile_enabled,
         managed_ready_fd,
+        render_server_env,
         &launcher,
     ))
 }
@@ -628,11 +638,17 @@ pub(crate) fn build_helper_command_with_launcher(
     log_level: crate::logging::LogLevel,
     host_profile_enabled: bool,
     managed_ready_fd: Option<i32>,
+    render_server_env: Option<&RenderServerEnv>,
     launcher: &KeepIdLauncher,
 ) -> HelperCommandSpec {
     HelperCommandSpec {
         program: launcher.program(),
-        env: helper_env(log_level, host_profile_enabled, managed_ready_fd),
+        env: helper_env(
+            log_level,
+            host_profile_enabled,
+            managed_ready_fd,
+            render_server_env,
+        ),
         args: launcher.args(executable, LIBKRUN_ENTER_HELPER_ARG, config_path),
     }
 }
@@ -641,6 +657,7 @@ fn helper_env(
     log_level: crate::logging::LogLevel,
     host_profile_enabled: bool,
     managed_ready_fd: Option<i32>,
+    render_server_env: Option<&RenderServerEnv>,
 ) -> Vec<(OsString, OsString)> {
     let mut env = vec![(
         OsString::from(INTERNAL_LOG_LEVEL_ENV),
@@ -651,6 +668,17 @@ fn helper_env(
     }
     if let Some(fd) = managed_ready_fd {
         env.push((OsString::from(READY_FD_ENV), OsString::from(fd.to_string())));
+    }
+    if let Some(_render_server) = render_server_env {
+        // The runner child exports its own environment before exec; the helper
+        // only needs the parent end of the socketpair, carried by fd number so
+        // it survives the helper exec and the VM-worker fork.
+        if let Some(fd) = std::env::var_os(crate::runtime::vm::libkrun::RENDER_SERVER_FD_ENV) {
+            env.push((
+                OsString::from(crate::runtime::vm::libkrun::RENDER_SERVER_FD_ENV),
+                fd,
+            ));
+        }
     }
     env
 }

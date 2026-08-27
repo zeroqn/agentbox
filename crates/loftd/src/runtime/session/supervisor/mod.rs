@@ -9,6 +9,7 @@ pub(crate) mod identity;
 pub(crate) mod managed_exit_marker;
 pub(crate) mod managed_ready;
 pub(crate) mod readiness_pipe;
+pub(crate) mod render_server;
 pub(crate) mod rlimits;
 pub(crate) mod sigwinch;
 pub(crate) mod vm_child;
@@ -234,6 +235,7 @@ mod tests {
             crate::logging::LogLevel::Debug,
             false,
             None,
+            None,
             &launcher,
         );
 
@@ -293,6 +295,7 @@ mod tests {
             crate::logging::LogLevel::Debug,
             false,
             None,
+            None,
             &launcher,
         );
         assert!(
@@ -313,6 +316,7 @@ mod tests {
             Path::new("/tmp/loftd-task/launch.conf"),
             crate::logging::LogLevel::Debug,
             true,
+            None,
             None,
             &launcher,
         );
@@ -352,6 +356,7 @@ mod tests {
             crate::logging::LogLevel::Info,
             false,
             Some(42),
+            None,
             &launcher,
         );
 
