@@ -40,18 +40,22 @@ Boot pipeline works end-to-end:
   `wrong ELF class: ELFCLASS32` → venus fails: vkCreateInstance => -1.
   With a clean env the same path fails as `cannot open shared object file`.
 - FIXED in run.sh: prepend the rootfs closure's 64-bit vulkan-loader + mesa to
-  LD_LIBRARY_PATH and set VK_DRIVER_FILES to lvp_icd.x86_64.json, so the render
-  server opens a 64-bit loader with a valid (lavapipe, software) host ICD.
-  Verified: vkCreateInstance => 0, 1 physical device ("Virtio-GPU Venus
-  (llvmpipe ...)"), vkCreateDevice => 0, RESULT: PASS (3/3 runs).
+  LD_LIBRARY_PATH and set VK_DRIVER_FILES to a host ICD from the same mesa.
+- HARDWARE BACKEND FOUND: on this L1, radv (radeon_icd) reaches the real GPU
+  through the virtio-gpu **DRM capset** (SUPPORTED_CAPSET_IDs = 0x46 → bits
+  {1,2,6} = virgl, virgl2, DRM — no venus, but DRM lets radv through).
+  Verified with radeon_icd: vkCreateInstance => 0, 1 physical device
+  ("Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33))"), 5 queue
+  families, vkCreateDevice => 0, RESULT: PASS (2/2 runs).  run.sh now
+  defaults to radeon_icd and falls back to lvp_icd.
 - without RENDER_SERVER flag (0xc0) venus initializes but
   vkEnumeratePhysicalDevices => -3 (VK_ERROR_INITIALIZATION_FAILED), count=0
 
 Net finding: the bare libkrun guest NOW gets a usable venus Vulkan device,
-backed on the host by lavapipe software rendering.  This resolves the
-render-server host libvulkan mismatch block.  The host ICD choice (lavapipe
-today; the L1's real virtio-gpu/venus when targeting the nested case) is the
-next product decision.
+**hardware-backed** (host ICD = radv → L1 virtio-gpu DRM capset → L0 GPU).
+The lavapipe fallback covers hosts with no hardware path.  The render-server
+host-ICD choice is the next product decision: loftd must set the same
+LD_LIBRARY_PATH + VK_DRIVER_FILES when spawning the render server.
 
 ## Bugs found
 
@@ -69,7 +73,9 @@ next product decision.
 ## Pipeline complete — all 5 issues done
 
 All five issues are confirmed `[done]` on the board.  The ELFCLASS32 block is
-resolved and the probe now reports RESULT: PASS.
+resolved, the probe reports RESULT: PASS, and — since the L1 virtio-gpu
+exposes a DRM capset — the render server now uses radv (hardware) by default,
+so the guest venus device is backed by the real AMD GPU.
 
 Follow-up (product, not probe): loftd's `GpuMode` is still only `Off | Drm`
 (`crates/loftd/src/runtime/vm/gpu.rs`); a venus mode does not exist in the
@@ -77,5 +83,5 @@ product yet.  When it is added, the render-server environment fix
 (LD_LIBRARY_PATH + VK_DRIVER_FILES) from run.sh must be carried into the loftd
 host runtime, or the L2 venus path will hit the same ELFCLASS32 / missing-libvulkan
 failure.  The nested HOST3D ring-shmem mmap claim in conclusion.md also needs
-re-examination: this single-libkrun probe maps HOST3D blobs fine with a local
-(lavapipe) host device.
+re-examination: this single-libkrun probe maps HOST3D blobs fine with both
+lavapipe and radv host devices.

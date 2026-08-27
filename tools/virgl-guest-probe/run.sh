@@ -52,18 +52,31 @@ echo "rootfs: $ROOTFS"
 # Resolve the host-side 64-bit vulkan-loader and mesa from the rootfs closure
 # (which uses the same flake nixpkgs).  The render server's venus renderer (vkr)
 # dlopens libvulkan.so.1 on the host; it needs a 64-bit loader and a host ICD.
-# Lavapipe (lvp) is a pure-software Vulkan ICD that works headless — ideal for
-# this diagnostic probe.
+# Prefer the hardware ICD (radeon): on this L1 the virtio-gpu exposes a DRM
+# capset, so radv reaches the real GPU and the guest venus device is
+# hardware-backed.  Fall back to lavapipe (software) if no radeon ICD exists
+# (e.g. a host whose virtio-gpu only advertises virgl capsets).  Override with
+# VK_ICD=radeon|lvp.
 VKLOADER="$(ls -d "$ROOTFS"/nix/store/*-vulkan-loader-*/lib 2>/dev/null | head -1)"
 MESA="$(ls -d "$ROOTFS"/nix/store/*-mesa-*/lib 2>/dev/null | head -1)"
-MESAICD="$(ls "$ROOTFS"/nix/store/*-mesa-*/share/vulkan/icd.d/lvp_icd.x86_64.json 2>/dev/null | head -1)"
-if [[ -z "$VKLOADER" || -z "$MESA" || -z "$MESAICD" ]]; then
+if [[ -z "$VKLOADER" || -z "$MESA" ]]; then
     echo "error: cannot resolve host vulkan-loader or mesa from rootfs" >&2
+    exit 1
+fi
+ICD="${VK_ICD:-radeon}"
+MESAICD="$(ls "$ROOTFS"/nix/store/*-mesa-*/share/vulkan/icd.d/${ICD}_icd.x86_64.json 2>/dev/null | head -1)"
+if [[ -z "$MESAICD" && "$ICD" = "radeon" ]]; then
+    echo "note: no radeon ICD on this host; falling back to lavapipe (software)" >&2
+    ICD=lvp
+    MESAICD="$(ls "$ROOTFS"/nix/store/*-mesa-*/share/vulkan/icd.d/${ICD}_icd.x86_64.json 2>/dev/null | head -1)"
+fi
+if [[ -z "$MESAICD" ]]; then
+    echo "error: cannot resolve a ${ICD} ICD from rootfs" >&2
     exit 1
 fi
 export LD_LIBRARY_PATH="${VKLOADER}:${MESA}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export VK_DRIVER_FILES="$MESAICD"
-echo "VK_DRIVER_FILES=$VK_DRIVER_FILES"
+echo "VK_DRIVER_FILES=$VK_DRIVER_FILES (ICD=$ICD)"
 
 echo "=== building launcher (nix build .#launcher) ==="
 LAUNCHER="$(nix build .#launcher --no-link --print-out-paths)"

@@ -3,11 +3,11 @@
 A bare libkrun microVM that boots a venus virtio-gpu and checks whether the
 guest sees a usable Vulkan device through virglrenderer's VENUS renderer.
 
-**Status: PASSING** — after a host-side environment fix (see "Host-side
-requirements" below), the guest creates a venus Vulkan instance, enumerates
-one physical device (`Virtio-GPU Venus (llvmpipe ...)`), and creates a logical
-device.  The host ICD is Lavapipe (software rendering); this is a diagnostic
-probe, not a product configuration.
+**Status: PASSING (hardware-backed)** — the guest creates a venus Vulkan
+instance, enumerates one physical device backed by the host GPU
+(`Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33))`), and creates a
+logical device.  The host ICD is `radeon` (hardware, via the L1 virtio-gpu
+DRM capset); on hosts without a hardware path it falls back to lavapipe.
 
 ## Files
 
@@ -26,8 +26,10 @@ probe, not a product configuration.
 - `run.sh` — convenience script: builds the rootfs and launcher via `nix
   build`, boots the VM, and greps the console log for the probe verdict.
   **Sets the host-side render-server environment** (LD_LIBRARY_PATH for a
-  64-bit vulkan-loader + mesa, VK_DRIVER_FILES → lvp_icd.x86_64.json) so the
-  venus render server can open a usable libvulkan on the host.
+  64-bit vulkan-loader + mesa, VK_DRIVER_FILES → the hardware ICD when
+  available) so the venus render server can open a usable libvulkan on the
+  host.  Default ICD is `radeon` (hardware); falls back to lavapipe
+  (software) when no radeon ICD exists.  Override with `VK_ICD=radeon|lvp`.
 - `flake.nix` — Nix flake that wires everything together: provides the
   `guest-probe`, `guest-rootfs`, and `launcher` packages, plus a dev shell
   with the required build inputs (gcc, vulkan-headers, libkrun).
@@ -64,9 +66,14 @@ covers gbm/glibc), so two host-side failures are possible:
 Both produce the same guest symptom: `vkCreateInstance => -1`.
 
 `run.sh` fixes both by prepending the rootfs closure's 64-bit `vulkan-loader`
-and `mesa` lib dirs to LD_LIBRARY_PATH and setting VK_DRIVER_FILES to the
-rootfs's `lvp_icd.x86_64.json` (Lavapipe software ICD).  Any product runtime
-that spawns this render server must set the same environment.
+and `mesa` lib dirs to LD_LIBRARY_PATH and setting VK_DRIVER_FILES to a host
+ICD from the same mesa (`radeon_icd.x86_64.json` by default, `lvp_icd` as a
+software fallback).  On this L1 the virtio-gpu exposes the **DRM capset**
+(`VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs` = 0x46 → bits {1,2,6} = virgl, virgl2,
+DRM), which is how radv reaches the real GPU; a host whose virtio-gpu only
+advertises virgl capsets has no hardware Vulkan device and must use lavapipe.
+Any product runtime that spawns this render server must set the same
+environment.
 
 ## Architecture
 
