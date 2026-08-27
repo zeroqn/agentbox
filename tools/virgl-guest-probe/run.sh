@@ -14,13 +14,15 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLAGS="${1:-0x2c0}"
 
-# Resolve the virglrenderer that libkrun actually links (its RUNPATH) so
-# RENDER_SERVER_EXEC_PATH matches the libvirglrenderer loaded at runtime.
+# Resolve the virglrenderer that libkrun actually links (its resolved lib path)
+# so RENDER_SERVER_EXEC_PATH matches the libvirglrenderer loaded at runtime.
+# Uses `ldd` (not `readelf`) because readelf is not part of the default NixOS
+# user environment.
 find_libkrun_vgl() {
     local lib
     for lib in /nix/store/*-libkrun-loftd-*/lib/libkrun.so; do
         local rp
-        rp="$(readelf -d "$lib" 2>/dev/null | grep -oE '/nix/store/[A-Za-z0-9.+-]+-virglrenderer-1\.3\.0/lib' | head -1)"
+        rp="$(ldd "$lib" 2>/dev/null | grep -oE '/nix/store/[A-Za-z0-9.+-]+-virglrenderer-1\.3\.0/lib' | head -1)"
         if [[ -n "$rp" ]]; then
             echo "${rp%/lib}"
             return 0
@@ -46,6 +48,22 @@ echo "RENDER_SERVER_EXEC_PATH=$RENDER_SERVER_EXEC_PATH"
 echo "=== building guest rootfs (nix build .#guest-rootfs) ==="
 ROOTFS="$(nix build .#guest-rootfs --no-link --print-out-paths)"
 echo "rootfs: $ROOTFS"
+
+# Resolve the host-side 64-bit vulkan-loader and mesa from the rootfs closure
+# (which uses the same flake nixpkgs).  The render server's venus renderer (vkr)
+# dlopens libvulkan.so.1 on the host; it needs a 64-bit loader and a host ICD.
+# Lavapipe (lvp) is a pure-software Vulkan ICD that works headless — ideal for
+# this diagnostic probe.
+VKLOADER="$(ls -d "$ROOTFS"/nix/store/*-vulkan-loader-*/lib 2>/dev/null | head -1)"
+MESA="$(ls -d "$ROOTFS"/nix/store/*-mesa-*/lib 2>/dev/null | head -1)"
+MESAICD="$(ls "$ROOTFS"/nix/store/*-mesa-*/share/vulkan/icd.d/lvp_icd.x86_64.json 2>/dev/null | head -1)"
+if [[ -z "$VKLOADER" || -z "$MESA" || -z "$MESAICD" ]]; then
+    echo "error: cannot resolve host vulkan-loader or mesa from rootfs" >&2
+    exit 1
+fi
+export LD_LIBRARY_PATH="${VKLOADER}:${MESA}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export VK_DRIVER_FILES="$MESAICD"
+echo "VK_DRIVER_FILES=$VK_DRIVER_FILES"
 
 echo "=== building launcher (nix build .#launcher) ==="
 LAUNCHER="$(nix build .#launcher --no-link --print-out-paths)"
