@@ -29,7 +29,7 @@ enum Call {
     FreeCtx(u32),
     InitLog(u32),
     SetVmConfig(u32, u8, u32),
-    SetGpuOptions2(u32, u32, u64),
+    SetGpuOptions3(u32, u32, u64, i32),
     CheckNestedVirt,
     SetNestedVirt(u32, bool),
     SetRoot(u32, String),
@@ -118,16 +118,20 @@ impl LibkrunApi for FakeLibkrunApi {
         Ok(self.rc("krun_set_vm_config"))
     }
 
-    fn set_gpu_options2(
+    fn set_gpu_options3(
         &mut self,
         ctx_id: u32,
         virgl_flags: u32,
         shm_size: u64,
+        render_server_fd: i32,
     ) -> Result<Option<i32>> {
-        self.calls
-            .borrow_mut()
-            .push(Call::SetGpuOptions2(ctx_id, virgl_flags, shm_size));
-        Ok(Some(self.rc("krun_set_gpu_options2")))
+        self.calls.borrow_mut().push(Call::SetGpuOptions3(
+            ctx_id,
+            virgl_flags,
+            shm_size,
+            render_server_fd,
+        ));
+        Ok(Some(self.rc("krun_set_gpu_options3")))
     }
 
     fn check_nested_virt(&mut self) -> Result<Option<i32>> {
@@ -547,27 +551,41 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
 }
 
 #[test]
-fn drm_gpu_mode_enables_native_context_renderer_flags_before_start() {
-    const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
-    const VIRGLRENDERER_THREAD_SYNC: u32 = 1 << 1;
+fn drm_gpu_mode_enables_venus_render_server_flags_before_start() {
+    const VIRGLRENDERER_VENUS: u32 = 1 << 6;
     const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
-    const VIRGLRENDERER_USE_ASYNC_FENCE_CB: u32 = 1 << 8;
+    const VIRGLRENDERER_RENDER_SERVER: u32 = 1 << 9;
     const VIRGLRENDERER_DRM: u32 = 1 << 10;
     const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
+
+    // configure_gpu reads the render-server fd number from the env var the
+    // supervisor sets on the VM worker.
+    let previous_fd = std::env::var("LOFTD_RENDER_SERVER_FD").ok();
+    // SAFETY: test-only env mutation, restored at the end of the test.
+    unsafe { std::env::set_var("LOFTD_RENDER_SERVER_FD", "9") };
 
     let calls = Rc::new(RefCell::new(Vec::new()));
     let config = LaunchConfig {
         gpu_mode: GpuMode::Drm,
         ..config()
     };
-    DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
+    let result = DirectLibkrunLauncher::new(FakeLibkrunApi::new(calls.clone()))
         .start_enter(&config)
-        .expect("launch should succeed");
+        .map_err(|_| ());
+
+    // SAFETY: restore the env var for other tests.
+    unsafe {
+        match previous_fd {
+            Some(value) => std::env::set_var("LOFTD_RENDER_SERVER_FD", value),
+            None => std::env::remove_var("LOFTD_RENDER_SERVER_FD"),
+        }
+    }
+    result.expect("launch should succeed");
 
     let calls = calls.borrow();
     let gpu_index = calls
         .iter()
-        .position(|call| matches!(call, Call::SetGpuOptions2(..)))
+        .position(|call| matches!(call, Call::SetGpuOptions3(..)))
         .expect("drm GPU mode should configure GPU options");
     let start_index = calls
         .iter()
@@ -576,14 +594,14 @@ fn drm_gpu_mode_enables_native_context_renderer_flags_before_start() {
 
     assert_eq!(
         calls[gpu_index],
-        Call::SetGpuOptions2(
+        Call::SetGpuOptions3(
             7,
-            VIRGLRENDERER_USE_EGL
-                | VIRGLRENDERER_THREAD_SYNC
+            VIRGLRENDERER_VENUS
                 | VIRGLRENDERER_NO_VIRGL
-                | VIRGLRENDERER_USE_ASYNC_FENCE_CB
+                | VIRGLRENDERER_RENDER_SERVER
                 | VIRGLRENDERER_DRM,
             GPU_SHM_SIZE_BYTES,
+            9,
         )
     );
     assert!(gpu_index < start_index);

@@ -33,7 +33,7 @@ type KrunInitLog = unsafe extern "C" fn(i32, u32, u32, u32) -> i32;
 type KrunCreateCtx = unsafe extern "C" fn() -> i32;
 type KrunFreeCtx = unsafe extern "C" fn(u32) -> i32;
 type KrunSetVmConfig = unsafe extern "C" fn(u32, u8, u32) -> i32;
-type KrunSetGpuOptions2 = unsafe extern "C" fn(u32, u32, u64) -> i32;
+type KrunSetGpuOptions3 = unsafe extern "C" fn(u32, u32, u64, i32) -> i32;
 type KrunCheckNestedVirt = unsafe extern "C" fn() -> i32;
 type KrunSetNestedVirt = unsafe extern "C" fn(u32, bool) -> i32;
 type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
@@ -58,7 +58,7 @@ pub(crate) struct DynamicLibkrunApi {
     create_ctx: KrunCreateCtx,
     free_ctx: KrunFreeCtx,
     set_vm_config: KrunSetVmConfig,
-    set_gpu_options2: Option<KrunSetGpuOptions2>,
+    set_gpu_options3: Option<KrunSetGpuOptions3>,
     check_nested_virt: Option<KrunCheckNestedVirt>,
     set_nested_virt: KrunSetNestedVirt,
     set_root: KrunSetRoot,
@@ -133,8 +133,8 @@ impl DynamicLibkrunApi {
                     handle,
                     "krun_set_vm_config",
                 )?),
-                set_gpu_options2: load_optional_symbol(handle, "krun_set_gpu_options2")
-                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetGpuOptions2>(symbol)),
+                set_gpu_options3: load_optional_symbol(handle, "krun_set_gpu_options3")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetGpuOptions3>(symbol)),
                 check_nested_virt: nested_virt_symbols
                     .check
                     .map(|symbol| std::mem::transmute::<*mut c_void, KrunCheckNestedVirt>(symbol)),
@@ -340,15 +340,16 @@ impl LibkrunApi for DynamicLibkrunApi {
         Ok(unsafe { (self.set_vm_config)(ctx_id, vcpus, ram_mib) })
     }
 
-    fn set_gpu_options2(
+    fn set_gpu_options3(
         &mut self,
         ctx_id: u32,
         virgl_flags: u32,
         shm_size: u64,
+        render_server_fd: i32,
     ) -> Result<Option<i32>> {
-        Ok(self.set_gpu_options2.map(|set_gpu_options2| {
+        Ok(self.set_gpu_options3.map(|set_gpu_options3| {
             // SAFETY: function pointer resolved from libkrun with verified signature.
-            unsafe { set_gpu_options2(ctx_id, virgl_flags, shm_size) }
+            unsafe { set_gpu_options3(ctx_id, virgl_flags, shm_size, render_server_fd) }
         }))
     }
 

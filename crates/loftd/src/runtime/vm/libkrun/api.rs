@@ -8,11 +8,12 @@ pub(crate) trait LibkrunApi {
     fn free_ctx(&mut self, ctx_id: u32) -> Result<()>;
     fn init_log(&mut self, level: u32) -> Result<i32>;
     fn set_vm_config(&mut self, ctx_id: u32, vcpus: u8, ram_mib: u32) -> Result<i32>;
-    fn set_gpu_options2(
+    fn set_gpu_options3(
         &mut self,
         ctx_id: u32,
         virgl_flags: u32,
         shm_size: u64,
+        render_server_fd: i32,
     ) -> Result<Option<i32>>;
     fn check_nested_virt(&mut self) -> Result<Option<i32>>;
     fn set_nested_virt(&mut self, ctx_id: u32, enabled: bool) -> Result<i32>;

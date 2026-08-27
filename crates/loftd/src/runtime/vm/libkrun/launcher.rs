@@ -16,17 +16,20 @@ use crate::runtime::vm::libkrun::api::LibkrunApi;
 pub(in crate::runtime::vm::libkrun) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
 pub(in crate::runtime::vm::libkrun) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
-const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
-const VIRGLRENDERER_THREAD_SYNC: u32 = 1 << 1;
+const VIRGLRENDERER_VENUS: u32 = 1 << 6;
 const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
-const VIRGLRENDERER_USE_ASYNC_FENCE_CB: u32 = 1 << 8;
+const VIRGLRENDERER_RENDER_SERVER: u32 = 1 << 9;
 const VIRGLRENDERER_DRM: u32 = 1 << 10;
-const VIRGLRENDERER_NATIVE_CONTEXT_FLAGS: u32 = VIRGLRENDERER_USE_EGL
-    | VIRGLRENDERER_THREAD_SYNC
-    | VIRGLRENDERER_NO_VIRGL
-    | VIRGLRENDERER_USE_ASYNC_FENCE_CB
-    | VIRGLRENDERER_DRM;
+// Venus Vulkan renderer via an external render server. Proven against the L1
+// virtio-gpu DRM capset: the guest sees a hardware-backed RADV venus device.
+// Native-context GL (USE_EGL|THREAD_SYNC|USE_ASYNC_FENCE_CB) and the venus
+// renderer cannot coexist in one virtio-gpu, so --gpu=drm is venus-only.
+const VIRGLRENDERER_VENUS_FLAGS: u32 =
+    VIRGLRENDERER_VENUS | VIRGLRENDERER_NO_VIRGL | VIRGLRENDERER_RENDER_SERVER | VIRGLRENDERER_DRM;
 const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
+// Env var the supervisor sets on the VM worker carrying the parent end of the
+// SOCK_SEQPACKET socketpair connected to the render-server runner.
+const RENDER_SERVER_FD_ENV: &str = "LOFTD_RENDER_SERVER_FD";
 
 #[cfg(test)]
 type AuditStartMarkerHook = Box<dyn FnMut() -> Result<()>>;
@@ -340,22 +343,27 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             GpuMode::Drm => {
                 tracing::debug!(
                     ctx_id,
-                    virgl_flags = VIRGLRENDERER_NATIVE_CONTEXT_FLAGS,
+                    virgl_flags = VIRGLRENDERER_VENUS_FLAGS,
                     shm_size = GPU_SHM_SIZE_BYTES,
-                    "krun_set_gpu_options2: begin"
+                    "krun_set_gpu_options3: begin"
                 );
+                let render_server_fd = std::env::var(RENDER_SERVER_FD_ENV)
+                    .context("gpu mode drm requires a sandboxed render server runner")?
+                    .parse::<i32>()
+                    .context("render server fd env value is not a valid fd number")?;
                 let rc = self
                     .api
-                    .set_gpu_options2(
+                    .set_gpu_options3(
                         ctx_id,
-                        VIRGLRENDERER_NATIVE_CONTEXT_FLAGS,
+                        VIRGLRENDERER_VENUS_FLAGS,
                         GPU_SHM_SIZE_BYTES,
+                        render_server_fd,
                     )?
                     .ok_or_else(|| {
-                        anyhow!("libkrun setup failed: krun_set_gpu_options2 is unavailable")
+                        anyhow!("libkrun setup failed: krun_set_gpu_options3 is unavailable")
                     })?;
-                check_setup("krun_set_gpu_options2", rc)?;
-                tracing::debug!(ctx_id, "krun_set_gpu_options2: complete");
+                check_setup("krun_set_gpu_options3", rc)?;
+                tracing::debug!(ctx_id, "krun_set_gpu_options3: complete");
                 Ok(())
             }
         }

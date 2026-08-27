@@ -8,29 +8,46 @@ let
   lib = pkgs.lib;
   system = pkgs.stdenv.hostPlatform.system;
   release = pins.libkrunRelease;
-  systemPins =
-    release.systems.${system}
-      or (throw "unsupported prebuilt libkrun system or missing libkrunRelease pin: ${system}");
+  libkrunSrc = builtins.fetchGit {
+    # Absolute path: the flake self-source does not carry submodule content,
+    # and the submodule's `.git` is an indirection file (gitdir: ../.git/modules/...)
+    # that Nix only accepts as a shallow repo.
+    url = "file:///home/dev/loftd/agentbox/deps/libkrun";
+    # deps/libkrun submodule (loftd fork), committed with the
+    # krun_set_gpu_options3 render-server fd plumbing.
+    rev = "ac13a578dd6b1b580a26b7ba4258bd6bcbb8da16";
+    shallow = true;
+  };
 in
-pkgs.stdenv.mkDerivation {
+pkgs.rustPlatform.buildRustPackage {
   pname = "libkrun";
-  version = release.tag;
+  version = "${release.tag}-loftd-source";
 
-  src = pkgs.fetchurl {
-    url = "https://github.com/${release.owner}/${release.repo}/releases/download/${release.tag}/${systemPins.asset}";
-    hash = systemPins.hash;
+  src = libkrunSrc;
+
+  cargoLock = {
+    lockFile = "${libkrunSrc}/Cargo.lock";
   };
 
-  sourceRoot = ".";
-  dontBuild = true;
+  # Build only the libkrun cdylib with the loftd full-feature set (mirrors
+  # `make BLK=1 NET=1 GPU=1 INPUT=1` from the loftd fork's prebuilt CI).
+  cargoBuildFlags = [
+    "-p"
+    "libkrun"
+    "--features"
+    "gpu,net,blk,input"
+  ];
+
+  doCheck = false;
 
   nativeBuildInputs = [
-    pkgs.autoPatchelfHook
     pkgs.pkg-config
+    pkgs.clang
+    pkgs.llvmPackages.libclang
   ];
 
   buildInputs = [
-    libkrunfw
+    (lib.getLib libkrunfw)
     pkgs.libcap_ng
     pkgs.libepoxy
     pkgs.libdrm
@@ -38,8 +55,18 @@ pkgs.stdenv.mkDerivation {
     pkgs.pipewire
   ];
 
-  appendRunpaths = [
-    "${lib.getLib libkrunfw}/lib"
+  # init-blob compiles init/init.c with `-static`; the static libc must not be a
+  # global buildInput (it would shadow the dynamic libc for every Rust link), so
+  # scope it to that single C compile via CC_LINUX (honored over CC).
+  CC_LINUX = "${pkgs.stdenv.cc}/bin/cc -L${pkgs.glibc.static}/lib";
+
+  # bindgen (used by krun-display/krun-input) needs libclang and the C headers.
+  # libclang is multi-output: the .so and clang headers live in the `lib` output.
+  LIBCLANG_PATH = "${lib.getLib pkgs.llvmPackages.libclang}/lib";
+  BINDGEN_EXTRA_CLANG_ARGS = "-I${pkgs.glibc.dev}/include -I${lib.getLib pkgs.llvmPackages.libclang}/lib/clang/${lib.versions.major pkgs.llvmPackages.libclang.version}/include";
+
+  runtimeDependencies = [
+    (lib.getLib libkrunfw)
   ];
 
   installPhase = ''
@@ -47,21 +74,15 @@ pkgs.stdenv.mkDerivation {
 
     mkdir -p "$out/lib" "$out/include" "$out/lib/pkgconfig"
 
-    if [ -d lib64 ]; then
-      cp -a lib64/. "$out/lib/"
-    elif [ -d lib ]; then
-      cp -a lib/. "$out/lib/"
-    else
-      cp -a libkrun.so* "$out/lib/"
-    fi
+    # buildRustPackage passes --target <triple> (stdenv.hostPlatform.config),
+    # so release artifacts land in target/<triple>/release/ not target/release/.
+    install -m 755 "target/${pkgs.stdenv.hostPlatform.config}/release/libkrun.so" "$out/lib/"
+    ln -sf libkrun.so "$out/lib/libkrun.so.1"
+    ln -sf libkrun.so "$out/lib/libkrun.so.1.18"
 
-    if [ -d include ]; then
-      cp -a include/. "$out/include/"
-    fi
-
-    for header in libkrun.h libkrun_display.h libkrun_input.h; do
-      test -f "$out/include/$header"
-    done
+    install -m 644 include/libkrun.h "$out/include/"
+    install -m 644 include/libkrun_display.h "$out/include/"
+    install -m 644 include/libkrun_input.h "$out/include/"
 
     cat > "$out/lib/pkgconfig/libkrun.pc" <<PC_EOF
 prefix=$out
@@ -71,7 +92,7 @@ includedir=''${prefix}/include
 
 Name: libkrun
 Description: Dynamic library for creating microVM-based process sandboxes
-Version: 1.18.0
+Version: ${release.tag}
 Libs: -L''${libdir} -lkrun
 Cflags: -I''${includedir}
 PC_EOF
@@ -80,7 +101,7 @@ PC_EOF
   '';
 
   meta = {
-    description = "Pinned prebuilt full-feature libkrun shared library for loftd and agentbox";
+    description = "loftd libkrun built from the deps/libkrun submodule (with krun_set_gpu_options3 render-server fd plumbing)";
     homepage = "https://github.com/${release.owner}/${release.repo}";
     license = with lib.licenses; [ asl20 ];
     platforms = lib.attrNames release.systems;
