@@ -82,6 +82,9 @@
         "syscall": "fsetxattr"
       },
       {
+        "syscall": "fstat"
+      },
+      {
         "syscall": "fstatfs"
       },
       {
@@ -142,6 +145,9 @@
         "syscall": "mknodat"
       },
       {
+        "syscall": "memfd_create"
+      },
+      {
         "syscall": "mmap"
       },
       {
@@ -184,6 +190,9 @@
         "syscall": "recvfrom"
       },
       {
+        "syscall": "recvmsg"
+      },
+      {
         "syscall": "renameat2"
       },
       {
@@ -203,6 +212,9 @@
       },
       {
         "syscall": "sched_yield"
+      },
+      {
+        "syscall": "sendmsg"
       },
       {
         "syscall": "sendto"

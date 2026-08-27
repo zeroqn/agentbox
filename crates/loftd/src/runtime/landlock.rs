@@ -714,7 +714,12 @@ pub(crate) fn apply_render_server_rules() -> Result<()> {
     let read = make_bitflags!(AccessFs::{ReadFile | ReadDir});
     for (path, access) in [
         (Path::new("/nix/store"), read_execute),
-        (Path::new("/dev"), file_access_rights()),
+        // libdrm lists DRM render nodes by opening `/dev/dri` as a directory,
+        // which requires ReadDir in addition to the file/device rights.
+        (
+            Path::new("/dev"),
+            file_access_rights() | make_bitflags!(AccessFs::{ReadDir}),
+        ),
         (Path::new("/sys"), read),
         (Path::new("/proc"), read),
     ] {
