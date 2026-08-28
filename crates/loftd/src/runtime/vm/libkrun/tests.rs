@@ -552,10 +552,11 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
 
 #[test]
 fn drm_gpu_mode_enables_venus_render_server_flags_before_start() {
+    const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
     const VIRGLRENDERER_VENUS: u32 = 1 << 6;
-    const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
     const VIRGLRENDERER_RENDER_SERVER: u32 = 1 << 9;
     const VIRGLRENDERER_DRM: u32 = 1 << 10;
+    const VIRGLRENDERER_USE_VIDEO: u32 = 1 << 11;
     const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
 
     // configure_gpu reads the render-server fd number from the env var the
@@ -596,10 +597,11 @@ fn drm_gpu_mode_enables_venus_render_server_flags_before_start() {
         calls[gpu_index],
         Call::SetGpuOptions3(
             7,
-            VIRGLRENDERER_VENUS
-                | VIRGLRENDERER_NO_VIRGL
+            VIRGLRENDERER_USE_EGL
+                | VIRGLRENDERER_VENUS
                 | VIRGLRENDERER_RENDER_SERVER
-                | VIRGLRENDERER_DRM,
+                | VIRGLRENDERER_DRM
+                | VIRGLRENDERER_USE_VIDEO,
             GPU_SHM_SIZE_BYTES,
             9,
         )

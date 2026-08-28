@@ -99,6 +99,28 @@ impl DynamicLibkrunApi {
 
     fn open(name: &str) -> Result<Self> {
         let c_name = CString::new(name)?;
+
+        // Pre-register libva.so.2 and libva-drm.so.2 globally before the libkrun
+        // dlopen.  The VM worker's dlopen of libkrun (RTLD_NOW) triggers a chain
+        // libkrun -> libvirglrenderer -> libva.so.2, and libva.so.2 has an undefined
+        // symbol vaGetDisplayDRM that only libva-drm.so.2 provides.  When both are
+        // loaded together as DT_NEEDED of libvirglrenderer, the RTLD_NOW per-object
+        // resolution processes libva.so.2 before libva-drm.so.2, which fails.
+        // Pre-loading both globally (libva-drm first) makes the symbols available
+        // in the lookup scope so the libkrun dlopen finds the already-loaded copy.
+        for soname in ["libva-drm.so.2", "libva.so.2"] {
+            let c_soname = CString::new(soname)?;
+            // SAFETY: dlopen with a NUL-terminated soname; relies on LD_LIBRARY_PATH.
+            let handle =
+                unsafe { libc::dlopen(c_soname.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
+            if handle.is_null() {
+                tracing::warn!(
+                    "libkrun dlopen pre-register could not load {soname}: {}",
+                    dlerror_string()
+                );
+            }
+        }
+
         // SAFETY: dlopen is called with a NUL-terminated library name and RTLD_NOW.
         let handle = unsafe { libc::dlopen(c_name.as_ptr(), libc::RTLD_NOW) };
         if handle.is_null() {

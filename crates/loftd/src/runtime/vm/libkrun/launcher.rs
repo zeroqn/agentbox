@@ -16,16 +16,23 @@ use crate::runtime::vm::libkrun::api::LibkrunApi;
 pub(in crate::runtime::vm::libkrun) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
 pub(in crate::runtime::vm::libkrun) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
 const VIRGLRENDERER_VENUS: u32 = 1 << 6;
-const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
 const VIRGLRENDERER_RENDER_SERVER: u32 = 1 << 9;
 const VIRGLRENDERER_DRM: u32 = 1 << 10;
+const VIRGLRENDERER_USE_VIDEO: u32 = 1 << 11;
 // Venus Vulkan renderer via an external render server. Proven against the L1
 // virtio-gpu DRM capset: the guest sees a hardware-backed RADV venus device.
-// Native-context GL (USE_EGL|THREAD_SYNC|USE_ASYNC_FENCE_CB) and the venus
-// renderer cannot coexist in one virtio-gpu, so --gpu=drm is venus-only.
-const VIRGLRENDERER_VENUS_FLAGS: u32 =
-    VIRGLRENDERER_VENUS | VIRGLRENDERER_NO_VIRGL | VIRGLRENDERER_RENDER_SERVER | VIRGLRENDERER_DRM;
+// The venus renderer runs in the sandboxed render server (RENDER_SERVER is
+// respected by venus but ignored by virgl), while vrend runs in-process for
+// GL and VA-API video (USE_EGL + USE_VIDEO with a get_drm_fd callback).
+// THREAD_SYNC|ASYNC_FENCE_CB native-context flags still cannot coexist with
+// venus in one virtio-gpu.
+const VIRGLRENDERER_VENUS_FLAGS: u32 = VIRGLRENDERER_USE_EGL
+    | VIRGLRENDERER_VENUS
+    | VIRGLRENDERER_RENDER_SERVER
+    | VIRGLRENDERER_DRM
+    | VIRGLRENDERER_USE_VIDEO;
 const GPU_SHM_SIZE_BYTES: u64 = 256 * 1024 * 1024;
 // Env var the supervisor sets on the VM worker carrying the parent end of the
 // SOCK_SEQPACKET socketpair connected to the render-server runner.
