@@ -164,6 +164,7 @@ let
         mkdir -p ./usr/lib
         ln -s ${pkgs.mesa} ./usr/lib/loftd-mesa-runtime
         ln -s ${pkgs.mesa} ./usr/lib/loftd-software-renderer
+        ln -s ${pkgs.fontconfig.out} ./usr/lib/loftd-fontconfig
       ''}
       ${pkgs.lib.optionalString (imageVariant == "loftd" && rioBin != null) ''
         cp ${rioBin}/share/terminfo/r/rio ./home/dev/.terminfo/r/rio

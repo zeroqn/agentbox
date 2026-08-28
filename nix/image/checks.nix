@@ -268,6 +268,10 @@ let
               grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/loftd-mesa-runtime' ${containerSourceFile}
               grep -F './usr/lib/loftd-software-renderer' ${containerSourceFile}
               grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/loftd-software-renderer' ${containerSourceFile}
+              grep -F 'pkgs.fontconfig' ${layersSourceFile}
+              grep -F './usr/lib/loftd-fontconfig' ${containerSourceFile}
+              grep -F 'ln -s ${"$"}{pkgs.fontconfig.out} ./usr/lib/loftd-fontconfig' ${containerSourceFile}
+              test -f ${pkgs.fontconfig.out}/etc/fonts/fonts.conf
               ${pkgs.lib.optionalString (rioBin != null) ''
                 test -x ${rioBin}/bin/rio
                 grep -F './home/dev/.terminfo/r' ${containerSourceFile}

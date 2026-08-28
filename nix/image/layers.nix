@@ -457,6 +457,7 @@ let
       pkgs.lib.optional (rioBin != null) rioBin
       ++ [
         pkgs.mesa
+        pkgs.fontconfig.out
         pkgs.perf
         pkgs.strace
         pkgs.waypipe

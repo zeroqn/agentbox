@@ -7,6 +7,7 @@ use crate::guest_init::components::rootless::idmap::WRAPPER_BIN_DIR;
 
 const UTF8_LOCALE_DEFAULT: &str = "C.UTF-8";
 const UTF8_LOCALE_ENV_NAMES: [&str; 2] = ["LANG", "LC_CTYPE"];
+const FONTCONFIG_PATH: &str = "/usr/lib/loftd-fontconfig/etc/fonts";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::guest_init) struct ShellEnvironment {
@@ -34,6 +35,7 @@ pub(in crate::guest_init) fn derive(
         ("XDG_STATE_HOME".to_owned(), format!("{home}/.local/state")),
         ("XDG_CACHE_HOME".to_owned(), format!("{home}/.cache")),
         ("TMPDIR".to_owned(), tmpdir.display().to_string()),
+        ("FONTCONFIG_PATH".to_owned(), FONTCONFIG_PATH.to_owned()),
     ];
     if let Some(runtime_dir) = &runtime_dir {
         vars.push((

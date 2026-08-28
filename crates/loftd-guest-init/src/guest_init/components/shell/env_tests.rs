@@ -55,6 +55,17 @@ fn internal_shell_environment_omits_docker_host_without_container_storage() {
 }
 
 #[test]
+fn internal_shell_environment_exports_fontconfig_path() {
+    let identity = DevIdentity::new(1234, 1235, PathBuf::from("/nix/store/fish/bin/fish"));
+    let shell_env = derive(&identity, false, None);
+
+    assert!(shell_env.vars.contains(&(
+        "FONTCONFIG_PATH".to_owned(),
+        "/usr/lib/loftd-fontconfig/etc/fonts".to_owned()
+    )));
+}
+
+#[test]
 fn internal_shell_environment_exports_pulse_server_when_configured() {
     let identity = DevIdentity::new(1234, 1235, PathBuf::from("/nix/store/fish/bin/fish"));
     let shell_env = derive(&identity, false, Some("tcp:192.0.2.10:4713"));
