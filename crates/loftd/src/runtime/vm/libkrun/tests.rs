@@ -553,6 +553,7 @@ fn fake_api_records_direct_libkrun_v1_call_order() {
 #[test]
 fn drm_gpu_mode_enables_venus_render_server_flags_before_start() {
     const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
+    const VIRGLRENDERER_THREAD_SYNC: u32 = 1 << 1;
     const VIRGLRENDERER_VENUS: u32 = 1 << 6;
     const VIRGLRENDERER_RENDER_SERVER: u32 = 1 << 9;
     const VIRGLRENDERER_DRM: u32 = 1 << 10;
@@ -598,6 +599,7 @@ fn drm_gpu_mode_enables_venus_render_server_flags_before_start() {
         Call::SetGpuOptions3(
             7,
             VIRGLRENDERER_USE_EGL
+                | VIRGLRENDERER_THREAD_SYNC
                 | VIRGLRENDERER_VENUS
                 | VIRGLRENDERER_RENDER_SERVER
                 | VIRGLRENDERER_DRM

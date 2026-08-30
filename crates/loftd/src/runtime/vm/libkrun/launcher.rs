@@ -17,6 +17,7 @@ pub(in crate::runtime::vm::libkrun) const PROFILE_KERNEL_CMDLINE_APPEND: &str =
     "ignore_loglevel loglevel=7 printk.time=1 initcall_debug";
 pub(in crate::runtime::vm::libkrun) const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
 const VIRGLRENDERER_USE_EGL: u32 = 1 << 0;
+const VIRGLRENDERER_THREAD_SYNC: u32 = 1 << 1;
 const VIRGLRENDERER_VENUS: u32 = 1 << 6;
 const VIRGLRENDERER_RENDER_SERVER: u32 = 1 << 9;
 const VIRGLRENDERER_DRM: u32 = 1 << 10;
@@ -26,9 +27,12 @@ const VIRGLRENDERER_USE_VIDEO: u32 = 1 << 11;
 // The venus renderer runs in the sandboxed render server (RENDER_SERVER is
 // respected by venus but ignored by virgl), while vrend runs in-process for
 // GL and VA-API video (USE_EGL + USE_VIDEO with a get_drm_fd callback).
-// THREAD_SYNC|ASYNC_FENCE_CB native-context flags still cannot coexist with
-// venus in one virtio-gpu.
+// THREAD_SYNC enables a background vrend-sync thread that retires GL fences
+// independently of the guest's command submission. This is required for video
+// decode (which blocks synchronously on the decode fence) — without it, the
+// fence is only checked once at the end of submit and never again.
 const VIRGLRENDERER_VENUS_FLAGS: u32 = VIRGLRENDERER_USE_EGL
+    | VIRGLRENDERER_THREAD_SYNC
     | VIRGLRENDERER_VENUS
     | VIRGLRENDERER_RENDER_SERVER
     | VIRGLRENDERER_DRM

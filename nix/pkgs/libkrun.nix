@@ -15,7 +15,7 @@ let
     url = "file:///home/dev/loftd/agentbox/deps/libkrun";
     # deps/libkrun submodule (loftd fork), committed with the
     # krun_set_gpu_options3 render-server fd plumbing.
-    rev = "ac13a578dd6b1b580a26b7ba4258bd6bcbb8da16";
+    rev = "47d7bf26106d76e748576228ba9c8dd7f47d1a91";
     shallow = true;
   };
 in
