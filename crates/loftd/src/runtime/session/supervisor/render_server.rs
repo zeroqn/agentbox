@@ -29,6 +29,10 @@ use crate::runtime::vm::libkrun::RENDER_SERVER_FD_ENV;
 pub(crate) const RENDER_SERVER_EXEC_PATH_ENV: &str = "RENDER_SERVER_EXEC_PATH";
 pub(crate) const RENDER_SERVER_LD_LIBRARY_PATH_ENV: &str = "LD_LIBRARY_PATH";
 pub(crate) const RENDER_SERVER_VK_DRIVER_FILES_ENV: &str = "VK_DRIVER_FILES";
+// Redirect Mesa's on-disk shader cache into a landlock-allowed writable
+// tempfs (the render server has no writable rules for $HOME/.cache).
+const RENDER_SERVER_MESA_SHADER_CACHE_DIR_ENV: &str = "MESA_SHADER_CACHE_DIR";
+const RENDER_SERVER_MESA_SHADER_CACHE_DIR_VALUE: &str = "/dev/shm/mesa-cache";
 
 const MESA_LIBDIR_ENV: &str = "LOFTD_MESA_LIBDIR";
 const MESA_ICD_ENV: &str = "LOFTD_MESA_ICD";
@@ -88,6 +92,10 @@ impl RenderServerEnv {
             (
                 OsString::from(RENDER_SERVER_VK_DRIVER_FILES_ENV),
                 self.mesa_icd.clone().into_os_string(),
+            ),
+            (
+                OsString::from(RENDER_SERVER_MESA_SHADER_CACHE_DIR_ENV),
+                OsString::from(RENDER_SERVER_MESA_SHADER_CACHE_DIR_VALUE),
             ),
         ]
     }
@@ -279,6 +287,10 @@ mod tests {
         assert!(vars.contains(&(
             OsString::from(RENDER_SERVER_VK_DRIVER_FILES_ENV),
             OsString::from("/nix/store/mesa-mesa-26.1.8/share/vulkan/icd.d/radeon_icd.x86_64.json")
+        )));
+        assert!(vars.contains(&(
+            OsString::from(RENDER_SERVER_MESA_SHADER_CACHE_DIR_ENV),
+            OsString::from(RENDER_SERVER_MESA_SHADER_CACHE_DIR_VALUE)
         )));
     }
 }

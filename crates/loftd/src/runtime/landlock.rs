@@ -705,31 +705,53 @@ fn file_access_rights() -> landlock::BitFlags<AccessFs> {
 /// stack, whose transitive dependencies (libLLVM, libdrm, libxcb, ...) live in
 /// separate immutable Nix store paths.  The rules therefore grant RO+Execute on
 /// the whole `/nix/store` rather than trying to enumerate a closure, RW +
-/// device ioctl on `/dev` (dri render node, `/dev/shm` blobs, urandom, null),
-/// and RO on `/sys` and `/proc` (libdrm sysfs and loader inspection).
+/// device ioctl on `/dev` (dri render node, urandom, null), and RO on `/sys`
+/// and `/proc` (libdrm sysfs and loader inspection).
+///
+/// `/dev/shm` and `/tmp` get their own writable rules: landlock `PathBeneath`
+/// rules are tied to the filesystem of the path, so the `/dev` rule does not
+/// extend to the separate tmpfs mounted at `/dev/shm`, and Mesa/RADV writes its
+/// shader cache and temporary blobs there during context creation.
 pub(crate) fn apply_render_server_rules() -> Result<()> {
     let fs_access = AccessFs::from_all(ABI::V5);
     let mut ruleset = Ruleset::default().handle_access(fs_access)?.create()?;
-    let read_execute = make_bitflags!(AccessFs::{Execute | ReadFile | ReadDir});
-    let read = make_bitflags!(AccessFs::{ReadFile | ReadDir});
-    for (path, access) in [
-        (Path::new("/nix/store"), read_execute),
-        // libdrm lists DRM render nodes by opening `/dev/dri` as a directory,
-        // which requires ReadDir in addition to the file/device rights.
-        (
-            Path::new("/dev"),
-            file_access_rights() | make_bitflags!(AccessFs::{ReadDir}),
-        ),
-        (Path::new("/sys"), read),
-        (Path::new("/proc"), read),
-    ] {
-        let path_fd = PathFd::new(path)
+    for (path, access) in render_server_rule_paths() {
+        let path_fd = PathFd::new(&path)
             .with_context(|| format!("failed to open Landlock rule {}", path.display()))?;
         ruleset = ruleset.add_rule(PathBeneath::new(path_fd, access))?;
     }
     let status = ruleset.restrict_self()?;
     tracing::debug!(?status, "render server Landlock restriction status");
     Ok(())
+}
+
+/// The render-server landlock rule set.
+///
+/// Landlock `PathBeneath` rules are tied to the filesystem of the path, so a
+/// rule on `/dev` does NOT extend to the separate tmpfs mounted at `/dev/shm`
+/// (nor to the `/tmp` mount). The render server needs writable scratch for
+/// Mesa/RADV's shader cache and temporary blobs during context creation.
+fn render_server_rule_paths() -> Vec<(PathBuf, landlock::BitFlags<AccessFs>)> {
+    let read_execute = make_bitflags!(AccessFs::{Execute | ReadFile | ReadDir});
+    let read = make_bitflags!(AccessFs::{ReadFile | ReadDir});
+    let writable = make_bitflags!(AccessFs::{
+        ReadFile | WriteFile | ReadDir | Execute | Truncate | MakeReg | MakeDir
+        | RemoveFile | RemoveDir
+    });
+    vec![
+        (PathBuf::from("/nix/store"), read_execute),
+        // libdrm lists DRM render nodes by opening `/dev/dri` as a directory,
+        // which requires ReadDir in addition to the file/device rights.
+        (
+            PathBuf::from("/dev"),
+            file_access_rights() | make_bitflags!(AccessFs::{ReadDir}),
+        ),
+        (PathBuf::from("/sys"), read),
+        (PathBuf::from("/proc"), read),
+        // Separate mount points from `/dev` and `/`; writable scratch for Mesa.
+        (PathBuf::from("/dev/shm"), writable),
+        (PathBuf::from("/tmp"), writable),
+    ]
 }
 
 fn ensure_status(mode: LandlockMode, status: RestrictionStatus) -> Result<()> {
@@ -1166,6 +1188,69 @@ mod tests {
         assert!(ensure_fully_enforced_for_test(LandlockMode::BestEffort, false).is_ok());
         assert!(ensure_fully_enforced_for_test(LandlockMode::All, true).is_ok());
         assert!(ensure_fully_enforced_for_test(LandlockMode::Relax, true).is_ok());
+    }
+
+    #[test]
+    fn render_server_rules_grant_writable_scratch_mounts() {
+        let rules = render_server_rule_paths();
+        let rule_for = |path: &str| -> landlock::BitFlags<AccessFs> {
+            rules
+                .iter()
+                .find(|(p, _)| p == Path::new(path))
+                .unwrap_or_else(|| panic!("render server rules must include {path}"))
+                .1
+        };
+
+        // `/dev/shm` and `/tmp` are separate mounts from `/dev` and `/`, so
+        // they need explicit rules; Mesa/RADV writes its shader cache and
+        // temporary blobs there during context creation.
+        for path in ["/dev/shm", "/tmp"] {
+            let access = rule_for(path);
+            assert!(
+                access.contains(AccessFs::WriteFile),
+                "{path} must be writable"
+            );
+            assert!(
+                access.contains(AccessFs::ReadFile),
+                "{path} must be readable"
+            );
+            assert!(
+                access.contains(AccessFs::ReadDir),
+                "{path} must be listable"
+            );
+            assert!(
+                access.contains(AccessFs::MakeReg) && access.contains(AccessFs::MakeDir),
+                "{path} must allow creating files and directories"
+            );
+            // Mesa/RADV's shader-cache atomic write does `rename(.tmp, final)` then
+            // `unlink(.tmp)`; those need the Remove* rights on the parent dir.
+            assert!(
+                access.contains(AccessFs::RemoveFile) && access.contains(AccessFs::RemoveDir),
+                "{path} must allow removing files and directories for atomic cache writes"
+            );
+        }
+
+        let store = rule_for("/nix/store");
+        assert!(
+            store.contains(AccessFs::Execute),
+            "/nix/store must be executable for dlopen"
+        );
+        let dev = rule_for("/dev");
+        assert!(
+            dev.contains(AccessFs::IoctlDev),
+            "/dev must allow device ioctl"
+        );
+        assert!(
+            dev.contains(AccessFs::ReadDir),
+            "/dev must be listable for DRM node discovery"
+        );
+        for path in ["/sys", "/proc"] {
+            let access = rule_for(path);
+            assert!(
+                access.contains(AccessFs::ReadFile),
+                "{path} must be readable"
+            );
+        }
     }
 
     #[test]
