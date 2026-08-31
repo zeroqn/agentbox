@@ -1,0 +1,105 @@
+Align virglrenderer's vendored pipe_video_profile enum with Mesa 26.1.8
+
+virglrenderer vendors src/gallium/include/pipe/p_video_enums.h (old Mesa
+<= 25 layout). The guest runs Mesa 26.1.8, whose enum is renumbered:
+MPEG4_SIMPLE/MPEG4_ADVANCED_SIMPLE are gone (-2 shift) and
+HEVC_MAIN10_444/HEVC_MAIN_422/HEVC_MAIN10_422 were inserted (+3 shift).
+The wire profile is a bare 8-bit value (struct virgl_video_caps.profile),
+so mismatched layouts silently drop HEVC/AV1 and mislabel H.264 entries
+in guest vainfo. Sync the vendored layout and the two conversion
+functions to the Mesa 26.1.8 mapping.
+
+--- a/src/gallium/include/pipe/p_video_enums.h
++++ b/src/gallium/include/pipe/p_video_enums.h
+@@ -51,8 +51,6 @@
+    PIPE_VIDEO_PROFILE_MPEG1,
+    PIPE_VIDEO_PROFILE_MPEG2_SIMPLE,
+    PIPE_VIDEO_PROFILE_MPEG2_MAIN,
+-   PIPE_VIDEO_PROFILE_MPEG4_SIMPLE,
+-   PIPE_VIDEO_PROFILE_MPEG4_ADVANCED_SIMPLE,
+    PIPE_VIDEO_PROFILE_VC1_SIMPLE,
+    PIPE_VIDEO_PROFILE_VC1_MAIN,
+    PIPE_VIDEO_PROFILE_VC1_ADVANCED,
+@@ -68,11 +66,15 @@
+    PIPE_VIDEO_PROFILE_HEVC_MAIN_10,
+    PIPE_VIDEO_PROFILE_HEVC_MAIN_STILL,
+    PIPE_VIDEO_PROFILE_HEVC_MAIN_12,
++   PIPE_VIDEO_PROFILE_HEVC_MAIN10_444,
++   PIPE_VIDEO_PROFILE_HEVC_MAIN_422,
++   PIPE_VIDEO_PROFILE_HEVC_MAIN10_422,
+    PIPE_VIDEO_PROFILE_HEVC_MAIN_444,
+    PIPE_VIDEO_PROFILE_JPEG_BASELINE,
+    PIPE_VIDEO_PROFILE_VP9_PROFILE0,
+    PIPE_VIDEO_PROFILE_VP9_PROFILE2,
+    PIPE_VIDEO_PROFILE_AV1_MAIN,
++   PIPE_VIDEO_PROFILE_AV1_PROFILE2,
+    PIPE_VIDEO_PROFILE_MAX
+ };
+ 
+--- a/src/vrend/virgl_video.c
++++ b/src/vrend/virgl_video.c
+@@ -131,10 +131,6 @@
+       return PIPE_VIDEO_PROFILE_MPEG2_SIMPLE;
+    case VAProfileMPEG2Main:
+       return PIPE_VIDEO_PROFILE_MPEG2_MAIN;
+-   case VAProfileMPEG4Simple:
+-      return PIPE_VIDEO_PROFILE_MPEG4_SIMPLE;
+-   case VAProfileMPEG4AdvancedSimple:
+-      return PIPE_VIDEO_PROFILE_MPEG4_ADVANCED_SIMPLE;
+    case VAProfileVC1Simple:
+       return PIPE_VIDEO_PROFILE_VC1_SIMPLE;
+    case VAProfileVC1Main:
+@@ -142,7 +138,7 @@
+    case VAProfileVC1Advanced:
+       return PIPE_VIDEO_PROFILE_VC1_ADVANCED;
+    case VAProfileH264ConstrainedBaseline:
+-      return PIPE_VIDEO_PROFILE_MPEG4_AVC_BASELINE;
++      return PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE;
+    case VAProfileH264Main:
+       return PIPE_VIDEO_PROFILE_MPEG4_AVC_MAIN;
+    case VAProfileH264High:
+@@ -224,17 +220,13 @@
+       return VAProfileMPEG2Simple;
+    case PIPE_VIDEO_PROFILE_MPEG2_MAIN:
+       return VAProfileMPEG2Main;
+-   case PIPE_VIDEO_PROFILE_MPEG4_SIMPLE:
+-      return VAProfileMPEG4Simple;
+-   case PIPE_VIDEO_PROFILE_MPEG4_ADVANCED_SIMPLE:
+-      return VAProfileMPEG4AdvancedSimple;
+    case PIPE_VIDEO_PROFILE_VC1_SIMPLE:
+       return VAProfileVC1Simple;
+    case PIPE_VIDEO_PROFILE_VC1_MAIN:
+       return VAProfileVC1Main;
+    case PIPE_VIDEO_PROFILE_VC1_ADVANCED:
+       return VAProfileVC1Advanced;
+-   case PIPE_VIDEO_PROFILE_MPEG4_AVC_BASELINE:
++   case PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE:
+       return VAProfileH264ConstrainedBaseline;
+    case PIPE_VIDEO_PROFILE_MPEG4_AVC_MAIN:
+       return VAProfileH264Main;
+@@ -256,9 +248,12 @@
+    case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH10:
+    case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH422:
+    case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH444:
+-   case PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE:
++   case PIPE_VIDEO_PROFILE_MPEG4_AVC_BASELINE:
+    case PIPE_VIDEO_PROFILE_HEVC_MAIN_12:
+    case PIPE_VIDEO_PROFILE_HEVC_MAIN_STILL:
++   case PIPE_VIDEO_PROFILE_HEVC_MAIN10_444:
++   case PIPE_VIDEO_PROFILE_HEVC_MAIN_422:
++   case PIPE_VIDEO_PROFILE_HEVC_MAIN10_422:
+    case PIPE_VIDEO_PROFILE_HEVC_MAIN_444:
+    case PIPE_VIDEO_PROFILE_UNKNOWN:
+       return VAProfileNone;
+--- a/src/vrend/vrend_video.c
++++ b/src/vrend/vrend_video.c
+@@ -703,6 +703,9 @@
+     case PIPE_VIDEO_PROFILE_HEVC_MAIN_10:
+     case PIPE_VIDEO_PROFILE_HEVC_MAIN_STILL:
+     case PIPE_VIDEO_PROFILE_HEVC_MAIN_12:
++    case PIPE_VIDEO_PROFILE_HEVC_MAIN10_444:
++    case PIPE_VIDEO_PROFILE_HEVC_MAIN_422:
++    case PIPE_VIDEO_PROFILE_HEVC_MAIN10_422:
+     case PIPE_VIDEO_PROFILE_HEVC_MAIN_444:
+         modify_h265_picture_desc(cdc, tgt, &desc->h265);
+         break;

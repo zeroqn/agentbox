@@ -18,6 +18,11 @@ let
             (
               final: prev: {
                 mesa = headless.packages.${system}.mesa or prev.mesa;
+                virglrenderer = prev.virglrenderer.overrideAttrs (old: {
+                  patches = (old.patches or []) ++ [
+                    ../pkgs/patches/virglrenderer-enum-26.patch
+                  ];
+                });
               }
             );
       }
