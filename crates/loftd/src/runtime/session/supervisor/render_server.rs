@@ -122,6 +122,16 @@ pub(crate) struct RenderServerGuard {
 }
 
 impl RenderServerGuard {
+    /// Detach the runner from the launcher's lifetime.
+    ///
+    /// Used when a managed session detaches while the VM worker is still
+    /// running: the worker inherited its own copy of `parent_fd`, so the
+    /// render server must stay alive to keep serving venus context creation.
+    /// Dropping the guard afterwards only closes the launcher's `parent_fd`.
+    pub(crate) fn disarm(&mut self) {
+        self.pid = -1;
+    }
+
     fn terminate_runner(&mut self) {
         if self.pid > 0 {
             // SAFETY: pid is the launcher's direct fork child; ECHILD is fine
@@ -257,6 +267,7 @@ fn render_server_policy_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::seccomp::allowed_syscalls_from_policy;
 
     fn env() -> RenderServerEnv {
         RenderServerEnv {
@@ -292,5 +303,59 @@ mod tests {
             OsString::from(RENDER_SERVER_MESA_SHADER_CACHE_DIR_ENV),
             OsString::from(RENDER_SERVER_MESA_SHADER_CACHE_DIR_VALUE)
         )));
+    }
+
+    #[test]
+    fn disarmed_render_server_guard_leaves_the_runner_alive_on_drop() {
+        // A detached managed session returns from run_helper_process while the
+        // VM worker (which inherits its own copy of the socketpair) is still
+        // running; the render server must survive the launcher exit so the
+        // proxy can keep creating venus contexts.  Disarming the guard makes
+        // Drop skip the SIGTERM and just close the launcher's parent_fd.
+        // SAFETY: the child only loops in pause(); the parent reaps it after
+        // the assertion, so no state is shared with the test harness.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            loop {
+                unsafe { libc::pause() };
+            }
+        }
+        let mut guard = RenderServerGuard {
+            pid,
+            parent_fd: -1,
+            env: env(),
+        };
+        guard.disarm();
+        drop(guard);
+        let runner_alive = unsafe { libc::kill(pid, 0) } == 0;
+        // Cleanup even on assertion failure.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+        assert!(
+            runner_alive,
+            "disarmed render server guard must not signal its runner on drop"
+        );
+    }
+
+    #[test]
+    fn render_server_seccomp_policy_allows_venus_driver_syscalls() {
+        // The venus render server's RADV driver calls these during the first
+        // context create (shader-cache setup + worker thread tuning). With the
+        // default mismatch_action "trap", a missing allowlist entry SIGSYS-kills
+        // the server ~5s after proxy init, before the first CtxCreate completes.
+        // Regression guard for the chromium --gpu=drm venus smoke baseline.
+        let policy_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/seccomp/render-server.json");
+        let allowed =
+            allowed_syscalls_from_policy(&policy_path).expect("parse render server policy");
+        for syscall in ["flock", "mkdir", "sched_setscheduler", "setpriority"] {
+            assert!(
+                allowed.contains(syscall),
+                "render server seccomp policy must allow {syscall} (venus RADV driver)"
+            );
+        }
     }
 }

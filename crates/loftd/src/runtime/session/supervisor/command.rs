@@ -42,7 +42,7 @@ pub(crate) fn run_helper_process(
         None
     };
     let ready_fd = ready_pipe.as_ref().and_then(ParentReadyPipe::writer_fd);
-    let render_server = if config.gpu_mode == GpuMode::Drm {
+    let mut render_server = if config.gpu_mode == GpuMode::Drm {
         Some(render_server::spawn_render_server()?)
     } else {
         None
@@ -159,7 +159,16 @@ pub(crate) fn run_helper_process(
             )
         });
         return match attach_result {
-            Ok(AttachOutcome::Detached) => Ok(ChildStatus::detached()),
+            Ok(AttachOutcome::Detached) => {
+                // The launcher exits while the VM worker keeps running. The
+                // render server's real peer is the worker's inherited
+                // socketpair copy, so disarm the guard: dropping it must only
+                // close the launcher's parent_fd, not SIGTERM the runner.
+                if let Some(guard) = render_server.as_mut() {
+                    guard.disarm();
+                }
+                Ok(ChildStatus::detached())
+            }
             Ok(AttachOutcome::Exited(code)) => {
                 let status = match child.wait() {
                     Ok(status) => status,
