@@ -29,7 +29,7 @@ in
     systems = {
       x86_64-linux = {
         asset = "dirge-x86_64-unknown-linux-gnu-sandbox.tar.gz";
-        hash = "sha256-NBOD+o2aSt/WC79UfNWWcqAdAAYcME4WEMn87s1vCYk=";
+        hash = "sha256-Bo72wotCZ4g1te3/VTQ1w1gYBpd9cmxwhfV699r3/6w=";
       };
     };
   };
@@ -130,11 +130,11 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-dd6a6b7d0229";
+    tag = "sha-93474b6e2bed";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-+wIkie2l+WoEcKjNYCBbopL7Hm40IRtob6/iFfj6EWo=";
+        hash = "sha256-QyorRjlHu97faMNrpU/ZZP6LOh1ulkp2jEegdy/P4dc=";
       };
     };
   };
