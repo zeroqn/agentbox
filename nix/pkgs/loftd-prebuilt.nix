@@ -27,6 +27,20 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
         pkgs.passt
         pkgs.util-linux
       ];
+      renderServerIcdPath =
+        "${pkgs.mesa}/share/vulkan/icd.d/radeon_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json";
+      renderServerWrapperArgs =
+        [
+          "--set"
+          "LOFTD_MESA_LIBDIR"
+          "${pkgs.mesa}/lib"
+          "--set"
+          "LOFTD_MESA_ICD"
+          renderServerIcdPath
+          "--set"
+          "LOFTD_VULKAN_LOADER_LIBDIR"
+          "${pkgs.vulkan-loader}/lib"
+        ];
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "loftd";
@@ -40,6 +54,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
       nativeBuildInputs = [
         pkgs.autoPatchelfHook
         pkgs.binutils
+        pkgs.makeWrapper
       ];
 
       buildInputs = [
@@ -62,6 +77,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
 
         install -Dm755 "$src" "$out/bin/loftd"
         install -Dm644 ${../../crates/loftd/assets/seccomp/default.json} "$out/share/loftd/seccomp/default.json"
+        install -Dm644 ${../../crates/loftd/assets/seccomp/render-server.json} "$out/share/loftd/seccomp/render-server.json"
         mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd"
         ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah"
         ln -s ${pkgs.btrfs-progs}/bin/btrfs "$out/libexec/loftd-helpers/btrfs"
@@ -69,6 +85,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
         ln -s ${pkgs.util-linux}/bin/blkid "$out/libexec/loftd-helpers/blkid"
         ln -s ${pkgs.passt}/bin/pasta "$out/libexec/loftd-helpers/pasta"
         ln -s ${pkgs.passt}/bin/passt "$out/libexec/loftd-helpers/passt"
+        ln -s ${pkgs.virglrenderer}/libexec/virgl_render_server "$out/libexec/loftd-helpers/virgl_render_server"
         ${pkgs.lib.optionalString (libkrun != null) ''
           for library in ${pkgs.lib.getLib libkrun}/lib/libkrun.so*; do
             ln -s "$library" "$out/lib/loftd/$(basename "$library")"
@@ -79,6 +96,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
             ln -s "$library" "$out/lib/loftd/$(basename "$library")"
           done
         ''}
+        wrapProgram "$out/bin/loftd" ${pkgs.lib.escapeShellArgs renderServerWrapperArgs}
 
         runHook postInstall
       '';
