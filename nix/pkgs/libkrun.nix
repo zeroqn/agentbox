@@ -13,9 +13,11 @@ let
     # and the submodule's `.git` is an indirection file (gitdir: ../.git/modules/...)
     # that Nix only accepts as a shallow repo.
     url = "file:///home/dev/loftd/agentbox/deps/libkrun";
-    # deps/libkrun submodule (loftd fork), committed with the
-    # krun_set_gpu_options3 render-server fd plumbing.
-    rev = "47d7bf26106d76e748576228ba9c8dd7f47d1a91";
+    # deps/libkrun submodule (loftd fork), with the six-fix hardening
+    # (render-server fd ownership, poll-fd lifetime, poison-safe fence
+    # handler, /dev/dri enumeration) plus the krun_set_gpu_options3
+    # render-server fd plumbing.
+    rev = "0fb25eb15f984e99baf4095823d0af45ab6e5d7b";
     shallow = true;
   };
 in
