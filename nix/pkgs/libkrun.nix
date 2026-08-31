@@ -14,6 +14,8 @@ pkgs.stdenvNoCC.mkDerivation {
   pname = "libkrun";
   version = "${release.tag}";
 
+  nativeBuildInputs = [ pkgs.patchelf ];
+
   src = pkgs.fetchurl {
     url = "https://github.com/${release.owner}/${release.repo}/releases/download/${release.tag}/${systemPins.asset}";
     hash = systemPins.hash;
@@ -29,6 +31,22 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -a include/. "$out/include/"
 
     runHook postInstall
+  '';
+
+  postFixup = ''
+    # The loftd prebuilt libkrun has DT_NEEDED on libvirglrenderer.so.1 but
+    # ships no DT_RUNPATH to locate it (the previous ad8a40428d15 release did).
+    # Restore that edge so crun/loftd can load libkrun without an ambient
+    # LD_LIBRARY_PATH; crun's own RUNPATH cannot cover it because DT_RUNPATH is
+    # not transitive across DT_NEEDED children.
+    for so in "$out"/lib/libkrun.so.*; do
+      if [ -L "$so" ]; then
+        continue
+      fi
+      ${pkgs.patchelf}/bin/patchelf \
+        --add-rpath ${pkgs.virglrenderer}/lib \
+        "$so"
+    done
   '';
 
   meta = {
