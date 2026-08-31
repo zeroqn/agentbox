@@ -19,9 +19,11 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::path::{Path, PathBuf};
 
 use crate::runtime::launch::config::{BindMount, DiskAttachment, HostNixOverlay, LaunchConfig};
+use crate::runtime::vm::gpu::GpuMode;
 
 const FD_DIR: &str = "/proc/self/fd";
 const LIBKRUN_KVM_DEVICE: &str = "/dev/kvm";
+const GPU_DRI_DEVICE_DIR: &str = "/dev/dri";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 pub(crate) enum LandlockMode {
@@ -275,6 +277,9 @@ impl EffectivePolicy {
             ));
         }
         path_rules.extend(libkrun_runtime_device_rules());
+        if config.gpu_mode == GpuMode::Drm {
+            path_rules.extend(gpu_runtime_device_rules());
+        }
 
         normalize_path_rules(&mut path_rules);
         compute_read_only_guarantees(&mut path_rules);
@@ -442,6 +447,14 @@ fn managed_attach_socket_rule(attach_socket: &Path) -> Result<PathRule> {
 
 fn libkrun_runtime_device_rules() -> Vec<PathRule> {
     runtime_device_rules_from(&[("kvm", PathBuf::from(LIBKRUN_KVM_DEVICE))])
+}
+
+/// ReadWrite access to the DRM render-node directory for the in-process
+/// virglrenderer (vrend EGL/GL and VA-API video) that runs inside the VM
+/// worker under `--gpu=drm`. The standalone venus render server keeps its own
+/// broader `/dev` rule in `apply_render_server_rules`.
+fn gpu_runtime_device_rules() -> Vec<PathRule> {
+    runtime_device_rules_from(&[("dri", PathBuf::from(GPU_DRI_DEVICE_DIR))])
 }
 
 fn runtime_device_rules_from(candidates: &[(&str, PathBuf)]) -> Vec<PathRule> {
@@ -1291,6 +1304,68 @@ mod tests {
         );
         assert!(!rules.iter().any(|rule| rule.path == device_parent));
         assert!(!rules.iter().any(|rule| rule.path == missing));
+    }
+
+    #[test]
+    fn gpu_runtime_device_rules_grant_read_write_dri_when_device_present() {
+        let rules = gpu_runtime_device_rules();
+        if Path::new(GPU_DRI_DEVICE_DIR).exists() {
+            assert_eq!(rules.len(), 1);
+            assert_eq!(rules[0].path, PathBuf::from(GPU_DRI_DEVICE_DIR));
+            assert_eq!(rules[0].access, PathAccess::ReadWrite);
+            assert_eq!(
+                rules[0].category,
+                PathCategory::RuntimeDevice {
+                    name: "dri".to_owned()
+                }
+            );
+        } else {
+            assert!(
+                rules.is_empty(),
+                "no DRM device directory on this host; gpu device rules must be empty"
+            );
+        }
+    }
+
+    #[test]
+    fn vm_worker_policy_adds_dri_rule_only_for_gpu_mode_drm() {
+        let is_dri_rule = |rule: &PathRule| matches!(&rule.category, PathCategory::RuntimeDevice { name } if name.as_str() == "dri");
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(dir.path());
+        config.gpu_mode = GpuMode::Off;
+
+        let off_policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            dir.path(),
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+        assert!(
+            !off_policy.path_rules.iter().any(is_dri_rule),
+            "gpu device rule must not be granted when gpu mode is off"
+        );
+
+        config.gpu_mode = GpuMode::Drm;
+        let drm_policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            dir.path(),
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+        let dri_rule_granted = drm_policy.path_rules.iter().any(is_dri_rule);
+        if Path::new(GPU_DRI_DEVICE_DIR).exists() {
+            assert!(
+                dri_rule_granted,
+                "gpu mode drm must grant the DRM device directory"
+            );
+        } else {
+            assert!(
+                !dri_rule_granted,
+                "no DRM device directory on this host; nothing to grant"
+            );
+        }
     }
 
     #[test]
