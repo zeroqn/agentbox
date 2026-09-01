@@ -14,9 +14,12 @@ use crate::runtime::session::supervisor::identity;
 use crate::runtime::session::supervisor::managed_exit_marker;
 use crate::runtime::session::supervisor::managed_ready;
 use crate::runtime::session::supervisor::readiness_pipe::HelperReadyWriter;
+use crate::runtime::session::supervisor::render_server;
 use crate::runtime::session::supervisor::rlimits;
 use crate::runtime::session::supervisor::vm_child;
-use crate::runtime::session::supervisor::{LIBKRUN_ENTER_HELPER_ARG, LIBKRUN_VM_WORKER_ARG};
+use crate::runtime::session::supervisor::{
+    LIBKRUN_ENTER_HELPER_ARG, LIBKRUN_VM_WORKER_ARG, RENDER_SERVER_BOOTSTRAP_ARG,
+};
 use crate::runtime::session::task_control;
 use crate::runtime::vm::network::{NetworkManagerSession, PasstWorkerSession, status_exit_code};
 use crate::runtime::vm::prepared_root;
@@ -25,7 +28,7 @@ pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
     let mut args = args.into_iter();
     let subcommand = args.next().ok_or_else(|| {
         anyhow!(
-            "expected internal {LIBKRUN_ENTER_HELPER_ARG} <launch.conf> or {LIBKRUN_VM_WORKER_ARG} <launch.conf> <holder-pid> [passt-fd], got 0 argument(s)"
+            "expected internal {LIBKRUN_ENTER_HELPER_ARG} <launch.conf>, {LIBKRUN_VM_WORKER_ARG} <launch.conf> <holder-pid> [passt-fd], or {RENDER_SERVER_BOOTSTRAP_ARG}, got 0 argument(s)"
         )
     })?;
     let subcommand_text = subcommand.to_string_lossy();
@@ -41,8 +44,11 @@ pub(crate) fn run_internal(args: Vec<OsString>) -> Result<()> {
             run_helper(PathBuf::from(config_path).as_path())
         }
         Some(LIBKRUN_VM_WORKER_ARG) => vm_child::run_vm_worker_internal(args.collect()),
+        Some(RENDER_SERVER_BOOTSTRAP_ARG) => {
+            render_server::run_render_server_bootstrap(args.collect())
+        }
         _ => bail!(
-            "unknown loftd internal command '{subcommand_text}'; expected {LIBKRUN_ENTER_HELPER_ARG} or {LIBKRUN_VM_WORKER_ARG}"
+            "unknown loftd internal command '{subcommand_text}'; expected {LIBKRUN_ENTER_HELPER_ARG}, {LIBKRUN_VM_WORKER_ARG}, or {RENDER_SERVER_BOOTSTRAP_ARG}"
         ),
     }
 }

@@ -713,7 +713,7 @@ fn file_access_rights() -> landlock::BitFlags<AccessFs> {
 
 /// Landlock confinement for the standalone venus render-server runner.
 ///
-/// The runner executes on the host filesystem (it is forked before the
+/// The runner executes on the host filesystem (it is spawned before the
 /// network-enter helper) and dlopens the full mesa/vulkan-loader/virglrenderer
 /// stack, whose transitive dependencies (libLLVM, libdrm, libxcb, ...) live in
 /// separate immutable Nix store paths.  The rules therefore grant RO+Execute on
@@ -725,9 +725,22 @@ fn file_access_rights() -> landlock::BitFlags<AccessFs> {
 /// rules are tied to the filesystem of the path, so the `/dev` rule does not
 /// extend to the separate tmpfs mounted at `/dev/shm`, and Mesa/RADV writes its
 /// shader cache and temporary blobs there during context creation.
+///
+/// TCP bind and connect are denied by handling `AccessNet::{BindTcp |
+/// ConnectTcp}` and adding no `NetPort` rules.  This is defense in depth: the
+/// seccomp allowlist already permits `socket`, `bind`, and `connect` (for the
+/// venus AF_UNIX socketpair and Chromium's engine), so without a Landlock net
+/// deny-all the render server could open TCP sockets.  UDP is a documented
+/// residual — Landlock ABI V5 only covers TCP, and the seccomp policy permits
+/// it.
 pub(crate) fn apply_render_server_rules() -> Result<()> {
     let fs_access = AccessFs::from_all(ABI::V5);
-    let mut ruleset = Ruleset::default().handle_access(fs_access)?.create()?;
+    let net_access = make_bitflags!(AccessNet::{BindTcp | ConnectTcp});
+    let mut ruleset = Ruleset::default()
+        .set_compatibility(CompatLevel::BestEffort)
+        .handle_access(fs_access)?
+        .handle_access(net_access)?
+        .create()?;
     for (path, access) in render_server_rule_paths() {
         let path_fd = PathFd::new(&path)
             .with_context(|| format!("failed to open Landlock rule {}", path.display()))?;
@@ -1366,6 +1379,152 @@ mod tests {
                 "no DRM device directory on this host; nothing to grant"
             );
         }
+    }
+
+    #[test]
+    fn render_server_rules_deny_all_tcp() {
+        // Landlock net restrictions require kernel support for `AccessNet`
+        // (Landlock ABI V5+); probe it with a HardRequirement net-only ruleset
+        // and skip explicitly on older kernels (the seccomp allowlist remains
+        // the enforcement fallback there).
+        let net_supported = Ruleset::default()
+            .set_compatibility(CompatLevel::HardRequirement)
+            .handle_access(make_bitflags!(AccessNet::{BindTcp | ConnectTcp}))
+            .and_then(|ruleset| ruleset.create())
+            .is_ok();
+        if !net_supported {
+            eprintln!(
+                "skipping render_server_rules_deny_all_tcp: kernel lacks Landlock net support"
+            );
+            return;
+        }
+
+        // A live loopback listener makes the child's connect attempt succeed
+        // without Landlock, so a denied connect proves the net deny-all is
+        // enforced rather than just failing for lack of a listener.
+        // SAFETY: socket/bind/listen create a test-local TCP listener.
+        let listener = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(listener >= 0, "failed to create listener socket");
+        let bind_addr = loopback_tcp_addr(0);
+        assert_eq!(
+            unsafe {
+                libc::bind(
+                    listener,
+                    &bind_addr as *const libc::sockaddr_in as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                )
+            },
+            0,
+            "failed to bind listener"
+        );
+        assert_eq!(unsafe { libc::listen(listener, 1) }, 0, "failed to listen");
+        let mut bound = loopback_tcp_addr(0);
+        let mut bound_len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+        // SAFETY: getsockname writes the bound ephemeral port into `bound`.
+        assert_eq!(
+            unsafe {
+                libc::getsockname(
+                    listener,
+                    &mut bound as *mut libc::sockaddr_in as *mut libc::sockaddr,
+                    &mut bound_len,
+                )
+            },
+            0,
+            "getsockname failed"
+        );
+
+        // SAFETY: forks an isolated child that applies the render-server
+        // landlock ruleset and attempts a TCP bind and connect; the parent
+        // reaps it so no state is shared with the test harness.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            let outcome = render_server_tcp_deny_probe(bound.sin_port);
+            // SAFETY: _exit is async-signal-safe and skips destructors.
+            unsafe { libc::_exit(outcome) };
+        }
+        let mut status = 0;
+        // SAFETY: pid is the direct fork child created above.
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        // SAFETY: closing the test's own listener socket.
+        unsafe { libc::close(listener) };
+        assert!(
+            libc::WIFEXITED(status),
+            "render server probe child terminated abnormally"
+        );
+        assert_eq!(
+            libc::WEXITSTATUS(status),
+            0,
+            "render server landlock did not deny TCP bind/connect (probe exit {})",
+            libc::WEXITSTATUS(status)
+        );
+    }
+
+    /// Loopback `sockaddr_in` with the given port in network byte order.
+    fn loopback_tcp_addr(port: u16) -> libc::sockaddr_in {
+        libc::sockaddr_in {
+            sin_family: libc::AF_INET as libc::sa_family_t,
+            sin_port: port.to_be(),
+            sin_addr: libc::in_addr {
+                s_addr: libc::INADDR_LOOPBACK.to_be(),
+            },
+            sin_zero: [0; 8],
+        }
+    }
+
+    /// In an isolated child, apply the render-server landlock ruleset (fs +
+    /// net deny-all, `CompatLevel::BestEffort`) and report via exit code
+    /// whether a TCP bind and a connect to `connect_port` are both denied.
+    fn render_server_tcp_deny_probe(connect_port: u16) -> i32 {
+        let ruleset = match Ruleset::default()
+            .set_compatibility(CompatLevel::BestEffort)
+            .handle_access(AccessFs::from_all(ABI::V5))
+            .and_then(|ruleset| {
+                ruleset.handle_access(make_bitflags!(AccessNet::{BindTcp | ConnectTcp}))
+            })
+            .and_then(|ruleset| ruleset.create())
+        {
+            Ok(ruleset) => ruleset,
+            Err(err) => {
+                eprintln!("render server ruleset creation failed: {err:#}");
+                return 2;
+            }
+        };
+        if let Err(err) = ruleset.restrict_self() {
+            eprintln!("render server restrict_self failed: {err:#}");
+            return 3;
+        }
+        // SAFETY: socket creates a TCP socket in the restricted child.
+        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        if fd < 0 {
+            eprintln!("probe socket failed: {}", std::io::Error::last_os_error());
+            return 4;
+        }
+        let bind_addr = loopback_tcp_addr(0);
+        let connect_addr = loopback_tcp_addr(connect_port);
+        let bind_rc = unsafe {
+            libc::bind(
+                fd,
+                &bind_addr as *const libc::sockaddr_in as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
+        };
+        let connect_rc = unsafe {
+            libc::connect(
+                fd,
+                &connect_addr as *const libc::sockaddr_in as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
+        };
+        // SAFETY: closing the probe socket.
+        unsafe { libc::close(fd) };
+        if bind_rc == 0 || connect_rc == 0 {
+            eprintln!(
+                "render server landlock did not deny TCP: bind_rc={bind_rc} connect_rc={connect_rc}"
+            );
+            return 5;
+        }
+        0
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub(crate) fn run_helper_process(
     };
     let ready_fd = ready_pipe.as_ref().and_then(ParentReadyPipe::writer_fd);
     let mut render_server = if config.gpu_mode == GpuMode::Drm {
-        Some(render_server::spawn_render_server()?)
+        Some(render_server::spawn_render_server(ready_fd)?)
     } else {
         None
     };

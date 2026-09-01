@@ -21,9 +21,13 @@ use crate::runtime::session::task_control::ActiveTaskSpec;
 
 pub(crate) const LIBKRUN_ENTER_HELPER_ARG: &str = "libkrun-network-enter";
 pub(crate) const LIBKRUN_VM_WORKER_ARG: &str = "libkrun-vm-worker-enter";
+pub(crate) const RENDER_SERVER_BOOTSTRAP_ARG: &str = "render-server-bootstrap";
 
 pub(crate) fn is_supervisor_internal_arg(arg: &str) -> bool {
-    matches!(arg, LIBKRUN_ENTER_HELPER_ARG | LIBKRUN_VM_WORKER_ARG)
+    matches!(
+        arg,
+        LIBKRUN_ENTER_HELPER_ARG | LIBKRUN_VM_WORKER_ARG | RENDER_SERVER_BOOTSTRAP_ARG
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,9 +145,10 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_internal_arg_recognizes_helper_and_vm_worker() {
+    fn supervisor_internal_arg_recognizes_helper_vm_worker_and_render_server_bootstrap() {
         assert!(is_supervisor_internal_arg(LIBKRUN_ENTER_HELPER_ARG));
         assert!(is_supervisor_internal_arg(LIBKRUN_VM_WORKER_ARG));
+        assert!(is_supervisor_internal_arg(RENDER_SERVER_BOOTSTRAP_ARG));
         assert!(!is_supervisor_internal_arg("btrfs-rootfs"));
     }
 
