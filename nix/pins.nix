@@ -130,7 +130,7 @@ in
     # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
     # release payloads.
-    tag = "sha-93474b6e2bed";
+    tag = "sha-b4604a40c75f";
     systems = {
       x86_64-linux = {
         asset = "loftd-x86_64-unknown-linux-gnu";
