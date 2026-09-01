@@ -1204,6 +1204,30 @@ mod tests {
     }
 
     #[test]
+    fn packaged_default_seccomp_policy_allows_gpu_drm_worker_syscalls() {
+        let policy: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../assets/seccomp/default.json"))
+                .expect("default seccomp policy should parse");
+        let syscalls =
+            allowed_syscalls_from_policy_value(&policy).expect("default policy should inspect");
+
+        for syscall in [
+            "readlink",
+            "uname",
+            "sched_setaffinity",
+            "setpriority",
+            "sched_setscheduler",
+            "gettid",
+            "sysinfo",
+        ] {
+            assert!(
+                syscalls.contains(syscall),
+                "{syscall} is required by the gpu worker thread during --gpu=drm init when landlock=off"
+            );
+        }
+    }
+
+    #[test]
     fn compile_enforce_policy_reads_policy_before_apply() {
         let dir = tempfile::tempdir().expect("tempdir");
         let policy_path = dir.path().join("default.json");

@@ -109,6 +109,9 @@
         "syscall": "getgid"
       },
       {
+        "syscall": "gettid"
+      },
+      {
         "syscall": "getuid"
       },
       {
@@ -193,6 +196,9 @@
         "syscall": "read"
       },
       {
+        "syscall": "readlink"
+      },
+      {
         "syscall": "readlinkat"
       },
       {
@@ -220,6 +226,12 @@
         "syscall": "sched_getaffinity"
       },
       {
+        "syscall": "sched_setaffinity"
+      },
+      {
+        "syscall": "sched_setscheduler"
+      },
+      {
         "syscall": "sched_yield"
       },
       {
@@ -230,6 +242,9 @@
       },
       {
         "syscall": "set_robust_list"
+      },
+      {
+        "syscall": "setpriority"
       },
       {
         "syscall": "setresgid"
@@ -253,10 +268,16 @@
         "syscall": "symlinkat"
       },
       {
+        "syscall": "sysinfo"
+      },
+      {
         "syscall": "tgkill"
       },
       {
         "syscall": "umask"
+      },
+      {
+        "syscall": "uname"
       },
       {
         "syscall": "unlink"
