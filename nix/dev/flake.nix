@@ -6,18 +6,20 @@
     agentbox.url = "../..";
     nixpkgs.follows = "agentbox/nixpkgs";
     nixpkgsMaster.follows = "agentbox/nixpkgsMaster";
+    headless.url = "github:zeroqn/headless";
   };
 
   outputs =
     {
       nixpkgs,
       nixpkgsMaster,
+      headless,
       ...
     }:
     let
       root = ../..;
       systems = import ../../nix/lib/systems.nix {
-        inherit nixpkgs nixpkgsMaster;
+        inherit nixpkgs headless;
       };
       pins = import ../../nix/pins.nix;
     in
