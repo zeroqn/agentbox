@@ -77,15 +77,15 @@ in
   libkrunRelease = {
     owner = "zeroqn";
     repo = "libkrun";
-    tag = "loftd-0fb25eb15f98";
+    tag = "loftd-3842e7383799";
     systems = {
       x86_64-linux = {
         asset = "libkrun-x86_64-linux-full.tgz";
-        hash = "sha256-KEYs3RpB2UToT2dIlMdjrT/AuyH5A6jcp3QBrb5xDBs=";
+        hash = "sha256-BpmztMASl/H8jqtYWR3f5I9tOsup3odc2SvOxHDhjuY=";
       };
       aarch64-linux = {
         asset = "libkrun-aarch64-linux-full.tgz";
-        hash = "sha256-eDZDhQY3W01czxpa7no8s+nN+YYoqYfDoLA3fUqoPtU=";
+        hash = "sha256-eAmWOjaZiW/brzk+e+OP07OFk17Fv/oVeLG5l8u7Aws=";
       };
     };
   };
