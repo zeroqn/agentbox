@@ -100,7 +100,16 @@
         "syscall": "getdents64"
       },
       {
+        "syscall": "getegid"
+      },
+      {
         "syscall": "geteuid"
+      },
+      {
+        "syscall": "getgid"
+      },
+      {
+        "syscall": "getuid"
       },
       {
         "syscall": "getpeername"
