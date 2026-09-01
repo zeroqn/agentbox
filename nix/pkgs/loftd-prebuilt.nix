@@ -96,7 +96,9 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
             ln -s "$library" "$out/lib/loftd/$(basename "$library")"
           done
         ''}
-        wrapProgram "$out/bin/loftd" ${pkgs.lib.escapeShellArgs renderServerWrapperArgs}
+        wrapProgram "$out/bin/loftd" \
+          --prefix LD_LIBRARY_PATH : "$out/lib/loftd" \
+          ${pkgs.lib.escapeShellArgs renderServerWrapperArgs}
 
         runHook postInstall
       '';
