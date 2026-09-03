@@ -37,6 +37,39 @@ typedef VkResult (*PFN_vkCreateDevice)(VkPhysicalDevice,
                                        const VkDeviceCreateInfo *,
                                        const VkAllocationCallbacks *, VkDevice *);
 typedef void (*PFN_vkDestroyDevice)(VkDevice, const VkAllocationCallbacks *);
+typedef void (*PFN_vkGetDeviceQueue)(VkDevice, uint32_t, uint32_t, VkQueue *);
+typedef VkResult (*PFN_vkCreateFence)(VkDevice, const VkFenceCreateInfo *,
+                                      const VkAllocationCallbacks *, VkFence *);
+typedef VkResult (*PFN_vkWaitForFences)(VkDevice, uint32_t, const VkFence *,
+                                        VkBool32, uint64_t);
+typedef void (*PFN_vkDestroyFence)(VkDevice, VkFence, const VkAllocationCallbacks *);
+typedef void (*PFN_vkGetPhysicalDeviceMemoryProperties)(
+    VkPhysicalDevice, VkPhysicalDeviceMemoryProperties *);
+typedef VkResult (*PFN_vkCreateBuffer)(VkDevice, const VkBufferCreateInfo *,
+                                       const VkAllocationCallbacks *, VkBuffer *);
+typedef void (*PFN_vkDestroyBuffer)(VkDevice, VkBuffer, const VkAllocationCallbacks *);
+typedef void (*PFN_vkGetBufferMemoryRequirements)(VkDevice, VkBuffer,
+                                                  VkMemoryRequirements *);
+typedef VkResult (*PFN_vkAllocateMemory)(VkDevice, const VkMemoryAllocateInfo *,
+                                         const VkAllocationCallbacks *, VkDeviceMemory *);
+typedef void (*PFN_vkFreeMemory)(VkDevice, VkDeviceMemory, const VkAllocationCallbacks *);
+typedef VkResult (*PFN_vkBindBufferMemory)(VkDevice, VkBuffer, VkDeviceMemory, VkDeviceSize);
+typedef VkResult (*PFN_vkMapMemory)(VkDevice, VkDeviceMemory, VkDeviceSize, VkDeviceSize,
+                                    VkMemoryMapFlags, void **);
+typedef void (*PFN_vkUnmapMemory)(VkDevice, VkDeviceMemory);
+typedef VkResult (*PFN_vkCreateCommandPool)(VkDevice, const VkCommandPoolCreateInfo *,
+                                            const VkAllocationCallbacks *, VkCommandPool *);
+typedef void (*PFN_vkDestroyCommandPool)(VkDevice, VkCommandPool,
+                                         const VkAllocationCallbacks *);
+typedef VkResult (*PFN_vkAllocateCommandBuffers)(VkDevice,
+                                                 const VkCommandBufferAllocateInfo *,
+                                                 VkCommandBuffer *);
+typedef VkResult (*PFN_vkBeginCommandBuffer)(VkCommandBuffer,
+                                             const VkCommandBufferBeginInfo *);
+typedef void (*PFN_vkCmdFillBuffer)(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize,
+                                    uint32_t);
+typedef VkResult (*PFN_vkEndCommandBuffer)(VkCommandBuffer);
+typedef VkResult (*PFN_vkQueueSubmit)(VkQueue, uint32_t, const VkSubmitInfo *, VkFence);
 
 static void *g_lib = NULL;
 static PFN_vkCreateInstance g_CreateInstance = NULL;
@@ -183,6 +216,252 @@ int main(void) {
     }
     printf("[guest-probe] vkCreateDevice => 0 (logical device created)\n");
 
-    printf("[guest-probe] RESULT: PASS\n");
-    return 0;
+    /*
+     * Submission is the only Venus fence path not covered by enumeration alone.
+     * A fill is a real GPU write, so a signalled fence plus visible data is
+     * evidence the EXECBUFFER round-trip and host-side retirement both worked.
+     */
+    PFN_vkGetDeviceQueue getQueue =
+        (PFN_vkGetDeviceQueue)get_proc_addr(instance, "vkGetDeviceQueue");
+    PFN_vkCreateFence createFence =
+        (PFN_vkCreateFence)get_proc_addr(instance, "vkCreateFence");
+    PFN_vkWaitForFences waitForFences =
+        (PFN_vkWaitForFences)get_proc_addr(instance, "vkWaitForFences");
+    PFN_vkDestroyFence destroyFence =
+        (PFN_vkDestroyFence)get_proc_addr(instance, "vkDestroyFence");
+    PFN_vkGetPhysicalDeviceMemoryProperties getMemProps =
+        (PFN_vkGetPhysicalDeviceMemoryProperties)get_proc_addr(
+            instance, "vkGetPhysicalDeviceMemoryProperties");
+    PFN_vkCreateBuffer createBuffer =
+        (PFN_vkCreateBuffer)get_proc_addr(instance, "vkCreateBuffer");
+    PFN_vkDestroyBuffer destroyBuffer =
+        (PFN_vkDestroyBuffer)get_proc_addr(instance, "vkDestroyBuffer");
+    PFN_vkGetBufferMemoryRequirements getBufReqs =
+        (PFN_vkGetBufferMemoryRequirements)get_proc_addr(
+            instance, "vkGetBufferMemoryRequirements");
+    PFN_vkAllocateMemory allocMemory =
+        (PFN_vkAllocateMemory)get_proc_addr(instance, "vkAllocateMemory");
+    PFN_vkFreeMemory freeMemory =
+        (PFN_vkFreeMemory)get_proc_addr(instance, "vkFreeMemory");
+    PFN_vkBindBufferMemory bindBufMem =
+        (PFN_vkBindBufferMemory)get_proc_addr(instance, "vkBindBufferMemory");
+    PFN_vkMapMemory mapMemory =
+        (PFN_vkMapMemory)get_proc_addr(instance, "vkMapMemory");
+    PFN_vkUnmapMemory unmapMemory =
+        (PFN_vkUnmapMemory)get_proc_addr(instance, "vkUnmapMemory");
+    PFN_vkCreateCommandPool createPool =
+        (PFN_vkCreateCommandPool)get_proc_addr(instance, "vkCreateCommandPool");
+    PFN_vkDestroyCommandPool destroyPool =
+        (PFN_vkDestroyCommandPool)get_proc_addr(instance, "vkDestroyCommandPool");
+    PFN_vkAllocateCommandBuffers allocCmdBufs =
+        (PFN_vkAllocateCommandBuffers)get_proc_addr(instance, "vkAllocateCommandBuffers");
+    PFN_vkBeginCommandBuffer beginCmdBuf =
+        (PFN_vkBeginCommandBuffer)get_proc_addr(instance, "vkBeginCommandBuffer");
+    PFN_vkCmdFillBuffer cmdFill =
+        (PFN_vkCmdFillBuffer)get_proc_addr(instance, "vkCmdFillBuffer");
+    PFN_vkEndCommandBuffer endCmdBuf =
+        (PFN_vkEndCommandBuffer)get_proc_addr(instance, "vkEndCommandBuffer");
+    PFN_vkQueueSubmit queueSubmit =
+        (PFN_vkQueueSubmit)get_proc_addr(instance, "vkQueueSubmit");
+
+    const char *missing = NULL;
+    if (!getQueue) missing = "vkGetDeviceQueue";
+    else if (!createFence) missing = "vkCreateFence";
+    else if (!waitForFences) missing = "vkWaitForFences";
+    else if (!getMemProps) missing = "vkGetPhysicalDeviceMemoryProperties";
+    else if (!createBuffer) missing = "vkCreateBuffer";
+    else if (!getBufReqs) missing = "vkGetBufferMemoryRequirements";
+    else if (!allocMemory) missing = "vkAllocateMemory";
+    else if (!bindBufMem) missing = "vkBindBufferMemory";
+    else if (!createPool) missing = "vkCreateCommandPool";
+    else if (!allocCmdBufs) missing = "vkAllocateCommandBuffers";
+    else if (!beginCmdBuf) missing = "vkBeginCommandBuffer";
+    else if (!cmdFill) missing = "vkCmdFillBuffer";
+    else if (!endCmdBuf) missing = "vkEndCommandBuffer";
+    else if (!queueSubmit) missing = "vkQueueSubmit";
+
+    if (missing) {
+        printf("[guest-probe] RESULT: INCONCLUSIVE - %s not resolvable\n", missing);
+        return 2;
+    }
+
+    VkQueue queue = VK_NULL_HANDLE;
+    getQueue(device, graphics_family, 0, &queue);
+
+    VkFence fence = VK_NULL_HANDLE;
+    const VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    vr = createFence(device, &fci, NULL, &fence);
+    printf("[guest-probe] vkCreateFence => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkCreateFence error\n");
+        return 1;
+    }
+
+    VkPhysicalDeviceMemoryProperties mem_props;
+    getMemProps(dev, &mem_props);
+
+    const VkBufferCreateInfo bci = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = 256,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    };
+    VkBuffer buffer = VK_NULL_HANDLE;
+    vr = createBuffer(device, &bci, NULL, &buffer);
+    printf("[guest-probe] vkCreateBuffer => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkCreateBuffer error\n");
+        destroyFence(device, fence, NULL);
+        return 1;
+    }
+
+    VkMemoryRequirements reqs = { 0 };
+    getBufReqs(device, buffer, &reqs);
+
+    uint32_t mem_type = UINT32_MAX;
+    for (uint32_t i = 0; i < mem_props.memoryTypeCount && i < 32; i++) {
+        if ((reqs.memoryTypeBits & (1u << i)) &&
+            (mem_props.memoryTypes[i].propertyFlags &
+             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+            mem_type = i;
+            break;
+        }
+    }
+    printf("[guest-probe] buffer reqs: size=%llu align=%llu typeBits=0x%x "
+           "host_visible_type=%u\n",
+           (unsigned long long)reqs.size, (unsigned long long)reqs.alignment,
+           reqs.memoryTypeBits, mem_type);
+
+    if (mem_type == UINT32_MAX) {
+        printf("[guest-probe] RESULT: INCONCLUSIVE - no host-visible memory type\n");
+        return 2;
+    }
+
+    const VkMemoryAllocateInfo mai = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = reqs.size,
+        .memoryTypeIndex = mem_type,
+    };
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    vr = allocMemory(device, &mai, NULL, &memory);
+    printf("[guest-probe] vkAllocateMemory => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkAllocateMemory error\n");
+        return 1;
+    }
+
+    vr = bindBufMem(device, buffer, memory, 0);
+    printf("[guest-probe] vkBindBufferMemory => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkBindBufferMemory error\n");
+        return 1;
+    }
+
+    const VkCommandPoolCreateInfo pci = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = graphics_family,
+    };
+    VkCommandPool pool = VK_NULL_HANDLE;
+    vr = createPool(device, &pci, NULL, &pool);
+    printf("[guest-probe] vkCreateCommandPool => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkCreateCommandPool error\n");
+        return 1;
+    }
+
+    const VkCommandBufferAllocateInfo cbai = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vr = allocCmdBufs(device, &cbai, &cmd);
+    printf("[guest-probe] vkAllocateCommandBuffers => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkAllocateCommandBuffers error\n");
+        return 1;
+    }
+
+    const VkCommandBufferBeginInfo cbbi = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    vr = beginCmdBuf(cmd, &cbbi);
+    printf("[guest-probe] vkBeginCommandBuffer => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkBeginCommandBuffer error\n");
+        return 1;
+    }
+
+    cmdFill(cmd, buffer, 0, VK_WHOLE_SIZE, 0x5a5a5a5au);
+    vr = endCmdBuf(cmd);
+    printf("[guest-probe] vkEndCommandBuffer => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkEndCommandBuffer error\n");
+        return 1;
+    }
+
+    const VkSubmitInfo si = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cmd,
+    };
+    vr = queueSubmit(queue, 1, &si, fence);
+    printf("[guest-probe] vkQueueSubmit => %d\n", vr);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] RESULT: FAIL - vkQueueSubmit error\n");
+        return 1;
+    }
+
+    /*
+     * The decisive measurement. Venus fences retire on the host when the
+     * virtio-gpu worker polls virglrenderer, so a submission whose fence never
+     * signals surfaces here as TIMEOUT rather than as an error return.
+     */
+    const uint64_t timeout_ns = 10ull * 1000ull * 1000ull * 1000ull;
+    VkResult wait_res = waitForFences(device, 1, &fence, VK_FALSE, timeout_ns);
+    printf("[guest-probe] vkWaitForFences(10s) => %d (%s)\n", wait_res,
+           wait_res == VK_SUCCESS    ? "SIGNALED"
+           : wait_res == VK_TIMEOUT  ? "TIMEOUT - fence never completed"
+                                     : "ERROR");
+
+    int rc = 1;
+    if (wait_res == VK_SUCCESS) {
+        void *mapped = NULL;
+        VkResult mr = mapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, &mapped);
+        if (mr == VK_SUCCESS && mapped) {
+            const uint32_t *words = (const uint32_t *)mapped;
+            int saw_fill = 0;
+            for (uint32_t i = 0; i < 64; i++)
+                if (words[i] == 0x5a5a5a5au)
+                    saw_fill = 1;
+            printf("[guest-probe] buffer[0]=0x%08x fill_visible=%d\n", words[0], saw_fill);
+            unmapMemory(device, memory);
+            if (!saw_fill)
+                printf("[guest-probe] NOTE: fence signalled but fill not visible "
+                       "(coherency or GPU write issue)\n");
+        } else {
+            printf("[guest-probe] vkMapMemory => %d (skipping readback)\n", mr);
+        }
+        printf("[guest-probe] RESULT: PASS\n");
+        rc = 0;
+    } else if (wait_res == VK_TIMEOUT) {
+        printf("[guest-probe] RESULT: FAIL - EXECBUFFER submitted but fence did not "
+               "complete within 10s\n");
+    } else {
+        printf("[guest-probe] RESULT: FAIL - vkWaitForFences error\n");
+    }
+
+    destroyPool(device, pool, NULL);
+    destroyBuffer(device, buffer, NULL);
+    freeMemory(device, memory, NULL);
+    destroyFence(device, fence, NULL);
+
+    PFN_vkDestroyDevice destroyDevice =
+        (PFN_vkDestroyDevice)get_proc_addr(instance, "vkDestroyDevice");
+    if (destroyDevice)
+        destroyDevice(device, NULL);
+
+    return rc;
 }

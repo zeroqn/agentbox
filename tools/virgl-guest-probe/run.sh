@@ -101,10 +101,12 @@ cat "$CONSOLE" 2>/dev/null || true
 echo
 echo "=== verdict ==="
 if grep -q "RESULT: PASS" "$CONSOLE" 2>/dev/null; then
-    echo "PASS: the libkrun guest exposed a venus Vulkan device and created a logical device."
+    echo "PASS: the libkrun guest exposed a venus Vulkan device, created a logical device,"
+    echo "      and a vkQueueSubmit fence completed."
     exit 0
 elif grep -q "RESULT: FAIL\|FAIL" "$CONSOLE" 2>/dev/null; then
-    echo "FAIL: the guest did not get a usable venus Vulkan device (see console above)."
+    echo "FAIL: the guest did not get a usable venus Vulkan device, or its submit fence"
+    echo "      did not complete (see console above)."
     exit 1
 else
     echo "INCONCLUSIVE: no probe verdict in the console (see log above)."
