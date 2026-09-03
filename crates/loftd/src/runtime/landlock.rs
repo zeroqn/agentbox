@@ -110,6 +110,7 @@ pub(crate) enum PathCategory {
     ManagedSessionState,
     ProfileOutput,
     RuntimeDevice { name: String },
+    GpuSystemInfo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +280,7 @@ impl EffectivePolicy {
         path_rules.extend(libkrun_runtime_device_rules());
         if config.gpu_mode == GpuMode::Drm {
             path_rules.extend(gpu_runtime_device_rules());
+            path_rules.extend(gpu_system_info_rules());
         }
 
         normalize_path_rules(&mut path_rules);
@@ -363,6 +365,7 @@ impl PathCategory {
             Self::ManagedSessionState => "managed-session-state".to_owned(),
             Self::ProfileOutput => "profile-output".to_owned(),
             Self::RuntimeDevice { name } => format!("runtime-device:{name}"),
+            Self::GpuSystemInfo => "gpu-system-info".to_owned(),
         }
     }
 }
@@ -455,6 +458,27 @@ fn libkrun_runtime_device_rules() -> Vec<PathRule> {
 /// broader `/dev` rule in `apply_render_server_rules`.
 fn gpu_runtime_device_rules() -> Vec<PathRule> {
     runtime_device_rules_from(&[("dri", PathBuf::from(GPU_DRI_DEVICE_DIR))])
+}
+
+/// ReadOnly system-information mounts for the VM worker's in-process
+/// virglrenderer under `--gpu=drm`. Libdrm resolves `/dev/dri/renderD*` by
+/// reading PCI metadata under `/sys`, and Mesa inspects `/proc` while
+/// initializing; without these the vrend winsys fails with
+/// `MESA-LOADER: failed to retrieve device information`. Mirrors the `/sys`
+/// and `/proc` rules granted to the standalone venus render server.
+fn gpu_system_info_rules() -> Vec<PathRule> {
+    vec![
+        PathRule::new(
+            PathCategory::GpuSystemInfo,
+            PathBuf::from("/sys"),
+            PathAccess::ReadOnly,
+        ),
+        PathRule::new(
+            PathCategory::GpuSystemInfo,
+            PathBuf::from("/proc"),
+            PathAccess::ReadOnly,
+        ),
+    ]
 }
 
 fn runtime_device_rules_from(candidates: &[(&str, PathBuf)]) -> Vec<PathRule> {
@@ -1379,6 +1403,56 @@ mod tests {
                 "no DRM device directory on this host; nothing to grant"
             );
         }
+    }
+
+    #[test]
+    fn vm_worker_policy_grants_read_only_sys_and_proc_only_for_gpu_mode_drm() {
+        let is_sys_rule = |rule: &PathRule| matches!(&rule.category, PathCategory::GpuSystemInfo);
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(dir.path());
+        config.gpu_mode = GpuMode::Off;
+
+        let off_policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            dir.path(),
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+        assert!(
+            !off_policy.path_rules.iter().any(is_sys_rule),
+            "system info rules must not be granted when gpu mode is off"
+        );
+
+        config.gpu_mode = GpuMode::Drm;
+        let drm_policy = EffectivePolicy::build_with_fd_report(
+            &config,
+            dir.path(),
+            false,
+            RetainedFdReport::default(),
+        )
+        .unwrap();
+        for path in ["/sys", "/proc"] {
+            let rule = drm_policy
+                .path_rules
+                .iter()
+                .find(|rule| rule.path == Path::new(path))
+                .unwrap_or_else(|| panic!("gpu mode drm must grant read access to {path}"));
+            assert_eq!(rule.category, PathCategory::GpuSystemInfo);
+            assert_eq!(
+                rule.access,
+                PathAccess::ReadOnly,
+                "{path} must be read-only for the VM worker"
+            );
+        }
+    }
+
+    #[test]
+    fn gpu_system_info_report_label_is_explicit() {
+        assert_eq!(
+            PathCategory::GpuSystemInfo.as_report_label(),
+            "gpu-system-info"
+        );
     }
 
     #[test]
