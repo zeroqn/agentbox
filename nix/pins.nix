@@ -5,13 +5,13 @@ in
   agentboxVersion = cargoToml.workspace.package.version;
 
   piCodingAgent = {
-    version = "0.84.2";
+    version = "0.85.1";
     owner = "earendil-works";
     repo = "pi";
-    rev = "v0.84.2";
-    srcHash = "sha256-d29ft9otYxdHRWYIAX8KMHPpppToX9ME5LbPb1rPcYo=";
-    npmDepsHash = "sha256-cx1796NfsTUPWiKUsrvDbMryTWYLEF4svZZMUb31pzI=";
-    aiNpmTarballHash = "sha256-AmJ4Wnaw6y7sWWzYp6su4j7vidLvG7EhHE8KGUTaz0E=";
+    rev = "v0.85.1";
+    srcHash = "sha256-gU8BSiqqOYt2RRuQONHHGvZeSM5KFQVrwif9bmuUXUc=";
+    npmDepsHash = "sha256-6/CE7cCSopNH7cUJDkRLunhhiFDgYkhKi6QRBx8zwes=";
+    aiNpmTarballHash = "sha256-r30RmGF5RFzm/oizfVfeIvgjwP/TplyuMcVVt/XpklM=";
   };
 
   dirge = {
