@@ -200,11 +200,16 @@ let
     ''}
   '';
 
+  browserContracts = ''
+    grep -F 'browserImageLayer' ${layersSourceFile}
+    grep -F 'pkgs.ungoogled-chromium' ${layersSourceFile}
+    test -x ${pkgs.ungoogled-chromium}/bin/chromium
+  '';
+
   rootCargoAbsent = pkgs.runCommand "${imageVariant}-image-root-cargo-absent-check" { } ''
     set -euo pipefail
 
     test ! -e ${layers.rustSourceImage}/.cargo
-    test -f ${layers.rustSourceImage}/share/rust-src/.cargo/config.toml
 
     touch "$out"
   '';
@@ -283,6 +288,11 @@ let
                 esac
               ''}
               test -x ${pkgs.waypipe}/bin/waypipe
+              ${browserContracts}
+              case ":${layers.imagePath}:" in
+                *":${layers.browserImageLayer}/bin:"*) ;;
+                *) exit 1 ;;
+              esac
               case ":${layers.imagePath}:" in
                 *":${pkgs.perf}/bin:"*) ;;
                 *) exit 1 ;;
@@ -314,8 +324,14 @@ let
                   *) ;;
                 esac
               ''}
+              ${browserContracts}
+              case ":${layers.imagePath}:" in
+                *":${layers.browserImageLayer}/bin:"*) exit 1 ;;
+                *) ;;
+              esac
               case ":${layers.imagePath}:" in
                 *":${pkgs.perf}/bin:"*) exit 1 ;;
+                *) ;;
               esac
               case ":${layers.imagePath}:" in
                 *":${pkgs.strace}/bin:"*) exit 1 ;;

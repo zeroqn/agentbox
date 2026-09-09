@@ -1,6 +1,7 @@
 target/
 result
 .omx/
+.smoke/
 
 .dolt/
 

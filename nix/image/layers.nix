@@ -361,10 +361,21 @@ let
     libkrun
     pkgs.starship
   ];
-  toolingImageLayer = pkgs.buildEnv {
+toolingImageLayer = pkgs.buildEnv {
     name = "agentbox-tooling-layer";
     paths = toolingImagePackages;
-    pathsToLink = [ "/" ];
+    pathsToLink = ["/"];
+  };
+
+  # Development browser for the loftd guest GPU smoke. Wrapped
+  # `ungoogled-chromium` (the same package `environment.systemPackages`
+  # installs on NixOS) so the wrapper script provides LD_LIBRARY_PATH /
+  # XDG_DATA_DIRS itself; use the dedicated layer so Chromium updates stay
+  # cache-stable (only this layer's archive changes, not tooling/rust/base).
+  browserImageLayer = pkgs.buildEnv {
+    name = "loftd-browser-layer";
+    paths = [ pkgs.ungoogled-chromium ];
+    pathsToLink = ["/"];
   };
 
   agentImagePackages = [
@@ -456,6 +467,7 @@ let
     ++ pkgs.lib.optionals (imageVariant == "loftd") (
       pkgs.lib.optional (rioBin != null) rioBin
       ++ [
+        browserImageLayer
         pkgs.mesa
         pkgs.fontconfig.out
         pkgs.perf
@@ -477,6 +489,7 @@ let
     ++ pkgs.lib.optionals (imageVariant == "loftd") (
       pkgs.lib.optional (rioBin != null) rioBin
       ++ [
+        browserImageLayer
         pkgs.perf
         pkgs.strace
         pkgs.waypipe
@@ -518,93 +531,85 @@ let
       rustcCommandCompat
       rustAnalyzerCommandCompat
     ];
+browserLayerPaths = [ (toString browserImageLayer) ];
   agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
   toolingLayerPaths = [ (toString toolingImageLayer) ];
   cToolchainLayerPaths = builtins.map toString cToolchainImagePackages;
   rustLayerPaths = [ (toString rustToolchainImageLayer) ];
   dynamicToolchainLayerPaths = [ (toString dynamicToolchainImageLayer) ];
-  agentboxImageLayeringPipeline = [
-    [
-      "split_paths"
-      agentboxLayerPaths
-    ]
+
+  # dockerTools `over rest` group: the first element becomes its own layer,
+  # the remaining text is piped into the following stages. Keep each named
+  # group as its own unflattened layer; only the trailing "rest" is flattened.
+  toolingAndBelow = [
+    [ "split_paths" toolingLayerPaths ]
     [
       "over"
       "rest"
       [
         "pipe"
         [
-          [
-            "split_paths"
-            agentLayerPaths
-          ]
+          [ "split_paths" dynamicToolchainLayerPaths ]
           [
             "over"
             "rest"
             [
               "pipe"
               [
-                [
-                  "split_paths"
-                  toolingLayerPaths
-                ]
-                [
-                  "over"
-                  "rest"
-                  [
-                    "pipe"
-                    [
-                      [
-                        "split_paths"
-                        dynamicToolchainLayerPaths
-                      ]
-                      [
-                        "over"
-                        "rest"
-                        [
-                          "pipe"
-                          [
-                            [
-                              "split_paths"
-                              rustLayerPaths
-                            ]
-                            [
-                              "over"
-                              "rest"
-                              [
-                                "pipe"
-                                [
-                                  [
-                                    "split_paths"
-                                    cToolchainLayerPaths
-                                  ]
-                                  [
-                                    "flatten"
-                                  ]
-                                ]
-                              ]
-                            ]
-                            [
-                              "flatten"
-                            ]
-                          ]
-                        ]
-                      ]
-                    ]
-                  ]
-                ]
-                [
-                  "flatten"
-                ]
+                [ "split_paths" rustLayerPaths ]
+                [ "over" "rest" [ "pipe" [ [ "split_paths" cToolchainLayerPaths ] [ "flatten" ] ] ] ]
+                [ "flatten" ]
               ]
             ]
           ]
-          [
-            "flatten"
-          ]
+          [ "flatten" ]
         ]
       ]
+    ]
+    # The tooling group's "rest" is the flattened remainder (c-toolchain
+    # + base "rest"). Keeping the flatten here matches the pre-browser
+    # pipeline's limit_layers behavior.
+    [ "flatten" ]
+  ];
+
+  # agentbox-layer first, then tooling-and-below as its "rest". The loftd
+  # variant nests the dedicated browser layer at the same depth as tooling so
+  # it stays its own unflattened layer (cache-stable on Chromium updates).
+  agentAndBelow =
+    if imageVariant == "loftd" then
+[
+        [ "split_paths" browserLayerPaths ]
+        [
+          "over"
+          "rest"
+          [
+            "pipe"
+            [
+              [ "split_paths" agentLayerPaths ]
+              [ "over" "rest" [ "pipe" toolingAndBelow ] ]
+              ["flatten"]
+            ]
+          ]
+        ]
+        ["flatten"]
+      ]
+    else
+      [
+        [ "split_paths" agentLayerPaths ]
+        [ "over" "rest" [ "pipe" toolingAndBelow ] ]
+        ["flatten"]
+      ];
+
+  agentboxImageLayeringPipeline = [
+    [
+      "split_paths"
+      agentboxLayerPaths
+    ]
+[
+      "over"
+      "rest"
+      [ "pipe" agentAndBelow ]
     ]
     [
       "flatten"
@@ -623,6 +628,7 @@ in
     agentImageLayer
     agentboxImageLayeringPipeline
     agentboxImageMaxLayers
+    browserImageLayer
     imageContents
     imagePath
     realPodmanBin
