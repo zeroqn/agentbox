@@ -3,6 +3,7 @@
   piCodingAgent,
   rioBin,
   dirge,
+  herdrPrebuilt,
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
@@ -24,6 +25,7 @@ let
       piCodingAgent
       rioBin
       dirge
+      herdrPrebuilt
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
@@ -54,6 +56,7 @@ let
       piCodingAgent
       rioBin
       dirge
+      herdrPrebuilt
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt

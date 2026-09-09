@@ -3,6 +3,7 @@
   piCodingAgent,
   rioBin,
   dirge,
+  herdrPrebuilt,
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
@@ -24,6 +25,7 @@ let
       piCodingAgent
       rioBin
       dirge
+      herdrPrebuilt
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
@@ -217,6 +219,16 @@ let
     esac
   '';
 
+  herdrContracts = ''
+    grep -F 'herdrPrebuilt' ${layersSourceFile}
+    ${
+      pkgs.lib.optionalString (herdrPrebuilt != null) ''
+        test -x ${layers.agentImageLayer}/bin/herdr
+        ${herdrPrebuilt}/bin/herdr --version >/dev/null
+      ''
+    }
+  '';
+
   rootCargoAbsent = pkgs.runCommand "${imageVariant}-image-root-cargo-absent-check" { } ''
     set -euo pipefail
 
@@ -270,6 +282,7 @@ let
         ${terminalMultiplexerContracts}
         ${ghosttyTerminfoContracts}
         ${zvecGrepContracts}
+        ${herdrContracts}
 
         ${
           if imageVariant == "loftd" then

@@ -3,6 +3,7 @@
   piCodingAgent,
   rioBin,
   dirge,
+  herdrPrebuilt,
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
@@ -384,7 +385,8 @@ toolingImageLayer = pkgs.buildEnv {
     dirge
     ompPrebuilt
     zvecGrep
-  ];
+  ]
+  ++ pkgs.lib.optional (herdrPrebuilt != null) herdrPrebuilt;
   agentImageLayer = pkgs.buildEnv {
     name = "agentbox-agent-layer";
     paths = agentImagePackages;

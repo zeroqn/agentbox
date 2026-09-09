@@ -34,6 +34,23 @@ in
     };
   };
 
+  # Pinned by scripts/update-herdr.sh (tag + per-system asset hashes).
+  herdrPrebuiltRelease = {
+    owner = "herdrdev";
+    repo = "herdr";
+    tag = "v0.9.0";
+    systems = {
+      x86_64-linux = {
+        asset = "herdr-linux-x86_64";
+        hash = "sha256-T6GgEVjdgEPaktMbJweAsNzBBgMDjZthysTYGrY/tx8=";
+      };
+      aarch64-linux = {
+        asset = "herdr-linux-aarch64";
+        hash = "sha256-nI2yD7fnQnsTjVNnET8WIf/TGfL2XW8AniWUApEV8NI=";
+      };
+    };
+  };
+
   ompPrebuiltRelease = {
     owner = "can1357";
     repo = "oh-my-pi";

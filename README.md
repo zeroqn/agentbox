@@ -207,6 +207,7 @@ nix build .#loftd-prebuilt
 nix build .#agentbox-musl
 nix build .#rmux-prebuilt
 nix build .#rtk-prebuilt
+nix build .#herdr-prebuilt
 nix build .#libkrunfw
 nix build .#libkrun
 nix build .#crun
@@ -277,6 +278,9 @@ GitHub Actions no longer publishes new agentbox images or release binaries.
   not currently publish this package for `aarch64-linux`.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
+- `.#herdr-prebuilt`: install the pinned published `herdrdev/herdr` Linux
+  release binary (static-PIE) for the current system. The agentbox and loftd
+  images include this package as `herdr` in the agent layer.
 - `.#zvec-grep` (`x86_64-linux`): install the pinned `zvec-ai/zvec-grep` (`zg`)
   hybrid workspace search CLI from the GitHub source archive, wrapped around
   Nixpkgs Node.js. The agent layer keeps the glibc x86_64 native payloads (zvec
@@ -2103,6 +2107,13 @@ Refresh pinned `omp` prebuilt release metadata in `nix/pins.nix` from `can1357/o
 
 ```bash
 nix develop --command ./scripts/update-omp-prebuilt.sh
+```
+
+Refresh pinned `herdrdev/herdr` prebuilt release metadata (tag and per-system
+asset hashes) in `nix/pins.nix`:
+
+```bash
+nix develop --command ./scripts/update-herdr.sh
 ```
 
 Refresh pinned `zvec-ai/zvec-grep` source and npm dependency metadata in

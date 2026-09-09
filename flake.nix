@@ -42,6 +42,9 @@
             inherit pkgs pins libkrun;
           };
           dirge = if dirgePrebuilt != null then dirgePrebuilt else dirgeSource;
+          herdrPrebuilt = import ./nix/pkgs/herdr-prebuilt.nix {
+            inherit pkgs pins;
+          };
           ompPrebuilt = import ./nix/pkgs/omp-prebuilt.nix {
             inherit pkgs pins;
           };
@@ -115,6 +118,7 @@
 
                 piCodingAgent
                 rioBin
+                herdrPrebuilt
                 ompPrebuilt
                 rmuxPrebuilt
                 rtkPrebuilt
@@ -176,6 +180,9 @@
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
           zvec-grep = zvecGrep;
         }
+        // pkgs.lib.optionalAttrs (herdrPrebuilt != null) {
+          herdr-prebuilt = herdrPrebuilt;
+        }
         // pkgs.lib.optionalAttrs (rioBin != null) {
           rio-bin = rioBin;
         }
@@ -203,6 +210,7 @@
               piCodingAgent = packages.pi-coding-agent;
               rioBin = packages.rio-bin or null;
               dirge = packages.dirge;
+              herdrPrebuilt = packages.herdr-prebuilt or null;
               ompPrebuilt = packages.omp-prebuilt;
               rmuxPrebuilt = packages.rmux-prebuilt;
               rtkPrebuilt = packages.rtk-prebuilt or null;
