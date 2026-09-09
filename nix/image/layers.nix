@@ -8,6 +8,8 @@
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
+  doltPrebuilt,
+  beadsPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
@@ -385,6 +387,8 @@ toolingImageLayer = pkgs.buildEnv {
     dirge
     ompPrebuilt
     zvecGrep
+    doltPrebuilt
+    beadsPrebuilt
   ]
   ++ pkgs.lib.optional (herdrPrebuilt != null) herdrPrebuilt;
   agentImageLayer = pkgs.buildEnv {

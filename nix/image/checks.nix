@@ -8,6 +8,8 @@
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
+  doltPrebuilt,
+  beadsPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
@@ -30,6 +32,8 @@ let
       rmuxPrebuilt
       rtkPrebuilt
       zvecGrep
+      doltPrebuilt
+      beadsPrebuilt
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
@@ -229,6 +233,26 @@ let
     }
   '';
 
+  doltContracts = ''
+    grep -F 'doltPrebuilt' ${layersSourceFile}
+    test -x ${layers.agentImageLayer}/bin/dolt
+    HOME="$TMPDIR" ${layers.agentImageLayer}/bin/dolt version | grep -F 'dolt version ${doltPrebuilt.version}'
+    case ":${layers.imagePath}:" in
+      *":${layers.agentImageLayer}/bin:"*) ;;
+      *) exit 1 ;;
+    esac
+  '';
+
+  beadsContracts = ''
+    grep -F 'beadsPrebuilt' ${layersSourceFile}
+    test -x ${layers.agentImageLayer}/bin/bd
+    HOME="$TMPDIR" ${layers.agentImageLayer}/bin/bd version | grep -F 'bd version ${beadsPrebuilt.version}'
+    case ":${layers.imagePath}:" in
+      *":${layers.agentImageLayer}/bin:"*) ;;
+      *) exit 1 ;;
+    esac
+  '';
+
   rootCargoAbsent = pkgs.runCommand "${imageVariant}-image-root-cargo-absent-check" { } ''
     set -euo pipefail
 
@@ -283,6 +307,8 @@ let
         ${ghosttyTerminfoContracts}
         ${zvecGrepContracts}
         ${herdrContracts}
+        ${doltContracts}
+        ${beadsContracts}
 
         ${
           if imageVariant == "loftd" then

@@ -83,6 +83,40 @@ in
     };
   };
 
+  # Pinned by scripts/update-dolt-prebuilt.sh (tag + per-system asset hashes).
+  doltPrebuiltRelease = {
+    owner = "dolthub";
+    repo = "dolt";
+    tag = "v2.3.2";
+    systems = {
+      x86_64-linux = {
+        asset = "dolt-linux-amd64.tar.gz";
+        hash = "sha256-eilJ+isrN5nuHlfm1kUZqNZdZ1/YMvZGnU4H5aHHKxQ=";
+      };
+      aarch64-linux = {
+        asset = "dolt-linux-arm64.tar.gz";
+        hash = "sha256-siMehOBq35XqgcboiUCe56ct5alssDu/G/NDOsdjz5w=";
+      };
+    };
+  };
+
+  # Pinned by scripts/update-beads-prebuilt.sh (tag + per-system asset hashes).
+  beadsPrebuiltRelease = {
+    owner = "gastownhall";
+    repo = "beads";
+    tag = "v1.3.0-rc.1";
+    systems = {
+      x86_64-linux = {
+        asset = "beads_1.3.0-rc.1_linux_amd64.tar.gz";
+        hash = "sha256-8CO25ild0W82hli6XUv/6ZHDaF3kDm3OknX6WGmr9s4=";
+      };
+      aarch64-linux = {
+        asset = "beads_1.3.0-rc.1_linux_arm64.tar.gz";
+        hash = "sha256-NMpPH3ij0nyNgzAu9mydY5bgCfcbGHB6giVTjP31DYw=";
+      };
+    };
+  };
+
   containerLibPolicySeccompJson = {
     owner = "containers";
     repo = "container-libs";

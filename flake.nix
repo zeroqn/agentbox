@@ -63,6 +63,12 @@
           zvecGrep = import ./nix/pkgs/zvec-grep.nix {
             inherit pkgs pins;
           };
+          doltPrebuilt = import ./nix/pkgs/dolt-prebuilt.nix {
+            inherit pkgs pins;
+          };
+          beadsPrebuilt = import ./nix/pkgs/beads-prebuilt.nix {
+            inherit pkgs pins;
+          };
           containerLibPolicySeccompJson = import ./nix/pkgs/container-lib-policy-seccomp-json.nix {
             inherit pkgs pins;
           };
@@ -123,6 +129,8 @@
                 rmuxPrebuilt
                 rtkPrebuilt
                 zvecGrep
+                doltPrebuilt
+                beadsPrebuilt
                 containerLibPolicySeccompJson
                 libkrun
                 podman
@@ -179,6 +187,8 @@
           container-ci-sccache = loftdImageCiSccache;
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
           zvec-grep = zvecGrep;
+          dolt-prebuilt = doltPrebuilt;
+          beads-prebuilt = beadsPrebuilt;
         }
         // pkgs.lib.optionalAttrs (herdrPrebuilt != null) {
           herdr-prebuilt = herdrPrebuilt;
@@ -215,6 +225,8 @@
               rmuxPrebuilt = packages.rmux-prebuilt;
               rtkPrebuilt = packages.rtk-prebuilt or null;
               zvecGrep = packages.zvec-grep;
+              doltPrebuilt = packages.dolt-prebuilt;
+              beadsPrebuilt = packages.beads-prebuilt;
               containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
               libkrun = packages.libkrun;
               wl-cross-domain-proxy = packages.wl-cross-domain-proxy;

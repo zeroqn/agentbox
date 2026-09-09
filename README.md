@@ -208,6 +208,8 @@ nix build .#agentbox-musl
 nix build .#rmux-prebuilt
 nix build .#rtk-prebuilt
 nix build .#herdr-prebuilt
+nix build .#dolt-prebuilt
+nix build .#beads-prebuilt
 nix build .#libkrunfw
 nix build .#libkrun
 nix build .#crun
@@ -286,6 +288,13 @@ GitHub Actions no longer publishes new agentbox images or release binaries.
   Nixpkgs Node.js. The agent layer keeps the glibc x86_64 native payloads (zvec
   bindings, onnxruntime, sharp/libvips, node-llama-cpp CPU and Vulkan) and
   prunes the musl, CUDA, and cross-arch copies the image cannot load.
+- `.#dolt-prebuilt`: install the pinned `dolthub/dolt` Linux release tarball
+  binary for the current system. The agentbox and loftd images include this
+  package as `dolt` in the agent layer.
+- `.#beads-prebuilt`: install the pinned `gastownhall/beads` Linux release
+  tarball binary for the current system, patched with Nix to use the image's
+  glibc and libstdc++. The agentbox and loftd images include this package as
+  `bd` in the agent layer.
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
 - `.#libkrun`: install the pinned `zeroqn/libkrun` `loftd-*` prebuilt release
@@ -2070,6 +2079,21 @@ Refresh pinned Helvesec/rmux prebuilt release metadata in `nix/pins.nix`:
 
 ```bash
 nix develop --command ./scripts/update-rmux-prebuilt.sh
+```
+
+Refresh pinned `dolthub/dolt` prebuilt release metadata (tag and per-system
+asset hashes) in `nix/pins.nix`:
+
+```bash
+nix develop --command ./scripts/update-dolt-prebuilt.sh
+```
+
+Refresh pinned `gastownhall/beads` prebuilt release metadata (tag and
+per-system asset hashes; release asset names embed the tag without its leading
+`v`) in `nix/pins.nix`:
+
+```bash
+nix develop --command ./scripts/update-beads-prebuilt.sh
 ```
 
 Refresh pinned `zeroqn/libkrun` prebuilt release metadata in `nix/pins.nix`

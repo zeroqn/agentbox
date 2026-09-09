@@ -8,6 +8,8 @@
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
+  doltPrebuilt,
+  beadsPrebuilt,
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
@@ -30,6 +32,8 @@ let
       rmuxPrebuilt
       rtkPrebuilt
       zvecGrep
+      doltPrebuilt
+      beadsPrebuilt
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
@@ -61,6 +65,8 @@ let
       rmuxPrebuilt
       rtkPrebuilt
       zvecGrep
+      doltPrebuilt
+      beadsPrebuilt
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
