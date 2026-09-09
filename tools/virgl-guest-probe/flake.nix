@@ -102,12 +102,126 @@
 
           meta.mainProgram = "launcher";
         };
+
+      mkLauncherRs =
+        system:
+        let
+          pkgs = repo.inputs.nixpkgs.legacyPackages.${system};
+          libkrun = repo.packages.${system}.libkrun;
+        in
+        pkgs.stdenv.mkDerivation {
+          pname = "virgl-guest-launcher-rs";
+          version = "0.1.0";
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./launcher-rs.c
+              ./run-rs.sh
+            ];
+          };
+
+          nativeBuildInputs = [ pkgs.gcc ];
+          buildInputs = [ libkrun ];
+
+          buildPhase = ''
+            runHook preBuild
+            gcc -O2 -Wall -Wno-deprecated-declarations launcher-rs.c \
+              -I${libkrun}/include -L${libkrun}/lib -lkrun \
+              -Wl,-rpath,${libkrun}/lib \
+              -o launcher-rs-bin
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/bin"
+            cp launcher-rs-bin "$out/bin/launcher-rs"
+            cp "$src/run-rs.sh" "$out/bin/run-rs"
+            chmod +x "$out/bin/run-rs"
+            runHook postInstall
+          '';
+
+          meta.mainProgram = "launcher-rs";
+        };
+
+      mkSandboxRs =
+        system:
+        let
+          pkgs = repo.inputs.nixpkgs.legacyPackages.${system};
+        in
+        pkgs.stdenv.mkDerivation {
+          pname = "virgl-guest-sandbox-rs";
+          version = "0.1.0";
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = ./sandbox-rs.c;
+          };
+
+          nativeBuildInputs = [ pkgs.gcc ];
+          buildInputs = [ pkgs.libseccomp ];
+
+          buildPhase = ''
+            runHook preBuild
+            gcc -O2 -Wall sandbox-rs.c \
+              -I${pkgs.libseccomp}/include -L${pkgs.libseccomp}/lib \
+              -lseccomp -Wl,-rpath,${pkgs.libseccomp}/lib \
+              -o sandbox-rs-bin
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/bin"
+            cp sandbox-rs-bin "$out/bin/sandbox-rs"
+            runHook postInstall
+          '';
+
+          meta.mainProgram = "sandbox-rs";
+        };
+
+      mkLandlockRs =
+        system:
+        let
+          pkgs = repo.inputs.nixpkgs.legacyPackages.${system};
+        in
+        pkgs.stdenv.mkDerivation {
+          pname = "virgl-guest-landlock-rs";
+          version = "0.1.0";
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = ./landlock-rs.c;
+          };
+
+          nativeBuildInputs = [ pkgs.gcc ];
+          # linux-headers provides linux/landlock.h for the ABI constants.
+          buildInputs = [ pkgs.linuxHeaders ];
+
+          buildPhase = ''
+            runHook preBuild
+            gcc -O2 -Wall landlock-rs.c \
+              -I${pkgs.linuxHeaders}/include \
+              -o landlock-rs-bin
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/bin"
+            cp landlock-rs-bin "$out/bin/landlock-rs"
+            runHook postInstall
+          '';
+
+          meta.mainProgram = "landlock-rs";
+        };
     in
     {
       packages = forAllSystems (system: {
         guest-probe = mkGuestProbe system;
         guest-rootfs = mkGuestRootfs system;
         launcher = mkLauncher system;
+        launcher-rs = mkLauncherRs system;
+        sandbox-rs = mkSandboxRs system;
+        landlock-rs = mkLandlockRs system;
         default = mkGuestRootfs system;
       });
 

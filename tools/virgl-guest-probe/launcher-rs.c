@@ -1,0 +1,170 @@
+/* launcher-rs.c
+ *
+ * Host-side driver for the external-render-server venus probe ("run-rs.sh").
+ *
+ * Mirrors loftd's exact render-server path (compare render_server.rs):
+ *   - creates a SOCK_SEQPACKET socketpair (parent/child)
+ *   - forks virgl_render_server --socket-fd=<child> with the loftd-equivalent
+ *     render-server environment (LD_LIBRARY_PATH=vulkan-loader:mesa,
+ *     VK_DRIVER_FILES=<radeon ICD>, MESA_SHADER_CACHE_DIR=/dev/shm/mesa-cache)
+ *   - passes the PARENT end to libkrun via krun_set_gpu_options3 (the same
+ *     function loftd's launcher.rs configure_gpu uses, flags 0xe43)
+ *
+ * This is the exact path the in-process options2 probe does NOT exercise, and
+ * the path under which chromium's venus ring/fence init stalls in production.
+ */
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <libkrun.h>
+
+/* FLAGS_VENUS matches loftd's VIRGLRENDERER_VENUS_FLAGS (launcher.rs) exactly:
+   USE_EGL|THREAD_SYNC|VENUS|RENDER_SERVER|DRM|USE_VIDEO = 0xe43 (3651).
+   USE_VIDEO (1<<11) is not defined in the pinned libkrun.h, hence the literal. */
+#define FLAGS_VENUS 0xe43
+
+static void fail(const char *what, int rc) {
+    fprintf(stderr, "launcher-rs: %s failed rc=%d errno=%d (%s)\n", what, rc, errno, strerror(errno));
+    exit(1);
+}
+static void exec_render_server(int child_fd, int parent_fd) {
+    const char *exec_path = getenv("RENDER_SERVER_EXEC_PATH");
+    if (!exec_path || !*exec_path) {
+        fprintf(stderr, "launcher-rs: RENDER_SERVER_EXEC_PATH is not set\n");
+        _exit(2);
+    }
+    char socket_opt[64];
+    snprintf(socket_opt, sizeof(socket_opt), "--socket-fd=%d", child_fd);
+
+    /* If LOFTD_BOOTSTRAP=<loftd-bin>, use the REAL loftd render-server bootstrap
+     * (applies Landlock + the packaged render-server seccomp policy, then execs
+     * the RS) — the exact product sandbox.  We pass the real PARENT end as
+     * LOFTD_RENDER_SERVER_PARENT_FD (the bootstrap closes that copy) and the
+     * child end as LOFTD_RENDER_SERVER_CHILD_FD (the RS keeps it).  If
+     * SANDBOX_RS=1, apply the seccomp allowlist alone.  Otherwise exec the RS
+     * directly (unsandboxed). */
+    const char *loftd_bin = getenv("LOFTD_BOOTSTRAP");
+    if (loftd_bin && *loftd_bin) {
+        char parent_env[64], child_env[64];
+        snprintf(child_env, sizeof(child_env), "LOFTD_RENDER_SERVER_CHILD_FD=%d", child_fd);
+        putenv(child_env);
+        snprintf(parent_env, sizeof(parent_env), "LOFTD_RENDER_SERVER_PARENT_FD=%d", parent_fd);
+        putenv(parent_env);
+        /* The parent end must be open in the child so the bootstrap's close()
+         * actually closes this process's copy (and the RS still has its own). */
+        char *argv[] = { (char *)"loftd", (char *)"internal",
+                         (char *)"render-server-bootstrap", NULL };
+        execv(loftd_bin, argv);
+        fprintf(stderr, "launcher-rs: execv(loftd bootstrap) failed errno=%d (%s)\n", errno,
+                strerror(errno));
+        _exit(2);
+    }
+
+    /* If LANDLOCK_RS=<variant>, apply loftd's render-server Landlock rule set
+     * (as-shipped without REFER, or refer-fix with it) before exec — the A/B
+     * of the Landlock root cause.  Takes precedence over the sandbox modes so
+     * Landlock alone can be tested. */
+    const char *landlock_variant = getenv("LANDLOCK_RS");
+    const char *landlock_path = getenv("LANDLOCK_RS_PATH");
+    if (landlock_variant && *landlock_variant && landlock_path && *landlock_path) {
+        char *argv[] = { (char *)"landlock-rs", (char *)landlock_variant,
+                         (char *)exec_path, socket_opt, NULL };
+        execv(landlock_path, argv);
+        fprintf(stderr, "launcher-rs: execv(landlock-rs) failed errno=%d (%s)\n", errno,
+                strerror(errno));
+        _exit(2);
+    }
+
+    const char *sandbox_path = getenv("SANDBOX_RS_PATH");
+    if (getenv("SANDBOX_RS") && sandbox_path && *sandbox_path) {
+        char *argv[] = { (char *)"sandbox-rs", (char *)exec_path, socket_opt, NULL };
+        execv(sandbox_path, argv);
+        fprintf(stderr, "launcher-rs: execv(sandbox-rs) failed errno=%d (%s)\n", errno,
+                strerror(errno));
+        _exit(2);
+    }
+
+    char *argv[] = { (char *)"virgl_render_server", socket_opt, NULL };
+    execv(exec_path, argv);
+    fprintf(stderr, "launcher-rs: execv(%s) failed errno=%d (%s)\n", exec_path, errno,
+            strerror(errno));
+    _exit(2);
+}
+
+/* argv[1] = rootfs dir, argv[2] = console output file */
+int main(int argc, char **argv) {
+    if (argc < 3) {
+        fprintf(stderr, "usage: %s <rootfs-dir> <console-output-file>\n", argv[0]);
+        return 2;
+    }
+    const char *rootfs = argv[1];
+    const char *console = argv[2];
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) != 0)
+        fail("socketpair", errno);
+    int parent_fd = fds[0];
+    int child_fd = fds[1];
+
+    /* Clear CLOEXEC on both ends: the fd must survive the exec of the render
+     * server (child end) and the VM-worker fork (parent end). */
+    for (int i = 0; i < 2; i++) {
+        int fl = fcntl(fds[i], F_GETFD);
+        if (fl >= 0)
+            fcntl(fds[i], F_SETFD, fl & ~FD_CLOEXEC);
+    }
+
+    pid_t pid = fork();
+    if (pid < 0)
+        fail("fork", errno);
+    if (pid == 0) {
+        /* Child: run the render server (direct, or through the sandbox /
+         * loftd bootstrap).  The parent socketpair end stays open only in
+         * LOFTD_BOOTSTRAP mode (the bootstrap closes its own copy); otherwise
+         * the child must not carry it. */
+        if (!getenv("LOFTD_BOOTSTRAP"))
+            close(parent_fd);
+        exec_render_server(child_fd, parent_fd);
+    }
+    close(child_fd); /* parent keeps only parent_fd */
+
+    krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_DEBUG, KRUN_LOG_STYLE_NEVER, 0);
+
+    int32_t ctx = krun_create_ctx();
+    if (ctx < 0)
+        fail("krun_create_ctx", ctx);
+
+    int32_t rc;
+    if ((rc = krun_set_vm_config((uint32_t)ctx, 2, 512)) < 0)
+        fail("krun_set_vm_config", rc);
+    if ((rc = krun_set_root((uint32_t)ctx, rootfs)) < 0)
+        fail("krun_set_root", rc);
+
+    /* The exact product call: external render server fd through options3. */
+    if ((rc = krun_set_gpu_options3((uint32_t)ctx, FLAGS_VENUS,
+                                    256ull * 1024 * 1024, parent_fd)) < 0)
+        fail("krun_set_gpu_options3", rc);
+
+    if ((rc = krun_set_console_output((uint32_t)ctx, console)) < 0)
+        fail("krun_set_console_output", rc);
+
+    const char *guest_init_argv[] = { NULL };
+    const char *guest_init_envp[] = { NULL };
+    if ((rc = krun_set_exec((uint32_t)ctx, "/init", guest_init_argv, guest_init_envp)) < 0)
+        fail("krun_set_exec", rc);
+
+    fprintf(stderr, "launcher-rs: booting rootfs=%s gpu_flags=0x%x render-server-pid=%d\n",
+            rootfs, FLAGS_VENUS, (int)pid);
+
+    int32_t rc2 = krun_start_enter((uint32_t)ctx);
+    fail("krun_start_enter", rc2);
+    return 1;
+}

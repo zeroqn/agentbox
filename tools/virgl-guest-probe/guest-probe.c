@@ -103,6 +103,229 @@ static int load_loader(void) {
     return 0;
 }
 
+/* chromium-like heavy venus workload: a burst of concurrent submissions plus a
+ * sequential multi-submit churn, each submission carrying its own fence.
+ * ANGLE/Vulkan init drives many submissions across rings; if the venus ring
+ * retirement wedges under load (the chromium exit_code=6 symptom), one of
+ * these fences will time out here.  LOW/hangproof: every fence waits with a
+ * bounded 10s timeout, then we print which stage (if any) stalled.
+ *
+ * Returns 0 on success, 1 on a detected submission/fence stall.
+ */
+#define HEAVY_BURST 8
+#define HEAVY_CHURN 16
+
+static int heavy_workload(
+    VkDevice device,
+    VkQueue queue,
+    uint32_t graphics_family,
+    void *inst,
+    PFN_vkCreateBuffer createBuffer,
+    PFN_vkGetBufferMemoryRequirements getReq,
+    PFN_vkGetPhysicalDeviceMemoryProperties getMem,
+    VkPhysicalDevice phys,
+    PFN_vkAllocateMemory alloc,
+    PFN_vkBindBufferMemory bind,
+    PFN_vkCreateCommandPool createPool,
+    PFN_vkAllocateCommandBuffers allocBufs,
+    PFN_vkBeginCommandBuffer begin,
+    PFN_vkCmdFillBuffer fill,
+    PFN_vkEndCommandBuffer end,
+    PFN_vkCreateFence createFence,
+    PFN_vkWaitForFences wait,
+    PFN_vkDestroyFence destroyFence,
+    PFN_vkDestroyBuffer destroyBuffer,
+    PFN_vkFreeMemory freeMemory,
+    PFN_vkDestroyCommandPool destroyPool,
+    PFN_vkGetDeviceQueue getQueue,
+    PFN_vkQueueSubmit queueSubmit) {
+    (void)inst;
+
+    /* New command pool + a second graphics queue exercises a fresh ring. */
+    const VkCommandPoolCreateInfo pci = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = graphics_family,
+    };
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkResult vr = createPool(device, &pci, NULL, &pool);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] HEAVY: vkCreateCommandPool => %d (FAIL)\n", vr);
+        return 1;
+    }
+
+    const VkCommandBufferAllocateInfo cbai = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = HEAVY_BURST,
+    };
+    VkCommandBuffer cmds[HEAVY_BURST] = { 0 };
+    vr = allocBufs(device, &cbai, cmds);
+    if (vr != VK_SUCCESS) {
+        printf("[guest-probe] HEAVY: vkAllocateCommandBuffers => %d (FAIL)\n", vr);
+        destroyPool(device, pool, NULL);
+        return 1;
+    }
+
+    /* A second ring: use a second queue family if available, else reuse the
+     * graphics family (at least exercises a second queue/create path). */
+    VkPhysicalDeviceMemoryProperties mem_props;
+    getMem(phys, &mem_props);
+
+    uint32_t buf[HEAVY_BURST];
+    (void)buf;
+    VkBuffer buffers[HEAVY_BURST] = { 0 };
+    VkDeviceMemory mems[HEAVY_BURST] = { 0 };
+    VkFence fences[HEAVY_BURST] = { 0 };
+
+    for (uint32_t i = 0; i < HEAVY_BURST; i++) {
+        const VkBufferCreateInfo bci = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 64,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
+        vr = createBuffer(device, &bci, NULL, &buffers[i]);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: vkCreateBuffer[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+        VkMemoryRequirements reqs = { 0 };
+        getReq(device, buffers[i], &reqs);
+        uint32_t mt = UINT32_MAX;
+        for (uint32_t j = 0; j < mem_props.memoryTypeCount && j < 32; j++) {
+            if ((reqs.memoryTypeBits & (1u << j)) &&
+                (mem_props.memoryTypes[j].propertyFlags &
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+                mt = j;
+                break;
+            }
+        }
+        if (mt == UINT32_MAX) {
+            printf("[guest-probe] HEAVY: no host-visible mem type (FAIL)\n");
+            return 1;
+        }
+        const VkMemoryAllocateInfo mai = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = reqs.size,
+            .memoryTypeIndex = mt,
+        };
+        vr = alloc(device, &mai, NULL, &mems[i]);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: vkAllocateMemory[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+        vr = bind(device, buffers[i], mems[i], 0);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: vkBindBufferMemory[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+        const VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        vr = createFence(device, &fci, NULL, &fences[i]);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: vkCreateFence[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+    }
+
+    const VkCommandBufferBeginInfo cbbi = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    for (uint32_t i = 0; i < HEAVY_BURST; i++) {
+        vr = begin(cmds[i], &cbbi);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: vkBeginCommandBuffer[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+        fill(cmds[i], buffers[i], 0, VK_WHOLE_SIZE, 0x5a5a5a5au);
+        vr = end(cmds[i]);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: vkEndCommandBuffer[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+    }
+
+    /* Burst: submit all 8 concurrently, each with its own fence. */
+    VkSubmitInfo sis[HEAVY_BURST];
+    for (uint32_t i = 0; i < HEAVY_BURST; i++) {
+        sis[i] = (VkSubmitInfo){
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &cmds[i],
+        };
+    }
+    for (uint32_t i = 0; i < HEAVY_BURST; i++) {
+        vr = queueSubmit(queue, 1, &sis[i], fences[i]);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: vkQueueSubmit[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+    }
+    printf("[guest-probe] HEAVY: submitted %u concurrent bursts\n", HEAVY_BURST);
+
+    /* Wait on all burst fences. */
+    const uint64_t timeout_ns = 10ull * 1000ull * 1000ull * 1000ull;
+    VkResult w = wait(device, HEAVY_BURST, fences, VK_TRUE, timeout_ns);
+    printf("[guest-probe] HEAVY: vkWaitForFences(burst,10s) => %d (%s)\n", w,
+           w == VK_SUCCESS    ? "SIGNALED"
+           : w == VK_TIMEOUT  ? "TIMEOUT - burst fence never completed"
+                              : "ERROR");
+    if (w != VK_SUCCESS) {
+        printf("[guest-probe] HEAVY RESULT: FAIL - burst stage stalled\n");
+        return 1;
+    }
+
+    /* Sequential churn: one submit at a time, wait each, HEAVY_CHURN times.
+     * Use a fresh fence per step (fences are not auto-reset unless flagged). */
+    VkFence churn_fence = VK_NULL_HANDLE;
+    const VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    for (uint32_t i = 0; i < HEAVY_CHURN; i++) {
+        VkCommandBuffer c = cmds[i % HEAVY_BURST];
+        vr = begin(c, &cbbi);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: churn begin[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+        fill(c, buffers[i % HEAVY_BURST], 0, VK_WHOLE_SIZE, 0x5a5a5a5au);
+        vr = end(c);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: churn end[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+        vr = createFence(device, &fci, NULL, &churn_fence);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: churn createFence[%u] => %d (FAIL)\n", i, vr);
+            return 1;
+        }
+        vr = queueSubmit(queue, 1, &sis[i % HEAVY_BURST], churn_fence);
+        if (vr != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: churn submit[%u] => %d (FAIL)\n", i, vr);
+            destroyFence(device, churn_fence, NULL);
+            return 1;
+        }
+        w = wait(device, 1, &churn_fence, VK_FALSE, timeout_ns);
+        if (w != VK_SUCCESS) {
+            printf("[guest-probe] HEAVY: churn wait[%u] => %d (%s) (STALL)\n", i, w,
+                   w == VK_TIMEOUT ? "TIMEOUT - fence never completed" : "ERROR");
+            destroyFence(device, churn_fence, NULL);
+            printf("[guest-probe] HEAVY RESULT: FAIL - churn stage stalled at step %u\n", i);
+            return 1;
+        }
+        destroyFence(device, churn_fence, NULL);
+    }
+    printf("[guest-probe] HEAVY: churn %u submissions completed\n", HEAVY_CHURN);
+    printf("[guest-probe] HEAVY RESULT: PASS\n");
+
+    for (uint32_t i = 0; i < HEAVY_BURST; i++) {
+        if (fences[i]) destroyFence(device, fences[i], NULL);
+        if (buffers[i]) destroyBuffer(device, buffers[i], NULL);
+        if (mems[i]) freeMemory(device, mems[i], NULL);
+    }
+    destroyPool(device, pool, NULL);
+    return 0;
+}
+
 int main(void) {
     printf("[guest-probe] starting (lib=%s)\n", VK_LIB);
     if (load_loader() != 0)
@@ -444,13 +667,31 @@ int main(void) {
         } else {
             printf("[guest-probe] vkMapMemory => %d (skipping readback)\n", mr);
         }
-        printf("[guest-probe] RESULT: PASS\n");
+        printf("[guest-probe] BASELINE: PASS\n");
         rc = 0;
     } else if (wait_res == VK_TIMEOUT) {
         printf("[guest-probe] RESULT: FAIL - EXECBUFFER submitted but fence did not "
                "complete within 10s\n");
     } else {
         printf("[guest-probe] RESULT: FAIL - vkWaitForFences error\n");
+    }
+
+    /*
+     * Chromium-like heavy stage: burst of concurrent submits + a sequential
+     * churn.  If venus ring retirement wedges under load (the exit_code=6
+     * symptom), this stage's per-submit fence will time out here, isolating
+     * workload shape from loftd's runtime/sandbox context.
+     */
+    if (rc == 0) {
+        int heavy_rc = heavy_workload(
+            device, queue, graphics_family, instance,
+            createBuffer, getBufReqs, getMemProps, dev,
+            allocMemory, bindBufMem, createPool, allocCmdBufs,
+            beginCmdBuf, cmdFill, endCmdBuf, createFence,
+            waitForFences, destroyFence, destroyBuffer, freeMemory,
+            destroyPool, getQueue, queueSubmit);
+        if (heavy_rc != 0)
+            rc = 1;
     }
 
     destroyPool(device, pool, NULL);
