@@ -10,7 +10,6 @@
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
-  codex,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
   agentboxMuslPackage,
@@ -32,7 +31,6 @@ let
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
-      codex
       podman
       crun
       agentboxMuslPackage
@@ -63,7 +61,6 @@ let
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
-      codex
       podman
       crun
       agentboxMuslPackage

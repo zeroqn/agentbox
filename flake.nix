@@ -27,7 +27,6 @@
       packages = systems.forAllSystems (
         { pkgs, system, ... }:
         let
-          codex = (import nixpkgs-unstable { inherit system; }).codex;
           rioBin = headless.packages.${system}.rio-bin or null;
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
@@ -125,7 +124,6 @@
                 podman
                 crun
                 wl-cross-domain-proxy
-                codex
                 imageVariant
                 ;
               dirge = dirgePackage;
@@ -197,13 +195,11 @@
           ...
         }:
         let
-          codex = (import nixpkgs-unstable { inherit system; }).codex;
           packages = self.packages.${system};
           mkImageChecks =
             imageVariant:
             import ./nix/image/checks.nix {
               inherit pkgs imageVariant;
-              codex = codex;
               piCodingAgent = packages.pi-coding-agent;
               rioBin = packages.rio-bin or null;
               dirge = packages.dirge;
@@ -223,10 +219,12 @@
         in
         {
           container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
+          container-codex-absent = loftdImageChecks.codexAbsent;
           container-omx-absent = loftdImageChecks.omxAbsent;
           container-root-cargo-absent = loftdImageChecks.rootCargoAbsent;
           container-wrapper-contracts = loftdImageChecks.wrapperContracts;
           agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
+          agentbox-container-codex-absent = agentboxImageChecks.codexAbsent;
           agentbox-container-omx-absent = agentboxImageChecks.omxAbsent;
           agentbox-container-root-cargo-absent = agentboxImageChecks.rootCargoAbsent;
           agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;

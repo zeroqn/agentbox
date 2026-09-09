@@ -10,7 +10,6 @@
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
-  codex,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
   agentboxMuslPackage,
@@ -32,7 +31,6 @@ let
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
-      codex
       podman
       crun
       agentboxMuslPackage
@@ -250,6 +248,16 @@ let
         touch "$out/passed"
       '';
 
+  codexAbsent = pkgs.runCommand "${imageVariant}-image-codex-absent-check" { } ''
+    set -euo pipefail
+
+    test ! -e ${layers.agentImageLayer}/bin/codex
+    test ! -e ${layers.agentImageLayer}/bin/codex-code-mode-host
+
+    mkdir -p "$out"
+    touch "$out/passed"
+  '';
+
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
       {
@@ -367,6 +375,7 @@ in
     imageNixDbStorePaths
     missingImageConfigNixDbRefs
     missingRefsMessage
+    codexAbsent
     omxAbsent
     rootCargoAbsent
     wrapperContracts
