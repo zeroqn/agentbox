@@ -151,4 +151,14 @@ in
       };
     };
   };
+
+  # Pinned by scripts/update-zvec-grep.sh (srcHash + npmDepsHash).
+  zvecGrep = {
+    version = "0.2.0";
+    owner = "zvec-ai";
+    repo = "zvec-grep";
+    rev = "v0.2.0";
+    srcHash = "sha256-2o/6QWyeZqOy7O8ikO8puqMXmtvWdjS9Y1rNW/SD/Bc=";
+    npmDepsHash = "sha256-xEK245edmpn5yG2cT0b8/X6ONs4KmLNxxN1jRt5RZe0=";
+  };
 }

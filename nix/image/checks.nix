@@ -6,6 +6,7 @@
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
+  zvecGrep,
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
@@ -27,6 +28,7 @@ let
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
+      zvecGrep
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
@@ -206,6 +208,17 @@ let
     test -x ${pkgs.ungoogled-chromium}/bin/chromium
   '';
 
+  zvecGrepContracts = ''
+    grep -F 'zvecGrep' ${layersSourceFile}
+    test -x ${layers.agentImageLayer}/bin/zg
+    ${layers.agentImageLayer}/bin/zg --help >/dev/null
+    HOME="$TMPDIR" ${pkgs.nodejs}/bin/node ${./zvec-grep-native-load-check.mjs} ${layers.agentImageLayer}/lib/zvec-grep
+    case ":${layers.imagePath}:" in
+      *":${layers.agentImageLayer}/bin:"*) ;;
+      *) exit 1 ;;
+    esac
+  '';
+
   rootCargoAbsent = pkgs.runCommand "${imageVariant}-image-root-cargo-absent-check" { } ''
     set -euo pipefail
 
@@ -248,6 +261,7 @@ let
         ${allocatorContracts}
         ${terminalMultiplexerContracts}
         ${ghosttyTerminfoContracts}
+        ${zvecGrepContracts}
 
         ${
           if imageVariant == "loftd" then

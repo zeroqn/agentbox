@@ -6,6 +6,7 @@
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
+  zvecGrep,
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
@@ -27,6 +28,7 @@ let
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
+      zvecGrep
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy
@@ -57,6 +59,7 @@ let
       ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
+      zvecGrep
       containerLibPolicySeccompJson
       libkrun
       wl-cross-domain-proxy

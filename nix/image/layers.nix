@@ -6,6 +6,7 @@
   ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
+  zvecGrep,
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
@@ -384,6 +385,7 @@ toolingImageLayer = pkgs.buildEnv {
     piCodingAgent
     dirge
     ompPrebuilt
+    zvecGrep
   ];
   agentImageLayer = pkgs.buildEnv {
     name = "agentbox-agent-layer";

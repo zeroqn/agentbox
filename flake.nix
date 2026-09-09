@@ -58,6 +58,9 @@
           rtkPrebuilt = import ./nix/pkgs/rtk-prebuilt.nix {
             inherit pkgs pins;
           };
+          zvecGrep = import ./nix/pkgs/zvec-grep.nix {
+            inherit pkgs pins;
+          };
           containerLibPolicySeccompJson = import ./nix/pkgs/container-lib-policy-seccomp-json.nix {
             inherit pkgs pins;
           };
@@ -116,6 +119,7 @@
                 ompPrebuilt
                 rmuxPrebuilt
                 rtkPrebuilt
+                zvecGrep
                 containerLibPolicySeccompJson
                 libkrun
                 podman
@@ -172,6 +176,7 @@
           container = loftdImage;
           container-ci-sccache = loftdImageCiSccache;
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
+          zvec-grep = zvecGrep;
         }
         // pkgs.lib.optionalAttrs (rioBin != null) {
           rio-bin = rioBin;
@@ -205,6 +210,7 @@
               ompPrebuilt = packages.omp-prebuilt;
               rmuxPrebuilt = packages.rmux-prebuilt;
               rtkPrebuilt = packages.rtk-prebuilt or null;
+              zvecGrep = packages.zvec-grep;
               containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
               libkrun = packages.libkrun;
               wl-cross-domain-proxy = packages.wl-cross-domain-proxy;

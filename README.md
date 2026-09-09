@@ -277,6 +277,11 @@ GitHub Actions no longer publishes new agentbox images or release binaries.
   not currently publish this package for `aarch64-linux`.
 - `.#rtk-prebuilt`: install the pinned published RTK release asset (currently
   pinned for `x86_64-linux`).
+- `.#zvec-grep` (`x86_64-linux`): install the pinned `zvec-ai/zvec-grep` (`zg`)
+  hybrid workspace search CLI from the GitHub source archive, wrapped around
+  Nixpkgs Node.js. The agent layer keeps the glibc x86_64 native payloads (zvec
+  bindings, onnxruntime, sharp/libvips, node-llama-cpp CPU and Vulkan) and
+  prunes the musl, CUDA, and cross-arch copies the image cannot load.
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
 - `.#libkrun`: install the pinned `zeroqn/libkrun` `loftd-*` prebuilt release
@@ -2098,6 +2103,14 @@ Refresh pinned `omp` prebuilt release metadata in `nix/pins.nix` from `can1357/o
 
 ```bash
 nix develop --command ./scripts/update-omp-prebuilt.sh
+```
+
+Refresh pinned `zvec-ai/zvec-grep` source and npm dependency metadata in
+`nix/pins.nix` (the updater also rejects a release whose `bin.zg` no longer
+points at `dist/cli/index.js`, which `nix/pkgs/zvec-grep.nix` installs):
+
+```bash
+nix develop --command ./scripts/update-zvec-grep.sh
 ```
 
 ---
