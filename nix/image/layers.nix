@@ -4,7 +4,6 @@
   rioBin,
   dirge,
   herdrPrebuilt,
-  ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
@@ -385,7 +384,6 @@ toolingImageLayer = pkgs.buildEnv {
     pkgs.bubblewrap
     piCodingAgent
     dirge
-    ompPrebuilt
     zvecGrep
     doltPrebuilt
     beadsPrebuilt

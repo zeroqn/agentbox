@@ -4,7 +4,6 @@
   rioBin,
   dirge,
   herdrPrebuilt,
-  ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
@@ -28,7 +27,6 @@ let
       rioBin
       dirge
       herdrPrebuilt
-      ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
       zvecGrep
@@ -61,7 +59,6 @@ let
       rioBin
       dirge
       herdrPrebuilt
-      ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
       zvecGrep

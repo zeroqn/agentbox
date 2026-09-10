@@ -4,7 +4,6 @@
   rioBin,
   dirge,
   herdrPrebuilt,
-  ompPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
@@ -28,7 +27,6 @@ let
       rioBin
       dirge
       herdrPrebuilt
-      ompPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
       zvecGrep
@@ -294,6 +292,15 @@ let
     touch "$out/passed"
   '';
 
+  ompAbsent = pkgs.runCommand "${imageVariant}-image-omp-absent-check" { } ''
+    set -euo pipefail
+
+    test ! -e ${layers.agentImageLayer}/bin/omp
+
+    mkdir -p "$out"
+    touch "$out/passed"
+  '';
+
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
       {
@@ -416,6 +423,7 @@ in
     missingRefsMessage
     codexAbsent
     omxAbsent
+    ompAbsent
     rootCargoAbsent
     wrapperContracts
     ;

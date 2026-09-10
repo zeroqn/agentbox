@@ -1965,7 +1965,7 @@ agentbox repos and containers.
 The container provides:
 
 - interactive `fish` + `starship`
-- bubblewrap (`bwrap`), Pi (`pi`), and OMP (`omp`)
+- bubblewrap (`bwrap`) and Pi (`pi`)
 - cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)

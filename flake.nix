@@ -125,7 +125,6 @@
                 piCodingAgent
                 rioBin
                 herdrPrebuilt
-                ompPrebuilt
                 rmuxPrebuilt
                 rtkPrebuilt
                 zvecGrep
@@ -221,7 +220,6 @@
               rioBin = packages.rio-bin or null;
               dirge = packages.dirge;
               herdrPrebuilt = packages.herdr-prebuilt or null;
-              ompPrebuilt = packages.omp-prebuilt;
               rmuxPrebuilt = packages.rmux-prebuilt;
               rtkPrebuilt = packages.rtk-prebuilt or null;
               zvecGrep = packages.zvec-grep;
@@ -241,11 +239,13 @@
           container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
           container-codex-absent = loftdImageChecks.codexAbsent;
           container-omx-absent = loftdImageChecks.omxAbsent;
+          container-omp-absent = loftdImageChecks.ompAbsent;
           container-root-cargo-absent = loftdImageChecks.rootCargoAbsent;
           container-wrapper-contracts = loftdImageChecks.wrapperContracts;
           agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
           agentbox-container-codex-absent = agentboxImageChecks.codexAbsent;
           agentbox-container-omx-absent = agentboxImageChecks.omxAbsent;
+          agentbox-container-omp-absent = agentboxImageChecks.ompAbsent;
           agentbox-container-root-cargo-absent = agentboxImageChecks.rootCargoAbsent;
           agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
         }
