@@ -1901,6 +1901,7 @@ Each run ensures these host-backed paths and grafts them into the prepared root:
 - `~/.codex` -> `/home/dev/.codex`
 - `~/.omp` -> `/home/dev/.omp`
 - `~/.pi` -> `/home/dev/.pi`
+- `~/.local/share/cortexkit` -> `/home/dev/.local/share/cortexkit`
 - `~/.config/dirge` -> `/home/dev/.config/dirge`
 - `~/.local/share/dirge` -> `/home/dev/.local/share/dirge`
 - `~/.dirge` -> `/home/dev/.dirge`

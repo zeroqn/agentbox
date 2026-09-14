@@ -14,6 +14,11 @@ fn test_mounts() -> Vec<BindMount> {
         BindMount::directory("/home/host/.omp", OMP_TAG, OMP_TARGET),
         BindMount::directory("/home/host/.pi", PI_TAG, PI_TARGET),
         BindMount::directory(
+            "/home/host/.local/share/cortexkit",
+            CORTEXKIT_TAG,
+            CORTEXKIT_TARGET,
+        ),
+        BindMount::directory(
             "/home/host/.config/dirge",
             DIRGE_CONFIG_TAG,
             DIRGE_CONFIG_TARGET,
@@ -87,7 +92,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
     assert_eq!(config.mounts[0].source, Path::new("/workspace-src"));
     assert_eq!(config.mounts[0].tag, "loftd-workspace");
     assert_eq!(config.mounts[0].target, "/workspace");
-    assert_eq!(config.mounts.len(), 9);
+    assert_eq!(config.mounts.len(), 10);
     assert_eq!(config.ram_mib, 4096);
     assert_eq!(config.vcpus, 2);
     assert_eq!(config.log_level, LogLevel::Debug);

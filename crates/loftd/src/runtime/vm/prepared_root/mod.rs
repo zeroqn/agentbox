@@ -378,10 +378,11 @@ mod tests {
     use super::*;
     use crate::logging::LogLevel;
     use crate::runtime::launch::config::{
-        BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DIRGE_CONFIG_TAG,
-        DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET,
-        GuestInitOverrideMount, LaunchSpec, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET,
-        SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET,
+        BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, CORTEXKIT_TAG,
+        CORTEXKIT_TARGET, DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET,
+        DIRGE_HOME_TAG, DIRGE_HOME_TARGET, GuestInitOverrideMount, LaunchSpec, NetworkMode,
+        OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
+        WORKSPACE_TARGET,
     };
     use std::cell::RefCell;
     use std::path::Path;
@@ -477,6 +478,11 @@ mod tests {
             BindMount::directory(root.join("home/.omp"), OMP_TAG, OMP_TARGET),
             BindMount::directory(root.join("home/.pi"), PI_TAG, PI_TARGET),
             BindMount::directory(
+                root.join("home/.local/share/cortexkit"),
+                CORTEXKIT_TAG,
+                CORTEXKIT_TARGET,
+            ),
+            BindMount::directory(
                 root.join("home/.config/dirge"),
                 DIRGE_CONFIG_TAG,
                 DIRGE_CONFIG_TARGET,
@@ -546,6 +552,7 @@ mod tests {
             "home/.codex",
             "home/.omp",
             "home/.pi",
+            "home/.local/share/cortexkit",
             "home/.config/dirge",
             "home/.local/share/dirge",
             "home/.dirge",
@@ -587,13 +594,13 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[19],
+            calls[21],
             Call::Bind(
                 dir.path().join("state/sccache").display().to_string(),
                 root.join("home/dev/.cache/sccache").display().to_string()
             )
         );
-        assert_eq!(calls[20], Call::RuntimeEtc(root.display().to_string()));
+        assert_eq!(calls[22], Call::RuntimeEtc(root.display().to_string()));
     }
 
     #[test]
@@ -605,6 +612,7 @@ mod tests {
             "home/.codex",
             "home/.omp",
             "home/.pi",
+            "home/.local/share/cortexkit",
             "home/.config/dirge",
             "home/.local/share/dirge",
             "home/.dirge",
@@ -636,7 +644,7 @@ mod tests {
         let calls = commands.calls.borrow();
         let root = state.join(PREPARED_ROOT_DIR);
         assert_eq!(
-            calls[20],
+            calls[22],
             Call::CreateFile(
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
                     .display()
@@ -644,7 +652,7 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[21],
+            calls[23],
             Call::Bind(
                 override_path.display().to_string(),
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
@@ -653,14 +661,14 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[22],
+            calls[24],
             Call::ReadOnly(
                 root.join("nix/store/hash-loftd/bin/loftd-guest-init")
                     .display()
                     .to_string()
             )
         );
-        assert_eq!(calls[23], Call::RuntimeEtc(root.display().to_string()));
+        assert_eq!(calls[25], Call::RuntimeEtc(root.display().to_string()));
     }
 
     #[test]
@@ -672,6 +680,7 @@ mod tests {
             "home/.codex",
             "home/.omp",
             "home/.pi",
+            "home/.local/share/cortexkit",
             "home/.config/dirge",
             "home/.local/share/dirge",
             "home/.dirge",

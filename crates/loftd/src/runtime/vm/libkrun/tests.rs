@@ -1,10 +1,10 @@
 use crate::logging::LogLevel;
 use crate::runtime::launch::config::{
-    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, DIRGE_CONFIG_TAG,
-    DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG, DIRGE_HOME_TARGET,
-    DiskAttachment, LaunchConfig, LaunchSpec, ManagedSessionConfig, NetworkMode, OMP_TAG,
-    OMP_TARGET, PI_TAG, PI_TARGET, PulseBridgeConfig, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG,
-    WORKSPACE_TARGET, WaypipeConfig,
+    BindMount, CARGO_TAG, CARGO_TARGET, CODEX_TAG, CODEX_TARGET, CORTEXKIT_TAG, CORTEXKIT_TARGET,
+    DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG,
+    DIRGE_HOME_TARGET, DiskAttachment, LaunchConfig, LaunchSpec, ManagedSessionConfig, NetworkMode,
+    OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, PulseBridgeConfig, SCCACHE_TAG, SCCACHE_TARGET,
+    WORKSPACE_TAG, WORKSPACE_TARGET, WaypipeConfig,
 };
 use crate::runtime::seccomp::{AuditMode, SeccompMode};
 use crate::runtime::vm::gpu::GpuMode;
@@ -401,6 +401,11 @@ fn test_mounts() -> Vec<BindMount> {
         BindMount::directory("/home/host/.codex", CODEX_TAG, CODEX_TARGET),
         BindMount::directory("/home/host/.omp", OMP_TAG, OMP_TARGET),
         BindMount::directory("/home/host/.pi", PI_TAG, PI_TARGET),
+        BindMount::directory(
+            "/home/host/.local/share/cortexkit",
+            CORTEXKIT_TAG,
+            CORTEXKIT_TARGET,
+        ),
         BindMount::directory(
             "/home/host/.config/dirge",
             DIRGE_CONFIG_TAG,
