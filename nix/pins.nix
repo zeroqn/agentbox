@@ -193,12 +193,12 @@ in
   rtkPrebuiltRelease = {
     owner = "rtk-ai";
     repo = "rtk";
-    tag = "v0.45.0";
+    tag = "v0.49.0";
     systems = {
       x86_64-linux = {
         asset = "rtk-x86_64-unknown-linux-musl.tar.gz";
         binary = "rtk";
-        hash = "sha256-xMA2+/GB/FXvMpeGyMF+DUJ5crBTuCWUTZaKaq/vG6Q=";
+        hash = "sha256-cngjHf1+anMKSrf4R7GVvPAiicLVdiKw2rdaZBEQDI8=";
       };
     };
   };
