@@ -69,6 +69,7 @@ pub(super) const IMAGE_LOFTD_ENV_ALLOWLIST: &[&str] = &[
     "LOFTD_MIMALLOC_LIB",
     "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB",
     "LOFTD_REAL_PODMAN",
+    "MONTY_BIN",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
