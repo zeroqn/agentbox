@@ -38,15 +38,15 @@ in
   herdrPrebuiltRelease = {
     owner = "herdrdev";
     repo = "herdr";
-    tag = "v0.9.0";
+    tag = "v0.9.1";
     systems = {
       x86_64-linux = {
         asset = "herdr-linux-x86_64";
-        hash = "sha256-T6GgEVjdgEPaktMbJweAsNzBBgMDjZthysTYGrY/tx8=";
+        hash = "sha256-KgL+0WvrZR7wBuHUPwSPZSyk3FitBTzS1ERQVj1cVLc=";
       };
       aarch64-linux = {
         asset = "herdr-linux-aarch64";
-        hash = "sha256-nI2yD7fnQnsTjVNnET8WIf/TGfL2XW8AniWUApEV8NI=";
+        hash = "sha256-9Mz03nRfLLmjmpg+m6NwPa1Q7CpY3qgwJs6rchu9jZ4=";
       };
     };
   };
