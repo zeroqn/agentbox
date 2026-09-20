@@ -382,6 +382,9 @@ toolingImageLayer = pkgs.buildEnv {
 
   agentImagePackages = [
     pkgs.bubblewrap
+    # `sqlite3` CLI only: agent tools (e.g. Magic Context) shell out to it to
+    # repair a corrupted local database.
+    pkgs.sqlite
     piCodingAgent
     zvecGrep
     doltPrebuilt

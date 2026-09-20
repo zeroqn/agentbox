@@ -1976,6 +1976,8 @@ The container provides:
 
 - interactive `fish` + `starship`
 - bubblewrap (`bwrap`) and Pi (`pi`)
+- the `sqlite3` CLI in the agent layer, so agent tooling can repair a corrupted
+  local database (for example Magic Context's)
 - the pinned monty worker (`monty`, `MONTY_BIN`) that backs the RLM extension's
   sandboxed Python kernel
 - cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)

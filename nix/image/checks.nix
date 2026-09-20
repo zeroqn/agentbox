@@ -252,6 +252,11 @@ let
       *) exit 1 ;;
     esac
   '';
+  sqliteContracts = ''
+    grep -F 'pkgs.sqlite' ${layersSourceFile}
+    test -x ${layers.agentImageLayer}/bin/sqlite3
+    HOME="$TMPDIR" ${layers.agentImageLayer}/bin/sqlite3 --version
+  '';
   montyContracts = ''
     grep -F 'montyPrebuilt' ${layersSourceFile}
     grep -F 'MONTY_BIN=' ${configSourceFile}
@@ -356,6 +361,7 @@ let
         ${herdrContracts}
         ${doltContracts}
         ${beadsContracts}
+        ${sqliteContracts}
         ${montyContracts}
 
         ${
