@@ -326,6 +326,19 @@ let
     touch "$out/passed"
   '';
 
+  # `gh` ships in the shared tooling layer, so its absence is asserted against
+  # the realized image PATH rather than one layer's bin directory.
+  ghAbsent = pkgs.runCommand "${imageVariant}-image-gh-absent-check" { } ''
+    set -euo pipefail
+
+    for binDir in $(printf '%s' "${layers.imagePath}" | tr ':' '\n'); do
+      test ! -e "$binDir/gh"
+    done
+
+    mkdir -p "$out"
+    touch "$out/passed"
+  '';
+
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
       {
@@ -451,6 +464,7 @@ in
     omxAbsent
     ompAbsent
     dirgeAbsent
+    ghAbsent
     rootCargoAbsent
     wrapperContracts
     ;

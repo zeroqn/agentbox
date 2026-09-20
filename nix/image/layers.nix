@@ -354,7 +354,6 @@ let
     pkgs.bun
     pkgs.cargo-deny
     pkgs.fzf
-    pkgs.gh
     pkgs.neovim
     pkgs.nixfmt
   ]

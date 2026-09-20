@@ -244,6 +244,7 @@
           container-omx-absent = loftdImageChecks.omxAbsent;
           container-omp-absent = loftdImageChecks.ompAbsent;
           container-dirge-absent = loftdImageChecks.dirgeAbsent;
+          container-gh-absent = loftdImageChecks.ghAbsent;
           container-root-cargo-absent = loftdImageChecks.rootCargoAbsent;
           container-wrapper-contracts = loftdImageChecks.wrapperContracts;
           agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
@@ -251,6 +252,7 @@
           agentbox-container-omx-absent = agentboxImageChecks.omxAbsent;
           agentbox-container-omp-absent = agentboxImageChecks.ompAbsent;
           agentbox-container-dirge-absent = agentboxImageChecks.dirgeAbsent;
+          agentbox-container-gh-absent = agentboxImageChecks.ghAbsent;
           agentbox-container-root-cargo-absent = agentboxImageChecks.rootCargoAbsent;
           agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
         }
