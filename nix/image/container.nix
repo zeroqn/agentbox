@@ -2,7 +2,6 @@
   pkgs,
   piCodingAgent,
   rioBin,
-  dirge,
   herdrPrebuilt,
   montyPrebuilt,
   rmuxPrebuilt,
@@ -26,7 +25,6 @@ let
       pkgs
       piCodingAgent
       rioBin
-      dirge
       herdrPrebuilt
       montyPrebuilt
       rmuxPrebuilt
@@ -59,7 +57,6 @@ let
       pkgs
       piCodingAgent
       rioBin
-      dirge
       herdrPrebuilt
       montyPrebuilt
       rmuxPrebuilt

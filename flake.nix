@@ -118,7 +118,6 @@
           mkImageWith =
             {
               imageVariant,
-              dirgePackage,
               agentboxMuslPackage,
             }:
             import ./nix/image/container.nix {
@@ -141,21 +140,18 @@
                 wl-cross-domain-proxy
                 imageVariant
                 ;
-              dirge = dirgePackage;
               inherit agentboxMuslPackage;
             };
           mkImage =
             imageVariant:
             mkImageWith {
               inherit imageVariant;
-              dirgePackage = dirge;
               agentboxMuslPackage = rustPackages.agentboxMuslPackage;
             };
           mkImageCiSccache =
             imageVariant:
             mkImageWith {
               inherit imageVariant;
-              dirgePackage = dirge;
               agentboxMuslPackage = rustPackagesCiSccache.agentboxMuslPackage;
             };
           loftdImage = mkImage "loftd";
@@ -225,7 +221,6 @@
               inherit pkgs imageVariant;
               piCodingAgent = packages.pi-coding-agent;
               rioBin = packages.rio-bin or null;
-              dirge = packages.dirge;
               herdrPrebuilt = packages.herdr-prebuilt or null;
               montyPrebuilt = packages.monty-prebuilt or null;
               rmuxPrebuilt = packages.rmux-prebuilt;
@@ -248,12 +243,14 @@
           container-codex-absent = loftdImageChecks.codexAbsent;
           container-omx-absent = loftdImageChecks.omxAbsent;
           container-omp-absent = loftdImageChecks.ompAbsent;
+          container-dirge-absent = loftdImageChecks.dirgeAbsent;
           container-root-cargo-absent = loftdImageChecks.rootCargoAbsent;
           container-wrapper-contracts = loftdImageChecks.wrapperContracts;
           agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
           agentbox-container-codex-absent = agentboxImageChecks.codexAbsent;
           agentbox-container-omx-absent = agentboxImageChecks.omxAbsent;
           agentbox-container-omp-absent = agentboxImageChecks.ompAbsent;
+          agentbox-container-dirge-absent = agentboxImageChecks.dirgeAbsent;
           agentbox-container-root-cargo-absent = agentboxImageChecks.rootCargoAbsent;
           agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
         }

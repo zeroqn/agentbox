@@ -2,7 +2,6 @@
   pkgs,
   piCodingAgent,
   rioBin,
-  dirge,
   herdrPrebuilt,
   montyPrebuilt,
   rmuxPrebuilt,
@@ -384,7 +383,6 @@ toolingImageLayer = pkgs.buildEnv {
   agentImagePackages = [
     pkgs.bubblewrap
     piCodingAgent
-    dirge
     zvecGrep
     doltPrebuilt
     beadsPrebuilt

@@ -2,7 +2,6 @@
   pkgs,
   piCodingAgent,
   rioBin,
-  dirge,
   herdrPrebuilt,
   montyPrebuilt,
   rmuxPrebuilt,
@@ -26,7 +25,6 @@ let
       pkgs
       piCodingAgent
       rioBin
-      dirge
       herdrPrebuilt
       montyPrebuilt
       rmuxPrebuilt
@@ -318,6 +316,16 @@ let
     touch "$out/passed"
   '';
 
+  dirgeAbsent = pkgs.runCommand "${imageVariant}-image-dirge-absent-check" { } ''
+    set -euo pipefail
+
+    test ! -e ${layers.agentImageLayer}/bin/dirge
+    test ! -e ${layers.agentImageLayer}/bin/dirge-microvm-runner
+
+    mkdir -p "$out"
+    touch "$out/passed"
+  '';
+
   wrapperContracts =
     pkgs.runCommand "${imageVariant}-image-wrapper-contracts-check"
       {
@@ -442,6 +450,7 @@ in
     codexAbsent
     omxAbsent
     ompAbsent
+    dirgeAbsent
     rootCargoAbsent
     wrapperContracts
     ;
