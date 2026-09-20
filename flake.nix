@@ -45,6 +45,9 @@
           herdrPrebuilt = import ./nix/pkgs/herdr-prebuilt.nix {
             inherit pkgs pins;
           };
+          montyPrebuilt = import ./nix/pkgs/monty-prebuilt.nix {
+            inherit pkgs pins;
+          };
           ompPrebuilt = import ./nix/pkgs/omp-prebuilt.nix {
             inherit pkgs pins;
           };
@@ -125,6 +128,7 @@
                 piCodingAgent
                 rioBin
                 herdrPrebuilt
+                montyPrebuilt
                 rmuxPrebuilt
                 rtkPrebuilt
                 zvecGrep
@@ -192,6 +196,9 @@
         // pkgs.lib.optionalAttrs (herdrPrebuilt != null) {
           herdr-prebuilt = herdrPrebuilt;
         }
+        // pkgs.lib.optionalAttrs (montyPrebuilt != null) {
+          monty-prebuilt = montyPrebuilt;
+        }
         // pkgs.lib.optionalAttrs (rioBin != null) {
           rio-bin = rioBin;
         }
@@ -220,6 +227,7 @@
               rioBin = packages.rio-bin or null;
               dirge = packages.dirge;
               herdrPrebuilt = packages.herdr-prebuilt or null;
+              montyPrebuilt = packages.monty-prebuilt or null;
               rmuxPrebuilt = packages.rmux-prebuilt;
               rtkPrebuilt = packages.rtk-prebuilt or null;
               zvecGrep = packages.zvec-grep;

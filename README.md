@@ -210,6 +210,7 @@ nix build .#rtk-prebuilt
 nix build .#herdr-prebuilt
 nix build .#dolt-prebuilt
 nix build .#beads-prebuilt
+nix build .#monty-prebuilt
 nix build .#libkrunfw
 nix build .#libkrun
 nix build .#crun
@@ -295,6 +296,14 @@ GitHub Actions no longer publishes new agentbox images or release binaries.
   tarball binary for the current system, patched with Nix to use the image's
   glibc and libstdc++. The agentbox and loftd images include this package as
   `bd` in the agent layer.
+- `.#monty-prebuilt` (`x86_64-linux`): install the pinned published
+  `@pydantic/monty-linux-x64-gnu` npm tarball's `monty` worker (the sandboxed
+  Python interpreter the RLM extension spawns), patched with Nix to use the
+  image's glibc and libstdc++. Both images include this package as `monty` in
+  the agent layer and export `MONTY_BIN` pointing at it, so the extension uses
+  the store worker instead of the platform package it may find in
+  `node_modules`. Pin the version in lockstep with the `@pydantic/monty` JS
+  client: client and worker reject each other over a protocol-version mismatch.
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
 - `.#libkrun`: install the pinned `zeroqn/libkrun` `loftd-*` prebuilt release
@@ -1967,6 +1976,8 @@ The container provides:
 
 - interactive `fish` + `starship`
 - bubblewrap (`bwrap`) and Pi (`pi`)
+- the pinned monty worker (`monty`, `MONTY_BIN`) that backs the RLM extension's
+  sandboxed Python kernel
 - cargo-deny and Symposium (`cargo-agents`, invoked as `cargo agents`)
 - Python 3 (`PyYAML`, Tree-sitter, Tree-sitter Rust parser), Node.js
 - Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`, `sccache`, `mold`)
@@ -2095,6 +2106,13 @@ per-system asset hashes; release asset names embed the tag without its leading
 
 ```bash
 nix develop --command ./scripts/update-beads-prebuilt.sh
+```
+
+Refresh pinned `@pydantic/monty-linux-x64-gnu` worker metadata (version, tarball
+asset name, and SRI hash) in `nix/pins.nix` from the npm registry:
+
+```bash
+nix develop --command ./scripts/update-monty-prebuilt.sh
 ```
 
 Refresh pinned `zeroqn/libkrun` prebuilt release metadata in `nix/pins.nix`

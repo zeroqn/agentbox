@@ -4,6 +4,7 @@
   rioBin,
   dirge,
   herdrPrebuilt,
+  montyPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
@@ -27,6 +28,7 @@ let
       rioBin
       dirge
       herdrPrebuilt
+      montyPrebuilt
       rmuxPrebuilt
       rtkPrebuilt
       zvecGrep
@@ -250,6 +252,21 @@ let
       *) exit 1 ;;
     esac
   '';
+  montyContracts = ''
+    grep -F 'montyPrebuilt' ${layersSourceFile}
+    grep -F 'MONTY_BIN=' ${configSourceFile}
+    ${
+      pkgs.lib.optionalString (montyPrebuilt != null) ''
+        test -x ${layers.agentImageLayer}/bin/monty
+        HOME="$TMPDIR" ${layers.agentImageLayer}/bin/monty --version | grep -F 'monty-runtime ${montyPrebuilt.releaseVersion}'
+        case ":${layers.imagePath}:" in
+          *":${layers.agentImageLayer}/bin:"*) ;;
+          *) exit 1 ;;
+        esac
+        grep -F 'MONTY_BIN=${layers.montyPackage}/bin/monty' ${imageConfigFile}
+      ''
+    }
+  '';
 
   rootCargoAbsent = pkgs.runCommand "${imageVariant}-image-root-cargo-absent-check" { } ''
     set -euo pipefail
@@ -316,6 +333,7 @@ let
         ${herdrContracts}
         ${doltContracts}
         ${beadsContracts}
+        ${montyContracts}
 
         ${
           if imageVariant == "loftd" then

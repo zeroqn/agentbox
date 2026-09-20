@@ -117,6 +117,21 @@ in
     };
   };
 
+  # Pinned to the published `@pydantic/monty-linux-x64-gnu` npm tarball. Keep
+  # the version in sync with the `@pydantic/monty` JS client the RLM extension
+  # installs: client and worker reject each other over a protocol-version
+  # mismatch, and upstream may build a newer protocol than the published
+  # client speaks.
+  montyPrebuiltRelease = {
+    version = "0.0.23";
+    systems = {
+      x86_64-linux = {
+        asset = "monty-linux-x64-gnu-0.0.23.tgz";
+        hash = "sha256-q1ftin57G3vAMydqTWbimaDtSlDmrErbTLgFCv4sCSA=";
+      };
+    };
+  };
+
   containerLibPolicySeccompJson = {
     owner = "containers";
     repo = "container-libs";

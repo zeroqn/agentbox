@@ -4,6 +4,7 @@
   rioBin,
   dirge,
   herdrPrebuilt,
+  montyPrebuilt,
   rmuxPrebuilt,
   rtkPrebuilt,
   zvecGrep,
@@ -388,7 +389,8 @@ toolingImageLayer = pkgs.buildEnv {
     doltPrebuilt
     beadsPrebuilt
   ]
-  ++ pkgs.lib.optional (herdrPrebuilt != null) herdrPrebuilt;
+  ++ pkgs.lib.optional (herdrPrebuilt != null) herdrPrebuilt
+  ++ pkgs.lib.optional (montyPrebuilt != null) montyPrebuilt;
   agentImageLayer = pkgs.buildEnv {
     name = "agentbox-agent-layer";
     paths = agentImagePackages;
@@ -654,4 +656,6 @@ in
     nixBuilderGroupMembers
     nixBuilderPasswdEntries
     ;
+
+  montyPackage = montyPrebuilt;
 }

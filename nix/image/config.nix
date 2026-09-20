@@ -16,6 +16,15 @@ let
     "RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache"
     "CMAKE_C_COMPILER_LAUNCHER=${pkgs.sccache}/bin/sccache"
     "CMAKE_CXX_COMPILER_LAUNCHER=${pkgs.sccache}/bin/sccache"
+  ]
+  ++ montyEnv;
+
+  # The RLM extension resolves the monty worker from MONTY_BIN first, then from
+  # the @pydantic/monty platform package in node_modules, and only then from
+  # PATH. Pin it to the packaged worker so a stale node_modules payload cannot
+  # shadow it (worker and JS client reject a protocol-version mismatch).
+  montyEnv = pkgs.lib.optionals (layers.montyPackage != null) [
+    "MONTY_BIN=${layers.montyPackage}/bin/monty"
   ];
 
   agentboxEnv = [
