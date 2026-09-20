@@ -27,6 +27,7 @@
       packages = systems.forAllSystems (
         { pkgs, system, ... }:
         let
+          bun = (import nixpkgs-unstable { inherit system; }).bun;
           rioBin = headless.packages.${system}.rio-bin or null;
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
@@ -138,6 +139,7 @@
                 podman
                 crun
                 wl-cross-domain-proxy
+                bun
                 imageVariant
                 ;
               inherit agentboxMuslPackage;
@@ -214,11 +216,13 @@
           ...
         }:
         let
+          bun = (import nixpkgs-unstable { inherit system; }).bun;
           packages = self.packages.${system};
           mkImageChecks =
             imageVariant:
             import ./nix/image/checks.nix {
               inherit pkgs imageVariant;
+              bun = bun;
               piCodingAgent = packages.pi-coding-agent;
               rioBin = packages.rio-bin or null;
               herdrPrebuilt = packages.herdr-prebuilt or null;

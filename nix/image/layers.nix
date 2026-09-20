@@ -12,6 +12,7 @@
   containerLibPolicySeccompJson,
   libkrun,
   wl-cross-domain-proxy,
+  bun,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
   agentboxMuslPackage,
@@ -351,7 +352,7 @@ let
   };
 
   toolingImagePackages = [
-    pkgs.bun
+    bun
     pkgs.cargo-deny
     pkgs.fzf
     pkgs.neovim
