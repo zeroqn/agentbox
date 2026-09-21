@@ -1318,6 +1318,17 @@ memory rounded down to whole GiB, matching agentbox libkrun mode. Pass
 `SCCACHE_DIR=/home/dev/.cache/sccache`, backed by loftd's shared state
 `sccache` bind mount.
 
+Guest RAM is fixed for the life of the microVM, so the guest also gets zram
+swap sized to half of that figure: `loftd-guest-init` writes the size to
+`/sys/block/zram0/disksize`, signs the device with `mkswap`, and activates it
+with `swapon -p 100` during `enter`, before the shell or any background
+preparation starts. The pinned `libkrunfw` kernel is built with `CONFIG_SWAP`
+and `CONFIG_ZRAM` (zstd default, lzo available). Swap makes cold anonymous
+pages reclaimable, which turns memory pressure into slower progress instead of
+a guest OOM kill; it does not add memory, and a kernel without zram records
+`state=unavailable` in `/run/loftd/swap.status` rather than failing the
+session.
+
 Root shell handoff:
 
 ```bash

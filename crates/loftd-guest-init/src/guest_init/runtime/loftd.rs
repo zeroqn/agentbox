@@ -42,6 +42,7 @@ pub(in crate::guest_init) enum LoftdEnterOperation {
     ReadEnv,
     ValidatePreparedRootPaths,
     EnsureTmpTmpfs,
+    EnsureGuestSwap,
     EnsureTunDevice,
     EnsureLoopback,
     ResolveIdentity,
@@ -68,6 +69,7 @@ pub(in crate::guest_init) fn planned_enter_operations() -> Vec<LoftdEnterOperati
         LoftdEnterOperation::ReadEnv,
         LoftdEnterOperation::ValidatePreparedRootPaths,
         LoftdEnterOperation::EnsureTmpTmpfs,
+        LoftdEnterOperation::EnsureGuestSwap,
         LoftdEnterOperation::EnsureTunDevice,
         LoftdEnterOperation::EnsureLoopback,
         LoftdEnterOperation::ResolveIdentity,
@@ -131,6 +133,14 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
     })?;
     debug_breadcrumb("validate-prepared-root complete");
     profiler.measure_result("ensure-tmp-tmpfs", ensure_tmp_tmpfs_mounted)?;
+    profiler.measure_result("ensure-guest-swap", || {
+        // Guest swap is optional by design: it never fails the session, it only
+        // decides whether memory pressure degrades or kills the workload.
+        if process::is_root() {
+            crate::guest_init::components::swap::zram::ensure();
+        }
+        Ok(())
+    })?;
     profiler.measure_result("ensure-tun-device", || {
         crate::guest_init::components::rootless::kernel::prepare_tun_device()
     })?;
@@ -681,6 +691,23 @@ mod tests {
             pos(LoftdEnterOperation::EnsureLoopback) < pos(LoftdEnterOperation::RunManagedSession)
         );
         assert!(pos(LoftdEnterOperation::EnsureLoopback) < pos(LoftdEnterOperation::StartNixPrep));
+    }
+
+    #[test]
+    fn planned_loftd_enter_adds_swap_before_the_workload_starts() {
+        let operations = planned_enter_operations();
+        let pos = |op| {
+            operations
+                .iter()
+                .position(|candidate| candidate == &op)
+                .expect("operation should exist")
+        };
+
+        assert!(pos(LoftdEnterOperation::EnsureGuestSwap) < pos(LoftdEnterOperation::StartNixPrep));
+        assert!(pos(LoftdEnterOperation::EnsureGuestSwap) < pos(LoftdEnterOperation::DropAndExec));
+        assert!(
+            pos(LoftdEnterOperation::EnsureGuestSwap) < pos(LoftdEnterOperation::RunManagedSession)
+        );
     }
 
     #[test]

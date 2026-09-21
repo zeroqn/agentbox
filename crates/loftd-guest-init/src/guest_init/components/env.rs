@@ -7,6 +7,7 @@ pub(in crate::guest_init) const DEV_HOME: &str = "/home/dev";
 pub(in crate::guest_init) const DEFAULT_SHELL: &str = "fish";
 pub(in crate::guest_init) const RUN_DIR: &str = "/run/loftd";
 pub(in crate::guest_init) const FD_PRESSURE_STATUS_PATH: &str = "/run/loftd/fd-pressure.status";
+pub(in crate::guest_init) const SWAP_STATUS_PATH: &str = "/run/loftd/swap.status";
 pub(in crate::guest_init) const NIX_STATUS_PATH: &str = "/run/loftd/nix-prep.status";
 pub(in crate::guest_init) const NIX_LOG_PATH: &str = "/run/loftd/nix-prep.log";
 pub(in crate::guest_init) const NIX_WAIT_TIMEOUT_SECS: u64 = 120;
