@@ -26,6 +26,7 @@ pub(crate) trait LibkrunApi {
         read_only: bool,
     ) -> Result<i32>;
     fn disable_implicit_console(&mut self, ctx_id: u32) -> Result<i32>;
+    fn set_console_output(&mut self, ctx_id: u32, output_path: &Path) -> Result<i32>;
     fn add_virtio_console_default(
         &mut self,
         ctx_id: u32,

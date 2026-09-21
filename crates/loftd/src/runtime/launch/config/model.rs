@@ -456,7 +456,16 @@ pub(crate) struct ManagedSessionConfig {
     pub(crate) attach_socket_uid: u32,
     pub(crate) attach_socket_gid: u32,
     pub(crate) cleanup_task_rootfs_on_exit: bool,
+    /// Guest kernel console destination inside the task state directory.
+    ///
+    /// The kernel explains an OOM kill or a panic only on its console, and a
+    /// managed guest discards that console by default, so the launch routes it
+    /// to a file the supervisor can diagnose afterwards.
+    pub(crate) guest_kernel_console_log: PathBuf,
 }
+
+/// File name libkrun uses for the guest kernel console of a managed task.
+pub(crate) const MANAGED_GUEST_KERNEL_CONSOLE_LOG: &str = "guest-kernel-console.log";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LaunchConfig {

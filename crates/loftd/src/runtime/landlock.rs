@@ -871,6 +871,7 @@ mod tests {
     }
 
     fn managed_session_config(attach_socket: PathBuf) -> ManagedSessionConfig {
+        let guest_kernel_console_log = attach_socket.join("guest-kernel-console.log");
         ManagedSessionConfig {
             attach_socket,
             guest_port: 50_426,
@@ -878,6 +879,7 @@ mod tests {
             attach_socket_uid: 1000,
             attach_socket_gid: 1000,
             cleanup_task_rootfs_on_exit: true,
+            guest_kernel_console_log,
         }
     }
 

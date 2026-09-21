@@ -509,6 +509,7 @@ mod tests {
                 attach_socket_uid: 1000,
                 attach_socket_gid: 1000,
                 cleanup_task_rootfs_on_exit,
+                guest_kernel_console_log: task_dir.join("guest-kernel-console.log"),
             }),
             seccomp: Default::default(),
             landlock: Default::default(),

@@ -278,6 +278,9 @@ pub(crate) fn run(options: RuntimeOptions, profile_scope: RuntimeProfileScope) -
                             attach_socket_uid: current_uid(),
                             attach_socket_gid: current_gid(),
                             cleanup_task_rootfs_on_exit: !plan.preserve_debug,
+                            guest_kernel_console_log: lease.handle().task_dir().join(
+                                crate::runtime::launch::config::MANAGED_GUEST_KERNEL_CONSOLE_LOG,
+                            ),
                         };
                         match profiler.measure_result("launch_config_build", || {
                             LaunchConfig::build_for_task(LaunchSpec {

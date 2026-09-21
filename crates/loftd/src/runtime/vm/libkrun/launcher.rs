@@ -287,10 +287,26 @@ impl<A: LibkrunApi> DirectLibkrunLauncher<A> {
             check_setup("krun_set_port_map", rc)?;
             tracing::debug!(ctx_id, "krun_set_port_map: complete");
         }
-        tracing::debug!(ctx_id, "krun_disable_implicit_console: begin");
-        let rc = self.api.disable_implicit_console(ctx_id)?;
-        check_setup("krun_disable_implicit_console", rc)?;
-        tracing::debug!(ctx_id, "krun_disable_implicit_console: complete");
+        match &config.managed_session {
+            Some(managed) => {
+                // A managed guest has no user attached to its console, and the
+                // kernel puts its OOM kills and panics only there. Keep the
+                // implicit console but send it to a file the supervisor reads
+                // when the task ends.
+                tracing::debug!(ctx_id, "krun_set_console_output: begin");
+                let rc = self
+                    .api
+                    .set_console_output(ctx_id, &managed.guest_kernel_console_log)?;
+                check_setup("krun_set_console_output", rc)?;
+                tracing::debug!(ctx_id, "krun_set_console_output: complete");
+            }
+            None => {
+                tracing::debug!(ctx_id, "krun_disable_implicit_console: begin");
+                let rc = self.api.disable_implicit_console(ctx_id)?;
+                check_setup("krun_disable_implicit_console", rc)?;
+                tracing::debug!(ctx_id, "krun_disable_implicit_console: complete");
+            }
+        }
         tracing::debug!(ctx_id, "krun_add_virtio_console_default: begin");
         let rc = self.api.add_virtio_console_default(ctx_id, 0, 1, 2)?;
         check_setup("krun_add_virtio_console_default", rc)?;

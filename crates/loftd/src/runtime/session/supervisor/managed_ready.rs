@@ -932,6 +932,7 @@ mod tests {
             attach_socket_uid: unsafe { libc::getuid() },
             attach_socket_gid: unsafe { libc::getgid() },
             cleanup_task_rootfs_on_exit: false,
+            guest_kernel_console_log: socket_path.join("guest-kernel-console.log"),
         }
     }
 }

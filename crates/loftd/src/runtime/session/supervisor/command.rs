@@ -15,6 +15,7 @@ use crate::runtime::launch::config::LaunchConfig;
 use crate::runtime::seccomp;
 use crate::runtime::session::attach::{self, AttachInputPolicy, AttachOutcome};
 use crate::runtime::session::profile::{LOFTD_HOST_PROFILE_ENV, LoftdHostProfiler};
+use crate::runtime::session::supervisor::guest_death;
 use crate::runtime::session::supervisor::identity::KeepIdLauncher;
 use crate::runtime::session::supervisor::managed_exit_marker;
 use crate::runtime::session::supervisor::managed_ready;
@@ -62,19 +63,27 @@ pub(crate) fn run_helper_process(
     tracing::debug!(program = ?spec.program, args = ?spec.args, log_level = config.log_level.as_str(), "loftd libkrun helper command constructed");
     let audit_trace_path = config.seccomp.audit_trace_path().map(Path::to_path_buf);
     let mut command = spec.into_command();
-    let managed_helper_stderr = if config.managed_session.is_some() {
-        managed_exit_marker::reset_observed_guest_exit(&active_task.task_dir)?;
-        Some(ManagedHelperStderr::create(&active_task.task_dir)?)
-    } else {
-        None
+    let managed_helper_logs = match &config.managed_session {
+        Some(managed) => {
+            managed_exit_marker::reset_observed_guest_exit(&active_task.task_dir)?;
+            Some(ManagedHelperLogs::create(
+                &active_task.task_dir,
+                &managed.guest_kernel_console_log,
+            )?)
+        }
+        None => None,
     };
     if config.managed_session.is_some() {
-        command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(
-            managed_helper_stderr
-                .as_ref()
-                .expect("managed helper stderr must be initialized")
-                .spawn_stdio()?,
-        );
+        let logs = managed_helper_logs
+            .as_ref()
+            .expect("managed helper logs must be initialized");
+        command
+            .stdin(Stdio::null())
+            // The virtio-console device feeds the guest console to the helper's
+            // stdout, so capturing it keeps the guest kernel's own account of a
+            // death instead of discarding it.
+            .stdout(logs.stdout.spawn_stdio()?)
+            .stderr(logs.stderr.spawn_stdio()?);
     } else {
         command
             .stdin(Stdio::inherit())
@@ -141,7 +150,7 @@ pub(crate) fn run_helper_process(
         }) {
             terminate_spawned_child_group(&mut child);
             let _ = remove_active_task(&active_task.task_dir);
-            replay_managed_helper_stderr(managed_helper_stderr.as_ref());
+            replay_managed_helper_stderr(managed_helper_logs.as_ref());
             return Err(context_audit_error(
                 err,
                 audit_trace_path.as_deref(),
@@ -173,7 +182,7 @@ pub(crate) fn run_helper_process(
                 let status = match child.wait() {
                     Ok(status) => status,
                     Err(err) => {
-                        replay_managed_helper_stderr(managed_helper_stderr.as_ref());
+                        replay_managed_helper_stderr(managed_helper_logs.as_ref());
                         return Err(err)
                             .context("failed to wait for managed loftd helper after guest exit");
                     }
@@ -182,13 +191,13 @@ pub(crate) fn run_helper_process(
                     status,
                     code,
                     &active_task.task_dir,
-                    managed_helper_stderr.as_ref(),
+                    managed_helper_logs.as_ref(),
                 )
             }
             Err(err) => {
                 terminate_spawned_child_group(&mut child);
                 let _ = remove_active_task(&active_task.task_dir);
-                replay_managed_helper_stderr(managed_helper_stderr.as_ref());
+                replay_managed_helper_stderr(managed_helper_logs.as_ref());
                 Err(context_audit_error(
                     err,
                     audit_trace_path.as_deref(),
@@ -212,26 +221,26 @@ pub(crate) fn run_helper_process(
 
 const MANAGED_HELPER_STDERR_LOG: &str = "helper.stderr.log";
 
+/// The managed helper's stdout carries the guest entrypoint's own output, which
+/// the virtio-console port feeds there. It would otherwise be discarded.
+const MANAGED_HELPER_STDOUT_LOG: &str = "helper.stdout.log";
+
 #[derive(Debug, Clone)]
-struct ManagedHelperStderr {
+struct ManagedHelperLog {
     path: PathBuf,
+    label: &'static str,
 }
 
-impl ManagedHelperStderr {
-    fn create(task_state_dir: &Path) -> Result<Self> {
-        let path = task_state_dir.join(MANAGED_HELPER_STDERR_LOG);
+impl ManagedHelperLog {
+    fn create(task_state_dir: &Path, file_name: &str, label: &'static str) -> Result<Self> {
+        let path = task_state_dir.join(file_name);
         OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(&path)
-            .with_context(|| {
-                format!(
-                    "failed to create managed loftd helper stderr log '{}'",
-                    path.display()
-                )
-            })?;
-        Ok(Self { path })
+            .with_context(|| format!("failed to create {label} '{}'", path.display()))?;
+        Ok(Self { path, label })
     }
 
     fn spawn_stdio(&self) -> Result<Stdio> {
@@ -241,8 +250,9 @@ impl ManagedHelperStderr {
             .open(&self.path)
             .with_context(|| {
                 format!(
-                    "failed to open managed loftd helper stderr log '{}' for helper",
-                    self.path.display()
+                    "failed to open {label} '{path}' for helper",
+                    label = self.label,
+                    path = self.path.display()
                 )
             })?;
         Ok(Stdio::from(file))
@@ -254,8 +264,9 @@ impl ManagedHelperStderr {
             .open(&self.path)
             .with_context(|| {
                 format!(
-                    "failed to read managed loftd helper stderr log '{}'",
-                    self.path.display()
+                    "failed to read {label} '{path}'",
+                    label = self.label,
+                    path = self.path.display()
                 )
             })?;
         let mut contents = String::new();
@@ -264,20 +275,67 @@ impl ManagedHelperStderr {
     }
 }
 
+/// The two streams a managed helper writes for the host to read afterwards: the
+/// helper's own stderr and the guest console.
+#[derive(Debug, Clone)]
+struct ManagedHelperLogs {
+    stderr: ManagedHelperLog,
+    stdout: ManagedHelperLog,
+    /// Written by libkrun itself, so it is only ever read from here.
+    kernel_console: ManagedHelperLog,
+}
+
+impl ManagedHelperLogs {
+    fn create(task_state_dir: &Path, kernel_console_log: &Path) -> Result<Self> {
+        Ok(Self {
+            stderr: ManagedHelperLog::create(
+                task_state_dir,
+                MANAGED_HELPER_STDERR_LOG,
+                "managed loftd helper stderr log",
+            )?,
+            stdout: ManagedHelperLog::create(
+                task_state_dir,
+                MANAGED_HELPER_STDOUT_LOG,
+                "managed loftd helper stdout log",
+            )?,
+            kernel_console: ManagedHelperLog {
+                path: kernel_console_log.to_path_buf(),
+                label: "guest kernel console log",
+            },
+        })
+    }
+
+    /// Text for guest-death classification, kernel console first: the guest
+    /// kernel explains an OOM kill or a panic only there.
+    ///
+    /// Best effort by design: an unreadable log (libkrun may never have created
+    /// the console file) simply contributes nothing.
+    fn read_for_diagnosis(&self) -> String {
+        let mut contents = String::new();
+        for log in [&self.kernel_console, &self.stderr, &self.stdout] {
+            if let Ok(text) = log.read_to_string() {
+                contents.push_str(&text);
+            }
+            contents.push('\n');
+        }
+        contents
+    }
+}
+
 fn managed_helper_exit_result(
     status: ExitStatus,
     guest_code: i32,
     task_state_dir: &Path,
-    stderr_log: Option<&ManagedHelperStderr>,
+    logs: Option<&ManagedHelperLogs>,
 ) -> Result<ChildStatus> {
-    managed_helper_exit_result_with_replay(status, guest_code, task_state_dir, stderr_log, true)
+    managed_helper_exit_result_with_replay(status, guest_code, task_state_dir, logs, true)
 }
 
 fn managed_helper_exit_result_with_replay(
     status: ExitStatus,
     guest_code: i32,
     task_state_dir: &Path,
-    stderr_log: Option<&ManagedHelperStderr>,
+    logs: Option<&ManagedHelperLogs>,
     replay_stderr: bool,
 ) -> Result<ChildStatus> {
     tracing::debug!(
@@ -285,17 +343,25 @@ fn managed_helper_exit_result_with_replay(
         guest_code,
         "managed loftd helper exited after guest exit"
     );
-    if status.success() {
-        return Ok(ChildStatus::exited(guest_code));
-    }
-    let stderr = match stderr_log
-        .map(ManagedHelperStderr::read_to_string)
-        .transpose()
-    {
+    let stderr = match logs.map(|logs| logs.stderr.read_to_string()).transpose() {
         Ok(Some(contents)) => contents,
         Ok(None) => String::new(),
         Err(err) => format!("failed to read managed helper stderr log: {err:#}\n"),
     };
+    // The guest kernel explains an OOM kill or a panic only on its console, so
+    // classify the death before deciding how the helper exited: otherwise a
+    // guest killed under memory pressure looks exactly like a finished task.
+    let death_cause = guest_death::GuestDeathCause::diagnose(
+        &logs
+            .map(ManagedHelperLogs::read_for_diagnosis)
+            .unwrap_or_default(),
+    );
+    if let Some(description) = death_cause.describe() {
+        eprintln!("loftd: {description}");
+    }
+    if status.success() {
+        return Ok(ChildStatus::exited(guest_code));
+    }
     let observation =
         managed_exit_marker::read_matching_observed_guest_exit(task_state_dir, guest_code);
     if matches!(
@@ -308,12 +374,18 @@ fn managed_helper_exit_result_with_replay(
     if replay_stderr {
         replay_stderr_text(stderr.as_bytes());
     }
+    let cause = death_cause
+        .describe()
+        .map(|description| format!("; {description}"))
+        .unwrap_or_default();
     match status.code() {
         Some(code) => bail!(
-            "managed loftd helper exited with status {code} after guest exited with status {guest_code}"
+            "managed loftd helper exited with status {code} after guest exited with status {guest_code}{cause}"
         ),
         None => {
-            bail!("managed loftd helper was terminated after guest exited with status {guest_code}")
+            bail!(
+                "managed loftd helper was terminated after guest exited with status {guest_code}{cause}"
+            )
         }
     }
 }
@@ -349,11 +421,11 @@ fn managed_helper_status_is_marker_explained(
     saw_duplicate_worker_failure && saw_duplicate_helper_failure
 }
 
-fn replay_managed_helper_stderr(stderr_log: Option<&ManagedHelperStderr>) {
-    let Some(stderr_log) = stderr_log else {
+fn replay_managed_helper_stderr(logs: Option<&ManagedHelperLogs>) {
+    let Some(logs) = logs else {
         return;
     };
-    match stderr_log.read_to_string() {
+    match logs.stderr.read_to_string() {
         Ok(contents) => replay_stderr_text(contents.as_bytes()),
         Err(err) => replay_stderr_text(
             format!("failed to read managed helper stderr log: {err:#}\n").as_bytes(),
@@ -398,21 +470,23 @@ mod tests {
     #[test]
     fn managed_helper_stderr_sink_is_file_backed_for_detached_lifecycle() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let log = ManagedHelperStderr::create(temp.path()).expect("stderr log");
+        let logs =
+            ManagedHelperLogs::create(temp.path(), &temp.path().join("guest-kernel-console.log"))
+                .expect("helper logs");
 
         let status = Command::new("sh")
             .arg("-c")
             .arg("printf 'detached helper diagnostic\\n' >&2")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(log.spawn_stdio().expect("spawn stdio"))
+            .stderr(logs.stderr.spawn_stdio().expect("spawn stdio"))
             .status()
             .expect("run stderr writer");
 
         assert!(status.success());
 
         assert_eq!(
-            log.read_to_string().expect("read log"),
+            logs.stderr.read_to_string().expect("read log"),
             "detached helper diagnostic\n"
         );
         assert!(
@@ -422,12 +496,38 @@ mod tests {
     }
 
     #[test]
+    fn managed_guest_kernel_console_feeds_the_death_diagnosis() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let console_path = temp.path().join("guest-kernel-console.log");
+        let logs = ManagedHelperLogs::create(temp.path(), &console_path).expect("helper logs");
+        std::fs::write(
+            &console_path,
+            "Out of memory: Killed process 42 (python3) total-vm:5242880kB, anon-rss:4194304kB,\n",
+        )
+        .expect("kernel console text");
+
+        let cause = guest_death::GuestDeathCause::diagnose(&logs.read_for_diagnosis());
+
+        assert_eq!(
+            cause,
+            guest_death::GuestDeathCause::OomKilled {
+                task: "python3".to_owned(),
+                pid: Some(42),
+                anon_rss_kib: Some(4_194_304),
+                kills: 1,
+            }
+        );
+    }
+
+    #[test]
     fn managed_helper_status_accepts_marker_explained_duplicate_status() {
         let temp = tempfile::tempdir().expect("tempdir");
         managed_exit_marker::write_observed_guest_exit(temp.path(), 130).expect("marker");
-        let log = ManagedHelperStderr::create(temp.path()).expect("stderr log");
+        let logs =
+            ManagedHelperLogs::create(temp.path(), &temp.path().join("guest-kernel-console.log"))
+                .expect("helper logs");
         std::fs::write(
-            &log.path,
+            &logs.stderr.path,
             "loftd internal VM worker: sandboxed loftd VM worker child exited with status 130\n\
              loftd internal: loftd VM worker exited with status 1\n",
         )
@@ -437,7 +537,7 @@ mod tests {
             ExitStatus::from_raw(1 << 8),
             130,
             temp.path(),
-            Some(&log),
+            Some(&logs),
             false,
         )
         .expect("matching marker should explain duplicate helper status");
@@ -449,13 +549,15 @@ mod tests {
     fn managed_helper_status_rejects_empty_stderr_despite_marker() {
         let temp = tempfile::tempdir().expect("tempdir");
         managed_exit_marker::write_observed_guest_exit(temp.path(), 130).expect("marker");
-        let log = ManagedHelperStderr::create(temp.path()).expect("stderr log");
+        let logs =
+            ManagedHelperLogs::create(temp.path(), &temp.path().join("guest-kernel-console.log"))
+                .expect("helper logs");
 
         let err = managed_helper_exit_result_with_replay(
             ExitStatus::from_raw(1 << 8),
             130,
             temp.path(),
-            Some(&log),
+            Some(&logs),
             false,
         )
         .expect_err("empty stderr must not be classified as known duplicate noise");
@@ -467,9 +569,11 @@ mod tests {
     fn managed_helper_status_rejects_mismatched_duplicate_worker_status() {
         let temp = tempfile::tempdir().expect("tempdir");
         managed_exit_marker::write_observed_guest_exit(temp.path(), 130).expect("marker");
-        let log = ManagedHelperStderr::create(temp.path()).expect("stderr log");
+        let logs =
+            ManagedHelperLogs::create(temp.path(), &temp.path().join("guest-kernel-console.log"))
+                .expect("helper logs");
         std::fs::write(
-            &log.path,
+            &logs.stderr.path,
             "loftd internal VM worker: sandboxed loftd VM worker child exited with status 129\n\
              loftd internal: loftd VM worker exited with status 1\n",
         )
@@ -479,7 +583,7 @@ mod tests {
             ExitStatus::from_raw(1 << 8),
             130,
             temp.path(),
-            Some(&log),
+            Some(&logs),
             false,
         )
         .expect_err("different worker status must not be classified as known duplicate noise");
@@ -491,9 +595,11 @@ mod tests {
     fn managed_helper_status_rejects_duplicate_worker_line_with_extra_text() {
         let temp = tempfile::tempdir().expect("tempdir");
         managed_exit_marker::write_observed_guest_exit(temp.path(), 130).expect("marker");
-        let log = ManagedHelperStderr::create(temp.path()).expect("stderr log");
+        let logs =
+            ManagedHelperLogs::create(temp.path(), &temp.path().join("guest-kernel-console.log"))
+                .expect("helper logs");
         std::fs::write(
-            &log.path,
+            &logs.stderr.path,
             "loftd internal VM worker: sandboxed loftd VM worker child exited with status 130: extra\n\
              loftd internal: loftd VM worker exited with status 1\n",
         )
@@ -503,7 +609,7 @@ mod tests {
             ExitStatus::from_raw(1 << 8),
             130,
             temp.path(),
-            Some(&log),
+            Some(&logs),
             false,
         )
         .expect_err("extra worker stderr text must not be classified as known duplicate noise");
@@ -515,9 +621,11 @@ mod tests {
     fn managed_helper_status_rejects_cleanup_failure_despite_marker() {
         let temp = tempfile::tempdir().expect("tempdir");
         managed_exit_marker::write_observed_guest_exit(temp.path(), 130).expect("marker");
-        let log = ManagedHelperStderr::create(temp.path()).expect("stderr log");
+        let logs =
+            ManagedHelperLogs::create(temp.path(), &temp.path().join("guest-kernel-console.log"))
+                .expect("helper logs");
         std::fs::write(
-            &log.path,
+            &logs.stderr.path,
             "failed after managed guest exited with status 130: cleanup failure\n",
         )
         .expect("stderr text");
@@ -526,7 +634,7 @@ mod tests {
             ExitStatus::from_raw(1 << 8),
             130,
             temp.path(),
-            Some(&log),
+            Some(&logs),
             false,
         )
         .expect_err("cleanup failure must take precedence");
@@ -537,13 +645,15 @@ mod tests {
     #[test]
     fn managed_helper_status_rejects_nonzero_without_matching_marker() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let log = ManagedHelperStderr::create(temp.path()).expect("stderr log");
+        let logs =
+            ManagedHelperLogs::create(temp.path(), &temp.path().join("guest-kernel-console.log"))
+                .expect("helper logs");
 
         let err = managed_helper_exit_result_with_replay(
             ExitStatus::from_raw(1 << 8),
             130,
             temp.path(),
-            Some(&log),
+            Some(&logs),
             false,
         )
         .expect_err("missing marker must not be suppressed");

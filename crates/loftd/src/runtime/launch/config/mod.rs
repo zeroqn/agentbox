@@ -13,10 +13,10 @@ pub(crate) use model::{
     CODEX_TARGET, CORTEXKIT_TAG, CORTEXKIT_TARGET, DEFAULT_PULSE_BRIDGE_PORT, DEFAULT_WAYPIPE_PORT,
     DIRGE_CONFIG_TAG, DIRGE_CONFIG_TARGET, DIRGE_DATA_TAG, DIRGE_DATA_TARGET, DIRGE_HOME_TAG,
     DIRGE_HOME_TARGET, DiskAttachment, ExecConfig, GuestInitOverrideMount, GuestPermissions,
-    HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec, ManagedSessionConfig,
-    NIX_TARGET, NetworkMode, OMP_TAG, OMP_TARGET, PI_TAG, PI_TARGET, PulseBridgeConfig,
-    PulseServer, SCCACHE_TAG, SCCACHE_TARGET, WORKSPACE_TAG, WORKSPACE_TARGET, WaypipeConfig,
-    canonical_mount_target,
+    HostNixOverlay, LOFTD_KRUN_CONFIG_PATH, LaunchConfig, LaunchSpec,
+    MANAGED_GUEST_KERNEL_CONSOLE_LOG, ManagedSessionConfig, NIX_TARGET, NetworkMode, OMP_TAG,
+    OMP_TARGET, PI_TAG, PI_TARGET, PulseBridgeConfig, PulseServer, SCCACHE_TAG, SCCACHE_TARGET,
+    WORKSPACE_TAG, WORKSPACE_TARGET, WaypipeConfig, canonical_mount_target,
 };
 
 #[cfg(test)]

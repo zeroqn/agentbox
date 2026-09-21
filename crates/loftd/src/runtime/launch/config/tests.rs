@@ -377,6 +377,8 @@ fn launch_config_round_trips_managed_session_contract() {
             attach_socket_uid: 1000,
             attach_socket_gid: 1001,
             cleanup_task_rootfs_on_exit: true,
+            guest_kernel_console_log: Path::new("/state/task/guest-kernel-console.log")
+                .to_path_buf(),
         }),
     })
     .expect("launch config should build");
@@ -442,6 +444,8 @@ fn managed_session_extra_env_terminal_vars_are_guest_visible() {
             attach_socket_uid: 1000,
             attach_socket_gid: 1001,
             cleanup_task_rootfs_on_exit: true,
+            guest_kernel_console_log: Path::new("/state/task/guest-kernel-console.log")
+                .to_path_buf(),
         }),
     })
     .expect("launch config should build");

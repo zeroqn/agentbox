@@ -38,6 +38,7 @@ enum Call {
     AddVsockPort(u32, u32, String, bool),
     SetPortMap(u32, Vec<String>),
     DisableImplicitConsole(u32),
+    SetConsoleOutput(u32, String),
     AddVirtioConsoleDefault(u32, i32, i32, i32),
     SetWorkdir(u32, String),
     SetExec(u32, String, Vec<String>, Vec<(String, String)>),
@@ -174,6 +175,14 @@ impl LibkrunApi for FakeLibkrunApi {
             .borrow_mut()
             .push(Call::DisableImplicitConsole(ctx_id));
         Ok(self.rc("krun_disable_implicit_console"))
+    }
+
+    fn set_console_output(&mut self, ctx_id: u32, output_path: &Path) -> Result<i32> {
+        self.calls.borrow_mut().push(Call::SetConsoleOutput(
+            ctx_id,
+            output_path.display().to_string(),
+        ));
+        Ok(self.rc("krun_set_console_output"))
     }
 
     fn add_virtio_console_default(
@@ -339,6 +348,7 @@ fn managed_config(attach_socket: &Path) -> LaunchConfig {
             attach_socket_uid: unsafe { libc::geteuid() },
             attach_socket_gid: unsafe { libc::getegid() },
             cleanup_task_rootfs_on_exit: true,
+            guest_kernel_console_log: attach_socket.into(),
         }),
         ..config()
     }
@@ -358,6 +368,7 @@ fn waypipe_managed_config(waypipe_socket: &Path, attach_socket: &Path) -> Launch
             attach_socket_uid: unsafe { libc::geteuid() },
             attach_socket_gid: unsafe { libc::getegid() },
             cleanup_task_rootfs_on_exit: true,
+            guest_kernel_console_log: attach_socket.into(),
         }),
         ..config()
     }
@@ -784,6 +795,24 @@ fn managed_session_adds_vsock_listener_and_starts_before_host_socket_exists() {
         "launcher must not require libkrun-managed host socket before start"
     );
     let calls = calls.borrow();
+    let managed = managed_config(&socket);
+    let console_path = managed
+        .managed_session
+        .as_ref()
+        .expect("managed session")
+        .guest_kernel_console_log
+        .display()
+        .to_string();
+    assert!(
+        calls.contains(&Call::SetConsoleOutput(7, console_path)),
+        "managed launch should route the guest kernel console to a file: {calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|call| matches!(call, Call::DisableImplicitConsole(..))),
+        "a managed launch must keep the implicit console it captures"
+    );
     let vsock_index = calls
         .iter()
         .position(|call| matches!(call, Call::AddVsockPort(..)))

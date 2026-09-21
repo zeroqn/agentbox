@@ -1577,6 +1577,22 @@ records a structured skip until an isolated finite tmux comparison is added.
 
 Loftd troubleshooting FAQ:
 
+- When a task ends under memory pressure, the guest kernel's own account of the
+  kill is kept in `guest-kernel-console.log` in the task state directory, and
+  loftd reports it when the task ends, for example:
+
+  ```text
+  loftd: guest kernel OOM-killed python3.13 (pid 705), anon-rss 3895792 kB
+  ```
+
+  A managed task keeps its supervisor out of the guest OOM killer's reach
+  (`oom_score_adj` of -1000) while the shell and its children stay killable, so
+  a single runaway process is killed instead of ending the whole microVM. The
+  guest console also captures a kernel panic, which loftd reports as
+  `guest kernel found no killable task and panicked` when the OOM killer had no
+  victim left. Without the console capture a guest death under memory pressure
+  is indistinguishable from a task that finished normally.
+
 - If the interactive shell appears to hang during startup, check the host
   `RLIMIT_NOFILE` limits inherited by the process that launched loftd:
 

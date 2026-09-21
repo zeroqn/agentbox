@@ -236,6 +236,11 @@ impl LaunchConfig {
                     "false"
                 },
             );
+            push_field(
+                &mut out,
+                "managed_session.guest_kernel_console_log",
+                &managed.guest_kernel_console_log.display().to_string(),
+            );
         }
         push_field(&mut out, "seccomp.mode", self.seccomp.as_config_value());
         push_field(&mut out, "landlock.mode", self.landlock.as_config_value());
@@ -402,6 +407,7 @@ impl LaunchConfig {
                     | "managed_session.attach_socket_uid"
                     | "managed_session.attach_socket_gid"
                     | "managed_session.cleanup_task_rootfs_on_exit"
+                    | "managed_session.guest_kernel_console_log"
                     | "seccomp.mode"
                     | "landlock.mode"
                     | "seccomp.audit_trace_path"
@@ -579,6 +585,7 @@ fn parse_managed_session(
         "managed_session.attach_socket_uid",
         "managed_session.attach_socket_gid",
         "managed_session.cleanup_task_rootfs_on_exit",
+        "managed_session.guest_kernel_console_log",
     ]
     .iter()
     .any(|key| fields.contains_key(*key));
@@ -603,6 +610,10 @@ fn parse_managed_session(
             "managed_session.cleanup_task_rootfs_on_exit",
             &required_field(fields, "managed_session.cleanup_task_rootfs_on_exit")?,
         )?,
+        guest_kernel_console_log: PathBuf::from(required_field(
+            fields,
+            "managed_session.guest_kernel_console_log",
+        )?),
     }))
 }
 

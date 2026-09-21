@@ -39,6 +39,7 @@ type KrunSetNestedVirt = unsafe extern "C" fn(u32, bool) -> i32;
 type KrunSetRoot = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunAddDisk = unsafe extern "C" fn(u32, *const c_char, *const c_char, bool) -> i32;
 type KrunDisableImplicitConsole = unsafe extern "C" fn(u32) -> i32;
+type KrunSetConsoleOutput = unsafe extern "C" fn(u32, *const c_char) -> i32;
 type KrunAddVirtioConsoleDefault = unsafe extern "C" fn(u32, i32, i32, i32) -> i32;
 type KrunAddNetUnixstream = unsafe extern "C" fn(u32, *const c_char, i32, *mut u8, u32, u32) -> i32;
 type KrunAddVsockPort2 = unsafe extern "C" fn(u32, u32, *const c_char, bool) -> i32;
@@ -64,6 +65,7 @@ pub(crate) struct DynamicLibkrunApi {
     set_root: KrunSetRoot,
     add_disk: KrunAddDisk,
     disable_implicit_console: KrunDisableImplicitConsole,
+    set_console_output: Option<KrunSetConsoleOutput>,
     add_virtio_console_default: KrunAddVirtioConsoleDefault,
     add_net_unixstream: Option<KrunAddNetUnixstream>,
     add_vsock_port2: Option<KrunAddVsockPort2>,
@@ -178,6 +180,8 @@ impl DynamicLibkrunApi {
                     handle,
                     "krun_disable_implicit_console",
                 )?),
+                set_console_output: load_optional_symbol(handle, "krun_set_console_output")
+                    .map(|symbol| std::mem::transmute::<*mut c_void, KrunSetConsoleOutput>(symbol)),
                 add_virtio_console_default: std::mem::transmute::<
                     *mut c_void,
                     KrunAddVirtioConsoleDefault,
@@ -410,6 +414,16 @@ impl LibkrunApi for DynamicLibkrunApi {
     fn disable_implicit_console(&mut self, ctx_id: u32) -> Result<i32> {
         // SAFETY: function pointer resolved from libkrun with verified signature.
         Ok(unsafe { (self.disable_implicit_console)(ctx_id) })
+    }
+
+    fn set_console_output(&mut self, ctx_id: u32, output_path: &Path) -> Result<i32> {
+        let set_console_output = self.set_console_output.ok_or_else(|| {
+            anyhow!("libkrun console capture failed: krun_set_console_output symbol is unavailable")
+        })?;
+        let output_path = path_cstring(output_path)?;
+        // SAFETY: function pointer resolved from libkrun with verified signature and
+        // the C string lives for the duration of the call.
+        Ok(unsafe { set_console_output(ctx_id, output_path.as_ptr()) })
     }
 
     fn add_virtio_console_default(
