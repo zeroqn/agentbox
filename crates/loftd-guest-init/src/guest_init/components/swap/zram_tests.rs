@@ -2,16 +2,38 @@ use super::*;
 use std::cell::RefCell;
 
 const MEMINFO_8_GIB: &str = "MemTotal:        8388608 kB\nMemFree:         1048576 kB\n";
+const EIGHT_GIB: u64 = 8 * 1024 * 1024 * 1024;
 const FOUR_GIB: u64 = 4 * 1024 * 1024 * 1024;
+const TWO_GIB: u64 = 2 * 1024 * 1024 * 1024;
 
 #[test]
-fn plan_swap_size_halves_guest_ram() {
-    assert_eq!(plan_swap_size(8 * 1024 * 1024 * 1024), FOUR_GIB);
+fn plan_swap_capacity_matches_guest_ram() {
+    assert_eq!(plan_swap_capacity(EIGHT_GIB), EIGHT_GIB);
 }
 
 #[test]
-fn plan_swap_size_floors_tiny_guests() {
-    assert_eq!(plan_swap_size(64 * 1024 * 1024), MIN_SWAP_BYTES);
+fn plan_swap_capacity_floors_tiny_guests() {
+    assert_eq!(plan_swap_capacity(64 * 1024 * 1024), MIN_SWAP_BYTES);
+}
+
+#[test]
+fn plan_mem_limit_bounds_the_device_to_a_quarter_of_guest_ram() {
+    assert_eq!(plan_mem_limit(EIGHT_GIB), TWO_GIB);
+}
+
+#[test]
+fn plan_mem_limit_stays_below_the_capacity_it_bounds() {
+    for mem_total_bytes in [
+        128 * 1024 * 1024,
+        1024 * 1024 * 1024,
+        4 * 1024 * 1024 * 1024,
+        64 * 1024 * 1024 * 1024,
+    ] {
+        let capacity = plan_swap_capacity(mem_total_bytes);
+        let limit = plan_mem_limit(mem_total_bytes);
+
+        assert!(limit < capacity, "{limit} should stay below {capacity}");
+    }
 }
 
 #[test]
@@ -49,14 +71,16 @@ fn activation_sizes_signs_and_activates_the_zram_device() {
     let report = activate_with(&backend).expect("zram activation should succeed");
 
     assert_eq!(report.state, GuestSwapState::Ready);
-    assert_eq!(report.size_bytes, Some(FOUR_GIB));
+    assert_eq!(report.size_bytes, Some(EIGHT_GIB));
+    assert_eq!(report.mem_limit_bytes, Some(TWO_GIB));
     assert_eq!(
         backend.operations(),
         [
             "exists:/sys/block/zram0/disksize",
             "read:/proc/swaps",
             "read:/proc/meminfo",
-            "write:/sys/block/zram0/disksize=4294967296",
+            "write:/sys/block/zram0/disksize=8589934592",
+            "write:/sys/block/zram0/mem_limit=2147483648",
             "run:mkswap /dev/zram0",
             "run:swapon -p 100 /dev/zram0",
         ]
@@ -65,18 +89,20 @@ fn activation_sizes_signs_and_activates_the_zram_device() {
 
 #[test]
 fn activation_reports_the_active_device_without_resizing_it() {
-    let backend = FakeSwapBackend::with_active_device("4294967296\n");
+    let backend = FakeSwapBackend::with_active_device("4294967296\n", "1048576\n");
 
     let report = activate_with(&backend).expect("an active device is not an error");
 
     assert_eq!(report.state, GuestSwapState::Ready);
     assert_eq!(report.size_bytes, Some(FOUR_GIB));
+    assert_eq!(report.mem_limit_bytes, Some(1024 * 1024));
     assert_eq!(
         backend.operations(),
         [
             "exists:/sys/block/zram0/disksize",
             "read:/proc/swaps",
             "read:/sys/block/zram0/disksize",
+            "read:/sys/block/zram0/mem_limit",
         ]
     );
 }
@@ -89,7 +115,10 @@ fn ensure_records_a_ready_device_in_the_status_file() {
 
     assert_eq!(
         backend.status(),
-        format!("state=ready\ndevice={DEVICE}\nsize_bytes={FOUR_GIB}\npriority={SWAP_PRIORITY}\n")
+        format!(
+            "state=ready\ndevice={DEVICE}\nsize_bytes={EIGHT_GIB}\nmem_limit_bytes={TWO_GIB}\n\
+             priority={SWAP_PRIORITY}\n"
+        )
     );
 }
 
@@ -131,6 +160,7 @@ struct FakeSwapBackend {
     swaps: RefCell<String>,
     meminfo: RefCell<String>,
     device_size: RefCell<Option<String>>,
+    mem_limit: RefCell<Option<String>>,
     failing: RefCell<Option<String>>,
 }
 
@@ -143,6 +173,7 @@ impl FakeSwapBackend {
             swaps: RefCell::new("Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n".to_owned()),
             meminfo: RefCell::new(MEMINFO_8_GIB.to_owned()),
             device_size: RefCell::new(None),
+            mem_limit: RefCell::new(None),
             failing: RefCell::new(None),
         }
     }
@@ -154,13 +185,14 @@ impl FakeSwapBackend {
         }
     }
 
-    fn with_active_device(size: &str) -> Self {
+    fn with_active_device(size: &str, mem_limit: &str) -> Self {
         let backend = Self::new();
         *backend.swaps.borrow_mut() = format!(
             "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n\
              {DEVICE}                              partition\t4194300\t0\t100\n"
         );
         *backend.device_size.borrow_mut() = Some(size.to_owned());
+        *backend.mem_limit.borrow_mut() = Some(mem_limit.to_owned());
         backend
     }
 
@@ -199,6 +231,11 @@ impl SwapBackend for FakeSwapBackend {
                 .borrow()
                 .clone()
                 .ok_or_else(|| anyhow!("zram device has no size")),
+            Some(MEM_LIMIT_PATH) => self
+                .mem_limit
+                .borrow()
+                .clone()
+                .ok_or_else(|| anyhow!("zram device has no memory limit")),
             other => Err(anyhow!("unexpected read of {other:?}")),
         }
     }
@@ -208,7 +245,13 @@ impl SwapBackend for FakeSwapBackend {
         if self.failing.borrow().as_deref() == Some("write") {
             return Err(anyhow!("failed to write {}", path.display()));
         }
-        *self.device_size.borrow_mut() = Some(value.trim().to_owned());
+        match path.to_str() {
+            Some(DEVICE_SIZE_PATH) => {
+                *self.device_size.borrow_mut() = Some(value.trim().to_owned())
+            }
+            Some(MEM_LIMIT_PATH) => *self.mem_limit.borrow_mut() = Some(value.trim().to_owned()),
+            other => return Err(anyhow!("unexpected write to {other:?}")),
+        }
         Ok(())
     }
 

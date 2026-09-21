@@ -27,12 +27,27 @@ use crate::guest_init::fs as guest_fs;
 const DEVICE: &str = "/dev/zram0";
 /// zram is faster than any disk-backed swap device, so it goes first.
 const SWAP_PRIORITY: &str = "100";
-/// Swap capacity as a fraction of guest RAM.
-const SWAP_DENOMINATOR: u64 = 2;
+/// Swap capacity as a percentage of guest RAM.
+///
+/// The capacity counts uncompressed bytes, and zram keeps a page resident in
+/// compressed form, so this is the ceiling for pages the guest can park in
+/// swap rather than the amount of memory the device costs.
+const SWAP_CAPACITY_PERCENT: u64 = 100;
+/// Compressed-memory budget for the device as a percentage of guest RAM.
+///
+/// zram stores an incompressible page uncompressed, so without a budget the
+/// device would spend guest RAM at roughly 1:1 on such pages, buying nothing
+/// while pushing the guest into thrash instead of a prompt failure. Capping
+/// the budget keeps that cost bounded; once the cap is reached the device
+/// refuses further pages and the kernel falls back to its normal reclaim
+/// behaviour.
+const SWAP_MEM_LIMIT_PERCENT: u64 = 25;
 /// Floor so a small `--mem` still gets a device worth having.
 const MIN_SWAP_BYTES: u64 = 256 * 1024 * 1024;
-/// zram accepts a size only while the device is unused.
+/// zram accepts a size only while the device is unused; the budget can change
+/// at any time, including after the device is active.
 const DEVICE_SIZE_PATH: &str = "/sys/block/zram0/disksize";
+const MEM_LIMIT_PATH: &str = "/sys/block/zram0/mem_limit";
 const SWAPS_PATH: &str = "/proc/swaps";
 const MEMINFO_PATH: &str = "/proc/meminfo";
 
@@ -60,6 +75,7 @@ impl GuestSwapState {
 struct GuestSwapReport {
     state: GuestSwapState,
     size_bytes: Option<u64>,
+    mem_limit_bytes: Option<u64>,
     error: Option<String>,
 }
 
@@ -92,41 +108,67 @@ fn activate_with(backend: &impl SwapBackend) -> Result<GuestSwapReport> {
         .read(Path::new(SWAPS_PATH))
         .context("failed to read active swap devices")?;
     if swap_active(&swaps, DEVICE) {
-        return Ok(GuestSwapReport::ready(device_size_bytes(backend)));
+        // An active device is left exactly as it is; the report reads back the
+        // geometry whoever configured it, so the status file stays truthful.
+        return Ok(GuestSwapReport::ready(
+            read_size(backend, DEVICE_SIZE_PATH),
+            read_size(backend, MEM_LIMIT_PATH),
+        ));
     }
 
     let meminfo = backend
         .read(Path::new(MEMINFO_PATH))
         .context("failed to read guest memory size before sizing swap")?;
-    let size_bytes = plan_swap_size(parse_mem_total(&meminfo)?);
+    let mem_total_bytes = parse_mem_total(&meminfo)?;
+    let size_bytes = plan_swap_capacity(mem_total_bytes);
+    let mem_limit_bytes = plan_mem_limit(mem_total_bytes);
 
     backend
         .write(Path::new(DEVICE_SIZE_PATH), &format!("{size_bytes}\n"))
         .with_context(|| format!("failed to set the {DEVICE} size to {size_bytes} bytes"))?;
+    backend
+        .write(Path::new(MEM_LIMIT_PATH), &format!("{mem_limit_bytes}\n"))
+        .with_context(|| {
+            format!("failed to bound the {DEVICE} memory use to {mem_limit_bytes} bytes")
+        })?;
     backend
         .run("mkswap", &[DEVICE])
         .with_context(|| format!("failed to write a swap signature to {DEVICE}"))?;
     backend
         .run("swapon", &["-p", SWAP_PRIORITY, DEVICE])
         .with_context(|| format!("failed to activate {DEVICE} as swap"))?;
-    Ok(GuestSwapReport::ready(Some(size_bytes)))
+    Ok(GuestSwapReport::ready(
+        Some(size_bytes),
+        Some(mem_limit_bytes),
+    ))
 }
 
-/// Size of an already active device, for the report only.
-fn device_size_bytes(backend: &impl SwapBackend) -> Option<u64> {
+/// A byte count the kernel reports in one of the device's sysfs attributes.
+fn read_size(backend: &impl SwapBackend, path: &str) -> Option<u64> {
     backend
-        .read(Path::new(DEVICE_SIZE_PATH))
+        .read(Path::new(path))
         .ok()
         .and_then(|value| value.trim().parse().ok())
 }
 
-/// Half of guest RAM, floored so a small guest still gets a usable device.
+/// Swap capacity for a guest with this much RAM, floored so a small `--mem`
+/// still gets a device worth having.
 ///
-/// The capacity is the uncompressed size zram advertises; incompressible
-/// contents cost the device about as much RAM as they occupy, so half of RAM
-/// keeps the device's own worst-case footprint below the memory it is freeing.
-fn plan_swap_size(mem_total_bytes: u64) -> u64 {
-    (mem_total_bytes / SWAP_DENOMINATOR).max(MIN_SWAP_BYTES)
+/// Sized to guest RAM rather than to a fraction of it: the capacity is only
+/// reachable by pages the device can compress, which cost a fraction of the
+/// space they occupy, and [`plan_mem_limit`] bounds what the device may spend.
+fn plan_swap_capacity(mem_total_bytes: u64) -> u64 {
+    percent_of(mem_total_bytes, SWAP_CAPACITY_PERCENT).max(MIN_SWAP_BYTES)
+}
+
+/// Compressed-memory budget for the device, which always stays below the
+/// capacity returned by [`plan_swap_capacity`].
+fn plan_mem_limit(mem_total_bytes: u64) -> u64 {
+    percent_of(mem_total_bytes, SWAP_MEM_LIMIT_PERCENT)
+}
+
+fn percent_of(mem_total_bytes: u64, percent: u64) -> u64 {
+    mem_total_bytes * percent / 100
 }
 
 fn parse_mem_total(meminfo: &str) -> Result<u64> {
@@ -149,10 +191,11 @@ fn swap_active(swaps: &str, device: &str) -> bool {
 }
 
 impl GuestSwapReport {
-    fn ready(size_bytes: Option<u64>) -> Self {
+    fn ready(size_bytes: Option<u64>, mem_limit_bytes: Option<u64>) -> Self {
         Self {
             state: GuestSwapState::Ready,
             size_bytes,
+            mem_limit_bytes,
             error: None,
         }
     }
@@ -161,6 +204,7 @@ impl GuestSwapReport {
         Self {
             state: GuestSwapState::Unavailable,
             size_bytes: None,
+            mem_limit_bytes: None,
             error: None,
         }
     }
@@ -169,6 +213,7 @@ impl GuestSwapReport {
         Self {
             state: GuestSwapState::Failed,
             size_bytes: None,
+            mem_limit_bytes: None,
             error: Some(format!("{error:#}")),
         }
     }
@@ -179,6 +224,9 @@ impl GuestSwapReport {
         let _ = writeln!(out, "device={DEVICE}");
         if let Some(size_bytes) = self.size_bytes {
             let _ = writeln!(out, "size_bytes={size_bytes}");
+        }
+        if let Some(mem_limit_bytes) = self.mem_limit_bytes {
+            let _ = writeln!(out, "mem_limit_bytes={mem_limit_bytes}");
         }
         let _ = writeln!(out, "priority={SWAP_PRIORITY}");
         if let Some(error) = &self.error {

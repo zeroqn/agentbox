@@ -1319,14 +1319,18 @@ memory rounded down to whole GiB, matching agentbox libkrun mode. Pass
 `sccache` bind mount.
 
 Guest RAM is fixed for the life of the microVM, so the guest also gets zram
-swap sized to half of that figure: `loftd-guest-init` writes the size to
-`/sys/block/zram0/disksize`, signs the device with `mkswap`, and activates it
-with `swapon -p 100` during `enter`, before the shell or any background
-preparation starts. The pinned `libkrunfw` kernel is built with `CONFIG_SWAP`
-and `CONFIG_ZRAM` (zstd default, lzo available). Swap makes cold anonymous
-pages reclaimable, which turns memory pressure into slower progress instead of
-a guest OOM kill; it does not add memory, and a kernel without zram records
-`state=unavailable` in `/run/loftd/swap.status` rather than failing the
+swap: during `enter`, before the shell or any background preparation starts,
+`loftd-guest-init` sets the device capacity in `/sys/block/zram0/disksize`,
+bounds what the device may spend in `/sys/block/zram0/mem_limit`, signs it with
+`mkswap`, and activates it with `swapon -p 100`. The capacity equals guest RAM
+and the memory budget is a quarter of it. Capacity counts uncompressed bytes
+and zram holds a page compressed, so compressible content costs a fraction of
+the space it occupies, while the budget stops pages that do not compress from
+being parked at roughly 1:1. The pinned `libkrunfw` kernel is built with
+`CONFIG_SWAP` and `CONFIG_ZRAM` (zstd default, lzo available). Swap makes cold
+anonymous pages reclaimable, which turns memory pressure into slower progress
+instead of a guest OOM kill; it does not add memory, and a kernel without zram
+records `state=unavailable` in `/run/loftd/swap.status` rather than failing the
 session.
 
 Root shell handoff:
