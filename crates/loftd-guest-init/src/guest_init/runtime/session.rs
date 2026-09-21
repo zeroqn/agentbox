@@ -61,6 +61,10 @@ pub(in crate::guest_init) fn run(
             config.protocol_version
         );
     }
+    // A resident supervisor must outlive guest memory pressure: libkrun's init
+    // reboots the guest when the image entrypoint exits, so an OOM kill of this
+    // process would look like the task finishing.
+    process::protect_session_supervisor();
     managed_debug(&format!("starting port={}", config.port));
     managed_debug("vsock bind begin");
     let listener = VsockListener::bind(config.port)?;
@@ -1196,6 +1200,9 @@ fn spawn_pty_child(
         );
     }
     if pid == 0 {
+        // The workload subtree inherits the supervisor's OOM score, so it has to
+        // stay killable: the guest needs a victim for the kernel to pick.
+        process::allow_workload_kill();
         let code = child_main(
             &pty.slave_path,
             command,

@@ -344,6 +344,45 @@ fn plan_nofile_floor(current: NofileLimits) -> Result<NofileLimits> {
     })
 }
 
+/// `/proc/<pid>/oom_score_adj` value that puts a task outside the OOM
+/// killer's reach (`OOM_SCORE_ADJ_MIN` in the kernel).
+const SUPERVISOR_OOM_SCORE_ADJ: i32 = -1000;
+
+/// OOM score left on the workload subtree, which stays the guest's victim.
+const WORKLOAD_OOM_SCORE_ADJ: i32 = 0;
+
+const OOM_SCORE_ADJ_PATH: &str = "/proc/self/oom_score_adj";
+
+/// Takes the managed-session supervisor out of the guest OOM killer's reach.
+///
+/// Losing this process ends the microVM rather than the workload: libkrun's
+/// init execs the image entrypoint as a child of the real PID 1 and reboots
+/// the guest when that child exits, so an OOM kill here is indistinguishable
+/// from the task finishing. The guest runs the session either way, so a failed
+/// adjustment is reported and ignored.
+pub(in crate::guest_init) fn protect_session_supervisor() {
+    if let Err(err) = set_oom_score_adj(OOM_SCORE_ADJ_PATH, SUPERVISOR_OOM_SCORE_ADJ) {
+        eprintln!("loftd-guest-init: guest session is not protected from the OOM killer: {err:#}");
+    }
+}
+
+/// Restores the default OOM score on a workload process.
+///
+/// Called in the forked child before it drops privileges: a child inherits the
+/// supervisor's score, and an inherited [`SUPERVISOR_OOM_SCORE_ADJ`] would leave
+/// a memory-hungry workload as unkillable as the supervisor, which ends in the
+/// kernel's "no killable processes" panic.
+pub(in crate::guest_init) fn allow_workload_kill() {
+    if let Err(err) = set_oom_score_adj(OOM_SCORE_ADJ_PATH, WORKLOAD_OOM_SCORE_ADJ) {
+        eprintln!("loftd-guest-init: guest workload OOM score not restored: {err:#}");
+    }
+}
+
+fn set_oom_score_adj(path: &str, score: i32) -> Result<()> {
+    std::fs::write(path, format!("{score}\n"))
+        .with_context(|| format!("failed to write {score} to {path}"))
+}
+
 fn execvp(command: &[String]) -> Result<()> {
     let c_strings = command
         .iter()
@@ -709,5 +748,41 @@ mod tests {
             ensure_nofile_floor_with(&mut backend).expect_err("setrlimit failure should surface");
 
         assert!(format!("{err:#}").contains("failed to raise guest RLIMIT_NOFILE"));
+    }
+
+    #[test]
+    fn oom_protection_writes_the_unkillable_score() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("oom_score_adj");
+
+        set_oom_score_adj(path.to_str().unwrap(), SUPERVISOR_OOM_SCORE_ADJ).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "-1000\n");
+    }
+
+    #[test]
+    fn workload_restore_writes_the_default_score() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("oom_score_adj");
+
+        set_oom_score_adj(path.to_str().unwrap(), WORKLOAD_OOM_SCORE_ADJ).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "0\n");
+    }
+
+    #[test]
+    fn workload_score_stays_killable_next_to_the_supervisor() {
+        // The supervisor is exempt from the OOM killer, so the workload has to
+        // remain the more killable of the two or the kernel runs out of
+        // victims and panics instead of reclaiming.
+        const { assert!(WORKLOAD_OOM_SCORE_ADJ > SUPERVISOR_OOM_SCORE_ADJ) };
+    }
+
+    #[test]
+    fn oom_score_adjust_surfaces_write_failures() {
+        let err = set_oom_score_adj("/nonexistent-oom/oom_score_adj", SUPERVISOR_OOM_SCORE_ADJ)
+            .expect_err("a missing path must fail");
+
+        assert!(format!("{err:#}").contains("oom_score_adj"));
     }
 }
