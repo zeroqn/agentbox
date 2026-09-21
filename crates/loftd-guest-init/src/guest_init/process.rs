@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, anyhow};
 use std::ffi::CString;
+use std::fs::OpenOptions;
 use std::io;
+use std::io::Write;
 
 use crate::guest_init::components::env::{GuestPermission, GuestPermissions};
 use crate::guest_init::components::home::identity::DevIdentity;
@@ -209,21 +211,31 @@ pub(in crate::guest_init) fn pid_alive(pid: u32) -> bool {
 
 const GUEST_NOFILE_FLOOR: libc::rlim_t = 524_288;
 
+/// System-wide open-descriptor ceiling. The guest kernel derives it from guest
+/// RAM at boot, which at small `--mem` values lands below [`GUEST_NOFILE_FLOOR`].
+const FILE_MAX_PATH: &str = "/proc/sys/fs/file-max";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NofileLimits {
     soft: libc::rlim_t,
     hard: libc::rlim_t,
 }
 
-trait NofileRlimitBackend {
+/// The guest has two descriptor ceilings that must stay consistent:
+/// `RLIMIT_NOFILE` caps one process, while `fs.file-max` caps the whole guest.
+/// A lower system ceiling makes a process fail with `ENFILE` before it can
+/// reach its own `EMFILE`.
+trait NofileCeilingBackend {
     fn get_nofile_limits(&mut self) -> io::Result<NofileLimits>;
     fn set_nofile_limits(&mut self, limits: NofileLimits) -> io::Result<()>;
+    fn get_file_max(&mut self) -> io::Result<libc::rlim_t>;
+    fn set_file_max(&mut self, value: libc::rlim_t) -> io::Result<()>;
 }
 
 #[derive(Debug, Default)]
-struct LibcNofileRlimitBackend;
+struct LibcNofileCeilingBackend;
 
-impl NofileRlimitBackend for LibcNofileRlimitBackend {
+impl NofileCeilingBackend for LibcNofileCeilingBackend {
     fn get_nofile_limits(&mut self) -> io::Result<NofileLimits> {
         let mut limits = libc::rlimit {
             rlim_cur: 0,
@@ -252,30 +264,70 @@ impl NofileRlimitBackend for LibcNofileRlimitBackend {
             Err(io::Error::last_os_error())
         }
     }
+
+    fn get_file_max(&mut self) -> io::Result<libc::rlim_t> {
+        let text = std::fs::read_to_string(FILE_MAX_PATH)?;
+        text.trim().parse().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid value in {FILE_MAX_PATH}"),
+            )
+        })
+    }
+
+    fn set_file_max(&mut self, value: libc::rlim_t) -> io::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(FILE_MAX_PATH)?;
+        file.write_all(format!("{value}\n").as_bytes())
+    }
 }
 
 pub(in crate::guest_init) fn ensure_nofile_floor() -> Result<()> {
-    let mut backend = LibcNofileRlimitBackend;
+    let mut backend = LibcNofileCeilingBackend;
     ensure_nofile_floor_with(&mut backend)
 }
 
-fn ensure_nofile_floor_with(backend: &mut impl NofileRlimitBackend) -> Result<()> {
+fn ensure_nofile_floor_with(backend: &mut impl NofileCeilingBackend) -> Result<()> {
     let current = backend
         .get_nofile_limits()
         .context("failed to read guest RLIMIT_NOFILE before launching the guest shell")?;
     let requested = plan_nofile_floor(current)?;
-    if requested == current {
-        return Ok(());
-    }
-    backend
-        .set_nofile_limits(requested)
-        .with_context(|| {
+    if requested != current {
+        backend.set_nofile_limits(requested).with_context(|| {
             format!(
                 "failed to raise guest RLIMIT_NOFILE from soft={} hard={} to soft={} hard={} before launching the guest shell",
                 current.soft, current.hard, requested.soft, requested.hard
             )
         })?;
-    Ok(())
+    }
+    ensure_file_max_floor(backend, requested.hard)
+}
+
+/// The system-wide ceiling must never bind before a single process reaches its
+/// own hard limit, which is the largest descriptor count one process may hold.
+/// Values the kernel already reports above the hard limit are left alone.
+fn ensure_file_max_floor(
+    backend: &mut impl NofileCeilingBackend,
+    hard_limit: libc::rlim_t,
+) -> Result<()> {
+    let current = backend.get_file_max().context(
+        "failed to read guest fs.file-max before matching it to the guest RLIMIT_NOFILE",
+    )?;
+    let requested = plan_file_max_floor(current, hard_limit);
+    if requested == current {
+        return Ok(());
+    }
+    backend.set_file_max(requested).with_context(|| {
+        format!(
+            "failed to raise guest fs.file-max from {current} to {requested} so it covers the guest RLIMIT_NOFILE hard limit before launching the guest shell"
+        )
+    })
+}
+
+fn plan_file_max_floor(current: libc::rlim_t, hard_limit: libc::rlim_t) -> libc::rlim_t {
+    current.max(hard_limit)
 }
 
 fn plan_nofile_floor(current: NofileLimits) -> Result<NofileLimits> {
@@ -313,11 +365,18 @@ fn execvp(command: &[String]) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// System ceiling the kernel reports on a guest whose RAM derives a
+    /// `fs.file-max` above every hard limit these tests use.
+    const FAKE_FILE_MAX: libc::rlim_t = 1_048_576;
+
     #[derive(Debug)]
     struct FakeNofileBackend {
         current: io::Result<NofileLimits>,
         set_error: Option<i32>,
         set_calls: Vec<NofileLimits>,
+        file_max: io::Result<libc::rlim_t>,
+        set_file_max_error: Option<i32>,
+        file_max_set_calls: Vec<libc::rlim_t>,
     }
 
     impl FakeNofileBackend {
@@ -326,19 +385,36 @@ mod tests {
                 current: Ok(NofileLimits { soft, hard }),
                 set_error: None,
                 set_calls: Vec::new(),
+                file_max: Ok(FAKE_FILE_MAX),
+                set_file_max_error: None,
+                file_max_set_calls: Vec::new(),
             }
         }
 
         fn with_get_error(errno: i32) -> Self {
             Self {
                 current: Err(io::Error::from_raw_os_error(errno)),
-                set_error: None,
-                set_calls: Vec::new(),
+                ..Self::with_limits(0, 0)
             }
+        }
+
+        fn with_file_max(mut self, value: libc::rlim_t) -> Self {
+            self.file_max = Ok(value);
+            self
+        }
+
+        fn with_file_max_error(mut self, errno: i32) -> Self {
+            self.file_max = Err(io::Error::from_raw_os_error(errno));
+            self
+        }
+
+        fn with_set_file_max_error(mut self, errno: i32) -> Self {
+            self.set_file_max_error = Some(errno);
+            self
         }
     }
 
-    impl NofileRlimitBackend for FakeNofileBackend {
+    impl NofileCeilingBackend for FakeNofileBackend {
         fn get_nofile_limits(&mut self) -> io::Result<NofileLimits> {
             self.current.as_ref().map(|limits| *limits).map_err(|err| {
                 io::Error::from_raw_os_error(err.raw_os_error().unwrap_or(libc::EIO))
@@ -349,6 +425,21 @@ mod tests {
             self.set_calls.push(limits);
             self.set_error
                 .map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno)))
+        }
+
+        fn get_file_max(&mut self) -> io::Result<libc::rlim_t> {
+            self.file_max.as_ref().map(|value| *value).map_err(|err| {
+                io::Error::from_raw_os_error(err.raw_os_error().unwrap_or(libc::EIO))
+            })
+        }
+
+        fn set_file_max(&mut self, value: libc::rlim_t) -> io::Result<()> {
+            self.file_max_set_calls.push(value);
+            if let Some(errno) = self.set_file_max_error {
+                return Err(io::Error::from_raw_os_error(errno));
+            }
+            self.file_max = Ok(value);
+            Ok(())
         }
     }
 
@@ -483,6 +574,76 @@ mod tests {
         ensure_nofile_floor_with(&mut backend).expect("limits above floor should pass");
 
         assert!(backend.set_calls.is_empty());
+        assert!(
+            backend.file_max_set_calls.is_empty(),
+            "a system ceiling above the hard limit must be left alone"
+        );
+    }
+
+    #[test]
+    fn nofile_floor_raises_system_file_max_to_the_hard_limit() {
+        let mut backend = FakeNofileBackend::with_limits(1024, 4096).with_file_max(401_676);
+
+        ensure_nofile_floor_with(&mut backend).expect("below-floor ceilings should be raised");
+
+        assert_eq!(backend.file_max_set_calls, [GUEST_NOFILE_FLOOR]);
+    }
+
+    #[test]
+    fn nofile_floor_tracks_a_hard_limit_above_the_floor() {
+        let mut backend = FakeNofileBackend::with_limits(600_000, 700_000).with_file_max(401_676);
+
+        ensure_nofile_floor_with(&mut backend)
+            .expect("system ceiling should follow the hard limit");
+
+        assert!(
+            backend.set_calls.is_empty(),
+            "an unchanged RLIMIT_NOFILE must not be set again"
+        );
+        assert_eq!(backend.file_max_set_calls, [700_000]);
+    }
+
+    #[test]
+    fn nofile_floor_raises_file_max_even_when_rlimit_needs_no_change() {
+        let mut backend = FakeNofileBackend::with_limits(GUEST_NOFILE_FLOOR, GUEST_NOFILE_FLOOR)
+            .with_file_max(401_676);
+
+        ensure_nofile_floor_with(&mut backend).expect("the system ceiling should still be raised");
+
+        assert!(backend.set_calls.is_empty());
+        assert_eq!(backend.file_max_set_calls, [GUEST_NOFILE_FLOOR]);
+    }
+
+    #[test]
+    fn nofile_floor_reports_file_max_failures() {
+        let mut backend =
+            FakeNofileBackend::with_limits(1024, 4096).with_file_max_error(libc::ENOENT);
+        let err =
+            ensure_nofile_floor_with(&mut backend).expect_err("unreadable file-max should fail");
+        assert!(
+            format!("{err:#}").contains("failed to read guest fs.file-max"),
+            "unexpected error: {err:#}"
+        );
+
+        let mut backend = FakeNofileBackend::with_limits(1024, 4096)
+            .with_file_max(401_676)
+            .with_set_file_max_error(libc::EROFS);
+        let err =
+            ensure_nofile_floor_with(&mut backend).expect_err("unwritable file-max should fail");
+        assert!(
+            format!("{err:#}").contains("failed to raise guest fs.file-max"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn plan_file_max_floor_never_lowers_the_kernel_value() {
+        assert_eq!(
+            plan_file_max_floor(401_676, GUEST_NOFILE_FLOOR),
+            GUEST_NOFILE_FLOOR
+        );
+        assert_eq!(plan_file_max_floor(1_048_576, 4096), 1_048_576);
+        assert_eq!(plan_file_max_floor(4096, 4096), 4096);
     }
 
     #[test]

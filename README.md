@@ -1580,6 +1580,17 @@ Loftd troubleshooting FAQ:
   startup fails if the loaded libkrun does not provide `krun_set_rlimits` or
   rejects the nofile limit request.
 
+- The guest has two descriptor ceilings, and loftd keeps them consistent: the
+  per-process `RLIMIT_NOFILE` and the guest-kernel-wide
+  `/proc/sys/fs/file-max`. The guest kernel derives `file-max` from guest RAM at
+  boot, which at small `--mem` values (for example `--mem 4`) lands below the
+  guest `RLIMIT_NOFILE` hard limit. Guest bootstrap raises `fs.file-max` to at
+  least that hard limit so a process cannot fail with system-wide `ENFILE`
+  before it reaches its own limit. A kernel value already above the hard limit
+  is left alone, and `loftd --mem <GiB>` still raises the kernel-derived
+  default. `loftd-guest-init fd-report` prints both ceilings
+  (`process.N.soft_limit`, `process.N.hard_limit`, and `system_fds_max`).
+
 Active task control is loftd-native and does not use host Podman as a runtime
 backend:
 
