@@ -17,8 +17,13 @@ fn unshare_cleanup_runs_inside_podman_unshare() {
 #[test]
 fn unshare_cleanup_script_succeeds_when_mount_is_absent() {
     let absent_mount = "/tmp/agentbox-nix-merged-not-mounted";
+    // A non-login shell, so the host's profile and logout files cannot decide
+    // this test's result: a logout file that trips the script's `set -u` (NixOS
+    // /etc/bash_logout reads an unset variable) replaces the script's exit
+    // status. The `-lc` shape of the real invocation is asserted by
+    // `unshare_cleanup_runs_inside_podman_unshare`.
     let status = Command::new("bash")
-        .arg("-lc")
+        .arg("-c")
         .arg(UNSHARE_CLEANUP_SCRIPT)
         .arg("agentbox")
         .arg(absent_mount)
