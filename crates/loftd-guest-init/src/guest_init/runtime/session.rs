@@ -19,6 +19,7 @@ use crate::guest_init::runtime::attach_profile::{self, GuestAttachProfiler};
 use crate::guest_init::runtime::vsock::VsockListener;
 
 use crate::guest_init::components::env::GuestPermissions;
+use crate::guest_init::components::fdwatch;
 use crate::guest_init::components::home::identity::DevIdentity;
 use crate::guest_init::process;
 
@@ -551,7 +552,12 @@ fn run_event_loop(
     attach_profile: bool,
     pty_forwarding_mode: PtyForwardingMode,
 ) -> Result<()> {
+    let fd_env = fdwatch::ProcFdEnv;
+    let mut fd_watch = fdwatch::FdWatch::new(fdwatch::DEFAULT_WATCH_INTERVAL);
     loop {
+        if let Some(tick) = fd_watch.poll(Instant::now(), &fd_env) {
+            fdwatch::record_and_warn(&tick);
+        }
         if let Some(code) = reap_child(child)? {
             std::process::exit(code);
         }
@@ -731,7 +737,12 @@ fn serve_attached_client(
     let mut pty_reader = duplicate_file(master)?;
     let mut buf = [0u8; IO_BUF_SIZE];
     let drain_limits = AttachedPtyDrainLimits::default();
+    let fd_env = fdwatch::ProcFdEnv;
+    let mut fd_watch = fdwatch::FdWatch::new(fdwatch::DEFAULT_WATCH_INTERVAL);
     while active.load(Ordering::SeqCst) {
+        if let Some(tick) = fd_watch.poll(Instant::now(), &fd_env) {
+            fdwatch::record_and_warn(&tick);
+        }
         apply_pending_resizes(&resize_rx, terminal_state);
         if let Some(code) = reap_child(child)? {
             let _ = write_frame(&mut client, &Frame::Exit { code });

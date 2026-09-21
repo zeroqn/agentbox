@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::time::Duration;
 
 use crate::guest_init::cli::{
     GuestInitCommand, InternalSubcommand, NixSubcommand, PodmanSubcommand,
@@ -14,6 +15,10 @@ pub(in crate::guest_init) mod vsock;
 pub(in crate::guest_init) fn run(command: GuestInitCommand) -> Result<()> {
     match command {
         GuestInitCommand::Enter(command) => loftd::enter(command.resolved_command()),
+        GuestInitCommand::FdReport(command) => {
+            let interval = Duration::from_secs(command.interval_secs.max(1));
+            crate::guest_init::components::fdwatch::run_report(command.watch, interval)
+        }
         GuestInitCommand::AsDev(command) => as_dev::run(command.resolved_command()),
         GuestInitCommand::Internal(command) => match command.command {
             InternalSubcommand::Nix(nix) => match nix.command {

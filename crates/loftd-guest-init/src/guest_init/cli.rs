@@ -14,10 +14,23 @@ pub(in crate::guest_init) struct GuestInitCli {
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub(in crate::guest_init) enum GuestInitCommand {
     Enter(EnterCommand),
+    /// Report guest file-descriptor pressure and its likely origin.
+    #[command(name = "fd-report")]
+    FdReport(FdReportCommand),
     #[command(name = "as-dev", hide = true)]
     AsDev(AsDevCommand),
     #[command(hide = true)]
     Internal(InternalCommand),
+}
+
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub(in crate::guest_init) struct FdReportCommand {
+    /// Keep printing a fresh report every interval instead of exiting.
+    #[arg(long)]
+    pub(in crate::guest_init) watch: bool,
+    /// Seconds between samples while watching.
+    #[arg(long, value_name = "SECONDS", default_value_t = 10)]
+    pub(in crate::guest_init) interval_secs: u64,
 }
 
 #[derive(Debug, Args, Clone, PartialEq, Eq)]
@@ -121,7 +134,33 @@ mod tests {
         let help = String::from_utf8(help).expect("help should be utf8");
 
         assert!(help.contains("enter"));
+        assert!(help.contains("fd-report"));
         assert!(!help.contains("internal"));
+    }
+
+    #[test]
+    fn parses_public_fd_report_command() {
+        let cli = GuestInitCli::try_parse_from(["loftd-guest-init", "fd-report"])
+            .expect("fd-report should parse");
+        let GuestInitCommand::FdReport(command) = cli.command else {
+            panic!("expected fd-report command");
+        };
+        assert!(!command.watch);
+        assert_eq!(command.interval_secs, 10);
+
+        let cli = GuestInitCli::try_parse_from([
+            "loftd-guest-init",
+            "fd-report",
+            "--watch",
+            "--interval-secs",
+            "3",
+        ])
+        .expect("fd-report watch should parse");
+        let GuestInitCommand::FdReport(command) = cli.command else {
+            panic!("expected fd-report command");
+        };
+        assert!(command.watch);
+        assert_eq!(command.interval_secs, 3);
     }
 
     #[test]

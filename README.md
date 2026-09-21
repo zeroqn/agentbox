@@ -1346,6 +1346,21 @@ for `--log-level debug`; otherwise a scalar/global `RUST_LOG` value such as
 `debug` or `trace` can enable loftd tracing. Target-specific `RUST_LOG` filters
 still drive Rust tracing, but are not guessed into a libkrun numeric level.
 
+For guest-side file-descriptor pressure, `loftd-guest-init fd-report` prints the
+worst descriptor consumers in the guest (`pid`, command, count, soft limit, and
+an `socket`/`pipe`/`anon_inode`/`regular` target breakdown), the guest-wide
+`/proc/sys/fs/file-nr` allocation against `file-max`, and the origin of any
+exhaustion it observes. `origin=guest` means a guest-local open failed with
+`EMFILE`/`ENFILE`; `origin=host` means a guest-local open succeeded while the
+virtiofs probe target `/workspace` failed with `EMFILE`/`ENFILE`, which points at
+the host libkrun VM worker that backs every virtiofs mount rather than at the
+guest. Pass `--watch` (with `--interval-secs`, default 10) to keep printing a
+fresh report. Managed guest sessions sample the same report every 10 seconds
+into `/run/loftd/fd-pressure.status` and print a warning to `loftd-guest-init`
+stderr (captured in the task's `helper.stderr.log`) when a process crosses
+50/75/90% of its soft `RLIMIT_NOFILE` or grows by 256 descriptors between
+samples, so pressure is visible before a command fails with `EMFILE`.
+
 For timing diagnostics, `loftd --profile` emits `loftd host profile` and
 `loftd-guest-init profile` reports to stderr for completed btrfs-snapshot host
 and guest-init phases such as launch-plan build, task rootfs materialization,

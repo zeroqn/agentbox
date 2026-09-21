@@ -1,5 +1,6 @@
 pub(in crate::guest_init) mod disk;
 pub(in crate::guest_init) mod env;
+pub(in crate::guest_init) mod fdwatch;
 pub(in crate::guest_init) mod hardening;
 pub(in crate::guest_init) mod home;
 pub(in crate::guest_init) mod net;
