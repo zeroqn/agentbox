@@ -229,6 +229,14 @@ _Avoid_: silent automatic fallback
 The loftd policy where the task rootfs backend is selected deliberately through loftd configuration or a CLI override. Loftd's initial backend set is **btrfs snapshot default** and **fuse-overlay explicit fallback**; it does not include `auto` or `reflink`.
 _Avoid_: container storage driver selection
 
+**waypipe transport**:
+The guest-to-host delivery of a guest application's Wayland buffers through loftd's `--waypipe` path: a guest waypipe server (display `loftd-waypipe-0`) dials the host over vsock, where a host waypipe client listening on a unix socket relays to the real compositor.
+_Avoid_: waypipe display (that names only the guest-side socket), waypipe acceleration
+
+**venus present**:
+Putting venus-rendered frames on screen through a guest Vulkan surface (`VkSurfaceKHR`). It cannot work across the microvm boundary, because the host GPU never sees the guest's `wl_display`; offscreen venus rendering plus buffer sharing to the compositor is the path that does work.
+_Avoid_: venus GPU acceleration (that is the offscreen render path, which does work)
+
 ## Example dialogue
 
 Dev: Should this task use a named VM instance?
