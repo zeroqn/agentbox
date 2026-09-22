@@ -97,11 +97,19 @@ the part that is easy to get wrong:
   and `VK_DRIVER_FILES` at the image's mesa but never sets the GBM backend path,
   so ozone searched the NixOS default `/run/opengl-driver/lib/gbm`, missed the
   guest's `dri_gbm.so` and could not init a DRM render node.
-- dmabuf must be blocked on the waypipe side (`-n`/`--no-gpu`). With dmabuf
-  enabled the host compositor's format modifiers reach the guest and venus
-  rejects them (`VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`), which
-  crash-loops the GPU process. Buffers then travel as `wl_shm`, so rendering is
-  accelerated but the transfer is not zero-copy.
+- dmabuf must still be blocked on the waypipe side (`-n`/`--no-gpu`), though the
+  buffer-descriptor failure this run first recorded is fixed. The guest's
+  virtio-gpu GBM path reported `DRM_FORMAT_MOD_INVALID` for its shared exports,
+  which waypipe rejects outright (`unsupported modifier ffffffffffffff`), and the
+  strides it reported were synthesized rather than host ones (the 44x55 hardware
+  cursor exported `stride = 176`), which RADV rejects for a linear image with
+  `VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`; waypipe turned either
+  error into a fatal `wl_display` error. The guest now publishes the host's real
+  layout as `LINEAR`, so buffers arrive as dmabufs again and no import error is
+  logged, but `-n` is kept because with dmabuf enabled the presenting Chromium
+  GPU process still aborts (`GPU process exited unexpectedly: exit_code=6`) and
+  never paints, which fails the `venus-presenting` check. Buffers therefore
+  travel as `wl_shm`: rendering is accelerated, the transfer is not zero-copy.
 
 Reproducing a pinned baseline (rooted so a later `nix-collect-garbage` cannot
 delete the artifacts mid-run):

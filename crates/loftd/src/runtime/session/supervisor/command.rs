@@ -28,6 +28,14 @@ use crate::runtime::session::task_control::{
 };
 use crate::runtime::vm::gpu::GpuMode;
 
+/// Opts the VM worker's in-process vrend into GBM-backed buffers and the
+/// `VIRGL_CAP_V2_RESOURCE_LAYOUT` capability. Without it vrend neither
+/// advertises resource-layout queries nor allocates the shared resources
+/// through GBM, so the guest synthesizes strides that need not match the host
+/// allocation; a dma-buf exported from such a resource is then rejected by
+/// venus/RADV with `VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`.
+const VREND_GBM_LAYOUT_ENV: &str = "VIRGL_GBM_LAYOUT_ENABLE";
+
 pub(crate) fn run_helper_process(
     config: &LaunchConfig,
     config_path: &Path,
@@ -458,6 +466,38 @@ mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
 
+    fn render_server_test_env() -> RenderServerEnv {
+        RenderServerEnv {
+            exec_path: PathBuf::from(
+                "/nix/store/vgl-virglrenderer-1.3.0/libexec/virgl_render_server",
+            ),
+            mesa_lib_dir: PathBuf::from("/nix/store/mesa-mesa-26.1.8/lib"),
+            mesa_icd: PathBuf::from(
+                "/nix/store/mesa-mesa-26.1.8/share/vulkan/icd.d/radeon_icd.x86_64.json",
+            ),
+            vulkan_loader_lib_dir: PathBuf::from("/nix/store/vk-vulkan-loader-1.4.341.0/lib"),
+        }
+    }
+
+    #[test]
+    fn drm_gpu_mode_enables_the_vrend_gbm_layout_for_the_vm_worker() {
+        let env = helper_env(
+            crate::logging::LogLevel::Info,
+            false,
+            None,
+            Some(&render_server_test_env()),
+        );
+
+        assert!(env.contains(&(OsString::from(VREND_GBM_LAYOUT_ENV), OsString::from("1"))));
+    }
+
+    #[test]
+    fn non_drm_gpu_mode_leaves_the_vrend_gbm_layout_opt_in_alone() {
+        let env = helper_env(crate::logging::LogLevel::Info, false, None, None);
+
+        assert!(!env.iter().any(|(name, _)| name == VREND_GBM_LAYOUT_ENV));
+    }
+
     #[test]
     fn normalized_stderr_replay_starts_on_fresh_terminal_line() {
         let mut output = Vec::new();
@@ -798,6 +838,12 @@ fn helper_env(
                 fd,
             ));
         }
+    }
+    if render_server_env.is_some() {
+        // The guest's resource-layout queries are answered by the VM worker's
+        // in-process vrend, not by the standalone render server, so this opt-in
+        // has to reach the helper (and the VM worker forked from it).
+        env.push((OsString::from(VREND_GBM_LAYOUT_ENV), OsString::from("1")));
     }
     env
 }

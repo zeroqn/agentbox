@@ -1,0 +1,39 @@
+Report DRM_FORMAT_MOD_LINEAR for shared GBM resources with an implicit modifier
+
+vrend allocates every resource the guest can ask about through the GBM layout
+query (VIRGL_CCMD_GET_PIPE_RESOURCE_LAYOUT, only issued for VIRGL_BIND_SHARED)
+with GBM_BO_USE_LINEAR forced, because the virtio-gpu kernel driver supports no
+other modifier. The host driver still reports DRM_FORMAT_MOD_INVALID for a
+surface it created without an explicit modifier (radeonsi reports INVALID for
+both its linear and its tiled surfaces), so the guest was told the buffer is
+linear in stride but "implicitly tiled" in modifier.
+
+A guest that exports such a resource as a dma-buf (Chromium's cursor and
+scanout buffers, via gbm_bo_get_modifier) then hands waypipe/venus an INVALID
+modifier, which is not a member of any device's modifier list: venus rejects the
+import with "unsupported modifier", and the waypipe server turns that into a
+wl_display error that kills the client's GPU process.
+
+The buffer really is linear, so report the linear modifier for the resources
+vrend forced to GBM_BO_USE_LINEAR. Gated on VIRGL_BIND_SHARED on purpose: for
+any other bind the modifier says nothing about the tiling.
+
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -13749,6 +13749,16 @@
+       layout.num_planes = num_planes;
+       layout.modifier = gbm_bo_get_modifier(res->gbm_bo);
+ 
++      /* vrend allocates every shared resource with GBM_BO_USE_LINEAR because the
++       * virtio-gpu kernel driver supports no other modifier, but the host driver
++       * reports DRM_FORMAT_MOD_INVALID for a surface it created without an
++       * explicit modifier. Report the linear modifier for those buffers, so a
++       * guest that exports the resource as a dma-buf hands out a usable
++       * (modifier, plane layout) pair instead of an unimportable INVALID one.
++       */
++      if (layout.modifier == DRM_FORMAT_MOD_INVALID && (res->base.bind & VIRGL_BIND_SHARED))
++         layout.modifier = 0; /* DRM_FORMAT_MOD_LINEAR */
++
+       for (uint32_t i = 0; i < layout.num_planes; i++) {
+          layout.planes[i].offset = gbm_bo_get_offset(res->gbm_bo, i);
+          layout.planes[i].stride = gbm_bo_get_stride_for_plane(res->gbm_bo, i);
