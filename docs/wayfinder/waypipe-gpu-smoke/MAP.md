@@ -43,6 +43,8 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
 
 <!-- one line per closed ticket, gist plus link -->
 
+- [Venus-backed presenting run through waypipe](tickets/07-venus-backed-presenting-run.md): **hardware-accelerated presentation works** - guest Chromium `--ozone-platform=wayland --use-angle=vulkan` (NOT `--enable-features=Vulkan`) + `GBM_BACKENDS_PATH` + dmabuf blocked on the waypipe side gives 0 GPU crashes, venus proven by `VIRTGPU_CONTEXT_INIT`/`EXECBUFFER`, and the page in the host screenshot; transfer is `wl_shm` (not zero-copy).
+- [Guest Chromium presents through waypipe](tickets/03-guest-chromium-presents-via-waypipe.md): the working presenting configuration is `--ozone-platform=wayland --use-angle=vulkan` + `GBM_BACKENDS_PATH` + dmabuf blocked; `--enable-features=Vulkan` must not be used (Vulkan display compositing needs a `VkSurfaceKHR` ozone-wayland lacks, and the GPU process then crash-loops and never paints).
 - [Guest Chromium GPU process in the waypipe run](tickets/06-guest-chromium-gpu-process-in-waypipe-run.md): there is a real env gap (`GBM_BACKENDS_PATH` set nowhere, so ozone can't load `dri_gbm.so`), but venus-backed presentation is blocked by Chromium itself (`'--ozone-platform=wayland' is not compatible with Vulkan` -> GPU crash loop) and, once buffers are dmabufs, by waypipe's own import failure (`ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`). The working configuration is the shm/software one that the ticket 03 prototype used.
 - [Host waypipe client and vsock handshake](tickets/02-host-waypipe-client-handshake.md): the host runs `waypipe client` on the socket path loftd is given (loftd preflights it and fails fast if missing or not a socket); the dial is lazy - it happens on the first guest app connection, so a real guest client and the client log's `Connection received`/`may use dmabufs: true` lines are the evidence, not the guest socket's existence; the image's `rio` already painted a window the host compositor captured.
 - [weston headless + GL on this host](tickets/01-weston-headless-gl-on-host.md): weston 15.0.1 runs headless+GL on the host GPU (`GL renderer: AMD Radeon RX 7600M XT`, `renderD128`, no DRM master); screenshots need `--debug` (else `Output capture error: unauthorized` and an all-black PNG); `weston-screenshooter` writes a real PNG, decodable with stdlib zlib via the devshell python3; GL failure exits 1 and creates no socket.
@@ -71,17 +73,16 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
 
 ## Out of scope
 
-- Venus-backed (or generally GPU-accelerated) presentation through the waypipe display, and
-  dmabuf zero-copy for it. Blocked twice over: Chromium refuses Vulkan on
-  `--ozone-platform=wayland` and, once buffers are dmabufs, the guest waypipe server fails
-  to import them (`ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`) - see *Guest Chromium
-  GPU process in the waypipe run*. The smoke needs only the transport, which works on the
-  shm path.
-- The `GBM_BACKENDS_PATH` guest env gap in guest-init (`MESA_ENV` omits it, so the guest's
-  `lib/gbm/dri_gbm.so` is unreachable and ozone cannot init a render node) and waypipe's
-  dmabuf-import behaviour against virtio-gpu/venus modifiers. Both are product follow-ons
-  with their own risk; neither is required for a trustworthy transport baseline, and turning
-  either on without the other makes the presenting run worse, not better.
+- **dmabuf zero-copy** for the presenting run. GPU-accelerated presentation itself is now in
+  scope (see *Venus-backed presenting run through waypipe*); what stays out is making the
+  transfer zero-copy, which needs modifier negotiation fixed between the guest
+  (venus/virtio-gpu) and the host compositor's dmabuf feedback
+  (`VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`). The smoke carries the accelerated
+  presenting run on the `wl_shm` path.
+- Landing the two product changes this uncovered: adding `GBM_BACKENDS_PATH` to guest-init's
+  `MESA_ENV`, and blocking dmabuf for the waypipe server while the modifier gap is open. The
+  smoke can set both from its staged guest script and host client invocation; deciding whether
+  the image itself should change belongs to the product, not this map.
 - Input events (keyboard/pointer) from host to guest: this baseline proves pixels travel.
 - weston on a real DRM/KMS output (VT takeover); the compositor is headless by decision.
 - Transports other than the vsock path (ssh, plain unix), and X11/XWayland clients.

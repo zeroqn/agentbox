@@ -1,7 +1,7 @@
 ---
 label: wayfinder:prototype
 title: Guest Chromium presents through waypipe
-status: open
+status: closed
 blocked_by: ["01-weston-headless-gl-on-host", "02-host-waypipe-client-handshake"]
 claimed_by: bob (pi session 2026-09-22)
 ---
@@ -76,3 +76,41 @@ where `wp-page.html` paints a magenta (`#ff00ff`) page with white text.
    `IMAGE_LOFTD_ENV_ALLOWLIST`), so the second, `--disable-vulkan-surface` run silently
    repeated the plain variant. Guest-side variant selection has to travel by another
    channel (e.g. baked into the staged guest script) or not at all.
+
+## Resolution
+
+**Yes - and on venus.** The prototype first proved presentation with the plain flag set and
+software/shm buffers; bob's challenge ("I need hardware access for Chromium in the loftd guest
+through waypipe") then drove the engine investigation, whose answer (`Venus-backed presenting
+run through waypipe`) upgrades this ticket's result. The configuration that both presents and
+renders on the GPU:
+
+```sh
+# guest, in the waypipe session
+GBM_BACKENDS_PATH=/usr/lib/loftd-mesa-runtime/lib/gbm \
+chromium --ozone-platform=wayland --no-sandbox --disable-gpu-sandbox \
+         --use-angle=vulkan \
+         --user-data-dir=/tmp/c --window-size=640,480 \
+         --app=file:///workspace/smoke/wp-page.html
+```
+
+with the host waypipe client started with dmabuf blocked (`waypipe -n ... client`).
+
+Measured: 0 GPU-process crashes, the GPU process alive, venus in use
+(`VIRTGPU_CONTEXT_INIT=5`, `VIRTGPU_EXECBUFFER=42`, `VIRTGPU_MAP=4` under strace), and the
+page present in the host compositor's screenshots (`#ff00ff` x13094, `#ffffff` x2183) - both
+early and late, so it is a stable window rather than a lucky frame.
+
+Flags that must **not** be used: `--enable-features=Vulkan` (switches the display compositor
+to Vulkan, needs a `VkSurfaceKHR` ozone-wayland does not implement; the guest GPU process then
+crash-loops 5x and never paints).
+
+Evidence: `/home/dev/loftd/disk/chromium-smoke/{t03-plain,t06-evidence/anglevk,t06-evidence/anglevk-nogpu}/`.
+
+Consequences carried into the design freeze:
+
+- The smoke now needs a guest-side env addition (`GBM_BACKENDS_PATH`) and a waypipe-side
+  setting (dmabuf blocked) - both settable from the smoke's staged guest script and the host
+  client invocation, no image change required.
+- The presenting run is no longer renderer-agnostic in practice: it can carry the venus claim
+  itself, which is the scoring question left to `Freeze the --waypipe mode design`.
