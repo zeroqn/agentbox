@@ -19,8 +19,11 @@ implementation is mechanical:
   (with and without `--waypipe`) in the same VM image, tear everything down even on
   failure.
 - Evidence files and their exact scored predicates: host screenshot must contain the
-  pattern colour (fresh, non-blank); the venus renderer check stays as it is today and
-  comes from the headless run; an INFO record for the compositor log.
+  pattern colour (fresh, non-blank); an INFO record for the compositor log. **Revised while
+  charting:** since *Venus-backed presenting run through waypipe* showed the presenting run
+  can use venus, decide whether the presenting run should also assert the venus renderer
+  (via the guest's `VIRTGPU_*` ioctls or an ANGLE/Vulkan log line) instead of always leaning
+  on the separate headless run.
 - How the A/B pair is reported so a PASS is unambiguously attributable to the waypipe
   path.
 

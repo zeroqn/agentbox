@@ -106,3 +106,13 @@ degrades to the shm path. Recommendations:
   are unreachable), and investigate waypipe's dmabuf import against virtio-gpu/venus format
   modifiers. Both are real work with their own risk, and neither is needed for a trustworthy
   transport baseline.
+
+## Correction (same session, superseded by *Venus-backed presenting run through waypipe*)
+
+The conclusion above was too strong: the `'--ozone-platform=wayland' is not compatible
+with Vulkan` message is **not** fatal by itself (the host emits it too, with 0 GPU crashes),
+and venus-backed presentation **is** reachable. What actually crash-looped the GPU process
+was passing `--enable-features=Vulkan` (Vulkan for the display compositor, which needs a
+`VkSurfaceKHR` ozone-wayland does not implement). With `--use-angle=vulkan` *without* that
+feature, the guest GPU process runs cleanly and uses venus. Details and evidence in the new
+ticket; the GBM/dri finding here stands and is in fact required for the accelerated run.
