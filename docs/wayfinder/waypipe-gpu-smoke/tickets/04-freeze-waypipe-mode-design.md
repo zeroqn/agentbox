@@ -1,9 +1,9 @@
 ---
 label: wayfinder:task
 title: Freeze the --waypipe mode design
-status: open
+status: closed
 blocked_by: ["03-guest-chromium-presents-via-waypipe"]
-claimed_by: null
+claimed_by: bob (pi session 2026-09-22)
 ---
 
 ## Question
@@ -65,3 +65,38 @@ The agreed spec written as a section of `tools/chromium-loftd-smoke/README.md`
   flags `--ozone-platform=wayland --use-angle=vulkan` (never `--enable-features=Vulkan`), and
   dmabuf blocked on the waypipe client (`-n`). See *Venus-backed presenting run through
   waypipe*.
+
+## Resolution
+
+Frozen, and written where the implementer will look for it: the
+`--waypipe mode (frozen design)` section of
+`tools/chromium-loftd-smoke/README.md`. Summary of what was frozen:
+
+- **Flags**: `--waypipe` (off by default), `--weston`, `--waypipe-bin`,
+  `--weston-renderer gl|pixman`, `--present-wait` (30s), `--python`. Defaults
+  resolve from `$WESTON_BIN`/`$WAYPIPE_BIN`/`$PYTHON` then PATH.
+- **Stages**: preflight (btrfs + free space + weston/waypipe/python3, each a hard
+  failure naming the build command) -> compositor (`weston --backend=headless
+  --renderer=gl --debug --socket=loftd-smoke`) -> waypipe client (`waypipe -d -n
+  --socket <out>/waypipe/waypipe.sock client`) -> run A with `--waypipe=<socket>`
+  while the host captures the compositor twice -> run B, the identical guest work
+  with no `--waypipe` -> teardown via an EXIT trap.
+- **Evidence and predicates**: `waypipe-transport` (`Connection received` +
+  `Connected waypipe-server` in the host client log), `venus-presenting` (a
+  `set_title("waypipe-venus:...")` line naming `Vulkan` and `venus`, never
+  `SwiftShader`), `frame-presented` (>= 5000 pattern pixels in either host
+  frame), `control-no-frame` (no such frame without `--waypipe`), plus the four
+  existing headless checks. Every artefact must be fresh.
+- **The venus mechanism chosen** (bob's decision: the presenting run carries the
+  venus claim): the pattern page publishes the WebGL renderer as the window
+  title and waypipe logs titles verbatim, so the renderer crosses the transport
+  into a host-side log. Rejected alternatives: `strace` on the GPU process (it
+  distorted the run enough to hide a crash loop) and a debugging port.
+- **Non-obvious requirements frozen alongside**: `GBM_BACKENDS_PATH` in the
+  guest, `--use-angle=vulkan` without `--enable-features=Vulkan`, dmabuf blocked
+  (`-n`), liveness-based preflights rather than `-S` socket tests, guest-side
+  mode passed by file (`smoke/run-mode`), and a dedicated `PRESENT_DWELL` window
+  before the headless checks so the presenting renderer is not starved.
+
+Implemented in the same session; see *Implement the mode and record its
+baseline*.
