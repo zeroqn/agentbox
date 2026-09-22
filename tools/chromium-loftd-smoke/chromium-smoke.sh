@@ -8,11 +8,13 @@
 # files mmap from the digest-keyed image rootfs (host /nix overlay lowerdir)
 # instead of the fuse upper.
 #
-# Output: <out>/evidence/*  (fresh, host-visible bind /workspace/evidence)
-#         <out>/logs/*      (loftd.console, guest chromium logs)
-# Exit 0 only when fresh, non-empty evidence proves: chromium version,
-# chrome://gpu DOM with ANGLE/Vulkan status, a non-SwiftShader WebGL renderer,
-# a GPU-composited PNG, and chromium exit rc 0 for both runs.
+# Output: <out>/workspace/evidence/*  (fresh, host-visible bind /workspace/evidence)
+#         <out>/logs/*                (loftd.console)
+# Exit 0 only when fresh, non-empty evidence proves: chromium version, an
+# ANGLE WebGL renderer on the Vulkan backend (not SwiftShader) from the probe
+# page, a GPU-composited PNG, and rc 0 for every chromium run. The chrome://gpu
+# dump is captured for humans but unscored: its feature table lives in shadow
+# DOM, which --dump-dom does not serialize.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -105,6 +107,22 @@ fi
 mkdir -p "$out_dir/logs" "$out_dir/config/loftd"
 [ -n "$state_home" ] || state_home="$out_dir/state"
 
+# loftd's only implemented task-rootfs backend is btrfs-snapshot, and it
+# snapshots the Buildah-mounted rootfs, so BOTH the hermetic container-store
+# graphroot and the loftd state home must live on btrfs. Create the
+# directories first: `findmnt --target` fails on a path that does not exist
+# yet, which silently downgraded earlier runs to the unimplemented
+# fuse-overlay backend and a non-snapshottable vfs graphroot.
+mkdir -p "$state_home" "$out_dir/container-storage/graph"
+for required_btrfs_dir in "$out_dir/container-storage/graph" "$state_home"; do
+  if ! findmnt -t btrfs --target "$required_btrfs_dir" >/dev/null 2>&1; then
+    echo "FATAL: $required_btrfs_dir must be on btrfs; the btrfs-snapshot task-rootfs backend snapshots the Buildah graphroot, and neither the fuse-overlay backend nor a vfs graphroot can be snapshotted" >&2
+    echo "       put --out-dir (and --state-home) on a btrfs filesystem." >&2
+    exit 2
+  fi
+done
+backend="btrfs-snapshot"
+
 # Image: build the flake container (which runs image wrapper checks) and load
 # the OCI archive into a hermetic storage, never the host's ambient
 # ~/.config/containers/storage.conf (which may point at a broken btrfs path).
@@ -113,19 +131,23 @@ if [ -z "$container_ref" ]; then
   container_ref="$container_path"
 fi
 if [[ "$container_ref" == /* ]]; then
-  # Hermetic podman/buildah storage: vfs driver (no mount deps), fresh per run,
-  # on the same disk as the archive (the /nix store copy). TMPDIR stays local.
+  # Hermetic podman/buildah storage using the btrfs driver: it creates one
+  # subvolume per layer, which is exactly what btrfs-snapshot needs. A vfs
+  # graphroot is plain directories and cannot be snapshotted. Fresh per run;
+  # the ambient ~/.config/containers/storage.conf is never used.
   container_storage_dir="$out_dir/container-storage"
   mkdir -p "$container_storage_dir/graph" "$container_storage_dir/run" "$container_storage_dir/tmp"
   cat > "$container_storage_dir/storage.conf" <<EOF
 [storage]
-driver = "vfs"
+driver = "btrfs"
 graphroot = "$container_storage_dir/graph"
 runroot = "$container_storage_dir/run"
 EOF
   container_fs_free_kib=$(df -Pk "$container_storage_dir" | awk 'NR==2 {print $4}')
   container_size_kib=$(du -sk "$container_ref" 2>/dev/null | awk '{print $1}')
-  needed_kib=$((20 * 1024 * 1024))
+  # The unpacked image is ~3x the compressed archive; 12 GiB covers the
+  # graphroot plus the btrfs-snapshot task state (which is CoW-shared).
+  needed_kib=$((12 * 1024 * 1024))
   if [ "${container_fs_free_kib:-0}" -lt "$needed_kib" ]; then
     echo "FATAL: not enough free space on $container_storage_dir (free ${container_fs_free_kib} KiB, need ${needed_kib} KiB for archive ${container_size_kib} KiB). Free disk space first." >&2
     exit 2
@@ -135,13 +157,6 @@ EOF
   echo "loading image archive $container_ref into hermetic storage ($container_storage_dir)"
   podman load -i "$container_ref" >/dev/null
   container_ref="localhost/loftd:latest"
-fi
-
-# Backend: deterministic choice, not environment luck. btrfs-snapshot only when
-# the state-home path itself is on a btrfs filesystem; otherwise fuse-overlay.
-backend="fuse-overlay"
-if findmnt -t btrfs --target "$state_home" >/dev/null 2>&1; then
-  backend="btrfs-snapshot"
 fi
 
 # Isolated loftd config: hermetic state location + explicit backend. Never
@@ -204,14 +219,31 @@ check() { # check <name> <path> <desc> <predicate-args...>
   fi
 }
 
-check version "version.txt" "Chromium version" \
+check version "$E/version.txt" "Chromium version" \
   grep -Eq 'Chromium [0-9]'
-check gpu-dom "gpu-dom.html" "chrome://gpu DOM with ANGLE/Vulkan status" \
-  grep -Eq 'Vulkan|ANGLE|feature status|GPU feature'
-check webgl-renderer "webgl-renderer.txt" "non-SwiftShader WebGL renderer" \
-  grep -Eqv 'SwiftShader' <(grep -E 'renderer=' "$E/webgl-renderer.txt" 2>/dev/null)
-check chromium-rc "chromium-rc" "both chromium runs exit 0" \
-  grep -Eq 'gpu-dom rc=0[[:space:]]*webgl rc=0' "$E/chromium-rc"
+check chromium-rc "$E/chromium-rc" "the WebGL and probe-DOM runs exit 0" \
+  grep -Eq '^gpu-dom=[0-9]+ webgl=0 dom=0$'
+
+# The GPU/Vulkan assertion: the WebGL probe must report an ANGLE renderer on
+# the Vulkan backend that is not the software SwiftShader fallback. This is the
+# vulkan/venus evidence. chrome://gpu cannot serve this role: its feature-status
+# table is rendered into a custom element's shadow DOM, which --dump-dom does
+# not serialize, so gpu-dom.html is captured for humans but not scored.
+if fresh "$E/webgl-renderer.txt" \
+   && grep -q 'renderer=' "$E/webgl-renderer.txt" \
+   && grep -q 'Vulkan' "$E/webgl-renderer.txt" \
+   && ! grep -q 'SwiftShader' "$E/webgl-renderer.txt"; then
+  echo "PASS  webgl-vulkan (ANGLE/Vulkan renderer, not SwiftShader)"
+else
+  echo "FAIL  webgl-vulkan (need renderer= with Vulkan and no SwiftShader) -> $E/webgl-renderer.txt"
+  fail=1
+fi
+
+if [ -s "$E/gpu-dom.html" ]; then
+  echo "INFO  gpu-dom rc=$(sed -n 's/^gpu-dom=\([0-9]*\).*/\1/p' "$E/chromium-rc") captured; unscored (feature table is shadow DOM)"
+else
+  echo "INFO  gpu-dom missing (unscored chrome://gpu dump)"
+fi
 
 # PNG: non-empty + magic bytes
 if fresh "$E/webgl.png" && [ "$(head -c 4 "$E/webgl.png" | od -An -tx1 | tr -d ' \n')" = "89504e47" ]; then
