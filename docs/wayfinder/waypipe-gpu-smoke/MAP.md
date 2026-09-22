@@ -11,6 +11,11 @@ through loftd's `--waypipe` path, while the same microVM separately proves the h
 venus renderer. Reaching the destination = the mode exists, passes reproducibly on this
 host, is A/B attributable, and its baseline is recorded in the tool's README.
 
+**Status (2026-09-22): reached.** The `--waypipe` mode exists in
+`tools/chromium-loftd-smoke`, passes reproducibly on this host, is A/B
+attributable, and its baseline is recorded in the tool's README. No open tickets;
+the two product follow-ons under *Out of scope* remain for their own effort.
+
 ## Notes
 
 - Domain: loftd host (`crates/loftd`), guest bootstrap (`crates/loftd-guest-init`), the
@@ -43,6 +48,8 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
 
 <!-- one line per closed ticket, gist plus link -->
 
+- [Freeze the --waypipe mode design](tickets/04-freeze-waypipe-mode-design.md): flags, six stages, evidence files and exact predicates frozen into the tool's README, with the reasons (host-side venus evidence via the window title, pixel-decoded frames, mandatory control, liveness preflights, file-based guest mode, dedicated dwell).
+- [Implement the mode and record its baseline](tickets/05-implement-and-baseline.md): `--waypipe` implemented (commit a97767e) and green three times on the pinned artifacts - transport, venus-presenting, frame-presented and control-no-frame all PASS; the checks were also seen to fail, and both hard-fail preflights were exercised.
 - [Venus-backed presenting run through waypipe](tickets/07-venus-backed-presenting-run.md): **hardware-accelerated presentation works** - guest Chromium `--ozone-platform=wayland --use-angle=vulkan` (NOT `--enable-features=Vulkan`) + `GBM_BACKENDS_PATH` + dmabuf blocked on the waypipe side gives 0 GPU crashes, venus proven by `VIRTGPU_CONTEXT_INIT`/`EXECBUFFER`, and the page in the host screenshot; transfer is `wl_shm` (not zero-copy).
 - [Guest Chromium presents through waypipe](tickets/03-guest-chromium-presents-via-waypipe.md): the working presenting configuration is `--ozone-platform=wayland --use-angle=vulkan` + `GBM_BACKENDS_PATH` + dmabuf blocked; `--enable-features=Vulkan` must not be used (Vulkan display compositing needs a `VkSurfaceKHR` ozone-wayland lacks, and the GPU process then crash-loops and never paints).
 - [Guest Chromium GPU process in the waypipe run](tickets/06-guest-chromium-gpu-process-in-waypipe-run.md): there is a real env gap (`GBM_BACKENDS_PATH` set nowhere, so ozone can't load `dri_gbm.so`), but venus-backed presentation is blocked by Chromium itself (`'--ozone-platform=wayland' is not compatible with Vulkan` -> GPU crash loop) and, once buffers are dmabufs, by waypipe's own import failure (`ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`). The working configuration is the shm/software one that the ticket 03 prototype used.
@@ -51,25 +58,9 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
 
 ## Not yet specified
 
-- Whether `--waypipe` needs a fix in loftd or guest-init. The guest side is already
-  implemented (`waypipe --vsock --socket <PORT> --display loftd-waypipe-0 server -- sleep
-  infinity`, with `--no-gpu` only when `LOFTD_GPU_DRM` is unset) but nothing has ever
-  driven it end to end, so the first spike may surface a real defect (socket ownership,
-  vsock port registration, `--no-gpu` negotiation, readiness timing). Not sharp enough to
-  ticket until the spike reports.
-- ~~Whether the guest-to-host buffer path actually carries dmabufs~~ **answered by the
-  ticket 03 prototype: it is `wl_shm`** (`wl_shm.create_pool`, `wl_shm_pool.resize`; no
-  dmabuf transfer) even though the handshake advertises `may use dmabufs: true`. Whether to
-  *assert* dmabuf zero-copy as a second scored check is still open, and is only reachable
-  once the presenting run uses a GPU renderer (see *Guest Chromium GPU process in the
-  waypipe run*).
-- Whether a guest Chromium can use venus *and* present - **answered no** by
-  *Guest Chromium GPU process in the waypipe run*: Chromium refuses Vulkan on the Wayland
-  platform and waypipe cannot import virtio-gpu dmabufs. The remaining unknowns are only the
-  two product follow-ons listed under Out of scope.
-- Exact guest Chromium flag set (the spike decides it; `--disable-vulkan-surface` is a
-  candidate, and with the transport as the subject the presenting run may legitimately
-  use a non-venus renderer).
+- Nothing. Every question this effort could state sharply is either answered in
+  *Decisions so far* or ruled out under *Out of scope*; the two remaining threads
+  are product work with their own risk, not fog on this route.
 
 ## Out of scope
 
