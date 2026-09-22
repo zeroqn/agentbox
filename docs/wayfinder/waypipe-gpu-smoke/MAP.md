@@ -54,10 +54,12 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
   driven it end to end, so the first spike may surface a real defect (socket ownership,
   vsock port registration, `--no-gpu` negotiation, readiness timing). Not sharp enough to
   ticket until the spike reports.
-- Whether the guest-to-host buffer path *actually* carries dmabufs (the handshake only
-  advertises `may use dmabufs: true` and the guest client asks for dmabuf feedback; a
-  `wl_shm` path is also in play), and whether asserting dmabuf zero-copy becomes a second
-  scored check.
+- ~~Whether the guest-to-host buffer path actually carries dmabufs~~ **answered by the
+  ticket 03 prototype: it is `wl_shm`** (`wl_shm.create_pool`, `wl_shm_pool.resize`; no
+  dmabuf transfer) even though the handshake advertises `may use dmabufs: true`. Whether to
+  *assert* dmabuf zero-copy as a second scored check is still open, and is only reachable
+  once the presenting run uses a GPU renderer (see *Guest Chromium GPU process in the
+  waypipe run*).
 - Whether a guest Chromium can use venus *and* present. If the spike shows it can, the
   venus-present gap shrinks and no follow-on effort is needed; if it cannot, that
   limitation needs its own effort (not this map).
