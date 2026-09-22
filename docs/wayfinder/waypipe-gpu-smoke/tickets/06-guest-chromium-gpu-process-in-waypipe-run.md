@@ -1,9 +1,9 @@
 ---
 label: wayfinder:research
 title: Guest Chromium GPU process in the waypipe run
-status: open
+status: closed
 blocked_by: []
-claimed_by: null
+claimed_by: bob (pi session 2026-09-22)
 ---
 
 ## Question
@@ -31,3 +31,78 @@ Find out:
 
 A short verdict plus the env diff, and - if the fix is a one-liner in the image or the smoke
 - a recommendation on whether to take it here or leave it to the uv/venus follow-on effort.
+
+## Resolution
+
+Chased to the bottom. There **is** a real env gap, but it is not what blocks venus: the
+blocker is Chromium's own platform rule, plus a waypipe/virtio-gpu dmabuf gap.
+
+### 1. The env gap is real
+
+Guest-init exports `MESA_ENV` (`crates/loftd-guest-init/src/guest_init/components/wayland.rs`)
+when `LOFTD_GPU_DRM` is set - `LIBGL_DRIVERS_PATH`, `__EGL_VENDOR_LIBRARY_FILENAMES`,
+`VK_DRIVER_FILES` (call site `runtime/loftd.rs:190`) - and all three were present in the
+waypipe guest. **`GBM_BACKENDS_PATH` is set nowhere in the repo**, so Chromium's ozone GBM
+loader searched the NixOS default `/run/opengl-driver/lib/gbm` (absent in the guest):
+
+```text
+MESA-LOADER: failed to open dri: /run/opengl-driver/lib/gbm/dri_gbm.so: cannot open
+shared object file (search paths /run/opengl-driver/lib/gbm, suffix _gbm)
+WARNING ui/ozone/platform/wayland/ozone_platform_wayland.cc:278 Failed to initialize
+drm render node handle.
+```
+
+The guest does ship the backend: `/usr/lib/loftd-mesa-runtime/lib/gbm/dri_gbm.so`.
+
+### 2. A/B in the same harness (windowed Chromium, `--ozone-platform=wayland`, 22s)
+
+| configuration | dri_gbm / render-node lines | `not compatible with Vulkan` | GPU process crashes | page painted (host screenshot) |
+| --- | --- | --- | --- | --- |
+| control: `--use-angle=vulkan`, no GBM var | 6 | 1 | **0** | **yes** - `#ff00ff` x13094, `#ffffff` x2183 |
+| `GBM_BACKENDS_PATH` + same Vulkan flags | **0** | 3 | **5** | no (only weston greys) |
+| `GBM_BACKENDS_PATH`, no Vulkan flags (GL/EGL) | 0 | 0 | 0 | no - connection died (below) |
+
+Evidence: `/home/dev/loftd/disk/chromium-smoke/t06-evidence/{control,gbm,glgbm}/`.
+
+### 3. What actually blocks venus-backed presentation
+
+1. **Chromium refuses Vulkan on the Wayland platform.** With the render node finally
+   working, Chromium tries the GPU path and then rejects it itself:
+
+   ```text
+   ERROR ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc:249
+   '--ozone-platform=wayland' is not compatible with Vulkan. Consider switching to
+   '--ozone-platform=x11' or disabling Vulkan
+   ```
+
+   followed by a GPU-process crash loop (`exit_code=6`, `8704`). So `--use-angle=vulkan`
+   over a waypipe display cannot produce venus presentation; it makes things *worse* than
+   the control, which degrades to software and still paints.
+2. **The dmabuf path fails inside waypipe.** Without the Vulkan flags but with a working
+   GBM backend, Chromium does export dmabufs (it binds `zwp_linux_dmabuf_v1`), and then the
+   **guest-side waypipe server** cannot import them:
+
+   ```text
+   libwayland: wl_display#1: error 0: waypipe-server internal error: src/dmabuf.rs:2093:
+   Failed to create Vulkan image when importing dmabuf:
+   ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT
+   ```
+
+   which kills the connection and the app. That is why the working transfer is `wl_shm`
+   (matching ticket 03), and why the handshake's `may use dmabufs: true` is a trap rather
+   than a capability in this configuration.
+
+### 4. Does it matter for this effort?
+
+No. The charter already allows the presenting run to be renderer-agnostic, and the control
+configuration - the one the ticket 03 prototype used - paints the page reliably because it
+degrades to the shm path. Recommendations:
+
+- For the smoke: keep the presenting run on the shm/software path (do **not** set
+  `GBM_BACKENDS_PATH` for it, and do not pass `--use-angle=vulkan` with a Wayland
+  platform). If a GPU path is ever wanted, the guest waypipe server needs `--no-gpu`.
+- Product follow-ons (not this map, listed under Out of scope on the map): add
+  `GBM_BACKENDS_PATH` to `MESA_ENV` in guest-init (a genuine gap: the guest's GBM backends
+  are unreachable), and investigate waypipe's dmabuf import against virtio-gpu/venus format
+  modifiers. Both are real work with their own risk, and neither is needed for a trustworthy
+  transport baseline.
