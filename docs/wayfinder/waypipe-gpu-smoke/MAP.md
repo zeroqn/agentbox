@@ -43,6 +43,7 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
 
 <!-- one line per closed ticket, gist plus link -->
 
+- [Host waypipe client and vsock handshake](tickets/02-host-waypipe-client-handshake.md): the host runs `waypipe client` on the socket path loftd is given (loftd preflights it and fails fast if missing or not a socket); the dial is lazy - it happens on the first guest app connection, so a real guest client and the client log's `Connection received`/`may use dmabufs: true` lines are the evidence, not the guest socket's existence; the image's `rio` already painted a window the host compositor captured.
 - [weston headless + GL on this host](tickets/01-weston-headless-gl-on-host.md): weston 15.0.1 runs headless+GL on the host GPU (`GL renderer: AMD Radeon RX 7600M XT`, `renderD128`, no DRM master); screenshots need `--debug` (else `Output capture error: unauthorized` and an all-black PNG); `weston-screenshooter` writes a real PNG, decodable with stdlib zlib via the devshell python3; GL failure exits 1 and creates no socket.
 
 ## Not yet specified
@@ -53,8 +54,10 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
   driven it end to end, so the first spike may surface a real defect (socket ownership,
   vsock port registration, `--no-gpu` negotiation, readiness timing). Not sharp enough to
   ticket until the spike reports.
-- Whether the guest-to-host buffer path is shm or dmabuf, and whether asserting dmabuf
-  (zero-copy) should become a second scored check.
+- Whether the guest-to-host buffer path *actually* carries dmabufs (the handshake only
+  advertises `may use dmabufs: true` and the guest client asks for dmabuf feedback; a
+  `wl_shm` path is also in play), and whether asserting dmabuf zero-copy becomes a second
+  scored check.
 - Whether a guest Chromium can use venus *and* present. If the spike shows it can, the
   venus-present gap shrinks and no follow-on effort is needed; if it cannot, that
   limitation needs its own effort (not this map).
