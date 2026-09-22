@@ -14,26 +14,45 @@ amdgpu-backed DRM render node (see Prerequisites).
 
 ## Baseline status (2026-09-22)
 
-Measured against the pinned `pins.libkrunRelease` (`loftd-3842e7383799`) and
-the packaged `.#loftd-prebuilt` 0.6.6 — the repo's reproducible starting point,
-**not** the uncommitted `deps/libkrun` GPU experiments. Two identical runs:
+Measured against the pinned `pins.libkrunRelease` (`loftd-3842e7383799`) and the
+packaged `.#loftd-prebuilt` 0.6.6 — the repo's reproducible starting point, **not**
+the uncommitted `deps/libkrun` GPU experiments:
 
 ```text
 PASS  version       Chromium 153.0.8010.52
-PASS  chromium-rc   gpu-dom=0 webgl=0 dom=0  (all three runs exit 0)
-FAIL  webgl-vulkan  renderer=no-webgl
+PASS  chromium-rc   gpu-dom=0 webgl=0 dom=0  (all three Chromium runs exit 0)
+PASS  webgl-vulkan  ANGLE (AMD, Vulkan 1.4.334 (Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33)), venus)
 PASS  webgl-png     non-empty screenshot
-VERDICT: FAIL
+VERDICT: PASS
 ```
 
-The guest boots, Chromium runs, and `gpu-diag.txt` shows the guest does see
-`/dev/dri/renderD128` plus the venus ICD
-(`VK_DRIVER_FILES=.../virtio_icd.x86_64.json`, `LOFTD_GPU_DRM=1`). The failure
-is inside Chromium: the GPU process aborts on every attempt
-(`content/browser/gpu/gpu_process_host.cc: GPU process exited unexpectedly:
-exit_code=6`) and no WebGL context is created. **GPU acceleration does not work
-on this baseline**; flipping this FAIL to PASS is the goal of the follow-on
-libkrun work.
+**GPU acceleration works**: Chromium in the loftd microVM renders WebGL through
+the host GPU via `virtio-gpu` venus (`--gpu=drm`), with RADV on the host.
+
+### Why `--disable-vulkan-surface` is in the guest flags
+
+Without it the GPU process dies with `GPU process exited unexpectedly:
+exit_code=6` and `renderer=` stays empty, which reads like "venus is broken".
+It is not: tracing the GPU process shows it driving venus successfully (dozens
+of `DRM_IOCTL_VIRTGPU_EXECBUFFER` on `/dev/dri/renderD128`, all returning 0,
+plus `VIRTGPU_CONTEXT_INIT`/`VIRTGPU_MAP`), then going quiet for ~6 s and
+aborting with **no failing syscall and no message** — an unretired completion,
+not a crashed ioctl. The abort is in ANGLE's Vulkan **WSI/swapchain** (present)
+path; with `--disable-vulkan-surface` ANGLE takes a non-WSI path and the venus
+renderer appears. Notes for whoever digs further:
+
+- A plain venus Vulkan workload (`tools/virgl-guest-probe`) passes in the same
+  VM, so the host render-server path and venus fence/buffer handling are fine on
+  their own. ANGLE's present path is what venus does not complete.
+- The uncommitted `deps/libkrun` venus per-context poll/fence work is **not**
+  needed to fix this: a source-built libkrun with those changes fails the same
+  way without `--disable-vulkan-surface`. (Fence/poll callbacks never fire for
+  either workload — submits carry `num_in_fences=0`.)
+- Chromium with the same flags on the host (no venus) renders fine, so the
+  combination to reason about is venus + ANGLE's WSI.
+- The Chromium GPU process's own diagnostics are swallowed (`--enable-logging
+  =stderr`, `MESA_DEBUG`, `VK_LOADER_DEBUG` and `--log-file` all yield nothing);
+  tracing it with `strace -f -e trace=ioctl` is the way to see it work.
 
 Reproducing a pinned baseline (rooted so a later `nix-collect-garbage` cannot
 delete the artifacts mid-run):

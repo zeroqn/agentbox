@@ -41,8 +41,16 @@ CHROME_TIMEOUT=150
 : > "$E/version.txt"
 chromium --version > "$E/version.txt" 2>&1 || true
 
+# --disable-vulkan-surface is required in this environment: ANGLE's Vulkan
+# WSI/swapchain path never completes over venus. The GPU process drives venus
+# fine (dozens of DRM_IOCTL_VIRTGPU_EXECBUFFER on /dev/dri/renderD128 all return
+# 0), then goes quiet for ~6s and aborts (SIGABRT, so the browser reports
+# "GPU process exited unexpectedly: exit_code=6") with renderer= empty. With the
+# Vulkan surface disabled ANGLE takes a non-WSI path and the guest reports the
+# hardware venus renderer.
 FLAGS="--headless=new --no-sandbox --disable-gpu-sandbox \
   --use-angle=vulkan --enable-features=Vulkan,UseSkiaRenderer \
+  --disable-vulkan-surface \
   --enable-logging=stderr --allow-chrome-scheme-url \
   --virtual-time-budget=30000"
 
