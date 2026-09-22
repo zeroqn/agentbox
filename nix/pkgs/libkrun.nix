@@ -39,12 +39,21 @@ pkgs.stdenvNoCC.mkDerivation {
     # Restore that edge so crun/loftd can load libkrun without an ambient
     # LD_LIBRARY_PATH; crun's own RUNPATH cannot cover it because DT_RUNPATH is
     # not transitive across DT_NEEDED children.
+    #
+    # $ORIGIN covers the firmware: libkrun loads libkrunfw.so.5 with a plain
+    # soname dlopen, so the loader searches the directory of the caller
+    # (libkrun) rather than the executable's. Packages that expose libkrun and
+    # libkrunfw as siblings under "$out/lib/loftd" (agentbox-rust.nix,
+    # loftd-prebuilt.nix) then resolve the firmware from that directory and the
+    # bare loftd ELF needs no wrapper LD_LIBRARY_PATH; consumers that load
+    # libkrun from a directory without libkrunfw are unaffected because the
+    # lookup falls through to LD_LIBRARY_PATH.
     for so in "$out"/lib/libkrun.so.*; do
       if [ -L "$so" ]; then
         continue
       fi
       ${pkgs.patchelf}/bin/patchelf \
-        --add-rpath ${pkgs.virglrenderer}/lib \
+        --add-rpath '$ORIGIN:${pkgs.virglrenderer}/lib' \
         "$so"
     done
   '';

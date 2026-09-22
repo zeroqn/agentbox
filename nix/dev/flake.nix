@@ -61,6 +61,7 @@
         {
           default = rustPackages.rustPackage;
           loftd-dev = rustPackages.rustPackage;
+          virglrenderer = pkgs.virglrenderer;
         }
       );
     };

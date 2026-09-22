@@ -65,7 +65,10 @@ managed sidecar.
   the Nix `.#agentbox` package wraps the agentbox binary with this repo's
   libkrun/libkrunfw library path, while the Nix `.#loftd` source package keeps
   `bin/loftd` as a raw ELF and resolves libkrun from `$out/lib/loftd` before
-  falling back to sonames. Source/debug builds can set
+  falling back to sonames. The pinned `libkrun` also carries an `$ORIGIN`
+  runpath, so its own `libkrunfw.so.5` dlopen resolves against the same
+  `$out/lib/loftd` directory instead of an ambient `LD_LIBRARY_PATH`.
+  Source/debug builds can set
   `AGENTBOX_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for agentbox microvm or
   `LOFTD_LIBKRUN_LIBRARY=/path/to/libkrun.so.1` for loftd.
 - `pasta`/`passt` for loftd direct-libkrun host-alias networking in both
@@ -79,7 +82,11 @@ managed sidecar.
   libkrun virtio-GPU DRM node. A standalone `virgl_render_server` runner process
   is forked by the loftd launcher with its own Landlock and seccomp sandbox and
   renders Vulkan on the host via RADV against `/dev/dri`; the guest command sees
-  a Vulkan device backed by the host GPU. This mode requires a libkrun build
+  a Vulkan device backed by the host GPU. The render-server child reads
+  `LOFTD_MESA_LIBDIR`, `LOFTD_MESA_ICD`, and `LOFTD_VULKAN_LOADER_LIBDIR`
+  from the caller's environment; the Nix `.#agentbox` and
+  `.#loftd-prebuilt` wrappers set them, so a bare `.#loftd` `bin/loftd` run
+  must export them for `--gpu=drm`. This mode requires a libkrun build
   with `krun_set_gpu_options3` support.
 - `loftd --wayland` enables guest Wayland passthrough through
   `wl-cross-domain-proxy` and libkrun virtio-gpu DRM. The loftd
@@ -313,6 +320,14 @@ GitHub Actions no longer publishes new agentbox images or release binaries.
   normalizes upstream Linux `lib64` payloads into `$out/lib` and regenerates
   `libkrun.pc` for the Nix store path. Local source development for libkrun is
   intentionally limited to the submodule-aware dev flake (`./nix/dev#loftd-dev`).
+- `.#virglrenderer`: the nixpkgs `virglrenderer` with this repo's host-side
+  patches (`virglrenderer-enum-26.patch` and
+  `virglrenderer-gbm-layout-linear-modifier.patch`, applied by the overlay in
+  `nix/lib/systems.nix`). Host-side only: libkrun links `libvirglrenderer.so.1`
+  and the `virgl_render_server` helper is symlinked from this package, so the
+  loftd packages already ship it; downstream flakes that build their own host
+  vrend/libkrun stack should consume this output instead of nixpkgs'
+  `virglrenderer`.
 - `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
   override, krun handler support, raw data disk annotation support,
   `krun.nested_virt` support, and `pkgs.passt` on crun's runtime `PATH`.

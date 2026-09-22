@@ -181,6 +181,7 @@
           agentbox-container-ci-sccache = agentboxImageCiSccache;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
+          virglrenderer = pkgs.virglrenderer;
           wl-cross-domain-proxy = wl-cross-domain-proxy;
           crun = crun;
           podman = podman;
@@ -259,6 +260,25 @@
           agentbox-container-gh-absent = agentboxImageChecks.ghAbsent;
           agentbox-container-root-cargo-absent = agentboxImageChecks.rootCargoAbsent;
           agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
+          # The exported `virglrenderer` is the host-side patched build the loftd
+          # packages ship (libkrun links libvirglrenderer and the render-server
+          # helper is symlinked from it), so downstream consumers cannot pick up
+          # an unpatched vrend by consuming this output.
+          virglrenderer-is-patched =
+            pkgs.runCommand "virglrenderer-is-patched"
+              {
+                # Plain strings: comparing the two derivations must not pull
+                # either virglrenderer build into this check's closure.
+                patched = builtins.unsafeDiscardStringContext packages.virglrenderer.drvPath;
+                plain = builtins.unsafeDiscardStringContext (import nixpkgs { inherit system; }).virglrenderer.drvPath;
+              }
+              ''
+                if [ "$patched" = "$plain" ]; then
+                  echo "packages.virglrenderer is the plain nixpkgs build; the host vrend patches in nix/lib/systems.nix are missing" >&2
+                  exit 1
+                fi
+                touch "$out"
+              '';
         }
       );
 
