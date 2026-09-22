@@ -43,6 +43,8 @@ host, is A/B attributable, and its baseline is recorded in the tool's README.
 
 <!-- one line per closed ticket, gist plus link -->
 
+- [weston headless + GL on this host](tickets/01-weston-headless-gl-on-host.md): weston 15.0.1 runs headless+GL on the host GPU (`GL renderer: AMD Radeon RX 7600M XT`, `renderD128`, no DRM master); screenshots need `--debug` (else `Output capture error: unauthorized` and an all-black PNG); `weston-screenshooter` writes a real PNG, decodable with stdlib zlib via the devshell python3; GL failure exits 1 and creates no socket.
+
 ## Not yet specified
 
 - Whether `--waypipe` needs a fix in loftd or guest-init. The guest side is already
