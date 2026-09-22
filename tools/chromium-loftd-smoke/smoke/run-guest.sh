@@ -10,6 +10,52 @@ set -u
 E=/workspace/evidence
 mkdir -p "$E"
 
+# The host runner stages the mode next to this script; environment variables do
+# not survive into the guest (loftd passes only PATH plus its allowlist), so a
+# file is the only reliable channel for it.
+MODE="$(cat /workspace/smoke/run-mode 2>/dev/null || echo single)"
+PRESENT_TIMEOUT=180
+# How long the presenting Chromium has the guest to itself before the headless
+# checks start. The host screenshots the compositor during this window; running
+# the two phases concurrently starved the presenting renderer (its window set
+# its title but never put pixels on the wire within the capture window).
+PRESENT_DWELL="${PRESENT_DWELL:-90}"
+PRESENT_LOG="$E/presenting-$MODE.log"
+PRESENT_STATE="$E/presenting-$MODE-state.txt"
+PRESENT_PID=""
+
+# Presenting run (started before the headless checks so its window is mapped for
+# as long as possible; the host screenshots the compositor while this is up).
+if [ "$MODE" != "single" ]; then
+  # GBM_BACKENDS_PATH is required for hardware acceleration: guest-init points
+  # LIBGL/EGL/VK at the image's mesa but never sets the GBM backend path, so
+  # ozone searches the NixOS default /run/opengl-driver/lib/gbm, misses the
+  # guest's dri_gbm.so and cannot init a DRM render node - the GPU process then
+  # degrades to software and every buffer arrives as wl_shm.
+  export GBM_BACKENDS_PATH=/usr/lib/loftd-mesa-runtime/lib/gbm
+  rm -rf /tmp/chromium-smoke-present
+  # --use-angle=vulkan sends ANGLE (WebGL/raster) to Vulkan->venus. Never add
+  # --enable-features=Vulkan: that moves the display compositor onto Vulkan,
+  # which needs a VkSurfaceKHR ozone-wayland does not implement, and the GPU
+  # process then crash-loops and never paints.
+  timeout "$PRESENT_TIMEOUT" chromium --ozone-platform=wayland --no-sandbox \
+    --disable-gpu-sandbox --use-angle=vulkan \
+    --user-data-dir=/tmp/chromium-smoke-present --window-size=640,480 \
+    --window-position=0,0 --app=file:///workspace/smoke/waypipe-present.html \
+    --enable-logging=stderr > "$PRESENT_LOG" 2>&1 &
+  PRESENT_PID=$!
+fi
+
+# Let the presenting run own the guest while the host captures frames. The
+# headless checks below are deliberately serialised after this: running them
+# concurrently starved the presenting renderer.
+# Only the run that actually has a waypipe display is worth dwelling on; in the
+# control run there is no display, so the browser exits at once and waiting would
+# just lengthen the run.
+if [ -n "$PRESENT_PID" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  sleep "$PRESENT_DWELL"
+fi
+
 # Guest GPU diagnostics: the baseline question is whether the guest even sees a
 # DRM render node and the venus Vulkan ICD. Unscored, but the first thing to
 # read when the WebGL check fails.
@@ -107,5 +153,20 @@ grep -oE 'vendor=[^<]*' "$E/webgl-dom.html" >> "$E/webgl-renderer.txt" 2>/dev/nu
 grep -oE 'gl_version=[^<]*' "$E/webgl-dom.html" >> "$E/webgl-renderer.txt" 2>/dev/null || true
 
 printf 'gpu-dom=%s webgl=%s dom=%s\n' "$gpu_rc" "$webgl_rc" "$dom_rc" > "$E/chromium-rc"
+
+# Presenting-run outcome: mode, whether a waypipe display was even present, and
+# whether the browser was still alive at the end of its dwell (if it died early,
+# no host screenshot could have caught it).
+if [ -n "$PRESENT_PID" ]; then
+  present_alive=no
+  kill -0 "$PRESENT_PID" 2>/dev/null && present_alive=yes
+  {
+    printf 'mode=%s wayland_display=%s gbm_backends_path=%s alive_after_dwell_secs=%s alive=%s\n' \
+      "$MODE" "${WAYLAND_DISPLAY:-<unset>}" "${GBM_BACKENDS_PATH:-<unset>}" "$PRESENT_DWELL" "$present_alive"
+    echo "--- presenting chromium log (gpu/error lines) ---"
+    grep -aiE 'gpu process|not compatible|vulkan|render node|error|wayland' "$PRESENT_LOG" 2>/dev/null | head -10
+  } > "$PRESENT_STATE" 2>&1
+  kill "$PRESENT_PID" 2>/dev/null || true
+fi
 
 exit 0

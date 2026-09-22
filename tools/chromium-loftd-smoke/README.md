@@ -1,5 +1,12 @@
 # Chromium Loftd Live Smoke
 
+Two modes. The default proves Chromium's GPU path inside a loftd microVM
+(headless Chromium on venus). `--waypipe` additionally proves loftd's waypipe
+transport: a host Wayland compositor and waypipe client, `loftd
+--waypipe=<socket>`, and a guest Chromium that renders on venus *and* presents
+through waypipe, with a no-`--waypipe` control run for attribution. The frozen
+design of that mode is specified below.
+
 A single-command, artifact-correct live smoke for the loftd GPU path using a
 real Chromium inside a real loftd microVM.
 
@@ -25,6 +32,26 @@ PASS  webgl-vulkan  ANGLE (AMD, Vulkan 1.4.334 (Virtio-GPU Venus (AMD Radeon RX 
 PASS  webgl-png     non-empty screenshot
 VERDICT: PASS
 ```
+
+And with `--waypipe` (same pinned artifacts, 2026-09-22):
+
+```text
+PASS  version            Chromium 153.0.8010.52
+PASS  chromium-rc        gpu-dom=0 webgl=0 dom=0
+PASS  webgl-vulkan       headless run: ANGLE/Vulkan on venus
+PASS  webgl-png          non-empty screenshot
+PASS  waypipe-transport  guest waypipe server connected to the host client
+PASS  venus-presenting   waypipe-venus:ANGLE (AMD, Vulkan 1.4.334 (Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33)), venus)
+PASS  frame-presented    host compositor screenshot holds 210047 pattern pixels
+PASS  control-no-frame   without --waypipe the same work delivers 0 pattern pixels
+INFO  compositor         GL renderer: AMD Radeon RX 7600M XT (radeonsi, navi33, ...)
+VERDICT: PASS
+```
+
+So hardware-accelerated Chromium presents through loftd's waypipe transport: the
+guest's GPU process renders on venus while its window reaches a host-side
+compositor, and the venus renderer itself is read off the *host* waypipe client
+log (the guest page publishes it as the window title).
 
 **GPU acceleration works**: Chromium in the loftd microVM renders WebGL through
 the host GPU via `virtio-gpu` venus (`--gpu=drm`), with RADV on the host.
@@ -54,6 +81,28 @@ renderer appears. Notes for whoever digs further:
   =stderr`, `MESA_DEBUG`, `VK_LOADER_DEBUG` and `--log-file` all yield nothing);
   tracing it with `strace -f -e trace=ioctl` is the way to see it work.
 
+The **presenting** run (`--waypipe`) needs the opposite treatment, and this is
+the part that is easy to get wrong:
+
+- It must **not** pass `--enable-features=Vulkan`. That switches the display
+  compositor onto Vulkan, which needs a `VkSurfaceKHR`; ozone-wayland does not
+  implement `CreateVulkanSurface` and logs `'--ozone-platform=wayland' is not
+  compatible with Vulkan`. The message is harmless on its own (the host emits it
+  too, with zero GPU crashes) but with the feature enabled the guest's GPU
+  process crash-loops and never paints.
+- `--use-angle=vulkan` alone is the correct knob: ANGLE (WebGL/raster) runs on
+  Vulkan->venus while the compositor stays off Vulkan.
+- `GBM_BACKENDS_PATH=/usr/lib/loftd-mesa-runtime/lib/gbm` must be set in the
+  guest. guest-init's `MESA_ENV` points `LIBGL_DRIVERS_PATH`, the EGL vendor file
+  and `VK_DRIVER_FILES` at the image's mesa but never sets the GBM backend path,
+  so ozone searched the NixOS default `/run/opengl-driver/lib/gbm`, missed the
+  guest's `dri_gbm.so` and could not init a DRM render node.
+- dmabuf must be blocked on the waypipe side (`-n`/`--no-gpu`). With dmabuf
+  enabled the host compositor's format modifiers reach the guest and venus
+  rejects them (`VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`), which
+  crash-loops the GPU process. Buffers then travel as `wl_shm`, so rendering is
+  accelerated but the transfer is not zero-copy.
+
 Reproducing a pinned baseline (rooted so a later `nix-collect-garbage` cannot
 delete the artifacts mid-run):
 
@@ -82,6 +131,20 @@ tools/chromium-loftd-smoke/chromium-smoke.sh \
   --guest-init /path/to/loftd-guest-init \
   --container /nix/store/...-loftd-image.tar.gz \
   --mem 4 --timeout 600
+```
+
+Waypipe mode (needs weston + waypipe + python3; see *--waypipe mode* below):
+
+```bash
+nix build nixpkgs#weston nixpkgs#waypipe
+nix develop --command tools/chromium-loftd-smoke/chromium-smoke.sh \
+  --waypipe \
+  --weston      /nix/store/...-weston-15.0.1/bin/weston \
+  --waypipe-bin /nix/store/...-waypipe-0.11.0/bin/waypipe \
+  --loftd "$PWD/roots/loftd-prebuilt/bin/loftd" \
+  --guest-init "$PWD/roots/agentbox-musl/bin/loftd-guest-init" \
+  --container  "$PWD/roots/container" \
+  --out-dir /path/on/btrfs/chromium-smoke --mem 4 --timeout 900
 ```
 
 ## What it does
@@ -132,6 +195,76 @@ tools/chromium-loftd-smoke/chromium-smoke.sh \
    Exit 0 only when all pass; otherwise exit 1 with the failed check and
    evidence/log paths.
 
+## `--waypipe` mode (frozen design)
+
+Frozen in `docs/wayfinder/waypipe-gpu-smoke/tickets/04-freeze-waypipe-mode-design.md`.
+
+**What it proves.** That loftd's `--waypipe` path carries a real Wayland client
+from the guest to a host compositor, and that the client is hardware-accelerated
+while doing it. Four things, scored separately so a failure says which half broke:
+the transport connected; the presenting Chromium rendered on venus; the frame
+arrived at the compositor; and the same work *without* `--waypipe` delivers
+nothing (attribution).
+
+**Flags.**
+
+| flag | default | meaning |
+| --- | --- | --- |
+| `--waypipe` | off | run the presenting run and its control, and score them |
+| `--weston <path>` | `$WESTON_BIN`, else PATH | compositor binary (`nix build nixpkgs#weston`) |
+| `--waypipe-bin <path>` | `$WAYPIPE_BIN`, else PATH | waypipe binary (`nix build nixpkgs#waypipe`) |
+| `--weston-renderer <gl\|pixman>` | `gl` | compositor renderer; `pixman` is an explicit opt-in (software compositing, so transport evidence only) |
+| `--present-wait <secs>` | 30 | first compositor screenshot after launch; a second follows 30s later |
+| `--python <path>` | `$PYTHON`, else PATH | reads the screenshot pixels (stdlib zlib; `nix develop` provides python3) |
+
+**Stages.** (1) preflight: the existing btrfs/free-space checks plus weston,
+waypipe and python3, each a hard failure naming the build command; (2)
+compositor: `weston --backend=headless --renderer=gl --debug --width=640
+--height=480 --socket=loftd-smoke`, waited for with a liveness check; (3) waypipe
+client: `waypipe -d -n --socket <out>/waypipe/waypipe.sock client` pointed at that
+compositor socket, also waited for with a liveness check; (4) run A: `loftd ...
+--waypipe=<socket>` with the guest in `waypipe` mode while the host captures the
+compositor twice; (5) run B: the identical guest work with no `--waypipe`
+(control), captured the same way; (6) teardown: an EXIT trap kills both helpers.
+
+**Evidence and predicates** — all under `<out>/workspace/evidence/`, all required
+to be fresh (non-empty and mtime >= run start):
+
+| check | evidence | predicate |
+| --- | --- | --- |
+| `waypipe-transport` | `host-waypipe-client.log` | holds `Connection received` and `Connected waypipe-server` |
+| `venus-presenting` | `host-waypipe-client.log` | a `set_title("waypipe-venus:...")` line naming `Vulkan` and `venus`, never `SwiftShader` |
+| `frame-presented` | `host-frame-early.png`, `host-frame-late.png` | either holds >= 5000 pixels of the pattern colour |
+| `control-no-frame` | `control-frame-early.png`, `control-frame-late.png` | neither holds >= 5000 pattern pixels |
+| the four headless checks | as in the default mode | unchanged |
+
+**Why these choices.**
+
+- **The venus claim is read off the host, not the guest.** The pattern page sets
+  `document.title` to the WebGL `UNMASKED_RENDERER_WEBGL` string, and waypipe logs
+  window titles verbatim, so the renderer crosses the transport into a host-side
+  log. One artefact proves the title crossed *and* names the renderer. No strace:
+  tracing the GPU process slowed startup enough to hide a crash loop, so tracing
+  must not sit on the scored path.
+- **The frame is asserted on pixels, never on the file.** Without `--debug` weston
+  refuses capture and writes a plausible all-black PNG, so the check decodes the
+  image (`png-colour-count.py`, stdlib `zlib` only).
+- **A control run is mandatory.** A green frame check on its own cannot show the
+  frame arrived *through the transport*.
+- **Preflights check liveness, not just sockets.** `--out-dir` is reused between
+  runs, and a leftover socket file both makes a new listener fail with
+  `EADDRINUSE` and satisfies a `-S` test, so both helpers are verified alive.
+- **Guest-side mode travels by file.** Environment variables do not reach the
+  guest (loftd passes only PATH plus its allowlist), so the runner stages
+  `smoke/run-mode` and the guest reads it.
+- **The presenting run gets the guest to itself** (`PRESENT_DWELL`, 90s) before
+  the headless checks start: running them concurrently starved the presenting
+  renderer, whose window set its title but never put pixels on the wire inside
+  the capture window.
+
+**What it deliberately does not do.** dmabuf zero-copy (blocked, see above);
+input events; weston on real DRM/KMS; transports other than vsock.
+
 ## Output layout
 
 ```text
@@ -141,7 +274,13 @@ tools/chromium-loftd-smoke/chromium-smoke.sh \
   workspace/                guest /workspace (bind)
     smoke/run-guest.sh      the in-guest workload
     evidence/               the scored artifacts
-  logs/loftd.console        full VM console
+  logs/loftd.console        full VM console (run A)
+  logs/loftd-control.console full VM console (control run, --waypipe only)
+  logs/weston.log           compositor log (--waypipe only)
+  logs/waypipe-client.log   host waypipe client log (--waypipe only)
+  waypipe/run/              private XDG_RUNTIME_DIR for the compositor
+  waypipe/shot/             weston-screenshooter working dir
+  waypipe/waypipe.sock      the socket loftd is given (--waypipe only)
   logs/*                    mirrored chromium logs live in evidence/
 ```
 
@@ -156,6 +295,10 @@ tools/chromium-loftd-smoke/chromium-smoke.sh \
 - **btrfs output filesystem**: both the hermetic container graphroot and the
   loftd state home live under `--out-dir`, and `btrfs-snapshot` is the only
   implemented task-rootfs backend. On non-btrfs the smoke exits 2 up front.
+- `--waypipe` additionally needs **weston** and **waypipe**
+  (`nix build nixpkgs#weston nixpkgs#waypipe`; both resolve in the current pin)
+  and **python3** for the PNG pixel check (`nix develop` provides it). Each is a
+  hard failure with the build command in the message, never a silent skip.
 - **Disk space**: the loftd image (with the in-image Chromium) decompresses to
   ~7.7 GiB. The smoke keeps a 12 GiB free-space preflight on the output
   filesystem and fails fast with a clear message rather than mid-load ENOSPC.
@@ -178,6 +321,20 @@ tools/chromium-loftd-smoke/chromium-smoke.sh \
   evidence; check host prerequisites (`/dev/kvm`, state-home backend) first.
 - **Stale/missing evidence** — the freshness rule caught a reused artifact;
   re-run without `--keep-evidence`.
+- **FAIL waypipe-transport** — the guest never dialled the host client. Check
+  `<out>/logs/waypipe-client.log` (a stale socket shows up as `EADDRINUSE`),
+  then `loftd.console` for loftd's own preflight messages (`waypipe socket does
+  not exist`, `waypipe transport is not a Unix socket`).
+- **FAIL venus-presenting** — the transport worked but the presenting Chromium
+  did not report a venus renderer. Read `presenting-waypipe.log` and
+  `presenting-waypipe-state.txt`: a missing `GBM_BACKENDS_PATH`, an added
+  `--enable-features=Vulkan`, or a GPU process crash loop are the usual causes.
+- **FAIL frame-presented** — the window never reached the compositor. Compare
+  `host-frame-*.png` with `control-frame-*.png`; raise `--present-wait` if the
+  guest was simply slow, and check `presenting-waypipe-state.txt` for whether the
+  browser was alive at the end of its dwell.
+- **FAIL control-no-frame** — the pattern appeared without `--waypipe`, so the
+  frame check proves nothing; look for a leftover window on the compositor.
 
 ## Notes
 

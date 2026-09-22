@@ -10,6 +10,13 @@
 #
 # Output: <out>/workspace/evidence/*  (fresh, host-visible bind /workspace/evidence)
 #         <out>/logs/*                (loftd.console)
+# With --waypipe it additionally boots a host Wayland compositor (weston,
+# headless + GL) and a host waypipe client, launches loftd with
+# --waypipe=<socket>, and scores the waypipe transport: the guest's waypipe
+# server connecting, the guest Chromium rendering on venus while presenting
+# through waypipe, the pattern frame arriving in the compositor, and a
+# no---waypipe control run that must NOT deliver that frame.
+#
 # Exit 0 only when fresh, non-empty evidence proves: chromium version, an
 # ANGLE WebGL renderer on the Vulkan backend (not SwiftShader) from the probe
 # page, a GPU-composited PNG, and rc 0 for every chromium run. The chrome://gpu
@@ -29,6 +36,12 @@ timeout_seconds=600
 keep_evidence=0
 out_dir=""
 no_default_flag_set=0
+waypipe_mode=0
+weston_bin="${WESTON_BIN:-}"
+weston_renderer="gl"
+present_wait=30
+waypipe_bin="${WAYPIPE_BIN:-}"
+python_bin="${PYTHON:-}"
 
 usage() {
   cat <<'USAGE'
@@ -51,6 +64,16 @@ Options:
       --out-dir <path>       output root (default: .smoke/chromium-loftd/<timestamp>)
       --no-default-flags     do not add the verified --gpu=drm --alloc hardened
                              --seccomp=off --landlock=off default flags
+      --waypipe              also run and score the waypipe presenting run (host
+                             weston + waypipe client; needs --weston/--waypipe-bin
+                             and python3 - see the --waypipe mode section below)
+      --weston <path>        weston binary (default: $WESTON_BIN, else PATH)
+      --waypipe-bin <path>   waypipe binary (default: $WAYPIPE_BIN, else PATH)
+      --weston-renderer <r>  compositor renderer: gl (default) or pixman
+      --present-wait <secs>  seconds after launch before the first compositor
+                             screenshot (default: 30)
+      --python <path>        python3 used to read the host screenshot pixels
+                             (default: $PYTHON, else PATH)
   -h, --help                 show this help
 
 The verified working launch shape (used by the chromium GPU investigation) is:
@@ -74,6 +97,12 @@ while [ "$#" -gt 0 ]; do
     --keep-evidence) keep_evidence=1; shift ;;
     --out-dir) out_dir="${2:?missing value for --out-dir}"; shift 2 ;;
     --no-default-flags) no_default_flag_set=1; shift ;;
+    --waypipe) waypipe_mode=1; shift ;;
+    --weston) weston_bin="${2:?missing value for --weston}"; shift 2 ;;
+    --weston-renderer) weston_renderer="${2:?missing value for --weston-renderer}"; shift 2 ;;
+    --present-wait) present_wait="${2:?missing value for --present-wait}"; shift 2 ;;
+    --waypipe-bin) waypipe_bin="${2:?missing value for --waypipe-bin}"; shift 2 ;;
+    --python) python_bin="${2:?missing value for --python}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -82,6 +111,11 @@ done
 case "$mem_gib" in ''|*[!0-9]*) echo "--mem must be a positive integer" >&2; exit 1 ;; esac
 [ "$mem_gib" -ge 1 ] || { echo "--mem must be >= 1" >&2; exit 1; }
 case "$timeout_seconds" in ''|*[!0-9]*) echo "--timeout must be a positive integer" >&2; exit 1 ;; esac
+case "$present_wait" in ''|*[!0-9]*) echo "--present-wait must be a positive integer" >&2; exit 1 ;; esac
+case "$weston_renderer" in gl|pixman) : ;; *) echo "--weston-renderer must be gl or pixman" >&2; exit 1 ;; esac
+[ -n "$weston_bin" ] || weston_bin="$(command -v weston || true)"
+[ -n "$waypipe_bin" ] || waypipe_bin="$(command -v waypipe || true)"
+[ -n "$python_bin" ] || python_bin="$(command -v python3 || true)"
 
 [ -x "$loftd_bin" ] || loftd_bin="$(nix build "$repo_root#loftd" --print-out-paths 2>/dev/null || true)"
 loftd_bin="${loftd_bin%/bin/loftd}/bin/loftd"
@@ -174,10 +208,105 @@ workspace="$out_dir/workspace"
 mkdir -p "$workspace/smoke"
 cp "$tool_dir/smoke/run-guest.sh" "$workspace/smoke/run-guest.sh"
 chmod +x "$workspace/smoke/run-guest.sh"
+# The presenting run's pattern page travels with the workspace: the guest has no
+# access to the repo, so anything the guest executes or loads is staged here.
+cp "$tool_dir/smoke/waypipe-present.html" "$workspace/smoke/waypipe-present.html"
 if [ "$keep_evidence" -eq 0 ]; then
   rm -rf "$workspace/evidence"
 fi
 mkdir -p "$workspace/evidence"
+
+# ---- waypipe presenting run: compositor + client ---------------------------
+# Both must exist BEFORE loftd starts: loftd preflights the socket
+# ("waypipe socket does not exist" / "waypipe transport is not a Unix socket"),
+# and the guest's waypipe server dials the client lazily, on the guest app's
+# first connection.
+weston_pid=""
+waypipe_client_pid=""
+weston_dir=""
+cleanup() {
+  [ -n "$waypipe_client_pid" ] && kill "$waypipe_client_pid" 2>/dev/null || true
+  [ -n "$weston_pid" ] && kill "$weston_pid" 2>/dev/null || true
+  return 0
+}
+trap cleanup EXIT
+
+host_shot() { # host_shot <target-png>   capture the compositor output
+  local target="$1" shot
+  ( cd "$waypipe_shot" || exit 1
+    env XDG_RUNTIME_DIR="$waypipe_run" WAYLAND_DISPLAY="$weston_socket" \
+      timeout 30 "$weston_dir/weston-screenshooter" >>"$out_dir/logs/screenshooter.log" 2>&1
+    for shot in wayland-screenshot-*.png; do
+      [ -f "$shot" ] || continue
+      mv "$shot" "$target"
+      break
+    done ) >/dev/null 2>&1 || true
+}
+
+start_watcher() { # start_watcher <early-png> <late-png>
+  # The guest dwells on the presenting run for its own window (see
+  # run-guest.sh PRESENT_DWELL), so the two captures sit inside it.
+  ( sleep "$present_wait"; host_shot "$1"; sleep 30; host_shot "$2" ) &
+  watcher_pid=$!
+}
+
+if [ "$waypipe_mode" -eq 1 ]; then
+  [ -x "$weston_bin" ] || {
+    echo "FATAL: --waypipe needs weston; build it with 'nix build nixpkgs#weston' and pass --weston <path>" >&2
+    exit 2
+  }
+  [ -x "$waypipe_bin" ] || {
+    echo "FATAL: --waypipe needs waypipe; build it with 'nix build nixpkgs#waypipe' and pass --waypipe-bin <path>" >&2
+    exit 2
+  }
+  [ -n "$python_bin" ] && [ -x "$python_bin" ] || {
+    echo "FATAL: --waypipe needs python3 to read the host screenshot pixels (run under 'nix develop', or pass --python <path>)" >&2
+    exit 2
+  }
+  waypipe_run="$out_dir/waypipe/run"
+  waypipe_shot="$out_dir/waypipe/shot"
+  weston_socket="loftd-smoke"
+  mkdir -p "$waypipe_run" "$waypipe_shot"
+  chmod 700 "$waypipe_run"
+  weston_dir="$(dirname "$weston_bin")"
+  waypipe_sock="$out_dir/waypipe/waypipe.sock"
+
+  # A reused --out-dir leaves the previous run's sockets behind. A leftover
+  # socket file makes the new listener fail with EADDRINUSE *and* satisfies the
+  # "-S" readiness test, so it has to go before anything is started.
+  rm -f "$waypipe_run/$weston_socket" "$waypipe_sock"
+  echo "compositor: $weston_bin (backend=headless renderer=$weston_renderer socket=$weston_socket)"
+  env XDG_RUNTIME_DIR="$waypipe_run" "$weston_bin" --backend=headless \
+    --renderer="$weston_renderer" --debug --width=640 --height=480 \
+    --socket="$weston_socket" --no-config --log="$out_dir/logs/weston.log" \
+    >"$out_dir/logs/weston.stdout" 2>&1 &
+  weston_pid=$!
+  for _ in $(seq 1 50); do [ -S "$waypipe_run/$weston_socket" ] && break; sleep 0.2; done
+  if ! kill -0 "$weston_pid" 2>/dev/null || [ ! -S "$waypipe_run/$weston_socket" ]; then
+    echo "FATAL: weston did not create $waypipe_run/$weston_socket (log: $out_dir/logs/weston.log)" >&2
+    echo "       --debug is required for screenshots (without it weston refuses capture and writes a black PNG)." >&2
+    echo "       If the GL renderer could not initialise, retry with --weston-renderer=pixman (explicit opt-in:" >&2
+    echo "       the compositor then uses no GPU, so the run is transport evidence only)." >&2
+    exit 2
+  fi
+
+  # -n/--no-gpu blocks dmabuf. With dmabuf enabled the host compositor's format
+  # modifiers reach the guest over the waypipe display and venus rejects them
+  # (VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT), which crash-loops
+  # Chromium's GPU process. Buffers then travel as wl_shm instead.
+  env XDG_RUNTIME_DIR="$waypipe_run" WAYLAND_DISPLAY="$weston_socket" \
+    "$waypipe_bin" -d -n --socket "$waypipe_sock" client \
+    >"$out_dir/logs/waypipe-client.log" 2>&1 &
+  waypipe_client_pid=$!
+  for _ in $(seq 1 50); do [ -S "$waypipe_sock" ] && break; sleep 0.1; done
+  # Check the process too: a stale socket file from a previous run satisfies
+  # "-S" even when the client died on EADDRINUSE, which would silently turn the
+  # whole transport into a no-op.
+  if ! kill -0 "$waypipe_client_pid" 2>/dev/null || [ ! -S "$waypipe_sock" ]; then
+    echo "FATAL: the waypipe client is not listening on $waypipe_sock (log: $out_dir/logs/waypipe-client.log)" >&2
+    exit 2
+  fi
+fi
 
 launch_s="$(date +%s)"
 
@@ -189,22 +318,50 @@ if [ -n "$guest_init" ]; then
   loftd_args+=(--guest-init "$guest_init")
 fi
 
+run_vm() { # run_vm <guest-mode> <console-name>   uses the global vm_args
+  local mode="$1" console="$2"
+  printf '%s' "$mode" > "$workspace/smoke/run-mode"
+  ( cd "$workspace" && env XDG_CONFIG_HOME="$out_dir/config" XDG_STATE_HOME="$state_home" \
+      LOFTD_IMAGE="$container_ref" \
+      timeout "$timeout_seconds" \
+      script -q -e -c "$loftd_bin ${vm_args[*]} -- sh /workspace/smoke/run-guest.sh" /dev/null ) \
+    >"$out_dir/logs/$console" 2>&1
+}
+
 echo "loftd: $loftd_bin"
 echo "image: $container_ref"
 echo "backend: $backend | state-home: $state_home"
-echo "launch command: $loftd_bin ${loftd_args[*]} -- sh /workspace/smoke/run-guest.sh"
 
-( cd "$workspace" && env XDG_CONFIG_HOME="$out_dir/config" XDG_STATE_HOME="$state_home" \
-    LOFTD_IMAGE="$container_ref" \
-    timeout "$timeout_seconds" \
-    script -q -e -c "$loftd_bin ${loftd_args[*]} -- sh /workspace/smoke/run-guest.sh" /dev/null ) \
-  >"$out_dir/logs/loftd.console" 2>&1 && vm_rc=0 || vm_rc=$?
+vm_args=("${loftd_args[@]}")
+if [ "$waypipe_mode" -eq 1 ]; then
+  vm_args+=(--waypipe="$waypipe_sock")
+fi
+echo "launch command: $loftd_bin ${vm_args[*]} -- sh /workspace/smoke/run-guest.sh"
+
+if [ "$waypipe_mode" -eq 1 ]; then
+  start_watcher "$workspace/evidence/host-frame-early.png" "$workspace/evidence/host-frame-late.png"
+fi
+if run_vm waypipe loftd.console; then vm_rc=0; else vm_rc=$?; fi
 
 if [ "$vm_rc" -eq 124 ]; then
   echo "FATAL: loftd timed out after ${timeout_seconds}s (log: $out_dir/logs/loftd.console)" >&2
   exit 124
 fi
 echo "loftd vm exit: $vm_rc (see $out_dir/logs/loftd.console)"
+
+if [ "$waypipe_mode" -eq 1 ]; then
+  wait "$watcher_pid" 2>/dev/null || true
+  cp "$out_dir/logs/waypipe-client.log" "$workspace/evidence/host-waypipe-client.log" 2>/dev/null || true
+  # Attribution control: identical guest work, no --waypipe. Its screenshot must
+  # NOT contain the pattern, otherwise a green frame check proves nothing.
+  echo "control run: same guest work without --waypipe"
+  vm_args=("${loftd_args[@]}")
+  start_watcher "$workspace/evidence/control-frame-early.png" "$workspace/evidence/control-frame-late.png"
+  if run_vm control loftd-control.console; then control_rc=0; else control_rc=$?; fi
+  wait "$watcher_pid" 2>/dev/null || true
+  cp "$out_dir/logs/waypipe-client.log" "$workspace/evidence/control-waypipe-client.log" 2>/dev/null || true
+  echo "control vm exit: $control_rc (see $out_dir/logs/loftd-control.console)"
+fi
 
 fail=0
 E="$workspace/evidence"
@@ -251,6 +408,79 @@ if fresh "$E/webgl.png" && [ "$(head -c 4 "$E/webgl.png" | od -An -tx1 | tr -d '
 else
   echo "FAIL  webgl-png -> $E/webgl.png missing/stale/empty or not a PNG"
   fail=1
+fi
+
+# ---- waypipe mode checks ----------------------------------------------------
+# The presenting run is the venus authority: it renders on the GPU and presents
+# through waypipe at the same time, so its renderer and its frame are the
+# strongest evidence this tool can produce. The transport is scored separately
+# from the frame so a failure says which half broke.
+if [ "$waypipe_mode" -eq 1 ]; then
+  if fresh "$E/host-waypipe-client.log" \
+     && grep -q 'Connection received' "$E/host-waypipe-client.log" \
+     && grep -q 'Connected waypipe-server' "$E/host-waypipe-client.log"; then
+    echo "PASS  waypipe-transport (guest waypipe server connected to the host client)"
+  else
+    echo "FAIL  waypipe-transport (host client log needs 'Connection received' + 'Connected waypipe-server') -> $E/host-waypipe-client.log"
+    fail=1
+  fi
+
+  # The pattern page publishes the WebGL renderer as the window title, and
+  # waypipe logs titles verbatim, so the renderer crosses the transport into a
+  # host-side log. No strace (which distorted the run) and no debug port needed.
+  grep -aoE 'set_title\("waypipe-venus:[^"]*"' "$E/host-waypipe-client.log" 2>/dev/null \
+    | sed -e 's/^set_title("//' -e 's/"$//' | tail -1 > "$E/presenting-renderer.txt" 2>/dev/null || true
+  if [ -s "$E/presenting-renderer.txt" ] \
+     && grep -q 'Vulkan' "$E/presenting-renderer.txt" \
+     && grep -q 'venus' "$E/presenting-renderer.txt" \
+     && ! grep -q 'SwiftShader' "$E/presenting-renderer.txt"; then
+    echo "PASS  venus-presenting ($(cut -c1-70 "$E/presenting-renderer.txt"))"
+  else
+    echo "FAIL  venus-presenting (need the presenting run's title to name a venus Vulkan renderer; got: $(head -1 "$E/presenting-renderer.txt" 2>/dev/null))"
+    fail=1
+  fi
+
+  present_px=0
+  for f in "$E/host-frame-early.png" "$E/host-frame-late.png"; do
+    [ -s "$f" ] || continue
+    n="$("$python_bin" "$tool_dir/png-colour-count.py" "$f" ff00ff 2>/dev/null || echo 0)"
+    [ "${n:-0}" -gt "$present_px" ] && present_px="$n"
+  done
+  if [ "$present_px" -ge 5000 ]; then
+    echo "PASS  frame-presented (host compositor screenshot holds $present_px pattern pixels)"
+  else
+    echo "FAIL  frame-presented (best host screenshot holds $present_px pattern pixels, need >= 5000; the guest's frame never reached the compositor)"
+    fail=1
+  fi
+
+  # The control's captures must exist: a missing control frame would otherwise
+  # read as "no pattern pixels" and pass the check for the wrong reason.
+  control_px=0
+  control_missing=0
+  for f in "$E/control-frame-early.png" "$E/control-frame-late.png"; do
+    if ! fresh "$f"; then
+      control_missing=1
+      continue
+    fi
+    n="$("$python_bin" "$tool_dir/png-colour-count.py" "$f" ff00ff 2>/dev/null || echo 0)"
+    [ "${n:-0}" -gt "$control_px" ] && control_px="$n"
+  done
+  if [ "$control_missing" -eq 1 ]; then
+    echo "FAIL  control-no-frame (the control run produced no fresh compositor screenshot; attribution is unproven)"
+    fail=1
+  elif [ "$control_px" -lt 5000 ]; then
+    echo "PASS  control-no-frame (without --waypipe the compositor screenshot holds $control_px pattern pixels)"
+  else
+    echo "FAIL  control-no-frame (pattern pixels appeared without --waypipe: $control_px; the frame is not attributable to the transport)"
+    fail=1
+  fi
+
+  if grep -q 'GL renderer' "$out_dir/logs/weston.log" 2>/dev/null; then
+    echo "INFO  compositor $(grep -m1 'GL renderer' "$out_dir/logs/weston.log" | sed 's/^.*] //' | cut -c1-90)"
+  elif grep -q 'Using Pixman renderer' "$out_dir/logs/weston.log" 2>/dev/null; then
+    echo "INFO  compositor Using Pixman renderer (software compositing; transport evidence only)"
+  fi
+  echo "INFO  presenting $(head -1 "$E/presenting-waypipe-state.txt" 2>/dev/null | cut -c1-170)"
 fi
 
 if [ "$fail" -eq 0 ]; then
