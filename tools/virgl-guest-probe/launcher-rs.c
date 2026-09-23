@@ -2,13 +2,13 @@
  *
  * Host-side driver for the external-render-server venus probe ("run-rs.sh").
  *
- * Mirrors loftd's exact render-server path (compare render_server.rs):
+ * Mirrors cang's exact render-server path (compare render_server.rs):
  *   - creates a SOCK_SEQPACKET socketpair (parent/child)
- *   - forks virgl_render_server --socket-fd=<child> with the loftd-equivalent
+ *   - forks virgl_render_server --socket-fd=<child> with the cang-equivalent
  *     render-server environment (LD_LIBRARY_PATH=vulkan-loader:mesa,
  *     VK_DRIVER_FILES=<radeon ICD>, MESA_SHADER_CACHE_DIR=/dev/shm/mesa-cache)
  *   - passes the PARENT end to libkrun via krun_set_gpu_options3 (the same
- *     function loftd's launcher.rs configure_gpu uses, flags 0xe43)
+ *     function cang's launcher.rs configure_gpu uses, flags 0xe43)
  *
  * This is the exact path the in-process options2 probe does NOT exercise, and
  * the path under which chromium's venus ring/fence init stalls in production.
@@ -26,7 +26,7 @@
 
 #include <libkrun.h>
 
-/* FLAGS_VENUS matches loftd's VIRGLRENDERER_VENUS_FLAGS (launcher.rs) exactly:
+/* FLAGS_VENUS matches cang's VIRGLRENDERER_VENUS_FLAGS (launcher.rs) exactly:
    USE_EGL|THREAD_SYNC|VENUS|RENDER_SERVER|DRM|USE_VIDEO = 0xe43 (3651).
    USE_VIDEO (1<<11) is not defined in the pinned libkrun.h, hence the literal. */
 #define FLAGS_VENUS 0xe43
@@ -44,31 +44,31 @@ static void exec_render_server(int child_fd, int parent_fd) {
     char socket_opt[64];
     snprintf(socket_opt, sizeof(socket_opt), "--socket-fd=%d", child_fd);
 
-    /* If LOFTD_BOOTSTRAP=<loftd-bin>, use the REAL loftd render-server bootstrap
+    /* If CANG_BOOTSTRAP=<cang-bin>, use the REAL cang render-server bootstrap
      * (applies Landlock + the packaged render-server seccomp policy, then execs
      * the RS) — the exact product sandbox.  We pass the real PARENT end as
-     * LOFTD_RENDER_SERVER_PARENT_FD (the bootstrap closes that copy) and the
-     * child end as LOFTD_RENDER_SERVER_CHILD_FD (the RS keeps it).  If
+     * CANG_RENDER_SERVER_PARENT_FD (the bootstrap closes that copy) and the
+     * child end as CANG_RENDER_SERVER_CHILD_FD (the RS keeps it).  If
      * SANDBOX_RS=1, apply the seccomp allowlist alone.  Otherwise exec the RS
      * directly (unsandboxed). */
-    const char *loftd_bin = getenv("LOFTD_BOOTSTRAP");
-    if (loftd_bin && *loftd_bin) {
+    const char *cang_bin = getenv("CANG_BOOTSTRAP");
+    if (cang_bin && *cang_bin) {
         char parent_env[64], child_env[64];
-        snprintf(child_env, sizeof(child_env), "LOFTD_RENDER_SERVER_CHILD_FD=%d", child_fd);
+        snprintf(child_env, sizeof(child_env), "CANG_RENDER_SERVER_CHILD_FD=%d", child_fd);
         putenv(child_env);
-        snprintf(parent_env, sizeof(parent_env), "LOFTD_RENDER_SERVER_PARENT_FD=%d", parent_fd);
+        snprintf(parent_env, sizeof(parent_env), "CANG_RENDER_SERVER_PARENT_FD=%d", parent_fd);
         putenv(parent_env);
         /* The parent end must be open in the child so the bootstrap's close()
          * actually closes this process's copy (and the RS still has its own). */
-        char *argv[] = { (char *)"loftd", (char *)"internal",
+        char *argv[] = { (char *)"cang", (char *)"internal",
                          (char *)"render-server-bootstrap", NULL };
-        execv(loftd_bin, argv);
-        fprintf(stderr, "launcher-rs: execv(loftd bootstrap) failed errno=%d (%s)\n", errno,
+        execv(cang_bin, argv);
+        fprintf(stderr, "launcher-rs: execv(cang bootstrap) failed errno=%d (%s)\n", errno,
                 strerror(errno));
         _exit(2);
     }
 
-    /* If LANDLOCK_RS=<variant>, apply loftd's render-server Landlock rule set
+    /* If LANDLOCK_RS=<variant>, apply cang's render-server Landlock rule set
      * (as-shipped without REFER, or refer-fix with it) before exec — the A/B
      * of the Landlock root cause.  Takes precedence over the sandbox modes so
      * Landlock alone can be tested. */
@@ -127,10 +127,10 @@ int main(int argc, char **argv) {
         fail("fork", errno);
     if (pid == 0) {
         /* Child: run the render server (direct, or through the sandbox /
-         * loftd bootstrap).  The parent socketpair end stays open only in
-         * LOFTD_BOOTSTRAP mode (the bootstrap closes its own copy); otherwise
+         * cang bootstrap).  The parent socketpair end stays open only in
+         * CANG_BOOTSTRAP mode (the bootstrap closes its own copy); otherwise
          * the child must not carry it. */
-        if (!getenv("LOFTD_BOOTSTRAP"))
+        if (!getenv("CANG_BOOTSTRAP"))
             close(parent_fd);
         exec_render_server(child_fd, parent_fd);
     }

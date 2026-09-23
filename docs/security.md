@@ -4,18 +4,18 @@ Host-side sandboxing (Landlock, seccomp) and guest capability grants.
 
 ## Landlock
 
-- Host-side loftd Landlock is applied to the libkrun VM-worker process after
+- Host-side cang Landlock is applied to the libkrun VM-worker process after
   prepared-root and libkrun setup that require broader host access, but before
   `krun_start_enter`. It is applied before seccomp so the Landlock syscalls are
   not blocked by the seccomp filter.
 - For ordinary task launches, omitting `--landlock` is equivalent to
   `--landlock=relax`. Relax mode is fail-closed for the non-network Landlock
-  feature families loftd handles, including filesystem access rules, device
+  feature families cang handles, including filesystem access rules, device
   ioctl access handling, IPC scopes for abstract UNIX sockets and signals, and
   audit-flag support. It intentionally does not handle TCP `BindTcp`, so
   guest-local listeners such as websocket or dev-server ports can bind inside
-  the guest without disabling the rest of loftd's host-side Landlock layer.
-- `--landlock=all` preserves the stricter TCP bind behavior: loftd additionally
+  the guest without disabling the rest of cang's host-side Landlock layer.
+- `--landlock=all` preserves the stricter TCP bind behavior: cang additionally
   handles TCP `BindTcp` and constrains it to simple published TCP host ports when
   they are known.
 - `--landlock=best-effort` uses the `relax` policy shape, including unrestricted
@@ -37,14 +37,14 @@ Host-side sandboxing (Landlock, seccomp) and guest capability grants.
   affected read-only children as mount-enforced instead of Landlock-enforced.
 - TCP `ConnectTcp` is intentionally unrestricted by this first cut to preserve
   existing guest/network behavior. Landlock's connect rules are per remote TCP
-  port, and loftd does not yet have an outbound allowlist. TCP `BindTcp` is
+  port, and cang does not yet have an outbound allowlist. TCP `BindTcp` is
   unrestricted in `relax` and `best-effort`; it is handled and constrained to
   simple published TCP host ports only in `all`.
 - Guest-local binds do not expose host ports by themselves. Host inbound
   exposure remains controlled by repeatable `-p, --publish SPEC`; without a
   publish rule, a process may bind inside the guest VM but incoming host
   connections are not forwarded to it.
-- Before restriction, loftd inventories retained file descriptors. Fail-closed
+- Before restriction, cang inventories retained file descriptors. Fail-closed
   modes (`relax` and `all`) fail on unexpected retained regular files because
   descriptors opened before Landlock can retain access outside the filesystem
   rules.
@@ -55,14 +55,14 @@ Host-side sandboxing (Landlock, seccomp) and guest capability grants.
 
 ## Seccomp
 
-- Host-side loftd seccomp is incubating. For ordinary task launches, omitting
-  `--seccomp` makes loftd enforce the packaged default policy at
-  `$out/share/loftd/seccomp/default.json`. This is fail-closed: if the packaged
+- Host-side cang seccomp is incubating. For ordinary task launches, omitting
+  `--seccomp` makes cang enforce the packaged default policy at
+  `$out/share/cang/seccomp/default.json`. This is fail-closed: if the packaged
   policy is missing, unreadable, invalid, or cannot be compiled for the host
   architecture, the launch fails before the VM worker enters libkrun.
 - `--seccomp=off` is the explicit no-filter spelling and opt-out for a normal
   task launch. Maintenance/internal one-shot VMs such as
-  `loftd container-store resize/reset` remain default-off for this milestone.
+  `cang container-store resize/reset` remain default-off for this milestone.
 - `--seccomp=audit:<trace>` (also accepted as `--seccomp=trace:<trace>`) runs
   the libkrun VM-worker entrypoint under `strace -f`, writes a tracer-owned raw
   log, and converts it to the requested JSONL trace when the helper observes
@@ -77,7 +77,7 @@ Host-side sandboxing (Landlock, seccomp) and guest capability grants.
   finalization instead of publishing an unscoped JSONL trace. The keep-id helper
   setup, including `newuidmap` and `newgidmap`, is not traced. Use the raw
   `.strace` sidecar only for debugging.
-- `loftd seccomp synthesize --input <trace> --output <policy>` extracts syscall
+- `cang seccomp synthesize --input <trace> --output <policy>` extracts syscall
   names from the trace and writes a deterministic `seccompiler` JSON policy with
   a `main_thread` allowlist.
 - `--seccomp=audit:<policy>:<denied-trace>` (also accepted as
@@ -94,18 +94,18 @@ Host-side sandboxing (Landlock, seccomp) and guest capability grants.
   it does not mean a kernel seccomp denial occurred.
 - `--seccomp=audit-default:<denied-trace>` (also accepted as
   `--seccomp=trace-default:<denied-trace>`) is the same gap audit against the
-  packaged default policy at `$out/share/loftd/seccomp/default.json`, without
+  packaged default policy at `$out/share/cang/seccomp/default.json`, without
   spelling that policy path. This is also fail-closed: if the packaged default
-  policy is unavailable or invalid, loftd fails before launching the traced VM
+  policy is unavailable or invalid, cang fails before launching the traced VM
   worker instead of falling back to full audit.
-- `loftd seccomp extend --policy <baseline> --trace <denied-trace> --output
+- `cang seccomp extend --policy <baseline> --trace <denied-trace> --output
   <updated-policy>` additively appends missing syscall allow rules from a full
   or gap audit trace to an existing policy. Use `--default-policy` instead of
   `--policy <baseline>` to extend from the packaged default policy without
   spelling its path; exactly one of `--policy` or `--default-policy` is required.
   It preserves existing filter entries and appends new syscall-only entries in
   deterministic syscall-name order. The output is validated with `seccompiler`
-  before loftd writes it; the baseline policy file is not modified.
+  before cang writes it; the baseline policy file is not modified.
 - `--seccomp=enforce:<policy>` loads that `seccompiler` JSON policy and
   installs it in the VM worker immediately before `krun_start_enter`. Passing an
   explicit enforce path overrides the packaged default policy for that run.
@@ -113,7 +113,7 @@ Host-side sandboxing (Landlock, seccomp) and guest capability grants.
   syscall names only; it does not diff or prove seccompiler argument-condition
   rules. Always test the updated policy explicitly with
   `--seccomp=enforce:<policy>`.
-- This is loftd host-helper filtering only. It does not change guest Podman's
+- This is cang host-helper filtering only. It does not change guest Podman's
   seccomp profile.
 - On NixOS hosts where audit mode fails with ptrace errors such as
   `PTRACE_TRACEME: Operation not permitted`, first check:
@@ -152,9 +152,9 @@ per-user containers config to override it. To refresh the policy, update the
 ## Guest permissions
 
 ```bash
-./result/bin/loftd --new-perms=io-uring
-./result/bin/loftd --new-perms=perf
-./result/bin/loftd --new-perms=io-uring,net-admin,net-raw,bpf,perf,sys-admin
+./result/bin/cang --new-perms=io-uring
+./result/bin/cang --new-perms=perf
+./result/bin/cang --new-perms=io-uring,net-admin,net-raw,bpf,perf,sys-admin
 ```
 
 - `--new-perms` grants the comma-separated additional permissions `io-uring`, `net-admin`,
@@ -162,10 +162,10 @@ per-user containers config to override it. To refresh the policy, update the
   ignored.
   The former `--permissions`, `--io-uring`, and `--perf` flags have been removed.
 - No optional permission is enabled by default. Normal initial commands, managed PTY
-  commands, hidden `as-dev` commands, and later `loftd exec` commands run without
-  effective, permitted, inheritable, or ambient capabilities. Loftd retains only the
+  commands, hidden `as-dev` commands, and later `cang exec` commands run without
+  effective, permitted, inheritable, or ambient capabilities. Cang retains only the
   required rootless-ID-map and authorized grant capabilities in the guest bounding set.
-- Without `io-uring`, loftd disables creation of new io_uring instances
+- Without `io-uring`, cang disables creation of new io_uring instances
   guest-wide by setting `kernel.io_uring_disabled=2` during root guest
   initialization. This happens before Nix and Podman preparation, Wayland
   startup, managed-session startup, or the task command. Guest initialization
@@ -176,25 +176,25 @@ per-user containers config to override it. To refresh the policy, update the
   outside that group remain denied unless permitted by the kernel's
   `CAP_SYS_ADMIN` exception. `io-uring` itself does not grant `CAP_SYS_ADMIN`;
   an explicit `sys-admin` grant independently satisfies that exception for a
-  command launched through `loftd-granted`.
+  command launched through `cang-granted`.
 - `net-admin`, `net-raw`, `bpf`, and `sys-admin` authorize `CAP_NET_ADMIN`,
   `CAP_NET_RAW`, `CAP_BPF`, and `CAP_SYS_ADMIN`, respectively, for the explicit
-  `loftd-granted COMMAND [ARG ...]` helper. `CAP_SYS_ADMIN` is exceptionally broad;
+  `cang-granted COMMAND [ARG ...]` helper. `CAP_SYS_ADMIN` is exceptionally broad;
   it remains absent from normal guest commands and is granted only to commands launched
   through this helper. Every helper invocation receives all capability-bearing permissions
   authorized for the task; the helper refuses to run when none were authorized. For example:
 
   ```bash
-  ./result/bin/loftd --new-perms=sys-admin -- loftd-granted fish
+  ./result/bin/cang --new-perms=sys-admin -- cang-granted fish
   ```
 
   The helper is installed root-owned with the exact authorized file capabilities under
-  the read-only `/run/loftd/wrappers` tree. It does not read grants from its arguments,
+  the read-only `/run/cang/wrappers` tree. It does not read grants from its arguments,
   environment, or a policy file. A capability-bearing subtree still needs to drop its
   capabilities before invoking programs such as Bubblewrap that reject unexpected
   permitted capabilities.
-- The loftd guest image includes `perf` and `strace` on `PATH`. Without `perf`,
-  loftd leaves the guest kernel's hardened `kernel.perf_event_paranoid=3`
+- The cang guest image includes `perf` and `strace` on `PATH`. Without `perf`,
+  cang leaves the guest kernel's hardened `kernel.perf_event_paranoid=3`
   setting unchanged. `perf` sets `kernel.perf_event_paranoid=-1` and
   `kernel.kptr_restrict=0` before the task starts, enabling unprivileged kernel
   software events, tracepoints, and nonzero `/proc/kallsyms` addresses while
@@ -203,7 +203,7 @@ per-user containers config to override it. To refresh the policy, update the
   current x86 libkrun CPUID configuration disables the architectural PMU, so
   software events and available tracepoints are the supported profiling scope.
 - These permissions affect only processes inside the guest VM. They do not
-  alter loftd's host VM-worker capabilities, host seccomp, host Landlock, or
+  alter cang's host VM-worker capabilities, host seccomp, host Landlock, or
   host networking.
 - Nested Podman capability and seccomp policy remains independent. In
   particular, the packaged nested-container profile blocks io_uring syscalls,

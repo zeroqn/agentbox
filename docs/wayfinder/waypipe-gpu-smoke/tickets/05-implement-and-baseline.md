@@ -11,9 +11,9 @@ claimed_by: bob (pi session 2026-09-22)
 Implement the `--waypipe` mode per the frozen design, then prove it: run the A/B pair
 several times on this host, confirm the failures can fail (for example with weston
 stopped), and record the baseline, the repro command and any host prerequisites in
-`tools/chromium-loftd-smoke/README.md`.
+`tools/chromium-cang-smoke/README.md`.
 
-If the prototype surfaced real work in loftd or guest-init, that work graduates to its
+If the prototype surfaced real work in cang or guest-init, that work graduates to its
 own ticket before this one proceeds - this ticket is the smoke, not the runtime fix.
 
 ## Deliverable
@@ -37,7 +37,7 @@ Implemented and baselined.
 - `png-colour-count.py`: stdlib-only PNG pixel counter for the frame check.
 - `README.md`: the frozen design, the baseline, prerequisites and triage.
 
-**Baseline** (pinned `roots/loftd-prebuilt` 0.6.6 + `roots/agentbox-musl` +
+**Baseline** (pinned `roots/cang-prebuilt` 0.6.6 + `roots/agentbox-musl` +
 `roots/container`, host amdgpu): `VERDICT: PASS`, three consecutive runs (two
 before the final two edits, one after), all nine checks green:
 

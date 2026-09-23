@@ -2,7 +2,7 @@ let
   cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
 in
 {
-  loftdVersion = cargoToml.workspace.package.version;
+  cangVersion = cargoToml.workspace.package.version;
 
   piCodingAgent = {
     version = "0.85.1";
@@ -143,6 +143,9 @@ in
   libkrunRelease = {
     owner = "zeroqn";
     repo = "libkrun";
+    # Published zeroqn/libkrun release tag. The historical `loftd-*` name is
+    # kept because it identifies an already-published release and
+    # scripts/update-libkrun.sh selects releases by that prefix.
     tag = "loftd-3842e7383799";
     systems = {
       x86_64-linux = {
@@ -176,15 +179,17 @@ in
     };
   };
 
-  loftdPrebuiltRelease = {
+  cangPrebuiltRelease = {
     owner = "zeroqn";
     repo = "agentbox";
-    # Pinned by scripts/update-loftd-prebuilt.sh, which rejects wrapper-script,
-    # legacy flake-locked, and concrete /nix/store/<hash>-referencing loftd
+    # Pinned by scripts/update-cang-prebuilt.sh, which rejects wrapper-script,
+    # legacy flake-locked, and concrete /nix/store/<hash>-referencing cang
     # release payloads.
     tag = "sha-4e138d5e6239";
     systems = {
       x86_64-linux = {
+        # Published zeroqn/agentbox asset name. The historical `loftd-*` name
+        # is kept so this already-published release keeps resolving.
         asset = "loftd-x86_64-unknown-linux-gnu";
         hash = "sha256-zM+rpgzy/gpYSvwbEtLvn3SuJP0+MRAtU2DZ1MQYC2E=";
       };

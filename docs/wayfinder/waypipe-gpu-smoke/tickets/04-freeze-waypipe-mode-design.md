@@ -8,12 +8,12 @@ claimed_by: bob (pi session 2026-09-22)
 
 ## Question
 
-Freeze the shape of the `--waypipe` mode in `tools/chromium-loftd-smoke` so
+Freeze the shape of the `--waypipe` mode in `tools/chromium-cang-smoke` so
 implementation is mechanical:
 
 - New flags and their defaults (`--waypipe` toggle, `--weston`, `--waypipe-bin`,
   `--weston-renderer`, private `XDG_RUNTIME_DIR`), in the style of the existing
-  `--loftd/--guest-init/--container` options.
+  `--cang/--guest-init/--container` options.
 - Stages and their order: preflight (btrfs, free space, weston/waypipe present - hard
   fail if missing), start weston headless+GL, start the waypipe client, run the A/B pair
   (with and without `--waypipe`) in the same VM image, tear everything down even on
@@ -29,7 +29,7 @@ implementation is mechanical:
 
 ## Deliverable
 
-The agreed spec written as a section of `tools/chromium-loftd-smoke/README.md`
+The agreed spec written as a section of `tools/chromium-cang-smoke/README.md`
 (no implementation in this ticket).
 
 ## Decisions already taken (inputs, recorded as they land)
@@ -61,7 +61,7 @@ The agreed spec written as a section of `tools/chromium-loftd-smoke/README.md`
   port, and does not distort the run the way stracing the GPU process did (strace slowed
   startup enough to hide a crash loop - so do not make strace part of the scored path).
 - The presenting run must additionally set the guest env and waypipe flag that make venus
-  presentation work at all: `GBM_BACKENDS_PATH=/usr/lib/loftd-mesa-runtime/lib/gbm`, Chromium
+  presentation work at all: `GBM_BACKENDS_PATH=/usr/lib/cang-mesa-runtime/lib/gbm`, Chromium
   flags `--ozone-platform=wayland --use-angle=vulkan` (never `--enable-features=Vulkan`), and
   dmabuf blocked on the waypipe client (`-n`). See *Venus-backed presenting run through
   waypipe*.
@@ -70,14 +70,14 @@ The agreed spec written as a section of `tools/chromium-loftd-smoke/README.md`
 
 Frozen, and written where the implementer will look for it: the
 `--waypipe mode (frozen design)` section of
-`tools/chromium-loftd-smoke/README.md`. Summary of what was frozen:
+`tools/chromium-cang-smoke/README.md`. Summary of what was frozen:
 
 - **Flags**: `--waypipe` (off by default), `--weston`, `--waypipe-bin`,
   `--weston-renderer gl|pixman`, `--present-wait` (30s), `--python`. Defaults
   resolve from `$WESTON_BIN`/`$WAYPIPE_BIN`/`$PYTHON` then PATH.
 - **Stages**: preflight (btrfs + free space + weston/waypipe/python3, each a hard
   failure naming the build command) -> compositor (`weston --backend=headless
-  --renderer=gl --debug --socket=loftd-smoke`) -> waypipe client (`waypipe -d -n
+  --renderer=gl --debug --socket=cang-smoke`) -> waypipe client (`waypipe -d -n
   --socket <out>/waypipe/waypipe.sock client`) -> run A with `--waypipe=<socket>`
   while the host captures the compositor twice -> run B, the identical guest work
   with no `--waypipe` -> teardown via an EXIT trap.

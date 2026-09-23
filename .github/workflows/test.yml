@@ -21,8 +21,8 @@ jobs:
       - name: Run tests
         run: |
           nix develop --command cargo test \
-            --package loftd \
-            --package loftd-guest-init \
-            --package loftd-attach-protocol \
-            --package loftd-exec-protocol \
-            --package loftd-repository-tests
+            --package cang \
+            --package cang-guest-init \
+            --package cang-attach-protocol \
+            --package cang-exec-protocol \
+            --package cang-repository-tests

@@ -54,7 +54,7 @@ Boot pipeline works end-to-end:
 Net finding: the bare libkrun guest NOW gets a usable venus Vulkan device,
 **hardware-backed** (host ICD = radv → L1 virtio-gpu DRM capset → L0 GPU).
 The lavapipe fallback covers hosts with no hardware path.  The render-server
-host-ICD choice is the next product decision: loftd must set the same
+host-ICD choice is the next product decision: cang must set the same
 LD_LIBRARY_PATH + VK_DRIVER_FILES when spawning the render server.
 
 ## Bugs found
@@ -77,10 +77,10 @@ resolved, the probe reports RESULT: PASS, and — since the L1 virtio-gpu
 exposes a DRM capset — the render server now uses radv (hardware) by default,
 so the guest venus device is backed by the real AMD GPU.
 
-Follow-up (product, not probe): loftd's `GpuMode` is still only `Off | Drm`
-(`crates/loftd/src/runtime/vm/gpu.rs`); a venus mode does not exist in the
+Follow-up (product, not probe): cang's `GpuMode` is still only `Off | Drm`
+(`crates/cang/src/runtime/vm/gpu.rs`); a venus mode does not exist in the
 product yet.  When it is added, the render-server environment fix
-(LD_LIBRARY_PATH + VK_DRIVER_FILES) from run.sh must be carried into the loftd
+(LD_LIBRARY_PATH + VK_DRIVER_FILES) from run.sh must be carried into the cang
 host runtime, or the L2 venus path will hit the same ELFCLASS32 / missing-libvulkan
 failure.  The nested HOST3D ring-shmem mmap claim in conclusion.md also needs
 re-examination: this single-libkrun probe maps HOST3D blobs fine with both

@@ -3,7 +3,7 @@
 # with ANGLE/Vulkan init against the venus virtio-gpu — reproducing the exact
 # workload shape under which the in-product chromium GPU process hangs and is
 # watchdog-killed (exit_code=6). The goal: isolate the chromium-init/ANGLE/WSI
-# shape from the loftd runtime context.
+# shape from the cang runtime context.
 #
 # Usage: bash chromium-rootfs.sh <probe-rootfs> <chromium-unwrapped-store-path>
 # Output: printed store path of the variant rootfs (built under /tmp).

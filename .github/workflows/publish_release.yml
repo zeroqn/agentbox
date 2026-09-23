@@ -28,7 +28,7 @@ jobs:
       - name: Restore release sccache
         uses: actions/cache@v4
         with:
-          path: /tmp/loftd-ci-sccache-release
+          path: /tmp/cang-ci-sccache-release
           key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-${{ hashFiles('Cargo.lock', 'flake.lock', 'nix/pins.nix') }}
           restore-keys: |
             sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-release-
@@ -36,24 +36,24 @@ jobs:
 
       - name: Prepare release sccache directory
         run: |
-          mkdir -p /tmp/loftd-ci-sccache-release
-          sudo chown -R "$(id -u):$(id -g)" /tmp/loftd-ci-sccache-release
-          chmod -R a+rwX /tmp/loftd-ci-sccache-release
+          mkdir -p /tmp/cang-ci-sccache-release
+          sudo chown -R "$(id -u):$(id -g)" /tmp/cang-ci-sccache-release
+          chmod -R a+rwX /tmp/cang-ci-sccache-release
 
       - name: Build release binaries
         run: |
           set -euo pipefail
 
-          sccache_sandbox_path="/nix/var/cache/sccache=/tmp/loftd-ci-sccache-release"
+          sccache_sandbox_path="/nix/var/cache/sccache=/tmp/cang-ci-sccache-release"
 
-          nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#loftd-ci-sccache -o result-loftd
+          nix build --option extra-sandbox-paths "${sccache_sandbox_path}" .#cang-ci-sccache -o result-cang
 
       - name: Normalize release sccache permissions
         if: always()
         run: |
-          if [ -d /tmp/loftd-ci-sccache-release ]; then
-            sudo chown -R "$(id -u):$(id -g)" /tmp/loftd-ci-sccache-release
-            chmod -R a+rwX /tmp/loftd-ci-sccache-release
+          if [ -d /tmp/cang-ci-sccache-release ]; then
+            sudo chown -R "$(id -u):$(id -g)" /tmp/cang-ci-sccache-release
+            chmod -R a+rwX /tmp/cang-ci-sccache-release
           fi
 
       - name: Prepare and smoke-test release artifacts
@@ -65,32 +65,34 @@ jobs:
           short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
           sha_tag="sha-${short_sha}"
 
+          # The published asset keeps the historical `loftd-*` name so the
+          # pinned cangPrebuiltRelease in nix/pins.nix keeps resolving.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             release_version="${GITHUB_REF_NAME}"
-            loftd_asset_name="loftd-${release_version}-${arch}-unknown-linux-gnu"
+            cang_asset_name="loftd-${release_version}-${arch}-unknown-linux-gnu"
           else
             release_version=""
-            loftd_asset_name="loftd-${arch}-unknown-linux-gnu"
+            cang_asset_name="loftd-${arch}-unknown-linux-gnu"
           fi
 
-          if [[ "${loftd_asset_name}" == *-linux-flake-locked ]]; then
-            echo "refusing legacy loftd flake-locked asset name: ${loftd_asset_name}" >&2
+          if [[ "${cang_asset_name}" == *-linux-flake-locked ]]; then
+            echo "refusing legacy cang flake-locked asset name: ${cang_asset_name}" >&2
             exit 1
           fi
 
           mkdir -p dist
-          raw_loftd_path="result-loftd/bin/loftd"
-          test -x "${raw_loftd_path}"
-          if [ "$(dd if="${raw_loftd_path}" bs=2 count=1 2>/dev/null)" = "#!" ]; then
-            echo "refusing to publish loftd wrapper script as ${loftd_asset_name}" >&2
+          raw_cang_path="result-cang/bin/cang"
+          test -x "${raw_cang_path}"
+          if [ "$(dd if="${raw_cang_path}" bs=2 count=1 2>/dev/null)" = "#!" ]; then
+            echo "refusing to publish cang wrapper script as ${cang_asset_name}" >&2
             exit 1
           fi
-          if [ "$(dd if="${raw_loftd_path}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
-            echo "refusing to publish non-ELF loftd asset ${loftd_asset_name}" >&2
+          if [ "$(dd if="${raw_cang_path}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
+            echo "refusing to publish non-ELF cang asset ${cang_asset_name}" >&2
             exit 1
           fi
-          readelf -h "${raw_loftd_path}" > /dev/null
-          install -m 0755 "${raw_loftd_path}" "dist/${loftd_asset_name}"
+          readelf -h "${raw_cang_path}" > /dev/null
+          install -m 0755 "${raw_cang_path}" "dist/${cang_asset_name}"
 
           case "${arch}" in
             x86_64)
@@ -100,28 +102,28 @@ jobs:
               neutral_loader="/lib/ld-linux-aarch64.so.1"
               ;;
             *)
-              echo "unsupported loftd release architecture for neutral loader: ${arch}" >&2
+              echo "unsupported cang release architecture for neutral loader: ${arch}" >&2
               exit 1
               ;;
           esac
 
           nix --extra-experimental-features 'nix-command flakes' shell nixpkgs#patchelf -c \
-            patchelf --set-interpreter "${neutral_loader}" --set-rpath "" "dist/${loftd_asset_name}"
-          readelf -h "dist/${loftd_asset_name}" > /dev/null
+            patchelf --set-interpreter "${neutral_loader}" --set-rpath "" "dist/${cang_asset_name}"
+          readelf -h "dist/${cang_asset_name}" > /dev/null
 
-          if LC_ALL=C grep -aEq '/nix/store/[0-9a-df-np-sv-z]{32}-' "dist/${loftd_asset_name}"; then
-            echo "refusing to publish loftd asset ${loftd_asset_name}: neutral asset still contains concrete /nix/store/<hash>- references" >&2
+          if LC_ALL=C grep -aEq '/nix/store/[0-9a-df-np-sv-z]{32}-' "dist/${cang_asset_name}"; then
+            echo "refusing to publish cang asset ${cang_asset_name}: neutral asset still contains concrete /nix/store/<hash>- references" >&2
             exit 1
           fi
 
-          result-loftd/bin/loftd --help > /dev/null
+          result-cang/bin/cang --help > /dev/null
 
-          sha256sum "dist/${loftd_asset_name}" > "dist/${loftd_asset_name}.sha256"
+          sha256sum "dist/${cang_asset_name}" > "dist/${cang_asset_name}.sha256"
 
           {
-            echo "loftd_asset_name=${loftd_asset_name}"
-            echo "loftd_asset_path=dist/${loftd_asset_name}"
-            echo "loftd_checksum_path=dist/${loftd_asset_name}.sha256"
+            echo "cang_asset_name=${cang_asset_name}"
+            echo "cang_asset_path=dist/${cang_asset_name}"
+            echo "cang_checksum_path=dist/${cang_asset_name}.sha256"
             echo "sha_tag=${sha_tag}"
             echo "release_version=${release_version}"
           } >> "${GITHUB_OUTPUT}"
@@ -129,7 +131,7 @@ jobs:
       - name: Attest release binaries
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: ${{ steps.prep.outputs.loftd_asset_path }}
+          subject-path: ${{ steps.prep.outputs.cang_asset_path }}
 
       - name: Write release notes
         run: |
@@ -146,9 +148,9 @@ jobs:
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
           Assets:
-          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: neutral dynamically linked loftd ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wires libkrun/runtime-tool dependencies. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
+          - \`${{ steps.prep.outputs.cang_asset_name }}\`: neutral dynamically linked cang ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wires libkrun/runtime-tool dependencies. Prefer \`nix build .#cang\`, \`nix build .#cang-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/cang\` image for ordinary use.
 
-          The versioned image \`ghcr.io/<repo-owner>/loftd:${GITHUB_REF_NAME}\` is published by the image workflow on tag push.
+          The versioned image \`ghcr.io/<repo-owner>/cang:${GITHUB_REF_NAME}\` is published by the image workflow on tag push.
           The matching \`${{ steps.prep.outputs.sha_tag }}\` prerelease is the revision-addressed binary set for this exact revision.
           EOF_NOTES
           else
@@ -160,7 +162,7 @@ jobs:
           - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
           Assets:
-          - \`${{ steps.prep.outputs.loftd_asset_name }}\`: neutral dynamically linked loftd ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wires libkrun/runtime-tool dependencies. Prefer \`nix build .#loftd\`, \`nix build .#loftd-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/loftd\` image for ordinary use.
+          - \`${{ steps.prep.outputs.cang_asset_name }}\`: neutral dynamically linked cang ELF packaging input. It is not a standalone portable binary; Nix packaging patches ordinary ELF runtime dependencies and wires libkrun/runtime-tool dependencies. Prefer \`nix build .#cang\`, \`nix build .#cang-prebuilt\` once pinned, or the published \`ghcr.io/<repo-owner>/cang\` image for ordinary use.
 
           The \`alpha\` prerelease is reused on every push to main.
           The matching \`${{ steps.prep.outputs.sha_tag }}\` prerelease is the revision-addressed binary set for this exact revision.
@@ -224,8 +226,8 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          LOFTD_ASSET_PATH: ${{ steps.prep.outputs.loftd_asset_path }}
-          LOFTD_CHECKSUM_PATH: ${{ steps.prep.outputs.loftd_checksum_path }}
+          CANG_ASSET_PATH: ${{ steps.prep.outputs.cang_asset_path }}
+          CANG_CHECKSUM_PATH: ${{ steps.prep.outputs.cang_checksum_path }}
           RELEASE_VERSION: ${{ steps.prep.outputs.release_version }}
           SHA_TAG: ${{ steps.prep.outputs.sha_tag }}
         run: |
@@ -233,19 +235,19 @@ jobs:
 
           if [ "${GITHUB_REF_TYPE}" = "branch" ]; then
             gh release upload alpha \
-              "${LOFTD_ASSET_PATH}" \
-              "${LOFTD_CHECKSUM_PATH}" \
+              "${CANG_ASSET_PATH}" \
+              "${CANG_CHECKSUM_PATH}" \
               --clobber
           else
             gh release upload "${RELEASE_VERSION}" \
-              "${LOFTD_ASSET_PATH}" \
-              "${LOFTD_CHECKSUM_PATH}" \
+              "${CANG_ASSET_PATH}" \
+              "${CANG_CHECKSUM_PATH}" \
               --clobber
           fi
 
           gh release upload "${SHA_TAG}" \
-            "${LOFTD_ASSET_PATH}" \
-            "${LOFTD_CHECKSUM_PATH}" \
+            "${CANG_ASSET_PATH}" \
+            "${CANG_CHECKSUM_PATH}" \
             --clobber
 
       - name: Prune old sha releases

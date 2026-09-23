@@ -2,14 +2,14 @@
 
 ## Summary
 
-loftd will disable io_uring inside the guest VM by default and expose a top-level `--io-uring` boolean to allow the dynamic guest `dev` group to use it for an individual VM launch.
+cang will disable io_uring inside the guest VM by default and expose a top-level `--io-uring` boolean to allow the dynamic guest `dev` group to use it for an individual VM launch.
 
 The policy will be enforced through `/proc/sys/kernel/io_uring_disabled` and `/proc/sys/kernel/io_uring_group`:
 
 - Default launch: write `2` to `io_uring_disabled`, preventing all guest processes, including root, from creating io_uring instances.
-- `loftd --io-uring`: write the dynamic `dev` GID to `io_uring_group`, then keep `io_uring_disabled` at restricted mode `1`. Processes in that group can create io_uring instances without `CAP_SYS_ADMIN`; other processes remain denied unless they satisfy the kernel capability exception.
+- `cang --io-uring`: write the dynamic `dev` GID to `io_uring_group`, then keep `io_uring_disabled` at restricted mode `1`. Processes in that group can create io_uring instances without `CAP_SYS_ADMIN`; other processes remain denied unless they satisfy the kernel capability exception.
 
-The setting will be applied fail-closed by loftd guest-init before background services or the user workload start.
+The setting will be applied fail-closed by cang guest-init before background services or the user workload start.
 
 ## Goals
 
@@ -21,8 +21,8 @@ The setting will be applied fail-closed by loftd guest-init before background se
 
 ## Non-goals
 
-- Changing loftd's host VM-worker seccomp policy.
-- Changing loftd's host Landlock policy.
+- Changing cang's host VM-worker seccomp policy.
+- Changing cang's host Landlock policy.
 - Automatically changing nested Podman seccomp policy.
 - Providing arbitrary per-process or per-container io_uring controls.
 - Maintaining separate guest kernels with and without io_uring support.
@@ -129,7 +129,7 @@ The launch configuration will serialize the value explicitly so helper and super
 When enabled, the host will add:
 
 ```text
-LOFTD_IO_URING=1
+CANG_IO_URING=1
 ```
 
 Absent or any value other than `1` means disabled, following the existing guest boolean environment convention.
@@ -182,9 +182,9 @@ Failing closed avoids starting a VM with a weaker or different io_uring policy t
 
 ## Host seccomp interaction
 
-No changes are required to loftd's packaged default host seccomp policy.
+No changes are required to cang's packaged default host seccomp policy.
 
-The existing loftd policy filters syscalls made by the host VM-worker process. Syscalls issued by guest processes execute in the guest kernel and do not pass through the host seccomp filter.
+The existing cang policy filters syscalls made by the host VM-worker process. Syscalls issued by guest processes execute in the guest kernel and do not pass through the host seccomp filter.
 
 Therefore `--io-uring` will not add these syscalls to the host policy:
 
@@ -200,7 +200,7 @@ Existing host options remain independent:
 
 ## Host Landlock interaction
 
-No changes are required to loftd's host Landlock policy or ordering.
+No changes are required to cang's host Landlock policy or ordering.
 
 Host Landlock confines the host VM worker and does not directly confine processes inside the guest kernel. Allowing the guest `dev` group to create io_uring instances does not create a host io_uring ring and does not inherit host credentials.
 
@@ -210,7 +210,7 @@ The opt-in nevertheless increases guest-kernel attack surface, so it remains exp
 
 ## Future guest Landlock caveat
 
-If loftd later applies Landlock inside the guest, it must establish the guest Landlock domain before untrusted code can create io_uring rings or register personalities.
+If cang later applies Landlock inside the guest, it must establish the guest Landlock domain before untrusted code can create io_uring rings or register personalities.
 
 The sysctl only prevents creation of new rings. Existing rings remain usable after the sysctl changes. An io_uring personality registered before `landlock_restrict_self()` can retain credentials from before the Landlock restriction and must not cross into an untrusted process boundary.
 
@@ -226,7 +226,7 @@ The currently pinned container-libs default profile does not allow:
 - `io_uring_enter`
 - `io_uring_register`
 
-Consequently, `loftd --io-uring` permits a nested process only if its mapped group qualifies as the guest `dev` GID and its container seccomp policy permits the io_uring syscalls. Users who need io_uring inside a nested container must separately select or provide an appropriate container seccomp policy.
+Consequently, `cang --io-uring` permits a nested process only if its mapped group qualifies as the guest `dev` GID and its container seccomp policy permits the io_uring syscalls. Users who need io_uring inside a nested container must separately select or provide an appropriate container seccomp policy.
 
 This separation avoids broadening every nested container's syscall surface as a side effect of enabling the guest-kernel group policy.
 
@@ -242,8 +242,8 @@ This separation avoids broadening every nested container's syscall surface as a 
 
 - Verify the enabled state flows through launch planning.
 - Verify launch-config serialization and parsing preserve both enabled and disabled values.
-- Verify enabled launches emit `LOFTD_IO_URING=1` to guest-init.
-- Verify default launches do not emit `LOFTD_IO_URING`.
+- Verify enabled launches emit `CANG_IO_URING=1` to guest-init.
+- Verify default launches do not emit `CANG_IO_URING`.
 - Verify maintenance launch configurations retain the disabled default.
 
 ### Guest-init tests
@@ -252,8 +252,8 @@ This separation avoids broadening every nested container's syscall surface as a 
 - Verify enabled mode writes the dynamic `dev` GID to `io_uring_group` without writing `io_uring_disabled`.
 - Verify existing sysctl contents are overwritten.
 - Verify open and write failures for both sysctls propagate with useful context.
-- Verify missing `LOFTD_IO_URING` resolves to disabled.
-- Verify `LOFTD_IO_URING=1` resolves to enabled.
+- Verify missing `CANG_IO_URING` resolves to disabled.
+- Verify `CANG_IO_URING=1` resolves to enabled.
 
 ### Startup ordering
 
@@ -280,15 +280,15 @@ nix develop --command cargo test
 
 - Default launch: an `io_uring_setup` probe returns `EPERM` as the normal guest user.
 - Default launch: the same probe returns `EPERM` as guest root.
-- `loftd --io-uring`: the probe successfully creates an io_uring instance in the guest shell.
+- `cang --io-uring`: the probe successfully creates an io_uring instance in the guest shell.
 - With `--io-uring`, a nested Podman container remains denied by its default seccomp profile.
 
 ## Expected affected areas
 
-- `crates/loftd/src/cli/`
-- `crates/loftd/src/runtime/launch/`
-- `crates/loftd-guest-init/src/guest_init/components/hardening/`
-- `crates/loftd-guest-init/src/guest_init/runtime/loftd.rs`
+- `crates/cang/src/cli/`
+- `crates/cang/src/runtime/launch/`
+- `crates/cang-guest-init/src/guest_init/components/hardening/`
+- `crates/cang-guest-init/src/guest_init/runtime/cang.rs`
 - Relevant host and guest tests
 - `README.md`
 

@@ -7,7 +7,7 @@
 #   bash run-rs.sh
 #
 # Builds the same guest rootfs + guest-probe as run.sh, but launches through
-# launcher-rs.c which mirrors loftd's render_server.rs: socketpair -> spawn
+# launcher-rs.c which mirrors cang's render_server.rs: socketpair -> spawn
 # virgl_render_server --socket-fd=<child> -> krun_set_gpu_options3(ctx, 0xe43,
 # shm, parent_fd). Requires the dev-shell env (RENDER_SERVER_EXEC_PATH and an
 # LD_LIBRARY_PATH that resolves libkrun.so + libvirglrenderer.so.1 + the

@@ -1,6 +1,6 @@
 /* sandbox-rs.c
  *
- * Replicates loftd's render-server seccomp sandbox applied BEFORE exec of
+ * Replicates cang's render-server seccomp sandbox applied BEFORE exec of
  * virgl_render_server (mirror of render_server.rs: no_new_privs + compile +
  * apply the render-server.json syscall allowlist, then execv).  Invoked by
  * launcher-rs as: sandbox-rs <rs-exec-path> --socket-fd=<n>.

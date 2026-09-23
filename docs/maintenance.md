@@ -3,13 +3,13 @@
 Pinned-asset refresh scripts for `nix/pins.nix`, run from the dev shell
 (`nix develop`).
 
-Refresh pinned loftd prebuilt release metadata in `nix/pins.nix` from a neutral
+Refresh pinned cang prebuilt release metadata in `nix/pins.nix` from a neutral
 raw-ELF `sha-*` release. The updater rejects wrapper-script assets, legacy
 flake-locked names, and payloads containing concrete
 `/nix/store/<hash>-...` references:
 
 ```bash
-nix develop --command ./scripts/update-loftd-prebuilt.sh
+nix develop --command ./scripts/update-cang-prebuilt.sh
 ```
 
 Refresh pinned RTK prebuilt release metadata in `nix/pins.nix`:
@@ -48,8 +48,8 @@ nix develop --command ./scripts/update-monty-prebuilt.sh
 
 Refresh pinned `zeroqn/libkrun` prebuilt release metadata in `nix/pins.nix`
 from the newest matching `loftd-*` tag that contains both required Linux assets.
-Root `.#libkrun` and every shared consumer (`.#crun`, `.#podman`, `.#loftd`, images, and
-`.#loftd-prebuilt`) use the same pinned prebuilt libkrun
+Root `.#libkrun` and every shared consumer (`.#crun`, `.#podman`, `.#cang`, images, and
+`.#cang-prebuilt`) use the same pinned prebuilt libkrun
 package. Local source builds stay in the submodule-aware dev flake and use the
 checked-out `deps/libkrun` submodule:
 

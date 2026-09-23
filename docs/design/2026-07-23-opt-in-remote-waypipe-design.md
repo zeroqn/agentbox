@@ -1,35 +1,35 @@
-# Opt-in loftd remote Waypipe design
+# Opt-in cang remote Waypipe design
 
 ## Summary
 
-Add an opt-in loftd launch mode for running one GUI application inside a new loftd guest VM and displaying it through a workstation-side Waypipe client.
+Add an opt-in cang launch mode for running one GUI application inside a new cang guest VM and displaying it through a workstation-side Waypipe client.
 
 The interface is:
 
 ```bash
-loftd \
+cang \
   --workspace=/home/dev/foo \
-  --waypipe=/tmp/loftd-waypipe-xxx.sock \
+  --waypipe=/tmp/cang-waypipe-xxx.sock \
   -- gui-application
 ```
 
-The standalone `--workspace` option selects the host workspace directory and defaults to the current working directory when omitted. `--waypipe` identifies an existing Unix socket on the loftd host that is owned by SSH reverse forwarding. loftd bridges that socket to a dedicated guest vsock port and launches the requested command under a guest Waypipe server.
+The standalone `--workspace` option selects the host workspace directory and defaults to the current working directory when omitted. `--waypipe` identifies an existing Unix socket on the cang host that is owned by SSH reverse forwarding. cang bridges that socket to a dedicated guest vsock port and launches the requested command under a guest Waypipe server.
 
-This is separate from loftd's existing `--wayland` local compositor passthrough.
+This is separate from cang's existing `--wayland` local compositor passthrough.
 
 ## Goals
 
-- Launch a new loftd VM using an explicit host workspace directory.
+- Launch a new cang VM using an explicit host workspace directory.
 - Mount that directory at `/workspace` in the guest.
-- Connect a guest Waypipe server to an existing SSH-forwarded Unix socket on the loftd host.
+- Connect a guest Waypipe server to an existing SSH-forwarded Unix socket on the cang host.
 - Run the requested guest command under Waypipe.
-- Keep SSH authentication, encryption, and socket ownership outside loftd.
+- Keep SSH authentication, encryption, and socket ownership outside cang.
 - Start with software-only Waypipe forwarding through `--no-gpu`.
 - Produce clear validation errors before VM startup where possible.
 
 ## Non-goals
 
-- Connecting Waypipe to an already-running loftd task.
+- Connecting Waypipe to an already-running cang task.
 - Automatically starting SSH or the workstation Waypipe client.
 - Creating, listening on, unlinking, or cleaning up the host Unix socket.
 - Replacing or extending the existing `--wayland` cross-domain passthrough.
@@ -47,26 +47,26 @@ Start a Waypipe client connected to the workstation compositor:
 
 ```bash
 waypipe \
-  --socket "$XDG_RUNTIME_DIR/loftd-waypipe.sock" \
+  --socket "$XDG_RUNTIME_DIR/cang-waypipe.sock" \
   client
 ```
 
-Create an SSH reverse Unix-socket forward to the loftd host:
+Create an SSH reverse Unix-socket forward to the cang host:
 
 ```bash
 ssh \
-  -R /tmp/loftd-waypipe-xxx.sock:"$XDG_RUNTIME_DIR/loftd-waypipe.sock" \
-  loftd-host
+  -R /tmp/cang-waypipe-xxx.sock:"$XDG_RUNTIME_DIR/cang-waypipe.sock" \
+  cang-host
 ```
 
-### loftd host
+### cang host
 
 Launch a new guest and run the GUI application:
 
 ```bash
-loftd \
+cang \
   --workspace=/home/dev/foo \
-  --waypipe=/tmp/loftd-waypipe-xxx.sock \
+  --waypipe=/tmp/cang-waypipe-xxx.sock \
   -- gui-application
 ```
 
@@ -76,11 +76,11 @@ loftd \
 
 - `WORKSPACE` is an absolute host directory.
 - `WORKSPACE` becomes the launch working directory and is mounted at guest `/workspace`.
-- If `--workspace` is omitted, loftd uses the current working directory.
+- If `--workspace` is omitted, cang uses the current working directory.
 - `SOCKET` is an absolute host Unix-socket path.
-- `SOCKET` must already exist and be a Unix socket before loftd starts the VM.
+- `SOCKET` must already exist and be a Unix socket before cang starts the VM.
 - The socket is owned by the SSH reverse-forwarding process.
-- loftd connects to the socket but does not create, unlink, or remove it.
+- cang connects to the socket but does not create, unlink, or remove it.
 - A guest command is required for the initial version.
 - `--waypipe` is mutually exclusive with `--wayland`.
 - The initial version uses Waypipe `--no-gpu` and does not require `--gpu=drm`.
@@ -91,7 +91,7 @@ The argument formats are intentionally limited to one absolute path each. More W
 
 ### Host CLI and launch planning
 
-The loftd host parses `--workspace=WORKSPACE` and `--waypipe=SOCKET` into independent optional paths:
+The cang host parses `--workspace=WORKSPACE` and `--waypipe=SOCKET` into independent optional paths:
 
 - selected host workspace path
 - host Waypipe socket path
@@ -137,9 +137,9 @@ waypipe \
   -- gui-application
 ```
 
-The guest side omits a CID because it connects from the guest to the host. Guest identity, working directory, environment setup, and command execution should otherwise follow the normal loftd workload path.
+The guest side omits a CID because it connects from the guest to the host. Guest identity, working directory, environment setup, and command execution should otherwise follow the normal cang workload path.
 
-Waypipe must be available in the loftd guest image and guest `PATH`. It should not be added to the agentbox image.
+Waypipe must be available in the cang guest image and guest `PATH`. It should not be added to the agentbox image.
 
 ## Data flow
 
@@ -150,7 +150,7 @@ workstation Waypipe client
   ↑
 workstation Unix socket
   ↑ SSH reverse Unix-socket forwarding
-host /tmp/loftd-waypipe-xxx.sock
+host /tmp/cang-waypipe-xxx.sock
   ↑ libkrun Unix-socket connector
 host/guest vsock mapping
   ↑
@@ -159,7 +159,7 @@ guest Waypipe server --no-gpu
 guest GUI application
 ```
 
-The SSH connection remains the security boundary for remote transport. loftd does not expose Waypipe directly over TCP.
+The SSH connection remains the security boundary for remote transport. cang does not expose Waypipe directly over TCP.
 
 ## Interaction with existing features
 
@@ -167,7 +167,7 @@ The SSH connection remains the security boundary for remote transport. loftd doe
 
 `--waypipe` and `--wayland` are mutually exclusive.
 
-- `--wayland` forwards to a compositor local to the loftd host through the cross-domain proxy and virtio-gpu integration.
+- `--wayland` forwards to a compositor local to the cang host through the cross-domain proxy and virtio-gpu integration.
 - `--waypipe` forwards a newly launched application to a remote workstation through Waypipe, vsock, a host Unix socket, and SSH.
 
 They solve different transport problems and should remain separate.
@@ -176,7 +176,7 @@ They solve different transport problems and should remain separate.
 
 The initial Waypipe mode always uses `--no-gpu`.
 
-It does not automatically select `--gpu=drm`. If an explicitly supplied GPU mode conflicts with the software-only contract, loftd should reject it rather than silently changing its meaning.
+It does not automatically select `--gpu=drm`. If an explicitly supplied GPU mode conflicts with the software-only contract, cang should reject it rather than silently changing its meaning.
 
 ### Managed sessions
 
@@ -186,7 +186,7 @@ The initial Waypipe design does not add GUI reconnection semantics. Reattaching 
 
 ## Validation and errors
 
-Before starting the VM, loftd validates:
+Before starting the VM, cang validates:
 
 - `WORKSPACE` is absolute
 - `WORKSPACE` exists
@@ -202,11 +202,11 @@ Representative errors include:
 
 ```text
 workspace must be an absolute path: foo
-failed to canonicalize loftd workspace mount
-loftd workspace is not a directory: /home/dev/foo
-waypipe socket must be an absolute path: loftd-waypipe.sock
-waypipe socket does not exist: /tmp/loftd-waypipe-xxx.sock
-waypipe transport is not a Unix socket: /tmp/loftd-waypipe-xxx.sock
+failed to canonicalize cang workspace mount
+cang workspace is not a directory: /home/dev/foo
+waypipe socket must be an absolute path: cang-waypipe.sock
+waypipe socket does not exist: /tmp/cang-waypipe-xxx.sock
+waypipe transport is not a Unix socket: /tmp/cang-waypipe-xxx.sock
 --waypipe requires a guest command
 --waypipe cannot be combined with --wayland
 --waypipe software transport cannot be combined with --gpu=drm
@@ -220,14 +220,14 @@ Runtime errors should identify the failing boundary:
 - guest Waypipe server startup
 - launched GUI command failure
 
-The host socket may disappear after validation because SSH exits. This is a normal runtime race; the resulting connection failure should be reported without loftd attempting to recreate or replace the socket.
+The host socket may disappear after validation because SSH exits. This is a normal runtime race; the resulting connection failure should be reported without cang attempting to recreate or replace the socket.
 
 ## Lifecycle
 
 - SSH owns the host socket and removes it according to SSH forwarding behavior.
-- loftd does not unlink the socket before or after launch.
+- cang does not unlink the socket before or after launch.
 - The guest Waypipe server lifetime is tied to the launched GUI command.
-- The VM lifetime follows the normal loftd command lifecycle.
+- The VM lifetime follows the normal cang command lifecycle.
 - Closing the workstation Waypipe client or SSH transport causes the guest Waypipe connection or command to fail according to Waypipe behavior.
 - No persistent background Waypipe service is introduced in the first version.
 
@@ -270,12 +270,12 @@ The host socket may disappear after validation because SSH exits. This is a norm
 
 ### Nix image checks
 
-- Verify Waypipe exists only in the loftd image variant.
+- Verify Waypipe exists only in the cang image variant.
 - Verify the guest binary is available in `PATH`.
 
 ### Live smoke test
 
-Use a real workstation compositor, SSH reverse Unix-socket forwarding, a built loftd host binary, and the matching current guest-init/image. Launch a simple Wayland application and verify:
+Use a real workstation compositor, SSH reverse Unix-socket forwarding, a built cang host binary, and the matching current guest-init/image. Launch a simple Wayland application and verify:
 
 - the host SSH-forwarded socket exists before launch
 - libkrun registers the guest-to-host Waypipe mapping
@@ -289,7 +289,7 @@ Use a real workstation compositor, SSH reverse Unix-socket forwarding, a built l
 Possible later work, excluded from this design:
 
 - a one-command workstation wrapper using `waypipe ssh --remote-bin`
-- attaching a GUI command to an existing loftd task
+- attaching a GUI command to an existing cang task
 - optional Waypipe compression settings
 - GPU/dmabuf forwarding
 - X11 applications through Waypipe `--xwls`

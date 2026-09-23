@@ -1,0 +1,5 @@
+[package]
+name = "cang-repository-tests"
+version.workspace = true
+edition.workspace = true
+publish = false

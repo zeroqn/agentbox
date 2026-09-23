@@ -12,8 +12,8 @@ Does a non-headless guest Chromium on the waypipe display actually paint to the 
 compositor, and with which flags?
 
 Prototype the whole chain by hand: weston (headless, GL) on the host, `waypipe client`
-listening on a private socket, `loftd --gpu=drm --waypipe=<socket>` with a guest script
-that runs Chromium against `WAYLAND_DISPLAY=loftd-waypipe-0` with
+listening on a private socket, `cang --gpu=drm --waypipe=<socket>` with a guest script
+that runs Chromium against `WAYLAND_DISPLAY=cang-waypipe-0` with
 `--ozone-platform=wayland` and a page that paints a distinctive colour, then take the
 host compositor's screenshot and check the colour is present.
 
@@ -24,7 +24,7 @@ Answer with evidence:
    non-venus renderer - which is acceptable, since the transport is the subject).
 2. Whether the frame arrives at all: screenshot from the host compositor showing the
    pattern, plus the client/compositor logs.
-3. Any defect this surfaces in loftd's `--waypipe` path or guest-init's waypipe service
+3. Any defect this surfaces in cang's `--waypipe` path or guest-init's waypipe service
    (readiness, socket ownership, `--no-gpu` negotiation). If it is real work, do not fix
    it here: record it and let it graduate to its own ticket.
 
@@ -39,7 +39,7 @@ A prototype transcript plus the flag set, screenshot evidence, and any defect fo
 `/home/dev/loftd/disk/chromium-smoke/baseline/workspace/evidence/t03-*.txt` (guest).
 
 Setup: weston headless+GL+`--debug` (ticket 01) -> `waypipe -d --socket <D>/waypipe.sock
-client` (ticket 02) -> `loftd --mem 4 --gpu=drm --waypipe=<D>/waypipe.sock` -> guest runs
+client` (ticket 02) -> `cang --mem 4 --gpu=drm --waypipe=<D>/waypipe.sock` -> guest runs
 
 ```sh
 chromium --ozone-platform=wayland --no-sandbox --disable-gpu-sandbox \
@@ -72,22 +72,22 @@ where `wp-page.html` paints a magenta (`#ff00ff`) page with white text.
    renderer feeding a shm buffer. Under the charter that is acceptable (the transport is the
    subject and the venus claim is scored by the headless run), but it means this prototype
    does **not** show venus-backed presentation - see the new ticket below.
-6. Method note: `T03_VARIANT` did not reach the guest (loftd passes only PATH plus
-   `IMAGE_LOFTD_ENV_ALLOWLIST`), so the second, `--disable-vulkan-surface` run silently
+6. Method note: `T03_VARIANT` did not reach the guest (cang passes only PATH plus
+   `IMAGE_CANG_ENV_ALLOWLIST`), so the second, `--disable-vulkan-surface` run silently
    repeated the plain variant. Guest-side variant selection has to travel by another
    channel (e.g. baked into the staged guest script) or not at all.
 
 ## Resolution
 
 **Yes - and on venus.** The prototype first proved presentation with the plain flag set and
-software/shm buffers; bob's challenge ("I need hardware access for Chromium in the loftd guest
+software/shm buffers; bob's challenge ("I need hardware access for Chromium in the cang guest
 through waypipe") then drove the engine investigation, whose answer (`Venus-backed presenting
 run through waypipe`) upgrades this ticket's result. The configuration that both presents and
 renders on the GPU:
 
 ```sh
 # guest, in the waypipe session
-GBM_BACKENDS_PATH=/usr/lib/loftd-mesa-runtime/lib/gbm \
+GBM_BACKENDS_PATH=/usr/lib/cang-mesa-runtime/lib/gbm \
 chromium --ozone-platform=wayland --no-sandbox --disable-gpu-sandbox \
          --use-angle=vulkan \
          --user-data-dir=/tmp/c --window-size=640,480 \

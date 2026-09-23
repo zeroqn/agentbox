@@ -680,7 +680,7 @@ int main(void) {
      * Chromium-like heavy stage: burst of concurrent submits + a sequential
      * churn.  If venus ring retirement wedges under load (the exit_code=6
      * symptom), this stage's per-submit fence will time out here, isolating
-     * workload shape from loftd's runtime/sandbox context.
+     * workload shape from cang's runtime/sandbox context.
      */
     if (rc == 0) {
         int heavy_rc = heavy_workload(

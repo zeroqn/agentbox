@@ -18,7 +18,7 @@ Find out:
 
 1. Which env/paths the *headless* path sets that the *waypipe* path does not (compare the
    guest env in both runs, and `nix/image/config.nix` plus
-   `crates/loftd-guest-init/src/guest_init/components/*`).
+   `crates/cang-guest-init/src/guest_init/components/*`).
 2. Whether pointing the GBM/dri loader at the guest's mesa (`LIBGL_DRIVERS_PATH`,
    `__EGL_VENDOR_LIBRARY_FILENAMES`, `VK_DRIVER_FILES`) makes the windowed GPU process come
    up on venus, and whether it then presents at all (this may run straight into the
@@ -39,9 +39,9 @@ blocker is Chromium's own platform rule, plus a waypipe/virtio-gpu dmabuf gap.
 
 ### 1. The env gap is real
 
-Guest-init exports `MESA_ENV` (`crates/loftd-guest-init/src/guest_init/components/wayland.rs`)
-when `LOFTD_GPU_DRM` is set - `LIBGL_DRIVERS_PATH`, `__EGL_VENDOR_LIBRARY_FILENAMES`,
-`VK_DRIVER_FILES` (call site `runtime/loftd.rs:190`) - and all three were present in the
+Guest-init exports `MESA_ENV` (`crates/cang-guest-init/src/guest_init/components/wayland.rs`)
+when `CANG_GPU_DRM` is set - `LIBGL_DRIVERS_PATH`, `__EGL_VENDOR_LIBRARY_FILENAMES`,
+`VK_DRIVER_FILES` (call site `runtime/cang.rs:190`) - and all three were present in the
 waypipe guest. **`GBM_BACKENDS_PATH` is set nowhere in the repo**, so Chromium's ozone GBM
 loader searched the NixOS default `/run/opengl-driver/lib/gbm` (absent in the guest):
 
@@ -52,7 +52,7 @@ WARNING ui/ozone/platform/wayland/ozone_platform_wayland.cc:278 Failed to initia
 drm render node handle.
 ```
 
-The guest does ship the backend: `/usr/lib/loftd-mesa-runtime/lib/gbm/dri_gbm.so`.
+The guest does ship the backend: `/usr/lib/cang-mesa-runtime/lib/gbm/dri_gbm.so`.
 
 ### 2. A/B in the same harness (windowed Chromium, `--ozone-platform=wayland`, 22s)
 

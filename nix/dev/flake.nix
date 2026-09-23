@@ -1,11 +1,11 @@
 {
-  description = "Local submodule-aware development outputs for loftd";
+  description = "Local submodule-aware development outputs for cang";
 
   inputs = {
     self.submodules = true;
-    loftd.url = "../..";
-    nixpkgs.follows = "loftd/nixpkgs";
-    nixpkgsMaster.follows = "loftd/nixpkgsMaster";
+    cang.url = "../..";
+    nixpkgs.follows = "cang/nixpkgs";
+    nixpkgsMaster.follows = "cang/nixpkgsMaster";
     headless.url = "github:zeroqn/headless";
   };
 
@@ -42,13 +42,13 @@
             withSound = true;
             withInput = true;
           }).overrideAttrs (_oldAttrs: {
-            version = "1.18.1-loftd-profile";
+            version = "1.18.1-cang-profile";
             src = libkrunSrc;
             cargoDeps = pkgs.rustPlatform.importCargoLock {
               lockFile = libkrunSrc + "/Cargo.lock";
             };
           });
-          rustPackages = import ../../nix/pkgs/loftd-rust.nix {
+          rustPackages = import ../../nix/pkgs/cang-rust.nix {
             self = root;
             inherit
               pkgs
@@ -60,7 +60,7 @@
         in
         {
           default = rustPackages.rustPackage;
-          loftd-dev = rustPackages.rustPackage;
+          cang-dev = rustPackages.rustPackage;
           virglrenderer = pkgs.virglrenderer;
         }
       );

@@ -18,7 +18,7 @@
  * Flag set: VENUS(1<<6) | NO_VIRGL(1<<7) | RENDER_SERVER(1<<9) = 0x2c0.  This is
  * the host-side combination the virgl-render-server-probe proved creates a
  * venus context; render-server is enabled because that is the isolated path the
- * loftd sandbox is expected to trap on, and it is honored by venus.
+ * cang sandbox is expected to trap on, and it is honored by venus.
  */
 #include <stdint.h>
 #include <stdio.h>

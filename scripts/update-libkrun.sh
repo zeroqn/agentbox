@@ -10,8 +10,8 @@ required_release_systems=("x86_64-linux" "aarch64-linux")
 
 release_tag=""
 
-# Keep both Linux assets pinned from the same release so crun, podman, loftd,
-# loftd, and images all share one coherent libkrun build profile.
+# Keep both Linux assets pinned from the same release so crun, podman, cang,
+# cang, and images all share one coherent libkrun build profile.
 declare -A release_assets=(
   ["x86_64-linux"]="libkrun-x86_64-linux-full.tgz"
   ["aarch64-linux"]="libkrun-aarch64-linux-full.tgz"

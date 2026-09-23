@@ -1,4 +1,4 @@
-{ pkgs, loftdMuslPackage, configPayloads, layers }:
+{ pkgs, cangMuslPackage, configPayloads, layers }:
 
 let
   nixConfig = import ./nix-config.nix;
@@ -7,7 +7,7 @@ let
     "USER=dev"
     "SHELL=${pkgs.fish}/bin/fish"
     "LIBCLANG_PATH=${pkgs.libclang.lib}/lib"
-    "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${loftdMuslPackage}/bin"
+    "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${cangMuslPackage}/bin"
     "NIX_CONFIG=${nixConfig}"
     "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
     "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -27,20 +27,20 @@ let
     "MONTY_BIN=${layers.montyPackage}/bin/monty"
   ];
 
-  loftdEnv = [
-    "LOFTD_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/loftd/fish/conf.d/loftd-starship.fish"
-    "LOFTD_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/loftd/starship.toml"
-    "LOFTD_MIMALLOC_LIB=${layers.mimallocLib}"
-    "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
-    "LOFTD_REAL_PODMAN=${layers.realPodmanBin}"
+  cangEnv = [
+    "CANG_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/cang/fish/conf.d/cang-starship.fish"
+    "CANG_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/cang/starship.toml"
+    "CANG_MIMALLOC_LIB=${layers.mimallocLib}"
+    "CANG_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
+    "CANG_REAL_PODMAN=${layers.realPodmanBin}"
   ];
 in
 {
   Entrypoint = [
-    "${loftdMuslPackage}/bin/loftd-guest-init"
+    "${cangMuslPackage}/bin/cang-guest-init"
     "enter"
     "--"
   ];
   WorkingDir = "/workspace";
-  Env = commonEnv ++ loftdEnv;
+  Env = commonEnv ++ cangEnv;
 }

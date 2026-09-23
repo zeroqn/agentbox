@@ -15,7 +15,7 @@
   bun,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
-  loftdMuslPackage,
+  cangMuslPackage,
 }:
 let
   nixConfig = import ./nix-config.nix;
@@ -38,7 +38,7 @@ let
       bun
       podman
       crun
-      loftdMuslPackage
+      cangMuslPackage
       ;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
@@ -46,7 +46,7 @@ let
   imageConfig = import ./config.nix {
     inherit
       pkgs
-      loftdMuslPackage
+      cangMuslPackage
       configPayloads
       layers
       ;
@@ -69,16 +69,16 @@ let
       bun
       podman
       crun
-      loftdMuslPackage
+      cangMuslPackage
       ;
   };
   image = pkgs.dockerTools.buildLayeredImage {
-    name = "localhost/loftd";
+    name = "localhost/cang";
     tag = "latest";
-    maxLayers = layers.loftdImageMaxLayers;
+    maxLayers = layers.cangImageMaxLayers;
     contents = layers.imageContents;
     includeNixDB = true;
-    layeringPipeline = layers.loftdImageLayeringPipeline;
+    layeringPipeline = layers.cangImageLayeringPipeline;
     fakeRootCommands = ''
       mkdir -p \
         ./etc \
@@ -151,9 +151,9 @@ let
       cp ${pkgs.ghostty.terminfo}/share/terminfo/x/xterm-ghostty ./home/dev/.terminfo/x/xterm-ghostty
       chmod 0644 ./home/dev/.terminfo/x/xterm-ghostty
       mkdir -p ./usr/lib
-      ln -s ${pkgs.mesa} ./usr/lib/loftd-mesa-runtime
-      ln -s ${pkgs.mesa} ./usr/lib/loftd-software-renderer
-      ln -s ${pkgs.fontconfig.out} ./usr/lib/loftd-fontconfig
+      ln -s ${pkgs.mesa} ./usr/lib/cang-mesa-runtime
+      ln -s ${pkgs.mesa} ./usr/lib/cang-software-renderer
+      ln -s ${pkgs.fontconfig.out} ./usr/lib/cang-fontconfig
       ${pkgs.lib.optionalString (rioBin != null) ''
         cp ${rioBin}/share/terminfo/r/rio ./home/dev/.terminfo/r/rio
         cp ${rioBin}/share/terminfo/x/xterm-rio ./home/dev/.terminfo/x/xterm-rio
@@ -178,9 +178,9 @@ if imageChecks.missingImageConfigNixDbRefs != [ ] then
 else
   image.overrideAttrs (old: {
     buildCommand = ''
-      echo "checking loftd image config Nix DB metadata coverage"
+      echo "checking cang image config Nix DB metadata coverage"
       test -e ${imageChecks.imageConfigNixDbRefs}/passed
-      echo "checking loftd image wrapper contracts"
+      echo "checking cang image wrapper contracts"
       test -e ${imageChecks.wrapperContracts}/passed
     ''
     + (old.buildCommand or "");

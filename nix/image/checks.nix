@@ -15,7 +15,7 @@
   bun,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
-  loftdMuslPackage,
+  cangMuslPackage,
 }:
 
 let
@@ -38,7 +38,7 @@ let
       bun
       podman
       crun
-      loftdMuslPackage
+      cangMuslPackage
       ;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
@@ -46,7 +46,7 @@ let
   imageConfig = import ./config.nix {
     inherit
       pkgs
-      loftdMuslPackage
+      cangMuslPackage
       configPayloads
       layers
       ;
@@ -104,7 +104,7 @@ let
   refsText = refs: builtins.concatStringsSep "\n" refs;
   indentedRefsText = refs: builtins.concatStringsSep "\n" (map (ref: "  ${ref}") refs);
   missingRefsMessage = ''
-    loftd image config references store paths outside the generated image Nix DB metadata.
+    cang image config references store paths outside the generated image Nix DB metadata.
     These paths can be pulled in by Docker config/env references without being registered in /nix/var/nix/db.
 
     Missing from pkgs.closureInfo { rootPaths = layers.imageContents; }:
@@ -114,26 +114,26 @@ let
     It does not inspect, repair, or mutate the host Nix DB.
   '';
 
-  imageConfigFile = pkgs.writeText "loftd-image-config.json" imageConfigText;
-  imageConfigRefsFile = pkgs.writeText "loftd-image-config-refs.txt" (
+  imageConfigFile = pkgs.writeText "cang-image-config.json" imageConfigText;
+  imageConfigRefsFile = pkgs.writeText "cang-image-config-refs.txt" (
     refsText imageConfigRefs
   );
-  imageNixDbStorePathsFile = pkgs.writeText "loftd-image-nix-db-store-paths.txt" (
+  imageNixDbStorePathsFile = pkgs.writeText "cang-image-nix-db-store-paths.txt" (
     builtins.unsafeDiscardStringContext imageNixDbStorePathsText
   );
-  missingRefsFile = pkgs.writeText "loftd-image-config-missing-refs.txt" (
+  missingRefsFile = pkgs.writeText "cang-image-config-missing-refs.txt" (
     builtins.unsafeDiscardStringContext (refsText missingImageConfigNixDbRefs)
   );
-  missingRefsMessageFile = pkgs.writeText "loftd-image-config-missing-refs-message.txt" (
+  missingRefsMessageFile = pkgs.writeText "cang-image-config-missing-refs-message.txt" (
     builtins.unsafeDiscardStringContext missingRefsMessage
   );
-  containerSourceFile = pkgs.writeText "loftd-container-nix-source.txt" (
+  containerSourceFile = pkgs.writeText "cang-container-nix-source.txt" (
     builtins.readFile ./container.nix
   );
-  configSourceFile = pkgs.writeText "loftd-config-nix-source.txt" (
+  configSourceFile = pkgs.writeText "cang-config-nix-source.txt" (
     builtins.readFile ./config.nix
   );
-  layersSourceFile = pkgs.writeText "loftd-layers-nix-source.txt" (
+  layersSourceFile = pkgs.writeText "cang-layers-nix-source.txt" (
     builtins.readFile ./layers.nix
   );
   allocatorContracts = ''
@@ -143,7 +143,7 @@ let
     grep -F 'cat > ./etc/nix-allocator-libs <<EOF_NIX_ALLOCATOR_LIBS' ${containerSourceFile}
     grep -F 'mimalloc=' ${containerSourceFile}
     grep -F 'hardened=' ${containerSourceFile}
-    grep -F 'LOFTD_MIMALLOC_LIB=' ${configSourceFile}
+    grep -F 'CANG_MIMALLOC_LIB=' ${configSourceFile}
     ! grep -F 'LD_PRELOAD=' ${containerSourceFile}
   '';
   terminalMultiplexerContracts = ''
@@ -254,7 +254,7 @@ let
     }
   '';
 
-  rootCargoAbsent = pkgs.runCommand "loftd-image-root-cargo-absent-check" { } ''
+  rootCargoAbsent = pkgs.runCommand "cang-image-root-cargo-absent-check" { } ''
     set -euo pipefail
 
     test ! -e ${layers.rustSourceImage}/.cargo
@@ -263,7 +263,7 @@ let
   '';
 
   omxAbsent =
-    pkgs.runCommand "loftd-image-omx-absent-check"
+    pkgs.runCommand "cang-image-omx-absent-check"
       {
         nativeBuildInputs = [ pkgs.gnugrep ];
       }
@@ -285,7 +285,7 @@ let
         touch "$out/passed"
       '';
 
-  codexAbsent = pkgs.runCommand "loftd-image-codex-absent-check" { } ''
+  codexAbsent = pkgs.runCommand "cang-image-codex-absent-check" { } ''
     set -euo pipefail
 
     test ! -e ${layers.agentImageLayer}/bin/codex
@@ -295,7 +295,7 @@ let
     touch "$out/passed"
   '';
 
-  ompAbsent = pkgs.runCommand "loftd-image-omp-absent-check" { } ''
+  ompAbsent = pkgs.runCommand "cang-image-omp-absent-check" { } ''
     set -euo pipefail
 
     test ! -e ${layers.agentImageLayer}/bin/omp
@@ -304,7 +304,7 @@ let
     touch "$out/passed"
   '';
 
-  dirgeAbsent = pkgs.runCommand "loftd-image-dirge-absent-check" { } ''
+  dirgeAbsent = pkgs.runCommand "cang-image-dirge-absent-check" { } ''
     set -euo pipefail
 
     test ! -e ${layers.agentImageLayer}/bin/dirge
@@ -316,7 +316,7 @@ let
 
   # `gh` ships in the shared tooling layer, so its absence is asserted against
   # the realized image PATH rather than one layer's bin directory.
-  ghAbsent = pkgs.runCommand "loftd-image-gh-absent-check" { } ''
+  ghAbsent = pkgs.runCommand "cang-image-gh-absent-check" { } ''
     set -euo pipefail
 
     for binDir in $(printf '%s' "${layers.imagePath}" | tr ':' '\n'); do
@@ -328,7 +328,7 @@ let
   '';
 
   wrapperContracts =
-    pkgs.runCommand "loftd-image-wrapper-contracts-check"
+    pkgs.runCommand "cang-image-wrapper-contracts-check"
       {
         nativeBuildInputs = [ pkgs.gnugrep ];
       }
@@ -345,14 +345,14 @@ let
         ${sqliteContracts}
         ${montyContracts}
 
-        grep -F 'LOFTD_NIX_OVERLAY' ${layers.nixCommandCompat}/bin/nix
-        grep -F 'loftd-guest-init internal nix wait' ${layers.nixCommandCompat}/bin/nix
-        grep -F 'LOFTD_CONTAINERS_STORAGE' ${layers.podmanCommandCompat}/bin/podman
-        grep -F 'loftd-guest-init internal podman wait' ${layers.podmanCommandCompat}/bin/podman
-        grep -F 'loftd-guest-init internal podman service-wait' ${layers.dockerCommandCompat}/bin/docker
-        grep -F 'loftd-guest-init internal podman service-wait' ${layers.dockerComposeCommandCompat}/bin/docker-compose
-        grep -F 'loftd-nix-store-db-check' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
-        grep -F '/run/loftd/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
+        grep -F 'CANG_NIX_OVERLAY' ${layers.nixCommandCompat}/bin/nix
+        grep -F 'cang-guest-init internal nix wait' ${layers.nixCommandCompat}/bin/nix
+        grep -F 'CANG_CONTAINERS_STORAGE' ${layers.podmanCommandCompat}/bin/podman
+        grep -F 'cang-guest-init internal podman wait' ${layers.podmanCommandCompat}/bin/podman
+        grep -F 'cang-guest-init internal podman service-wait' ${layers.dockerCommandCompat}/bin/docker
+        grep -F 'cang-guest-init internal podman service-wait' ${layers.dockerComposeCommandCompat}/bin/docker-compose
+        grep -F 'cang-nix-store-db-check' ${layers.nixStoreDbCheck}/bin/cang-nix-store-db-check
+        grep -F '/run/cang/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/cang-nix-store-db-check
         test -x ${pkgs.perf}/bin/perf
         test -x ${pkgs.strace}/bin/strace
         test -f ${pkgs.mesa}/lib/dri/swrast_dri.so
@@ -362,13 +362,13 @@ let
         test -f ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json
         test -f ${pkgs.mesa}/share/vulkan/icd.d/virtio_icd.x86_64.json
         grep -F 'pkgs.mesa' ${layersSourceFile}
-        grep -F './usr/lib/loftd-mesa-runtime' ${containerSourceFile}
-        grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/loftd-mesa-runtime' ${containerSourceFile}
-        grep -F './usr/lib/loftd-software-renderer' ${containerSourceFile}
-        grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/loftd-software-renderer' ${containerSourceFile}
+        grep -F './usr/lib/cang-mesa-runtime' ${containerSourceFile}
+        grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/cang-mesa-runtime' ${containerSourceFile}
+        grep -F './usr/lib/cang-software-renderer' ${containerSourceFile}
+        grep -F 'ln -s ${"$"}{pkgs.mesa} ./usr/lib/cang-software-renderer' ${containerSourceFile}
         grep -F 'pkgs.fontconfig' ${layersSourceFile}
-        grep -F './usr/lib/loftd-fontconfig' ${containerSourceFile}
-        grep -F 'ln -s ${"$"}{pkgs.fontconfig.out} ./usr/lib/loftd-fontconfig' ${containerSourceFile}
+        grep -F './usr/lib/cang-fontconfig' ${containerSourceFile}
+        grep -F 'ln -s ${"$"}{pkgs.fontconfig.out} ./usr/lib/cang-fontconfig' ${containerSourceFile}
         test -f ${pkgs.fontconfig.out}/etc/fonts/fonts.conf
         ${pkgs.lib.optionalString (rioBin != null) ''
           test -x ${rioBin}/bin/rio
@@ -399,7 +399,7 @@ let
           *) exit 1 ;;
         esac
         ! grep -F 'AGENTBOX_LIBKRUN' ${layers.nixCommandCompat}/bin/nix
-        ! grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/loftd-nix-store-db-check
+        ! grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/cang-nix-store-db-check
 
         mkdir -p "$out"
         touch "$out/passed"
@@ -422,7 +422,7 @@ in
     ;
 
   imageConfigNixDbRefs =
-    pkgs.runCommand "loftd-image-config-nix-db-refs-check"
+    pkgs.runCommand "cang-image-config-nix-db-refs-check"
       {
         nativeBuildInputs = [
           pkgs.coreutils

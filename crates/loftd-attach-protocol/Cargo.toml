@@ -1,8 +1,0 @@
-[package]
-name = "loftd-attach-protocol"
-version.workspace = true
-edition.workspace = true
-publish = false
-
-[dependencies]
-anyhow.workspace = true

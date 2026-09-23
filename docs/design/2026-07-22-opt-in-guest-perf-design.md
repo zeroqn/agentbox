@@ -1,15 +1,15 @@
-# Opt-in loftd guest performance profiling
+# Opt-in cang guest performance profiling
 
 ## Summary
 
-Add an explicit top-level `loftd --perf` option that relaxes the guest kernel's performance-event and kernel-pointer policies for that launch. The hardened default remains unchanged. Add `perf` and `strace` to the loftd guest image so optimization and diagnostic workflows are available without installing tools at runtime.
+Add an explicit top-level `cang --perf` option that relaxes the guest kernel's performance-event and kernel-pointer policies for that launch. The hardened default remains unchanged. Add `perf` and `strace` to the cang guest image so optimization and diagnostic workflows are available without installing tools at runtime.
 
 ## Goals
 
-- Preserve `kernel.perf_event_paranoid=3` and the guest kernel's restricted pointer policy for ordinary loftd launches.
+- Preserve `kernel.perf_event_paranoid=3` and the guest kernel's restricted pointer policy for ordinary cang launches.
 - Allow an explicitly opted-in guest workload to use kernel software events, tracepoints, and `/proc/kallsyms` addresses required for kernel CPU attribution and end-to-end io_uring profiling.
 - Keep performance profiling independent from permission to create io_uring instances.
-- Include `perf` and `strace` in the loftd image only.
+- Include `perf` and `strace` in the cang image only.
 - Clearly document that hardware performance counters remain dependent on virtual PMU support.
 
 ## Non-goals
@@ -24,7 +24,7 @@ Add an explicit top-level `loftd --perf` option that relaxes the guest kernel's 
 
 ### Default launch
 
-Without `--perf`, loftd retains the guest kernel default:
+Without `--perf`, cang retains the guest kernel default:
 
 ```text
 kernel.perf_event_paranoid=3
@@ -34,7 +34,7 @@ No performance-monitoring relaxation occurs.
 
 ### Opt-in launch
 
-With `--perf`, loftd guest-init writes:
+With `--perf`, cang guest-init writes:
 
 ```text
 -1
@@ -63,7 +63,7 @@ This permits unprivileged guest processes to access kernel performance events, r
 For end-to-end io_uring profiling, the expected invocation is:
 
 ```bash
-loftd --io-uring --perf
+cang --io-uring --perf
 ```
 
 The options remain independent:
@@ -77,14 +77,14 @@ The guest kernel enables `CONFIG_PERF_EVENTS`, but the current x86 libkrun CPUID
 
 ## Architecture and data flow
 
-The new boolean follows the existing loftd runtime-option contract:
+The new boolean follows the existing cang runtime-option contract:
 
 1. The top-level Clap CLI parses `--perf`, defaulting to `false`.
 2. CLI conversion places the value in runtime options.
 3. Launch planning and session construction preserve it in the launch model.
 4. The serialized launch configuration preserves the value across helper and supervisor boundaries.
-5. Guest configuration serialization emits `LOFTD_PERF=1` only when enabled.
-6. loftd guest-init parses the marker as a boolean, defaulting to `false` when absent.
+5. Guest configuration serialization emits `CANG_PERF=1` only when enabled.
+6. cang guest-init parses the marker as a boolean, defaulting to `false` when absent.
 7. Root bootstrap applies the sysctl before Nix preparation, Podman preparation, Wayland startup, managed-session startup, privilege drop, or workload execution.
 
 Older or omitted serialized launch fields decode to the secure `false` default. New launch configurations serialize the field explicitly where the existing launch codec requires explicit fields.
@@ -122,11 +122,11 @@ The README will include the io_uring profiling example and the hardware-counter 
 
 ## Guest image packaging
 
-Add the nixpkgs `perf` and `strace` packages to the loftd-specific image package selection next to the existing loftd-only Wayland proxy package.
+Add the nixpkgs `perf` and `strace` packages to the cang-specific image package selection next to the existing cang-only Wayland proxy package.
 
 Requirements:
 
-- Both binaries are included in the loftd image closure.
+- Both binaries are included in the cang image closure.
 - Both binaries are available on the guest PATH.
 - Neither package is added to the agentbox image.
 - Image Nix DB metadata continues to cover all referenced store paths.
@@ -151,13 +151,13 @@ The feature is not coupled to unrelated convenience or profiling flags, preventi
 - CLI defaults `perf` to false.
 - `--perf` is accepted as a top-level launch option.
 - Launch models preserve enabled and disabled values.
-- Guest environment contains `LOFTD_PERF=1` only when enabled.
+- Guest environment contains `CANG_PERF=1` only when enabled.
 - Serialized configurations missing the field decode as false where compatibility decoding applies.
 - Existing management-subcommand option behavior remains unchanged.
 
 ### Guest crate
 
-- Environment parsing defaults `LOFTD_PERF` to false.
+- Environment parsing defaults `CANG_PERF` to false.
 - A present marker enables it.
 - Enabled configuration writes exactly `-1\n`.
 - Disabled configuration performs no write.
@@ -166,8 +166,8 @@ The feature is not coupled to unrelated convenience or profiling flags, preventi
 
 ### Nix image checks
 
-- The loftd image exposes `perf` and `strace` on PATH.
-- The agentbox image does not gain either loftd-only package through this change.
+- The cang image exposes `perf` and `strace` on PATH.
+- The agentbox image does not gain either cang-only package through this change.
 - Image closure and Nix DB metadata checks continue to pass.
 
 ## Validation
@@ -175,8 +175,8 @@ The feature is not coupled to unrelated convenience or profiling flags, preventi
 Run targeted tests first, followed by the repository validation sequence:
 
 ```bash
-nix develop --command cargo test -p loftd perf_
-nix develop --command cargo test -p loftd-guest-init perf_
+nix develop --command cargo test -p cang perf_
+nix develop --command cargo test -p cang-guest-init perf_
 nix develop --command cargo fmt --check
 nix develop --command cargo clippy --all-targets --all-features -- -D warnings
 nix develop --command cargo deny check
@@ -191,6 +191,6 @@ Live smoke validation should verify:
 - With `--perf`, it is `-1`.
 - `strace` starts successfully in the guest.
 - `perf` can execute a supported software-event or tracepoint workflow.
-- `loftd --io-uring --perf` permits an io_uring workload and its kernel-path profiling where the guest exposes the relevant tracepoints.
+- `cang --io-uring --perf` permits an io_uring workload and its kernel-path profiling where the guest exposes the relevant tracepoints.
 
 Hardware events are not an acceptance criterion because current libkrun x86 CPUID handling disables the virtual PMU.

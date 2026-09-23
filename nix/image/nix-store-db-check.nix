@@ -1,8 +1,8 @@
 { pkgs }:
 
 let
-  toolName = "loftd-nix-store-db-check";
-  runDir = "/run/loftd";
+  toolName = "cang-nix-store-db-check";
+  runDir = "/run/cang";
 in
 pkgs.writeShellScriptBin toolName ''
     set -euo pipefail

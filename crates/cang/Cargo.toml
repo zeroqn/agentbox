@@ -1,0 +1,25 @@
+[package]
+name = "cang"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "cang"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+libc.workspace = true
+landlock.workspace = true
+cang-attach-protocol.workspace = true
+cang-exec-protocol.workspace = true
+seccompiler.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

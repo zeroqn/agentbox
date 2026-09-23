@@ -1,18 +1,18 @@
-# Persistent loftd Waypipe and guest exec design
+# Persistent cang Waypipe and guest exec design
 
 ## Summary
 
-Allow a Waypipe-enabled loftd task to start with the normal interactive fish shell instead of requiring a GUI command at VM launch. Add a general foreground `loftd exec` command that starts another process inside any active exec-capable guest. When the guest was launched with `--waypipe`, exec processes inherit the guest's persistent Waypipe display and can launch GUI applications through the existing connection.
+Allow a Waypipe-enabled cang task to start with the normal interactive fish shell instead of requiring a GUI command at VM launch. Add a general foreground `cang exec` command that starts another process inside any active exec-capable guest. When the guest was launched with `--waypipe`, exec processes inherit the guest's persistent Waypipe display and can launch GUI applications through the existing connection.
 
 Waypipe becomes a VM-level service rather than a wrapper around one command. Arbitrary command execution uses a dedicated host socket, libkrun host-to-guest vsock mapping, guest listener, and versioned protocol. The existing managed-session attach protocol remains unchanged.
 
 ## Goals
 
-- Permit `loftd --waypipe=SOCKET` without an explicit guest command.
+- Permit `cang --waypipe=SOCKET` without an explicit guest command.
 - Preserve the normal default interactive fish login shell for a commandless Waypipe launch.
 - Preserve support for an explicit initial command with `--waypipe`.
 - Keep one Waypipe server active for the lifetime of a Waypipe-enabled VM.
-- Add `loftd exec <task-selector> -- COMMAND...` for every active exec-capable loftd VM.
+- Add `cang exec <task-selector> -- COMMAND...` for every active exec-capable cang VM.
 - Let exec commands in a Waypipe-enabled VM use its existing Waypipe connection automatically.
 - Stream exec stdin, stdout, and stderr in the foreground and return the guest command's exit status.
 - Keep exec process lifecycle independent from the primary shell while retaining the primary session as the VM lifetime owner.
@@ -37,7 +37,7 @@ Waypipe becomes a VM-level service rather than a wrapper around one command. Arb
 A command is no longer required with `--waypipe`:
 
 ```bash
-loftd --workspace=/home/dev/project --waypipe=/tmp/loftd-waypipe.sock
+cang --workspace=/home/dev/project --waypipe=/tmp/cang-waypipe.sock
 ```
 
 This launches the normal interactive fish login shell. The shell receives the Waypipe display environment and may start GUI applications directly.
@@ -45,8 +45,8 @@ This launches the normal interactive fish login shell. The shell receives the Wa
 An explicit initial command remains supported:
 
 ```bash
-loftd --workspace=/home/dev/project \
-  --waypipe=/tmp/loftd-waypipe.sock \
+cang --workspace=/home/dev/project \
+  --waypipe=/tmp/cang-waypipe.sock \
   -- gui-application
 ```
 
@@ -62,14 +62,14 @@ The existing requirements remain:
 The new command is:
 
 ```bash
-loftd exec <task-id-or-handle-selector> -- COMMAND...
+cang exec <task-id-or-handle-selector> -- COMMAND...
 ```
 
 For example:
 
 ```bash
-loftd ps
-loftd exec <task-selector> -- rio
+cang ps
+cang exec <task-selector> -- rio
 ```
 
 The command:
@@ -85,7 +85,7 @@ The command:
 - forwards termination signals such as `SIGINT` and `SIGTERM` to the guest process group;
 - exits with the guest process's exit status.
 
-The first version uses ordinary pipes rather than a PTY. Interactive full-screen terminal applications remain the responsibility of the primary managed session and `loftd attach`.
+The first version uses ordinary pipes rather than a PTY. Interactive full-screen terminal applications remain the responsibility of the primary managed session and `cang attach`.
 
 ## Architecture alternatives
 
@@ -120,7 +120,7 @@ A Waypipe-enabled launch additionally receives:
 
 - the existing Waypipe guest vsock port;
 - the host's existing SSH-forwarded Unix socket path;
-- a fixed guest Wayland display name, initially `loftd-waypipe-0`.
+- a fixed guest Wayland display name, initially `cang-waypipe-0`.
 
 The launch-config codec carries the guest exec port and protocol version to guest-init. The host-only exec socket path remains part of host launch and active-task state, following the existing managed attach split.
 
@@ -143,11 +143,11 @@ For a Waypipe-enabled task, guest-init then starts one persistent process equiva
 waypipe --no-gpu \
   --vsock \
   --socket <guest-port> \
-  --display loftd-waypipe-0 \
+  --display cang-waypipe-0 \
   server -- sleep infinity
 ```
 
-The fixed display name makes the guest socket location deterministic under the existing `XDG_RUNTIME_DIR`. Guest-init waits for that Wayland socket to become ready before starting user processes. It then adds `WAYLAND_DISPLAY=loftd-waypipe-0` to the environment used by both the primary process and subsequent exec processes.
+The fixed display name makes the guest socket location deterministic under the existing `XDG_RUNTIME_DIR`. Guest-init waits for that Wayland socket to become ready before starting user processes. It then adds `WAYLAND_DISPLAY=cang-waypipe-0` to the environment used by both the primary process and subsequent exec processes.
 
 Guest-init starts the exec listener before starting the primary process. The long-lived guest supervisor owns:
 
@@ -175,7 +175,7 @@ The host flow is:
 5. Send the argv request.
 6. Proxy stdin and signals to the guest.
 7. Receive stdout, stderr, structured errors, and final exit status.
-8. Return the guest exit status from `loftd exec`.
+8. Return the guest exit status from `cang exec`.
 
 The guest flow is:
 
@@ -194,7 +194,7 @@ The guest listener handles independent connections concurrently. Implementation 
 
 ## Exec protocol
 
-The exec protocol is independent from `loftd-attach-protocol` and has its own version constant. A small shared protocol crate may be introduced if needed by both host and guest crates, following the existing attach-protocol pattern.
+The exec protocol is independent from `cang-attach-protocol` and has its own version constant. A small shared protocol crate may be introduced if needed by both host and guest crates, following the existing attach-protocol pattern.
 
 Required message semantics are:
 
@@ -215,7 +215,7 @@ The protocol sets conservative frame-size and argv-size bounds, consistent with 
 
 ## Signal and disconnect behavior
 
-The host forwards termination-oriented signals received while `loftd exec` is active, including `SIGINT` and `SIGTERM`, to the guest exec process group. This lets Ctrl-C terminate a foreground GUI or console process without terminating the VM or primary shell.
+The host forwards termination-oriented signals received while `cang exec` is active, including `SIGINT` and `SIGTERM`, to the guest exec process group. This lets Ctrl-C terminate a foreground GUI or console process without terminating the VM or primary shell.
 
 If the host connection disappears before the process exits, the guest terminates that exec process group and reaps it. Foreground exec therefore does not leave accidental orphan processes after terminal loss or client failure.
 
@@ -232,7 +232,7 @@ This includes existing launch-derived values such as:
 - Nix and container-storage variables;
 - allocator selection;
 - terminal-independent task environment;
-- `WAYLAND_DISPLAY=loftd-waypipe-0` only for Waypipe-enabled tasks.
+- `WAYLAND_DISPLAY=cang-waypipe-0` only for Waypipe-enabled tasks.
 
 Exec does not copy the mutable environment or current directory of the interactive fish process. That state belongs to the shell and is not a reliable VM-wide contract. Every exec process starts in `/workspace`.
 
@@ -240,7 +240,7 @@ Exec does not copy the mutable environment or current directory of the interacti
 
 The active-task record format adds optional exec metadata containing the host socket and protocol version. Decoding an older record yields `exec: None`.
 
-`loftd exec` against an active legacy task returns a clear error that the task does not support exec and must be relaunched with a current loftd version. `ps`, `attach`, and `kill` continue to work with the record according to their existing compatibility behavior.
+`cang exec` against an active legacy task returns a clear error that the task does not support exec and must be relaunched with a current cang version. `ps`, `attach`, and `kill` continue to work with the record according to their existing compatibility behavior.
 
 Launch-config codec changes follow the repository's existing append-only compatibility rules. New guest exec fields are optional when decoding older launch contracts and required only when the new managed exec capability is enabled.
 
@@ -275,7 +275,7 @@ For Waypipe launch, guest-init must not start the primary shell with a declared 
 - Exec always runs as `dev`; there is no root or UID override.
 - Requests carry argv fields rather than shell text.
 - Existing task-wide seccomp, Landlock, mounts, allocator, networking, and guest-kernel policies apply to exec children.
-- The SSH reverse-forwarded Waypipe socket remains externally owned. loftd connects to it but does not create, unlink, replace, or clean it up.
+- The SSH reverse-forwarded Waypipe socket remains externally owned. cang connects to it but does not create, unlink, replace, or clean it up.
 
 ## Testing
 
@@ -326,8 +326,8 @@ For Waypipe launch, guest-init must not start the primary shell with a declared 
 
 ### Documentation and image checks
 
-- Update `README.md` to describe commandless Waypipe launch and later GUI launch through `loftd exec`.
-- Preserve the image assertion that the loftd image contains Waypipe.
+- Update `README.md` to describe commandless Waypipe launch and later GUI launch through `cang exec`.
+- Preserve the image assertion that the cang image contains Waypipe.
 - No new image package is required for exec itself.
 
 ## Validation
@@ -346,9 +346,9 @@ Also build the relevant Nix packages and image checks.
 Live validation should:
 
 1. Start the workstation Waypipe client and authenticated SSH reverse Unix-socket forwarding.
-2. Launch `loftd --waypipe=<socket>` without a command and confirm fish appears.
-3. Resolve the task with `loftd ps`.
-4. Run a GUI application with `loftd exec <task> -- <application>` and confirm it appears on the workstation.
+2. Launch `cang --waypipe=<socket>` without a command and confirm fish appears.
+3. Resolve the task with `cang ps`.
+4. Run a GUI application with `cang exec <task> -- <application>` and confirm it appears on the workstation.
 5. Confirm the primary fish shell remains usable while and after exec.
 6. Confirm stdout, stderr, exit status, Ctrl-C, and client-disconnect cleanup.
 7. Start concurrent exec commands.
@@ -356,7 +356,7 @@ Live validation should:
 
 ## Approved decisions
 
-- `loftd exec` is general to all active exec-capable VMs.
+- `cang exec` is general to all active exec-capable VMs.
 - Exec is foreground-only in the first version.
 - Exec uses non-PTY streams.
 - Exec runs as `dev` in `/workspace` with the launch-derived environment.

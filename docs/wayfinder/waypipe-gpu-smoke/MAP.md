@@ -5,26 +5,26 @@ title: Waypipe + drm=gpu live smoke
 
 ## Destination
 
-A live smoke in `tools/chromium-loftd-smoke` (a new `--waypipe` mode) that proves the
+A live smoke in `tools/chromium-cang-smoke` (a new `--waypipe` mode) that proves the
 waypipe transport: a guest Chromium presents a frame to a host-side Wayland compositor
-through loftd's `--waypipe` path, while the same microVM separately proves the hardware
+through cang's `--waypipe` path, while the same microVM separately proves the hardware
 venus renderer. Reaching the destination = the mode exists, passes reproducibly on this
 host, is A/B attributable, and its baseline is recorded in the tool's README.
 
 **Status (2026-09-22): reached.** The `--waypipe` mode exists in
-`tools/chromium-loftd-smoke`, passes reproducibly on this host, is A/B
+`tools/chromium-cang-smoke`, passes reproducibly on this host, is A/B
 attributable, and its baseline is recorded in the tool's README. No open tickets;
 the two product follow-ons under *Out of scope* remain for their own effort.
 
 ## Notes
 
-- Domain: loftd host (`crates/loftd`), guest bootstrap (`crates/loftd-guest-init`), the
-  `--gpu=drm` venus render server, and `tools/chromium-loftd-smoke`.
+- Domain: cang host (`crates/cang`), guest bootstrap (`crates/cang-guest-init`), the
+  `--gpu=drm` venus render server, and `tools/chromium-cang-smoke`.
 - Skills worth consulting: `grilling`, `domain-modeling`, `diagnosing-bugs`.
 - Standing preferences for this effort: honest scoring (every check must be able to
   fail); hard failure over silent weakening; reuse the existing smoke's hermetic podman
   store, btrfs preflight, workspace staging and evidence scoring instead of duplicating
-  them; document behaviour in `tools/chromium-loftd-smoke/README.md`.
+  them; document behaviour in `tools/chromium-cang-smoke/README.md`.
 - **Execution is in scope** for this map: it ends with the mode implemented, passing, and
   its baseline documented, not merely with decisions taken.
 - Harness note: `rlm.spawn` children in this session came back tool-less (they could not
@@ -42,7 +42,7 @@ the two product follow-ons under *Out of scope* remain for their own effort.
   existing headless venus renderer check stays as it is; an **A/B pair** (with and without
   `--waypipe`) makes a PASS attributable; if weston's GL renderer cannot initialise the
   smoke fails rather than degrading. Both weston 15.0.1 and waypipe 0.11.0 resolve in the
-  current nixpkgs pin, and waypipe already ships in the loftd image.
+  current nixpkgs pin, and waypipe already ships in the cang image.
 
 ## Decisions so far
 
@@ -53,7 +53,7 @@ the two product follow-ons under *Out of scope* remain for their own effort.
 - [Venus-backed presenting run through waypipe](tickets/07-venus-backed-presenting-run.md): **hardware-accelerated presentation works** - guest Chromium `--ozone-platform=wayland --use-angle=vulkan` (NOT `--enable-features=Vulkan`) + `GBM_BACKENDS_PATH` + dmabuf blocked on the waypipe side gives 0 GPU crashes, venus proven by `VIRTGPU_CONTEXT_INIT`/`EXECBUFFER`, and the page in the host screenshot; transfer is `wl_shm` (not zero-copy).
 - [Guest Chromium presents through waypipe](tickets/03-guest-chromium-presents-via-waypipe.md): the working presenting configuration is `--ozone-platform=wayland --use-angle=vulkan` + `GBM_BACKENDS_PATH` + dmabuf blocked; `--enable-features=Vulkan` must not be used (Vulkan display compositing needs a `VkSurfaceKHR` ozone-wayland lacks, and the GPU process then crash-loops and never paints).
 - [Guest Chromium GPU process in the waypipe run](tickets/06-guest-chromium-gpu-process-in-waypipe-run.md): there is a real env gap (`GBM_BACKENDS_PATH` set nowhere, so ozone can't load `dri_gbm.so`), but venus-backed presentation is blocked by Chromium itself (`'--ozone-platform=wayland' is not compatible with Vulkan` -> GPU crash loop) and, once buffers are dmabufs, by waypipe's own import failure (`ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT`). The working configuration is the shm/software one that the ticket 03 prototype used.
-- [Host waypipe client and vsock handshake](tickets/02-host-waypipe-client-handshake.md): the host runs `waypipe client` on the socket path loftd is given (loftd preflights it and fails fast if missing or not a socket); the dial is lazy - it happens on the first guest app connection, so a real guest client and the client log's `Connection received`/`may use dmabufs: true` lines are the evidence, not the guest socket's existence; the image's `rio` already painted a window the host compositor captured.
+- [Host waypipe client and vsock handshake](tickets/02-host-waypipe-client-handshake.md): the host runs `waypipe client` on the socket path cang is given (cang preflights it and fails fast if missing or not a socket); the dial is lazy - it happens on the first guest app connection, so a real guest client and the client log's `Connection received`/`may use dmabufs: true` lines are the evidence, not the guest socket's existence; the image's `rio` already painted a window the host compositor captured.
 - [weston headless + GL on this host](tickets/01-weston-headless-gl-on-host.md): weston 15.0.1 runs headless+GL on the host GPU (`GL renderer: AMD Radeon RX 7600M XT`, `renderD128`, no DRM master); screenshots need `--debug` (else `Output capture error: unauthorized` and an all-black PNG); `weston-screenshooter` writes a real PNG, decodable with stdlib zlib via the devshell python3; GL failure exits 1 and creates no socket.
 
 ## Not yet specified

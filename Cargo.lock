@@ -80,6 +80,55 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
+name = "cang"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "cang-attach-protocol",
+ "cang-exec-protocol",
+ "clap",
+ "landlock",
+ "libc",
+ "seccompiler",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "cang-attach-protocol"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
+name = "cang-exec-protocol"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
+name = "cang-guest-init"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "cang-attach-protocol",
+ "cang-exec-protocol",
+ "clap",
+ "libc",
+ "tempfile",
+ "vt100",
+]
+
+[[package]]
+name = "cang-repository-tests"
+version = "0.7.0"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -224,55 +273,6 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
-
-[[package]]
-name = "loftd"
-version = "0.7.0"
-dependencies = [
- "anyhow",
- "clap",
- "landlock",
- "libc",
- "loftd-attach-protocol",
- "loftd-exec-protocol",
- "seccompiler",
- "serde",
- "serde_json",
- "tempfile",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "loftd-attach-protocol"
-version = "0.7.0"
-dependencies = [
- "anyhow",
-]
-
-[[package]]
-name = "loftd-exec-protocol"
-version = "0.7.0"
-dependencies = [
- "anyhow",
-]
-
-[[package]]
-name = "loftd-guest-init"
-version = "0.7.0"
-dependencies = [
- "anyhow",
- "clap",
- "libc",
- "loftd-attach-protocol",
- "loftd-exec-protocol",
- "tempfile",
- "vt100",
-]
-
-[[package]]
-name = "loftd-repository-tests"
-version = "0.7.0"
 
 [[package]]
 name = "matchers"

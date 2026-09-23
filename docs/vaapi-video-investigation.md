@@ -1,7 +1,7 @@
-# VA-API hardware video in the loftd guest — investigation log
+# VA-API hardware video in the cang guest — investigation log
 
 Status: **blocked at Blocker 2**. Goal: make `vainfo`/`mpv --hwdec` report working
-hardware video codecs inside the loftd `--gpu=drm` guest without breaking the
+hardware video codecs inside the cang `--gpu=drm` guest without breaking the
 headless Chromium Vulkan path. Nothing in this branch has been verified end-to-end;
 the launcher flag change in particular is UNVERIFIED.
 
@@ -24,7 +24,7 @@ This works at process startup, but fails when the VM worker `dlopen`s `libkrun.s
 resolves libva.so.2's relocations before libva-drm.so.2 is loaded, giving
 `undefined symbol: vaGetDisplayDRM (fatal)`.
 
-Fix (in `crates/loftd/src/runtime/vm/libkrun/dynamic.rs`): pre-`dlopen` `libva-drm.so.2`
+Fix (in `crates/cang/src/runtime/vm/libkrun/dynamic.rs`): pre-`dlopen` `libva-drm.so.2`
 then `libva.so.2` with `RTLD_NOW|RTLD_GLOBAL` in the VM worker before the libkrun
 dlopen. Verified: the VM worker maps now contain both libs.
 
@@ -85,7 +85,7 @@ What was tried for Blocker 2 (all still failing or unverified):
 
 ## Reconstruction notes (for future smoke tests)
 
-- Live smoke uses `XDG_CONFIG_HOME=/home/dev/.local/share/containers/loftd-smoke-config`
+- Live smoke uses `XDG_CONFIG_HOME=/home/dev/.local/share/containers/cang-smoke-config`
   (btrfs-snapshot backend), `script -qefc` PTY wrapping for guest stdout.
 - In-guest Nix closure execution: copy the closure to guest `/tmp` tmpfs with
   `cp -rL --no-preserve=all`, chmod +x bin/, build `LD_LIBRARY_PATH` from the

@@ -80,7 +80,7 @@
             inherit pkgs pins libkrunfw;
           };
           wl-cross-domain-proxy = pkgs.callPackage ./nix/wl-cross-domain-proxy.nix { };
-          prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix {
+          prebuiltCang = import ./nix/pkgs/cang-prebuilt.nix {
             inherit
               pkgs
               pins
@@ -88,7 +88,7 @@
               libkrunfw
               ;
           };
-          rustPackages = import ./nix/pkgs/loftd-rust.nix {
+          rustPackages = import ./nix/pkgs/cang-rust.nix {
             inherit
               self
               pkgs
@@ -97,7 +97,7 @@
               libkrunfw
               ;
           };
-          rustPackagesCiSccache = import ./nix/pkgs/loftd-rust.nix {
+          rustPackagesCiSccache = import ./nix/pkgs/cang-rust.nix {
             inherit
               self
               pkgs
@@ -114,7 +114,7 @@
             inherit crun;
           };
           mkImage =
-            loftdMuslPackage:
+            cangMuslPackage:
             import ./nix/image/container.nix {
               inherit
                 pkgs
@@ -135,10 +135,10 @@
                 wl-cross-domain-proxy
                 bun
                 ;
-              inherit loftdMuslPackage;
+              inherit cangMuslPackage;
             };
-          loftdImage = mkImage rustPackages.loftdMuslPackage;
-          loftdImageCiSccache = mkImage rustPackagesCiSccache.loftdMuslPackage;
+          cangImage = mkImage rustPackages.cangMuslPackage;
+          cangImageCiSccache = mkImage rustPackagesCiSccache.cangMuslPackage;
         in
         {
           default = rustPackages.rustPackage;
@@ -148,19 +148,19 @@
           omp-prebuilt = ompPrebuilt;
           rmux-prebuilt = rmuxPrebuilt;
           symposium = symposium;
-          loftd = rustPackages.rustPackage;
-          loftd-ci-sccache = rustPackagesCiSccache.rustPackage;
-          loftd-prebuilt = prebuiltLoftd;
-          loftd-musl = rustPackages.loftdMuslPackage;
-          loftd-musl-ci-sccache = rustPackagesCiSccache.loftdMuslPackage;
+          cang = rustPackages.rustPackage;
+          cang-ci-sccache = rustPackagesCiSccache.rustPackage;
+          cang-prebuilt = prebuiltCang;
+          cang-musl = rustPackages.cangMuslPackage;
+          cang-musl-ci-sccache = rustPackagesCiSccache.cangMuslPackage;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
           virglrenderer = pkgs.virglrenderer;
           wl-cross-domain-proxy = wl-cross-domain-proxy;
           crun = crun;
           podman = podman;
-          container = loftdImage;
-          container-ci-sccache = loftdImageCiSccache;
+          container = cangImage;
+          container-ci-sccache = cangImageCiSccache;
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
           zvec-grep = zvecGrep;
           dolt-prebuilt = doltPrebuilt;
@@ -193,7 +193,7 @@
         let
           bun = (import nixpkgs-unstable { inherit system; }).bun;
           packages = self.packages.${system};
-          loftdImageChecks =
+          cangImageChecks =
             import ./nix/image/checks.nix {
               inherit pkgs;
               bun = bun;
@@ -211,19 +211,19 @@
               wl-cross-domain-proxy = packages.wl-cross-domain-proxy;
               podman = packages.podman;
               crun = packages.crun;
-              loftdMuslPackage = packages.loftd-musl;
+              cangMuslPackage = packages.cang-musl;
             };
         in
         {
-          container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
-          container-codex-absent = loftdImageChecks.codexAbsent;
-          container-omx-absent = loftdImageChecks.omxAbsent;
-          container-omp-absent = loftdImageChecks.ompAbsent;
-          container-dirge-absent = loftdImageChecks.dirgeAbsent;
-          container-gh-absent = loftdImageChecks.ghAbsent;
-          container-root-cargo-absent = loftdImageChecks.rootCargoAbsent;
-          container-wrapper-contracts = loftdImageChecks.wrapperContracts;
-          # The exported `virglrenderer` is the host-side patched build the loftd
+          container-nix-db-metadata = cangImageChecks.imageConfigNixDbRefs;
+          container-codex-absent = cangImageChecks.codexAbsent;
+          container-omx-absent = cangImageChecks.omxAbsent;
+          container-omp-absent = cangImageChecks.ompAbsent;
+          container-dirge-absent = cangImageChecks.dirgeAbsent;
+          container-gh-absent = cangImageChecks.ghAbsent;
+          container-root-cargo-absent = cangImageChecks.rootCargoAbsent;
+          container-wrapper-contracts = cangImageChecks.wrapperContracts;
+          # The exported `virglrenderer` is the host-side patched build the cang
           # packages ship (libkrun links libvirglrenderer and the render-server
           # helper is symlinked from it), so downstream consumers cannot pick up
           # an unpatched vrend by consuming this output.

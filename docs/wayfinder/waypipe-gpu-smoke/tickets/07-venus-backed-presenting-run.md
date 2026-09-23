@@ -19,7 +19,7 @@ i.e. hardware acceleration, not just a working transport?
 Guest Chromium:
 
 ```sh
-GBM_BACKENDS_PATH=/usr/lib/loftd-mesa-runtime/lib/gbm \
+GBM_BACKENDS_PATH=/usr/lib/cang-mesa-runtime/lib/gbm \
 chromium --ozone-platform=wayland --no-sandbox --disable-gpu-sandbox \
          --use-angle=vulkan \
          --user-data-dir=/tmp/c --window-size=640,480 \

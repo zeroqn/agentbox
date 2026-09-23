@@ -2,13 +2,13 @@
 
 ## Summary
 
-Waypipe is a launch-time task capability. A task launched with `--waypipe` owns a guest Waypipe server on the stable display `loftd-waypipe-0` and task-lifetime host transport sockets.
+Waypipe is a launch-time task capability. A task launched with `--waypipe` owns a guest Waypipe server on the stable display `cang-waypipe-0` and task-lifetime host transport sockets.
 
 Two exec forms have distinct behavior:
 
 ```bash
-loftd --waypipe exec TASK -- GUI_APP
-loftd --waypipe=/path/to/client.sock exec TASK -- GUI_APP
+cang --waypipe exec TASK -- GUI_APP
+cang --waypipe=/path/to/client.sock exec TASK -- GUI_APP
 ```
 
 The valueless form reuses the running Waypipe server. The valued form changes the external target, terminates and reaps the running server, starts a fresh server on the same display name, waits for readiness, and then starts the command.
@@ -20,9 +20,9 @@ Replacement is not Waypipe protocol reconnection. Existing GUI applications conn
 ### Launch
 
 ```bash
-loftd --waypipe
-loftd --waypipe=/path/to/client.sock
-loftd --waypipe=/path/to/client.sock -- GUI_APP
+cang --waypipe
+cang --waypipe=/path/to/client.sock
+cang --waypipe=/path/to/client.sock -- GUI_APP
 ```
 
 - `--waypipe` enables the task capability without an initial target.
@@ -33,9 +33,9 @@ loftd --waypipe=/path/to/client.sock -- GUI_APP
 ### Exec
 
 ```bash
-loftd exec TASK -- COMMAND...
-loftd --waypipe exec TASK -- GUI_APP
-loftd --waypipe=/path/to/client.sock exec TASK -- GUI_APP
+cang exec TASK -- COMMAND...
+cang --waypipe exec TASK -- GUI_APP
+cang --waypipe=/path/to/client.sock exec TASK -- GUI_APP
 ```
 
 - Ordinary exec does not interact with Waypipe.
@@ -53,7 +53,7 @@ The task supervisor owns:
 - serialization of valued target replacements;
 - cleanup of both task-private socket paths when the task ends.
 
-A guest data connection waits while no target is active. Once a target is selected, the broker connects to it and byte-proxies the stream. Waypipe protocol data remains separate from loftd control messages.
+A guest data connection waits while no target is active. Once a target is selected, the broker connects to it and byte-proxies the stream. Waypipe protocol data remains separate from cang control messages.
 
 A valued exec opens the control socket, supplies the new target, and keeps that control connection open for the duration of the exec request. This serializes target replacement and command startup. The target becomes available before guest server restart, so the new server can establish its transport while the control connection remains held.
 
@@ -63,7 +63,7 @@ Guest-init owns a serialized `WaypipeService` containing the current child proce
 
 Startup:
 
-1. Remove a stale `loftd-waypipe-0` display socket.
+1. Remove a stale `cang-waypipe-0` display socket.
 2. Start the Rust Waypipe server using the task's fixed vsock port.
 3. Wait for the stable display socket.
 4. Export the shared Waypipe environment for the primary and exec commands.
@@ -115,9 +115,9 @@ A host refuses exec against a task using a different protocol version instead of
 ## Security
 
 - External Waypipe targets must be absolute existing Unix socket paths.
-- Loftd does not expose an unauthenticated raw TCP Waypipe endpoint.
-- Loftd does not start or manage SSH or the workstation Waypipe client.
-- Task-private listeners use the existing loftd runtime-directory ownership and path-budget rules.
+- Cang does not expose an unauthenticated raw TCP Waypipe endpoint.
+- Cang does not start or manage SSH or the workstation Waypipe client.
+- Task-private listeners use the existing cang runtime-directory ownership and path-budget rules.
 - Guest exec commands continue to run as user `dev` under the existing exec security policy.
 
 ## Testing and validation

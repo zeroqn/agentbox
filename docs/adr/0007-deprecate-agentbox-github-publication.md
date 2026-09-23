@@ -4,27 +4,27 @@ Status: accepted
 
 Supersedes: ADR 0006
 
-GitHub Actions publishes and tests loftd artifacts only. Agentbox source code,
+GitHub Actions publishes and tests cang artifacts only. Agentbox source code,
 workspace membership, default workspace membership, and local Nix outputs remain
 available, but the repository no longer publishes new agentbox images or release
 binaries.
 
 ## Context
 
-Loftd now owns the active runtime and publication path. Repository-level Nix and
+Cang now owns the active runtime and publication path. Repository-level Nix and
 workflow contracts had been attached to `agentbox-host`, so simply excluding the
-agentbox crates from CI would also have removed loftd coverage. Continuing to
+agentbox crates from CI would also have removed cang coverage. Continuing to
 publish agentbox artifacts would additionally represent the deprecated product as
 actively supported.
 
 ## Decision
 
-Loftd and shared repository contracts live in a dedicated test-only workspace
+Cang and shared repository contracts live in a dedicated test-only workspace
 crate selected explicitly by GitHub CI. Agentbox-only tests remain with the
 agentbox crates and continue to run under ordinary local workspace tests.
 
-The image workflows publish only `ghcr.io/<owner>/loftd`. The release workflow
-publishes only the neutral loftd ELF and checksum assets. Agentbox-related flake
+The image workflows publish only `ghcr.io/<owner>/cang`. The release workflow
+publishes only the neutral cang ELF and checksum assets. Agentbox-related flake
 outputs remain unchanged for local use.
 
 ## Consequences

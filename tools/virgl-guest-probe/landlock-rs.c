@@ -1,5 +1,5 @@
 /*
- * landlock-rs: applies loftd's render-server Landlock rule set before
+ * landlock-rs: applies cang's render-server Landlock rule set before
  * exec'ing virgl_render_server, for the bare-VM chromium probe.
  *
  * Variants:

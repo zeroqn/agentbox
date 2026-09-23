@@ -1,17 +1,17 @@
 [workspace]
 members = [
-  "crates/loftd",
-  "crates/loftd-guest-init",
-  "crates/loftd-attach-protocol",
-  "crates/loftd-exec-protocol",
-  "crates/loftd-repository-tests",
+  "crates/cang",
+  "crates/cang-guest-init",
+  "crates/cang-attach-protocol",
+  "crates/cang-exec-protocol",
+  "crates/cang-repository-tests",
 ]
 default-members = [
-  "crates/loftd",
-  "crates/loftd-guest-init",
-  "crates/loftd-attach-protocol",
-  "crates/loftd-exec-protocol",
-  "crates/loftd-repository-tests",
+  "crates/cang",
+  "crates/cang-guest-init",
+  "crates/cang-attach-protocol",
+  "crates/cang-exec-protocol",
+  "crates/cang-repository-tests",
 ]
 resolver = "3"
 
@@ -24,8 +24,8 @@ anyhow = "1.0"
 clap = { version = "4.6", features = ["derive", "env"] }
 libc = "0.2"
 landlock = "0.4"
-loftd-attach-protocol = { path = "crates/loftd-attach-protocol" }
-loftd-exec-protocol = { path = "crates/loftd-exec-protocol" }
+cang-attach-protocol = { path = "crates/cang-attach-protocol" }
+cang-exec-protocol = { path = "crates/cang-exec-protocol" }
 seccompiler = { version = "0.5", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

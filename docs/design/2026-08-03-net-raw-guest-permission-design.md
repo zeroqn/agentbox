@@ -2,7 +2,7 @@
 
 ## Goal
 
-Expose an explicit `net-raw` value in loftd's existing `--permissions` option. A requesting guest `dev` workload receives Linux `CAP_NET_RAW` without changing the behavior of other permissions.
+Expose an explicit `net-raw` value in cang's existing `--permissions` option. A requesting guest `dev` workload receives Linux `CAP_NET_RAW` without changing the behavior of other permissions.
 
 ## Scope
 
@@ -25,8 +25,8 @@ Excluded:
 The public syntax is:
 
 ```text
-loftd --permissions=net-raw
-loftd --permissions=net-admin,net-raw
+cang --permissions=net-raw
+cang --permissions=net-admin,net-raw
 ```
 
 `net-raw` remains opt-in. Launches without it do not receive `CAP_NET_RAW`.
@@ -35,7 +35,7 @@ loftd --permissions=net-admin,net-raw
 
 The host and guest maintain matching typed `GuestPermission` enums. Add a `NetRaw` variant to both sets, render and parse it as `net-raw`, and include it in allowed-value diagnostics and CLI help.
 
-The existing launch configuration serializes nonempty permissions into `LOFTD_PERMISSIONS`, so no new contract field is required. Guest-init parses that environment value and adds capability 13 to the workload capability plan only when `NetRaw` is selected.
+The existing launch configuration serializes nonempty permissions into `CANG_PERMISSIONS`, so no new contract field is required. Guest-init parses that environment value and adds capability 13 to the workload capability plan only when `NetRaw` is selected.
 
 The existing credential transition already applies its planned capabilities to the `dev` user via the bounding set, effective/permitted/inheritable sets, and ambient set. `CAP_NET_RAW` therefore follows the same path for initial commands, interactive shells, and later guest workload execution.
 
