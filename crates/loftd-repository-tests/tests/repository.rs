@@ -285,7 +285,6 @@ fn loftd_package_exposes_stable_raw_elf_payload_for_release_workflow() {
         r#"RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";"#,
         r#"SCCACHE_DIR = "/nix/var/cache/sccache";"#,
         r#"SCCACHE_IGNORE_SERVER_IO_ERROR = "1";"#,
-        "nativeBuildInputs = [ pkgs.makeWrapper ] ++ ciSccacheNativeBuildInputs;",
         r#"mkdir -p "$out/libexec/loftd-helpers" "$out/lib/loftd""#,
         r#"ln -s ${pkgs.buildah}/bin/buildah "$out/libexec/loftd-helpers/buildah""#,
         r#"ln -s ${pkgs.btrfs-progs}/bin/btrfs "$out/libexec/loftd-helpers/btrfs""#,
@@ -295,13 +294,16 @@ fn loftd_package_exposes_stable_raw_elf_payload_for_release_workflow() {
         r#"ln -s ${pkgs.passt}/bin/passt "$out/libexec/loftd-helpers/passt""#,
         "${pkgs.lib.getLib libkrun}/lib/libkrun.so*",
         "${pkgs.lib.getLib libkrunfw}/lib/libkrunfw.so*",
-        r#"wrapProgram "$out/bin/loftd""#,
     ] {
         assert!(LOFTD_RUST_NIX.contains(required), "missing {required}");
     }
 
     for removed in [
         r#"install -Dm755 "$out/bin/loftd" "$out/libexec/loftd""#,
+        // The release workflow publishes $out/bin/loftd as the neutral asset and
+        // refuses a wrapper script, so the package must stay wrapper-free.
+        r#"wrapProgram "$out/bin/loftd""#,
+        "pkgs.makeWrapper",
         "agentbox-host",
         "agentbox-guest-init",
     ] {
