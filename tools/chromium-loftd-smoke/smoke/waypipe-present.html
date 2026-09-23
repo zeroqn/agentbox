@@ -3,13 +3,25 @@
   Pattern page for the --waypipe presenting run.
 
   Two jobs:
-  1. Paint a colour the host can assert on. The compositor-side screenshot must
-     contain PATTERN_RGB pixels or the guest's frame never arrived.
-  2. Publish the WebGL renderer as the window title. waypipe's client logs window
-     titles verbatim ("Processing request: xdg_toplevel#24.set_title("...")"),
-     so the title lands in a HOST-side log and carries the venus renderer across
-     the transport in the same artefact. That is why no strace or debugging port
-     is needed to assert hardware acceleration.
+  1. Paint a colour the host can assert on: the compositor-side screenshot must
+     contain #ff00ff pixels or the guest's frame never arrived through waypipe.
+  2. Publish the WebGL renderer twice - as the window title and as an on-page
+     overlay drawn in #00ffff. waypipe's client logs window titles verbatim
+     ("Processing request: xdg_toplevel#24.set_title("...")"), so the title lands
+     in a HOST-side log; the overlay is what makes the screenshot a human opens
+     name the renderer, which is how the frame itself carries the
+     hardware-acceleration claim. The host counts those overlay pixels
+     (renderer-on-frame), so the claim cannot quietly vanish from the artifact.
+
+  The page deliberately does not draw with WebGL. In this run (ozone-wayland +
+  --use-angle=vulkan) any WebGL draw aborts the guest's GPU process and loses
+  the canvas: measured with a visible canvas (GPU process exit_code=6) and with
+  a hidden canvas published through toDataURL() (exit_code=8704, "Restarting GPU
+  process due to unrecoverable error. Context was lost."). The same page's text
+  and background keep presenting, and the same context is created without a
+  crash in the headless runs (which do not draw either), so the wall is drawing
+  in the presenting run specifically. Reading the renderer string out of a
+  context is safe; see the README before adding a draw.
 
   A <script> must be inside <body> (a head script runs before document.body
   exists), and document.title must be set after the WebGL probe so the title
@@ -18,19 +30,29 @@
 <html>
 <head><meta charset="utf-8"><title>waypipe-present</title></head>
 <body style="margin:0;padding:0;background:#ff00ff">
-<div style="color:#ffffff;font:40px sans-serif;padding:40px">WAYPIPE-PRESENT</div>
+<div id="report" style="position:fixed;left:0;top:0;right:0;padding:16px;background:rgba(0,0,0,0.55);color:#00ffff;font:20px/1.35 monospace;white-space:pre-wrap"></div>
 <script>
   var renderer = 'no-webgl';
+  var vendor = '';
+  var glVersion = '';
   try {
-    var c = document.createElement('canvas');
-    var gl = c.getContext('webgl2') || c.getContext('webgl');
+    var canvas = document.createElement('canvas');
+    var gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
     if (gl) {
       var dbg = gl.getExtension('WEBGL_debug_renderer_info');
       renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : '';
+      glVersion = gl.getParameter(gl.VERSION);
     }
   } catch (e) {
     renderer = 'probe-error:' + e;
   }
+
+  document.getElementById('report').textContent =
+    'WAYPIPE-PRESENT\n' +
+    'renderer=' + renderer + '\n' +
+    'vendor=' + vendor + '\n' +
+    'gl_version=' + glVersion;
   document.title = 'waypipe-venus:' + renderer;
 </script>
 </body>

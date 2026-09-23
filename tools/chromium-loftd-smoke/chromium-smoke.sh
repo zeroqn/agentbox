@@ -14,8 +14,10 @@
 # headless + GL) and a host waypipe client, launches loftd with
 # --waypipe=<socket>, and scores the waypipe transport: the guest's waypipe
 # server connecting, the guest Chromium rendering on venus while presenting
-# through waypipe, the pattern frame arriving in the compositor, and a
-# no---waypipe control run that must NOT deliver that frame.
+# through waypipe, the page's frame arriving in the compositor (its magenta
+# background and the cyan renderer overlay the page prints), and a
+# no---waypipe control run that must NOT deliver that frame. The frame and its
+# control are also copied out as weston-screenshot*.png for a human to open.
 #
 # Exit 0 only when fresh, non-empty evidence proves: chromium version, an
 # ANGLE WebGL renderer on the Vulkan backend (not SwiftShader) from the probe
@@ -139,6 +141,10 @@ if [ -z "$out_dir" ]; then
   out_dir="$repo_root/.smoke/chromium-loftd/$(date -u +%Y%m%dT%H%M%SZ)"
 fi
 mkdir -p "$out_dir/logs" "$out_dir/config/loftd"
+# The top-level screenshots are this run's copies of scored frames. A reused
+# --out-dir would otherwise leave the previous run's image behind, and the
+# verdict would point a human at a frame from an older run.
+rm -f "$out_dir/weston-screenshot.png" "$out_dir/weston-screenshot-control.png"
 [ -n "$state_home" ] || state_home="$out_dir/state"
 
 # loftd's only implemented task-rootfs backend is btrfs-snapshot, and it
@@ -290,10 +296,11 @@ if [ "$waypipe_mode" -eq 1 ]; then
     exit 2
   fi
 
-  # -n/--no-gpu blocks dmabuf. With dmabuf enabled the host compositor's format
-  # modifiers reach the guest over the waypipe display and venus rejects them
-  # (VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT), which crash-loops
-  # Chromium's GPU process. Buffers then travel as wl_shm instead.
+  # -n/--no-gpu blocks dmabuf, so the guest's buffers travel as wl_shm. The
+  # buffer-descriptor failure this mode first recorded is fixed (the guest now
+  # publishes the host's real GBM layout as LINEAR), but with dmabuf enabled the
+  # presenting Chromium GPU process still aborts and never paints, so the flag
+  # stays. See the dmabuf bullet in the README for the measured mechanism.
   env XDG_RUNTIME_DIR="$waypipe_run" WAYLAND_DISPLAY="$weston_socket" \
     "$waypipe_bin" -d -n --socket "$waypipe_sock" client \
     >"$out_dir/logs/waypipe-client.log" 2>&1 &
@@ -440,16 +447,47 @@ if [ "$waypipe_mode" -eq 1 ]; then
     fail=1
   fi
 
+  # Two colours, two claims, one screenshot. #ff00ff is the page's background:
+  # it proves the guest's frame reached the compositor (transport). #00ffff is
+  # the colour the page prints its renderer=/vendor=/gl_version= overlay in:
+  # counting it proves the screenshot a human opens really carries the renderer,
+  # so the frame itself supports the hardware-acceleration claim instead of only
+  # the host log doing so. The overlay is text, hence the per-channel tolerance
+  # for antialiased glyph edges; which text it holds is a human (or OCR) job,
+  # and the frame must not be asked to prove more than that - the presenting
+  # page cannot draw with WebGL at all (see the README).
   present_px=0
+  present_frame=""
+  overlay_px=0
+  overlay_frame=""
+  scored_frame=""
   for f in "$E/host-frame-early.png" "$E/host-frame-late.png"; do
     [ -s "$f" ] || continue
     n="$("$python_bin" "$tool_dir/png-colour-count.py" "$f" ff00ff 2>/dev/null || echo 0)"
-    [ "${n:-0}" -gt "$present_px" ] && present_px="$n"
+    m="$("$python_bin" "$tool_dir/png-colour-count.py" "$f" 00ffff 16 2>/dev/null || echo 0)"
+    [ "${n:-0}" -gt "$present_px" ] && { present_px="$n"; present_frame="$f"; }
+    [ "${m:-0}" -gt "$overlay_px" ] && { overlay_px="$m"; overlay_frame="$f"; }
+    # The frame a human is pointed at should show both claims at once.
+    if [ -z "$scored_frame" ] && [ "${n:-0}" -ge 5000 ] && [ "${m:-0}" -ge 500 ]; then
+      scored_frame="$f"
+    fi
   done
+  # Keep the best capture as a top-level artefact: the pixel counts are the
+  # score, but a human still has to be able to look at the window that produced
+  # them - the frame holds the page's renderer=/vendor= overlay as well.
+  if [ -n "$present_frame" ]; then
+    cp "${scored_frame:-$present_frame}" "$out_dir/weston-screenshot.png"
+  fi
   if [ "$present_px" -ge 5000 ]; then
-    echo "PASS  frame-presented (host compositor screenshot holds $present_px pattern pixels)"
+    echo "PASS  frame-presented (${present_frame##*/} holds $present_px pattern pixels)"
   else
     echo "FAIL  frame-presented (best host screenshot holds $present_px pattern pixels, need >= 5000; the guest's frame never reached the compositor)"
+    fail=1
+  fi
+  if [ "$overlay_px" -ge 500 ]; then
+    echo "PASS  renderer-on-frame (${overlay_frame##*/} holds $overlay_px pixels of the page's renderer overlay, so the screenshot names the renderer)"
+  else
+    echo "FAIL  renderer-on-frame (best host screenshot holds $overlay_px pixels of the overlay colour 00ffff, need >= 500; the presented page did not print its renderer)"
     fail=1
   fi
 
@@ -457,14 +495,23 @@ if [ "$waypipe_mode" -eq 1 ]; then
   # read as "no pattern pixels" and pass the check for the wrong reason.
   control_px=0
   control_missing=0
+  control_frame=""
   for f in "$E/control-frame-early.png" "$E/control-frame-late.png"; do
     if ! fresh "$f"; then
       control_missing=1
       continue
     fi
+    # The control capture is the attribution half: a user comparing it with the
+    # presenting frame should see black next to the pattern. Every control frame
+    # is expected to be pattern-free, so the first fresh one is as good as any
+    # ("best" would be arbitrary - and picking by pattern count would pick none).
+    [ -n "$control_frame" ] || control_frame="$f"
     n="$("$python_bin" "$tool_dir/png-colour-count.py" "$f" ff00ff 2>/dev/null || echo 0)"
     [ "${n:-0}" -gt "$control_px" ] && control_px="$n"
   done
+  if [ -n "$control_frame" ]; then
+    cp "$control_frame" "$out_dir/weston-screenshot-control.png"
+  fi
   if [ "$control_missing" -eq 1 ]; then
     echo "FAIL  control-no-frame (the control run produced no fresh compositor screenshot; attribution is unproven)"
     fail=1
@@ -483,13 +530,27 @@ if [ "$waypipe_mode" -eq 1 ]; then
   echo "INFO  presenting $(head -1 "$E/presenting-waypipe-state.txt" 2>/dev/null | cut -c1-170)"
 fi
 
+screenshot_note() { # the frames a human can open to verify the run by eye
+  if [ "$waypipe_mode" -eq 1 ]; then
+    if [ -s "$out_dir/weston-screenshot.png" ]; then
+      echo "  screenshot: $out_dir/weston-screenshot.png (weston frame of the presented guest window)"
+    fi
+    if [ -s "$out_dir/weston-screenshot-control.png" ]; then
+      echo "  screenshot: $out_dir/weston-screenshot-control.png (control: the same guest work without --waypipe)"
+    fi
+  fi
+  return 0
+}
+
 if [ "$fail" -eq 0 ]; then
   echo "VERDICT: PASS — evidence: $E (fresh, $(stat -c %Y "$E"/* 2>/dev/null | wc -l) files)"
+  screenshot_note
   exit 0
 fi
 
 echo "VERDICT: FAIL — inspect:"
 echo "  evidence: $E"
+screenshot_note
 echo "  console:  $out_dir/logs/loftd.console"
 echo "  guest chromium logs are mirrored into the evidence dir (chromium-gpu.log, chromium-webgl.log)"
 exit 1

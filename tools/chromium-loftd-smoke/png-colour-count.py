@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Count pixels of one exact RGB colour in a PNG. Usage: png-colour-count.py FILE RRGGBB
+"""Count RGB pixels in a PNG. Usage: png-colour-count.py FILE RRGGBB [TOL]
+
+Without TOL a pixel counts only when it is exactly the target colour. TOL (0-255)
+counts a pixel when every channel is within TOL of the target, which the smoke
+uses for the page's renderer overlay: the overlay is text, so glyph interiors are
+exact while the antialiased edges are blended, and a few hundred pixels of slack
+keeps the count stable without accepting anything else on the page.
 
 Used by the --waypipe smoke to assert that the guest's painted pattern really
 reached the host compositor's screenshot. A file-existence or file-size check is
@@ -61,15 +67,17 @@ def decode(path):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         raise SystemExit(__doc__)
     path, target = sys.argv[1], sys.argv[2].lower()
+    tol = int(sys.argv[3]) if len(sys.argv) == 4 else 0
     want = bytes.fromhex(target)
     channels, rows = decode(path)
     count = 0
     for row in rows:
         for i in range(0, len(row), channels):
-            if row[i:i + 3] == want:
+            pixel = row[i:i + 3]
+            if all(abs(pixel[c] - want[c]) <= tol for c in range(3)):
                 count += 1
     print(count)
 

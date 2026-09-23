@@ -19,11 +19,13 @@ load resources. The environment is otherwise reproduced by the repository
 inputs; the one host prerequisite is a btrfs output filesystem and an
 amdgpu-backed DRM render node (see Prerequisites).
 
-## Baseline status (2026-09-22)
+## Baseline status (2026-09-23)
 
 Measured against the pinned `pins.libkrunRelease` (`loftd-3842e7383799`) and the
-packaged `.#loftd-prebuilt` 0.6.6 — the repo's reproducible starting point, **not**
-the uncommitted `deps/libkrun` GPU experiments:
+packaged `.#loftd-prebuilt` (release asset `sha-f502ab1346a7`, the same asset the
+2026-09-22 baseline used) with `.#agentbox-musl` built from the tree — the repo's
+reproducible starting point, **not** the uncommitted `deps/libkrun` GPU
+experiments:
 
 ```text
 PASS  version       Chromium 153.0.8010.52
@@ -33,25 +35,35 @@ PASS  webgl-png     non-empty screenshot
 VERDICT: PASS
 ```
 
-And with `--waypipe` (same pinned artifacts, 2026-09-22):
+And with `--waypipe` (same pinned artifacts, 2026-09-23, with weston 15.0.1 and
+waypipe 0.11.0):
 
 ```text
-PASS  version            Chromium 153.0.8010.52
-PASS  chromium-rc        gpu-dom=0 webgl=0 dom=0
-PASS  webgl-vulkan       headless run: ANGLE/Vulkan on venus
-PASS  webgl-png          non-empty screenshot
-PASS  waypipe-transport  guest waypipe server connected to the host client
-PASS  venus-presenting   waypipe-venus:ANGLE (AMD, Vulkan 1.4.334 (Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33)), venus)
-PASS  frame-presented    host compositor screenshot holds 210047 pattern pixels
-PASS  control-no-frame   without --waypipe the same work delivers 0 pattern pixels
-INFO  compositor         GL renderer: AMD Radeon RX 7600M XT (radeonsi, navi33, ...)
-VERDICT: PASS
+PASS  version             Chromium 153.0.8010.52
+PASS  chromium-rc         gpu-dom=0 webgl=0 dom=0
+PASS  webgl-vulkan        headless run: ANGLE/Vulkan on venus
+PASS  webgl-png           non-empty screenshot
+PASS  waypipe-transport   guest waypipe server connected to the host client
+PASS  venus-presenting    waypipe-venus:ANGLE (AMD, Vulkan 1.4.334 (Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33)), venus)
+PASS  frame-presented     host-frame-early.png holds 100928 pattern pixels
+PASS  renderer-on-frame   host-frame-early.png holds 4616 pixels of the page's renderer overlay, so the screenshot names the renderer
+PASS  control-no-frame    without --waypipe the compositor screenshot holds 0 pattern pixels
+INFO  compositor          GL renderer: AMD Radeon RX 7600M XT (radeonsi, navi33, ACO, DRM 3.64, 7.2.4-cachyos-lto)
+INFO  presenting          mode=waypipe wayland_display=loftd-waypipe-0 gbm_backends_path=/usr/lib/loftd-mesa-runtime/lib/gbm alive_after_dwell_secs=90 alive=yes
+VERDICT: PASS — evidence: <out>/workspace/evidence (fresh, 21 files)
+  screenshot: <out>/weston-screenshot.png (weston frame of the presented guest window)
+  screenshot: <out>/weston-screenshot-control.png (control: the same guest work without --waypipe)
 ```
+
+`renderer-on-frame` and the `weston-screenshot.png` copies are new here; the
+earlier `frame-presented ... 210047 pattern pixels` line came from the pattern
+page of the first baseline, which the renderer overlay replaced.
 
 So hardware-accelerated Chromium presents through loftd's waypipe transport: the
 guest's GPU process renders on venus while its window reaches a host-side
 compositor, and the venus renderer itself is read off the *host* waypipe client
-log (the guest page publishes it as the window title).
+log (the guest page publishes it as the window title) and printed on the page,
+so the screenshot names it too.
 
 **GPU acceleration works**: Chromium in the loftd microVM renders WebGL through
 the host GPU via `virtio-gpu` venus (`--gpu=drm`), with RADV on the host.
@@ -110,6 +122,45 @@ the part that is easy to get wrong:
   GPU process still aborts (`GPU process exited unexpectedly: exit_code=6`) and
   never paints, which fails the `venus-presenting` check. Buffers therefore
   travel as `wl_shm`: rendering is accelerated, the transfer is not zero-copy.
+
+The run also keeps the frames it scored, so a user can check the verdict by eye
+instead of trusting the pixel count: `<out>/weston-screenshot.png` is the best
+presenting capture and `<out>/weston-screenshot-control.png` the control's, and
+both verdict branches print their paths. The presenting frame is the readable
+half of the evidence: a magenta page carrying the page's own cyan
+`renderer=ANGLE (... Virtio-GPU Venus ..., venus)` overlay, so the image alone
+shows the frame arrived *and* names the hardware renderer. The control frame is
+the bare compositor (no guest window), which is what makes the presented frame
+attributable to the transport.
+
+### Why the presenting page does not draw WebGL
+
+The page only *reads* the WebGL renderer string; it never draws. That is not an
+omission, it is a measured wall: in the presenting run (`--ozone-platform=wayland
+--use-angle=vulkan`) any WebGL draw aborts the guest's GPU process, and the
+canvas is lost while the rest of the page keeps presenting. Measured on this host
+(pinned artifacts, 2026-09-23), with the same page, run and VM:
+
+| page | GPU process | frame |
+| --- | --- | --- |
+| context + `getParameter` only (what ships) | survives | magenta page + overlay |
+| visible canvas, `clear` + triangle | `exit_code=6` (SIGABRT) after the draw | magenta page + overlay, canvas region empty |
+| hidden canvas, triangle + `toDataURL()` into an `<img>` | `exit_code=8704`, `Restarting GPU process due to unrecoverable error. Context was lost.` | magenta page + overlay, image never appears |
+
+The same context is created without a crash in the headless runs (that is what
+`webgl-vulkan` reads), so the wall is specific to drawing in the presenting run;
+the headless pages do not draw either, and this smoke does not claim they do.
+
+The loss shows up in the page as `WebGL: CONTEXT_LOST_WEBGL`; the GPU process is
+reinitialised afterwards and the page's *later* paints still present, which is why
+a crash is easy to miss from the screenshot alone. So the presenting run cannot
+put GPU-drawn pixels in its own frame on this stack, and the frame's
+hardware-acceleration evidence is the renderer string the page prints (readable
+in `weston-screenshot.png`) plus the host-side title check, not a GPU-rendered
+image. Do not "fix" `renderer-on-frame` by adding a WebGL draw to the page: it
+will fail as above. Getting GPU-drawn pixels into a waypipe frame is its own
+problem (candidate: publish a headless venus render into the page), not a change
+to this check.
 
 Reproducing a pinned baseline (rooted so a later `nix-collect-garbage` cannot
 delete the artifacts mid-run):
@@ -209,10 +260,11 @@ Frozen in `docs/wayfinder/waypipe-gpu-smoke/tickets/04-freeze-waypipe-mode-desig
 
 **What it proves.** That loftd's `--waypipe` path carries a real Wayland client
 from the guest to a host compositor, and that the client is hardware-accelerated
-while doing it. Four things, scored separately so a failure says which half broke:
+while doing it. Five things, scored separately so a failure says which half broke:
 the transport connected; the presenting Chromium rendered on venus; the frame
-arrived at the compositor; and the same work *without* `--waypipe` delivers
-nothing (attribution).
+arrived at the compositor; that frame carries the renderer the page printed into
+it, so the screenshot names the hardware renderer by itself; and the same work
+*without* `--waypipe` delivers nothing (attribution).
 
 **Flags.**
 
@@ -243,6 +295,7 @@ to be fresh (non-empty and mtime >= run start):
 | `waypipe-transport` | `host-waypipe-client.log` | holds `Connection received` and `Connected waypipe-server` |
 | `venus-presenting` | `host-waypipe-client.log` | a `set_title("waypipe-venus:...")` line naming `Vulkan` and `venus`, never `SwiftShader` |
 | `frame-presented` | `host-frame-early.png`, `host-frame-late.png` | either holds >= 5000 pixels of the pattern colour |
+| `renderer-on-frame` | `host-frame-early.png`, `host-frame-late.png` | either holds >= 500 pixels of the cyan the page's `renderer=`/`vendor=`/`gl_version=` overlay is printed in (counted with a 16/255 per-channel tolerance) |
 | `control-no-frame` | `control-frame-early.png`, `control-frame-late.png` | neither holds >= 5000 pattern pixels |
 | the four headless checks | as in the default mode | unchanged |
 
@@ -256,7 +309,19 @@ to be fresh (non-empty and mtime >= run start):
   must not sit on the scored path.
 - **The frame is asserted on pixels, never on the file.** Without `--debug` weston
   refuses capture and writes a plausible all-black PNG, so the check decodes the
-  image (`png-colour-count.py`, stdlib `zlib` only).
+  image (`png-colour-count.py`, stdlib `zlib` only; an optional per-channel
+  tolerance absorbs antialiased glyph edges in the renderer overlay).
+- **The screenshot carries the hardware-acceleration claim, not just the frame.**
+  The pattern page paints a magenta background and prints
+  `renderer=`/`vendor=`/`gl_version=` into an on-page overlay drawn in `#00ffff`.
+  So one PNG answers both halves: magenta pixels say the guest's frame reached
+  the compositor, and cyan pixels say the renderer readout really is in the
+  image a human opens — `renderer-on-frame` fails if the overlay stops reaching
+  the frame, so the screenshot cannot silently lose the claim. The window title
+  carries the same string into the host-side log, which is where the mode's
+  machine-checkable venus evidence comes from; the overlay is that string for a
+  human. Nothing here proves the frame was *drawn* on the GPU: the page cannot
+  draw with WebGL in this run at all, see below.
 - **A control run is mandatory.** A green frame check on its own cannot show the
   frame arrived *through the transport*.
 - **Preflights check liveness, not just sockets.** `--out-dir` is reused between
@@ -289,6 +354,9 @@ input events; weston on real DRM/KMS; transports other than vsock.
   waypipe/run/              private XDG_RUNTIME_DIR for the compositor
   waypipe/shot/             weston-screenshooter working dir
   waypipe/waypipe.sock      the socket loftd is given (--waypipe only)
+  weston-screenshot.png     best presenting frame (magenta page + the page's cyan
+                            renderer= overlay), for a human to look at
+  weston-screenshot-control.png  control frame (bare compositor), same guest work without --waypipe
   logs/*                    mirrored chromium logs live in evidence/
 ```
 
@@ -310,6 +378,12 @@ input events; weston on real DRM/KMS; transports other than vsock.
 - **Disk space**: the loftd image (with the in-image Chromium) decompresses to
   ~7.7 GiB. The smoke keeps a 12 GiB free-space preflight on the output
   filesystem and fails fast with a clear message rather than mid-load ENOSPC.
+  Each run loads the image into a fresh hermetic store under `--out-dir`, and a
+  finished run cannot be removed with a plain `rm -rf` (rootless podman owns the
+  layer subvolumes through its subuid mapping, so the delete fails with
+  `Permission denied` on files such as `.../home/dev/.terminfo/*`). Clean it
+  inside that mapping instead: `podman unshare chmod -R u+w <out-dir> &&
+  podman unshare rm -rf <out-dir>`.
 
 ## Triage
 
@@ -337,10 +411,18 @@ input events; weston on real DRM/KMS; transports other than vsock.
   did not report a venus renderer. Read `presenting-waypipe.log` and
   `presenting-waypipe-state.txt`: a missing `GBM_BACKENDS_PATH`, an added
   `--enable-features=Vulkan`, or a GPU process crash loop are the usual causes.
-- **FAIL frame-presented** — the window never reached the compositor. Compare
-  `host-frame-*.png` with `control-frame-*.png`; raise `--present-wait` if the
-  guest was simply slow, and check `presenting-waypipe-state.txt` for whether the
-  browser was alive at the end of its dwell.
+- **FAIL frame-presented** — the window never reached the compositor. Open
+  `<out>/weston-screenshot.png` against `<out>/weston-screenshot-control.png`
+  (the same frames the check scored, in `host-frame-*.png` / `control-frame-*.png`
+  form in the evidence dir); raise `--present-wait` if the guest was simply slow,
+  and check `presenting-waypipe-state.txt` for whether the browser was alive at
+  the end of its dwell.
+- **FAIL renderer-on-frame** — the frame arrived but the page's renderer overlay
+  did not (magenta present, cyan missing). Open `<out>/weston-screenshot.png`:
+  if the overlay is missing the page never painted it, and
+  `presenting-waypipe.log` says why (a GPU process crash takes the page's later
+  paints with it). `presenting-waypipe-state.txt` reports whether the browser
+  was alive at the end of its dwell.
 - **FAIL control-no-frame** — the pattern appeared without `--waypipe`, so the
   frame check proves nothing; look for a leftover window on the compositor.
 
