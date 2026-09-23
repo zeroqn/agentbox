@@ -23,7 +23,11 @@ embeds them.
 - `crates/loftd-repository-tests/`: repository-wide invariant tests over Nix,
   workflow, and documentation content.
 - `flake.nix`: development shell, Rust packages, and container image definition.
-- `README.md`: user-facing build, run, and runtime usage documentation.
+- `README.md`: user-facing overview, prerequisites, quick start, and pointers
+  to the topic docs.
+- `docs/`: topic documentation (`usage`, `graphics-audio`, `security`,
+  `networking`, `images-and-storage`, `diagnostics`, `internals`, `build`,
+  `maintenance`) plus `docs/adr/`, `docs/design/`, and `docs/wayfinder/`.
 - `Cargo.toml` / `Cargo.lock`: Rust workspace metadata and dependency lockfile.
 
 ## Working Style

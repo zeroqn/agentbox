@@ -300,7 +300,7 @@ if [ "$waypipe_mode" -eq 1 ]; then
   # buffer-descriptor failure this mode first recorded is fixed (the guest now
   # publishes the host's real GBM layout as LINEAR), but with dmabuf enabled the
   # presenting Chromium GPU process still aborts and never paints, so the flag
-  # stays. See the dmabuf bullet in the README for the measured mechanism.
+  # stays. See docs/graphics-audio.md for the Waypipe GPU rendering path.
   env XDG_RUNTIME_DIR="$waypipe_run" WAYLAND_DISPLAY="$weston_socket" \
     "$waypipe_bin" -d -n --socket "$waypipe_sock" client \
     >"$out_dir/logs/waypipe-client.log" 2>&1 &
@@ -455,7 +455,7 @@ if [ "$waypipe_mode" -eq 1 ]; then
   # the host log doing so. The overlay is text, hence the per-channel tolerance
   # for antialiased glyph edges; which text it holds is a human (or OCR) job,
   # and the frame must not be asked to prove more than that - the presenting
-  # page cannot draw with WebGL at all (see the README).
+  # page cannot draw with WebGL at all (see docs/graphics-audio.md).
   present_px=0
   present_frame=""
   overlay_px=0
