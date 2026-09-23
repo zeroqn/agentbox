@@ -101,6 +101,30 @@ fn internal_runtime_parses_authoritative_host_nix_overlay_marker() {
 }
 
 #[test]
+fn internal_runtime_ignores_legacy_agentbox_env_names() {
+    let _guard = ENV_LOCK.lock().expect("env test lock");
+    // SAFETY: test mutates process env in a small single-threaded assertion.
+    unsafe {
+        std::env::set_var("AGENTBOX_LIBKRUN_NIX_OVERLAY", "1");
+        std::env::set_var("AGENTBOX_ENTER_AS_ROOT", "1");
+        std::env::set_var("AGENTBOX_HOST_UID", "2000");
+        std::env::remove_var("LOFTD_NIX_OVERLAY");
+        std::env::remove_var(ENTER_AS_ROOT_ENV);
+        std::env::remove_var("LOFTD_HOST_UID");
+    }
+    let parsed = LoftdEnv::from_process_env().expect("legacy env names should be ignored");
+    unsafe {
+        std::env::remove_var("AGENTBOX_LIBKRUN_NIX_OVERLAY");
+        std::env::remove_var("AGENTBOX_ENTER_AS_ROOT");
+        std::env::remove_var("AGENTBOX_HOST_UID");
+    }
+
+    assert!(!parsed.nix_overlay);
+    assert!(!parsed.enter_as_root);
+    assert_eq!(parsed.host_uid, None);
+}
+
+#[test]
 fn internal_runtime_parses_unified_permissions() {
     let _guard = ENV_LOCK.lock().expect("env test lock");
     unsafe {

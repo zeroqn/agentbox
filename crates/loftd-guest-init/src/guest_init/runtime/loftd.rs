@@ -13,12 +13,6 @@ use crate::guest_init::{command, process, profile};
 
 const HOST_UID_ENV: &str = "LOFTD_HOST_UID";
 const HOST_GID_ENV: &str = "LOFTD_HOST_GID";
-const LEGACY_HOST_UID_ENV: &str = "AGENTBOX_HOST_UID";
-const LEGACY_HOST_GID_ENV: &str = "AGENTBOX_HOST_GID";
-const LEGACY_ENTER_AS_ROOT_ENV: &str = "AGENTBOX_ENTER_AS_ROOT";
-const LEGACY_NIX_OVERLAY_ENV: &str = "AGENTBOX_LIBKRUN_NIX_OVERLAY";
-const LEGACY_CONTAINERS_STORAGE_ENV: &str = "AGENTBOX_LIBKRUN_CONTAINERS_STORAGE";
-const LEGACY_USE_PASST_ENV: &str = "AGENTBOX_LIBKRUN_USE_PASST";
 const SESSION_MANAGED_ENV: &str = "LOFTD_SESSION_MANAGED";
 const ATTACH_PORT_ENV: &str = "LOFTD_ATTACH_PORT";
 const ATTACH_PROTOCOL_VERSION_ENV: &str = "LOFTD_ATTACH_PROTOCOL_VERSION";
@@ -311,9 +305,9 @@ pub(in crate::guest_init) fn enter(command: Vec<String>) -> Result<()> {
 impl EnterEnv {
     fn from_env(env: &impl EnvSource) -> Result<Self> {
         Ok(Self {
-            enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
-            host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
-            host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
+            enter_as_root: env_flag(env, ENTER_AS_ROOT_ENV),
+            host_uid: parse_optional_u32(env, HOST_UID_ENV)?,
+            host_gid: parse_optional_u32(env, HOST_GID_ENV)?,
             loftd: loftd_env_from(env)?,
             pulse: parse_pulse_endpoint(env)?,
             waypipe_port: parse_optional_u32(env, WAYPIPE_PORT_ENV)?,
@@ -400,25 +394,21 @@ fn parse_required_u16(env: &impl EnvSource, name: &str) -> Result<u16> {
 
 fn loftd_env_from(env: &impl EnvSource) -> Result<LoftdEnv> {
     Ok(LoftdEnv {
-        nix_overlay: env_flag_any(env, "LOFTD_NIX_OVERLAY", LEGACY_NIX_OVERLAY_ENV),
+        nix_overlay: env_flag(env, "LOFTD_NIX_OVERLAY"),
         nix_host_overlay: env_flag(env, "LOFTD_NIX_HOST_OVERLAY"),
-        containers_storage: env_flag_any(
-            env,
-            "LOFTD_CONTAINERS_STORAGE",
-            LEGACY_CONTAINERS_STORAGE_ENV,
-        ),
+        containers_storage: env_flag(env, "LOFTD_CONTAINERS_STORAGE"),
         container_store_backend: ContainerStoreBackend::from_optional_env_value(
             env.var(CONTAINERS_STORE_ENV),
         )?,
-        use_passt: env_flag_any(env, "LOFTD_USE_PASST", LEGACY_USE_PASST_ENV),
+        use_passt: env_flag(env, "LOFTD_USE_PASST"),
         gpu_drm: env_flag(env, "LOFTD_GPU_DRM"),
         wayland: env_flag(env, "LOFTD_WAYLAND"),
         permissions: env
             .var("LOFTD_PERMISSIONS")
             .map_or(Ok(Default::default()), |value| value.parse())?,
-        enter_as_root: env_flag_any(env, ENTER_AS_ROOT_ENV, LEGACY_ENTER_AS_ROOT_ENV),
-        host_uid: parse_optional_u32_any(env, HOST_UID_ENV, LEGACY_HOST_UID_ENV)?,
-        host_gid: parse_optional_u32_any(env, HOST_GID_ENV, LEGACY_HOST_GID_ENV)?,
+        enter_as_root: env_flag(env, ENTER_AS_ROOT_ENV),
+        host_uid: parse_optional_u32(env, HOST_UID_ENV)?,
+        host_gid: parse_optional_u32(env, HOST_GID_ENV)?,
         nix_disk_id: env
             .var("LOFTD_NIX_DISK_ID")
             .unwrap_or_else(|| crate::guest_init::components::env::RAW_NIX_DISK_ID.to_owned()),
@@ -438,21 +428,8 @@ fn prepared_root_targets() -> Vec<&'static str> {
     PREPARED_ROOT_TARGETS.to_vec()
 }
 
-fn env_flag_any(env: &impl EnvSource, primary: &str, legacy: &str) -> bool {
-    env_flag(env, primary) || env_flag(env, legacy)
-}
-
 fn env_flag(env: &impl EnvSource, name: &str) -> bool {
     env.var(name).as_deref() == Some("1")
-}
-
-fn parse_optional_u32_any(
-    env: &impl EnvSource,
-    primary: &str,
-    legacy: &str,
-) -> Result<Option<u32>> {
-    parse_optional_u32(env, primary)?
-        .map_or_else(|| parse_optional_u32(env, legacy), |value| Ok(Some(value)))
 }
 
 fn parse_optional_u32(env: &impl EnvSource, name: &str) -> Result<Option<u32>> {
@@ -830,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn loftd_env_accepts_current_host_agentbox_compat_names() {
+    fn loftd_env_ignores_legacy_agentbox_env_names() {
         let env = EnterEnv::from_env(&env(&[
             ("AGENTBOX_LIBKRUN_NIX_OVERLAY", "1"),
             ("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE", "1"),
@@ -839,18 +816,18 @@ mod tests {
             ("AGENTBOX_HOST_UID", "2000"),
             ("AGENTBOX_HOST_GID", "2001"),
         ]))
-        .expect("compat env should parse");
+        .expect("legacy env names should be ignored");
 
-        assert!(env.enter_as_root);
-        assert!(env.loftd.nix_overlay);
-        assert!(env.loftd.containers_storage);
+        assert!(!env.enter_as_root);
+        assert!(!env.loftd.nix_overlay);
+        assert!(!env.loftd.containers_storage);
         assert_eq!(
             env.loftd.container_store_backend,
             ContainerStoreBackend::RawDisk
         );
-        assert!(env.loftd.use_passt);
-        assert_eq!(env.host_uid, Some(2000));
-        assert_eq!(env.host_gid, Some(2001));
+        assert!(!env.loftd.use_passt);
+        assert_eq!(env.host_uid, None);
+        assert_eq!(env.host_gid, None);
     }
 
     #[test]
