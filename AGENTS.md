@@ -2,36 +2,41 @@
 
 ## Purpose
 
-This repository contains `agentbox`, a small Rust CLI that launches an interactive
-Podman container shell with the current working directory mounted at
-`/workspace`.
+This repository contains `loftd`, a Rust CLI that launches a direct-libkrun
+microVM task environment from an OCI image with the current working directory
+mounted at `/workspace`.
 
-It also supports an optional host-side `fuse-overlayfs` mount rooted under
-`.agentbox/` and bind-mounts the merged result into the container at `/nix/store`.
+The repository also builds the guest bootstrap binary `loftd-guest-init`, the
+guest protocol crates it shares with the host, and the container image that
+embeds them.
 
 ## Repository Layout
 
-- `crates/agentbox-host/`: host-side `agentbox` CLI, Podman/libkrun runtime
-  orchestration, mount/state handling, and host-side unit tests.
-- `crates/agentbox-guest-init/`: in-guest `agentbox-guest-init` bootstrap
-  binary, root/user setup, guest Podman preparation, status files, and tests.
+- `crates/loftd/`: host-side `loftd` CLI, libkrun runtime orchestration, OCI
+  image ingestion, task rootfs/storage handling, Landlock/seccomp sandboxing,
+  and host-side tests.
+- `crates/loftd-guest-init/`: in-guest `loftd-guest-init` bootstrap binary,
+  root/user setup, guest Podman preparation, status files, and tests.
+- `crates/loftd-attach-protocol/`: attach/detach protocol shared by host and
+  guest.
+- `crates/loftd-exec-protocol/`: guest exec protocol shared by host and guest.
+- `crates/loftd-repository-tests/`: repository-wide invariant tests over Nix,
+  workflow, and documentation content.
 - `flake.nix`: development shell, Rust packages, and container image definition.
-- `README.md`: user-facing build, run, and overlay usage documentation.
+- `README.md`: user-facing build, run, and runtime usage documentation.
 - `Cargo.toml` / `Cargo.lock`: Rust workspace metadata and dependency lockfile.
 
 ## Working Style
 
 - Keep changes narrow and consistent with the host/guest crate ownership split.
-- Write host-crate behavioral tests under `crates/agentbox-host/src/`. These
-  tests exercise the host crate's own public or internal APIs (CLI, runtime,
-  Podman orchestration, mount, state). Do not add loftd-specific tests or
-  cross-cutting repository-invariant checks (documentation strings, ADR prose,
-  Nix file content assertions) here.
-- Write guest-crate behavioral tests under `crates/agentbox-guest-init/src/`.
+- Write host-crate behavioral tests under `crates/loftd/src/`. These tests
+  exercise the host crate's own public or internal APIs (CLI, runtime, storage,
+  sandboxing).
+- Write guest-crate behavioral tests under `crates/loftd-guest-init/src/`.
   These tests exercise in-guest bootstrap, root/user setup, guest Podman prep,
   or status logic.
-- Write loftd host-crate tests under `crates/loftd/src/`.
-- Write loftd guest-crate tests under `crates/loftd-guest-init/src/`.
+- Write repository-invariant tests (Nix file content, workflow, documentation,
+  or ADR prose assertions) under `crates/loftd-repository-tests/`.
 - Update `README.md` whenever user-visible behavior, requirements, or run
   commands change.
 - Preserve any existing user changes in the worktree. Do not revert unrelated
@@ -50,20 +55,14 @@ Common commands:
 ```bash
 cargo build
 cargo test
-nix build .#agentbox
+nix build .#loftd
 nix build .#container
 ```
 
 To run the CLI from a built artifact:
 
 ```bash
-AGENTBOX_IMAGE=localhost/agentbox:latest ./result/bin/agentbox
-```
-
-To exercise host overlay mode:
-
-```bash
-AGENTBOX_HOST_NIX_OVERLAY=1 ./result/bin/agentbox
+./result/bin/loftd --help
 ```
 
 ## Validation
@@ -82,18 +81,16 @@ tests pass.
 
 If behavior touches container runtime or FUSE integration, also verify manually:
 
-- container starts successfully with `podman`
+- the container image starts successfully with `podman`
 - `/workspace` is mounted as expected
-- overlay mode creates or reuses `.agentbox/nix-upper`, `.agentbox/nix-work`,
-  and `.agentbox/nix-merged`
-- overlay mount is cleaned up after shell exit
 
 ## Safety Notes
 
-- Do not remove or reset `.agentbox/` contents unless explicitly requested.
+- Do not remove or reset `.loftd/` or loftd state-root contents unless
+  explicitly requested.
 - Avoid destructive git operations unless explicitly requested.
 - Treat Podman, FUSE, and host `/nix/store` assumptions as environment-dependent
-  and verify them when changing overlay behavior.
+  and verify them when changing runtime behavior.
 
 ## Communication
 

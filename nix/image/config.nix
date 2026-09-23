@@ -1,4 +1,4 @@
-{ pkgs, agentboxMuslPackage, configPayloads, layers, imageVariant }:
+{ pkgs, loftdMuslPackage, configPayloads, layers }:
 
 let
   nixConfig = import ./nix-config.nix;
@@ -7,7 +7,7 @@ let
     "USER=dev"
     "SHELL=${pkgs.fish}/bin/fish"
     "LIBCLANG_PATH=${pkgs.libclang.lib}/lib"
-    "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${agentboxMuslPackage}/bin"
+    "PATH=/home/dev/.codex/bin:/home/dev/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${layers.imagePath}:${loftdMuslPackage}/bin"
     "NIX_CONFIG=${nixConfig}"
     "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
     "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -27,47 +27,20 @@ let
     "MONTY_BIN=${layers.montyPackage}/bin/monty"
   ];
 
-  agentboxEnv = [
-    "AGENTBOX_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
-    "AGENTBOX_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"
-    "AGENTBOX_NSS_WRAPPER_LIB=${pkgs.nss_wrapper}/lib/libnss_wrapper.so"
-    "AGENTBOX_MIMALLOC_LIB=${layers.mimallocLib}"
-    "AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
-    "AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"
-  ];
-
   loftdEnv = [
-    "LOFTD_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"
-    "LOFTD_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"
+    "LOFTD_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/loftd/fish/conf.d/loftd-starship.fish"
+    "LOFTD_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/loftd/starship.toml"
     "LOFTD_MIMALLOC_LIB=${layers.mimallocLib}"
     "LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"
     "LOFTD_REAL_PODMAN=${layers.realPodmanBin}"
   ];
-
-  variants = {
-    loftd = {
-      entrypoint = [
-        "${agentboxMuslPackage}/bin/loftd-guest-init"
-        "enter"
-        "--"
-      ];
-      env = loftdEnv;
-    };
-    agentbox = {
-      entrypoint = [
-        "${agentboxMuslPackage}/bin/agentbox-guest-init"
-        "default"
-        "enter"
-        "--"
-      ];
-      env = agentboxEnv;
-    };
-  };
-
-  variant = variants.${imageVariant} or (throw "unknown image variant: ${imageVariant}");
 in
 {
-  Entrypoint = variant.entrypoint;
+  Entrypoint = [
+    "${loftdMuslPackage}/bin/loftd-guest-init"
+    "enter"
+    "--"
+  ];
   WorkingDir = "/workspace";
-  Env = commonEnv ++ variant.env;
+  Env = commonEnv ++ loftdEnv;
 }

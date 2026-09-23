@@ -2,6 +2,6 @@
 {
   default = {
     type = "app";
-    program = "${self.packages.${pkgs.system}.agentbox}/bin/agentbox";
+    program = "${self.packages.${pkgs.system}.loftd}/bin/loftd";
   };
 }

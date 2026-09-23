@@ -15,8 +15,7 @@
   bun,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
-  agentboxMuslPackage,
-  imageVariant,
+  loftdMuslPackage,
 }:
 let
   nixConfig = import ./nix-config.nix;
@@ -39,19 +38,17 @@ let
       bun
       podman
       crun
-      agentboxMuslPackage
+      loftdMuslPackage
       ;
     fishConfig = configPayloads.fishConfig;
     starshipConfig = configPayloads.starshipConfig;
-    inherit imageVariant;
   };
   imageConfig = import ./config.nix {
     inherit
       pkgs
-      agentboxMuslPackage
+      loftdMuslPackage
       configPayloads
       layers
-      imageVariant
       ;
   };
   imageChecks = import ./checks.nix {
@@ -72,17 +69,16 @@ let
       bun
       podman
       crun
-      agentboxMuslPackage
-      imageVariant
+      loftdMuslPackage
       ;
   };
   image = pkgs.dockerTools.buildLayeredImage {
-    name = "localhost/${imageVariant}";
+    name = "localhost/loftd";
     tag = "latest";
-    maxLayers = layers.agentboxImageMaxLayers;
+    maxLayers = layers.loftdImageMaxLayers;
     contents = layers.imageContents;
     includeNixDB = true;
-    layeringPipeline = layers.agentboxImageLayeringPipeline;
+    layeringPipeline = layers.loftdImageLayeringPipeline;
     fakeRootCommands = ''
       mkdir -p \
         ./etc \
@@ -122,39 +118,24 @@ let
       EOF_NIX_CONF
       chmod 0644 ./etc/nix/nix.conf
       cat > ./etc/rmux.conf <<'EOF_RMUX_CONF'
-      ${
-        if imageVariant == "loftd" then
-          ''
-            set -g mouse off
-            bind T if-shell -F '#{mouse}' 'set -g mouse off ; display-message "mouse OFF: native terminal selection enabled"' 'set -g mouse on ; display-message "mouse ON: pane mouse mode enabled"'
+      set -g mouse off
+      bind T if-shell -F '#{mouse}' 'set -g mouse off ; display-message "mouse OFF: native terminal selection enabled"' 'set -g mouse on ; display-message "mouse ON: pane mouse mode enabled"'
 
-            # Quality-of-life.
-            set -g history-limit 100000
-            set -g renumber-windows on
-            set -g base-index 1
-            setw -g pane-base-index 1
-            setw -g mode-keys vi
-            set -g status-keys vi
+      # Quality-of-life.
+      set -g history-limit 100000
+      set -g renumber-windows on
+      set -g base-index 1
+      setw -g pane-base-index 1
+      setw -g mode-keys vi
+      set -g status-keys vi
 
-            bind | split-window -h -c "#{pane_current_path}"
-            bind - split-window -v -c "#{pane_current_path}"
-            bind c new-window -c "#{pane_current_path}"
-            bind h select-pane -L
-            bind j select-pane -D
-            bind k select-pane -U
-            bind l select-pane -R
-          ''
-        else
-          ''
-            set -g mouse on
-            bind | split-window -h
-            bind - split-window -v
-            bind h select-pane -L
-            bind j select-pane -D
-            bind k select-pane -U
-            bind l select-pane -R
-          ''
-      }
+      bind | split-window -h -c "#{pane_current_path}"
+      bind - split-window -v -c "#{pane_current_path}"
+      bind c new-window -c "#{pane_current_path}"
+      bind h select-pane -L
+      bind j select-pane -D
+      bind k select-pane -U
+      bind l select-pane -R
       EOF_RMUX_CONF
       chmod 0644 ./etc/rmux.conf
       cat > ./etc/tmux.conf <<'EOF_TMUX_CONF'
@@ -169,13 +150,11 @@ let
       chmod 0644 ./etc/tmux.conf
       cp ${pkgs.ghostty.terminfo}/share/terminfo/x/xterm-ghostty ./home/dev/.terminfo/x/xterm-ghostty
       chmod 0644 ./home/dev/.terminfo/x/xterm-ghostty
-      ${pkgs.lib.optionalString (imageVariant == "loftd") ''
-        mkdir -p ./usr/lib
-        ln -s ${pkgs.mesa} ./usr/lib/loftd-mesa-runtime
-        ln -s ${pkgs.mesa} ./usr/lib/loftd-software-renderer
-        ln -s ${pkgs.fontconfig.out} ./usr/lib/loftd-fontconfig
-      ''}
-      ${pkgs.lib.optionalString (imageVariant == "loftd" && rioBin != null) ''
+      mkdir -p ./usr/lib
+      ln -s ${pkgs.mesa} ./usr/lib/loftd-mesa-runtime
+      ln -s ${pkgs.mesa} ./usr/lib/loftd-software-renderer
+      ln -s ${pkgs.fontconfig.out} ./usr/lib/loftd-fontconfig
+      ${pkgs.lib.optionalString (rioBin != null) ''
         cp ${rioBin}/share/terminfo/r/rio ./home/dev/.terminfo/r/rio
         cp ${rioBin}/share/terminfo/x/xterm-rio ./home/dev/.terminfo/x/xterm-rio
         chmod 0644 ./home/dev/.terminfo/r/rio ./home/dev/.terminfo/x/xterm-rio
@@ -199,9 +178,9 @@ if imageChecks.missingImageConfigNixDbRefs != [ ] then
 else
   image.overrideAttrs (old: {
     buildCommand = ''
-      echo "checking ${imageVariant} image config Nix DB metadata coverage"
+      echo "checking loftd image config Nix DB metadata coverage"
       test -e ${imageChecks.imageConfigNixDbRefs}/passed
-      echo "checking ${imageVariant} image wrapper contracts"
+      echo "checking loftd image wrapper contracts"
       test -e ${imageChecks.wrapperContracts}/passed
     ''
     + (old.buildCommand or "");

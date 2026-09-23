@@ -1,12 +1,12 @@
 { pkgs }:
 {
-  fishConfig = pkgs.writeTextDir "share/agentbox/fish/conf.d/agentbox-starship.fish" ''
+  fishConfig = pkgs.writeTextDir "share/loftd/fish/conf.d/loftd-starship.fish" ''
     if status is-interactive
         starship init fish | source
     end
   '';
 
-  starshipConfig = pkgs.writeTextDir "share/agentbox/starship.toml" ''
+  starshipConfig = pkgs.writeTextDir "share/loftd/starship.toml" ''
     [hostname]
     ssh_only = false
     format = "[$hostname]($style) "

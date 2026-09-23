@@ -24,8 +24,8 @@ pkgs.mkShell {
   shellHook = ''
     export SHELL=${pkgs.fish}/bin/fish
 
-    if [ -z "''${AGENTBOX_DISABLE_AUTO_FISH-}" ] && [ -t 0 ] && [ -t 1 ] && [ -z "''${AGENTBOX_IN_AUTO_FISH-}" ]; then
-      export AGENTBOX_IN_AUTO_FISH=1
+    if [ -z "''${LOFTD_DISABLE_AUTO_FISH-}" ] && [ -t 0 ] && [ -t 1 ] && [ -z "''${LOFTD_IN_AUTO_FISH-}" ]; then
+      export LOFTD_IN_AUTO_FISH=1
       exec ${pkgs.fish}/bin/fish -i -C 'starship init fish | source'
     fi
   '';

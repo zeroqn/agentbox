@@ -1,8 +1,8 @@
-{ pkgs, imageVariant ? "agentbox" }:
+{ pkgs }:
 
 let
-  toolName = if imageVariant == "loftd" then "loftd-nix-store-db-check" else "agentbox-nix-store-db-check";
-  runDir = if imageVariant == "loftd" then "/run/loftd" else "/run/agentbox";
+  toolName = "loftd-nix-store-db-check";
+  runDir = "/run/loftd";
 in
 pkgs.writeShellScriptBin toolName ''
     set -euo pipefail

@@ -1,7 +1,5 @@
 [workspace]
 members = [
-  "crates/agentbox-host",
-  "crates/agentbox-guest-init",
   "crates/loftd",
   "crates/loftd-guest-init",
   "crates/loftd-attach-protocol",
@@ -9,8 +7,6 @@ members = [
   "crates/loftd-repository-tests",
 ]
 default-members = [
-  "crates/agentbox-host",
-  "crates/agentbox-guest-init",
   "crates/loftd",
   "crates/loftd-guest-init",
   "crates/loftd-attach-protocol",

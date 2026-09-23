@@ -1,6 +1,6 @@
 { pkgs, pins, libkrun ? null, libkrunfw ? null }:
 let
-  agentboxVersion = pins.agentboxVersion;
+  loftdVersion = pins.loftdVersion;
   loftdPrebuiltRelease = pins.loftdPrebuiltRelease;
   prebuiltSystem = pkgs.stdenv.hostPlatform.system;
   supportedSystems = builtins.attrNames loftdPrebuiltRelease.systems;
@@ -44,7 +44,7 @@ if builtins.hasAttr prebuiltSystem loftdPrebuiltRelease.systems then
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "loftd";
-      version = "${agentboxVersion}-prebuilt-${loftdPrebuiltRelease.tag}";
+      version = "${loftdVersion}-prebuilt-${loftdPrebuiltRelease.tag}";
       src = pkgs.fetchurl {
         url = releaseUrl;
         hash = assetInfo.hash;

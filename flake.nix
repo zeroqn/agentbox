@@ -1,5 +1,5 @@
 {
-  description = "Rust CLI for launching a Podman shell inside a Nix-based container";
+  description = "Rust CLI for launching direct-libkrun microVM task environments";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -58,9 +58,6 @@
           symposium = import ./nix/pkgs/symposium.nix {
             inherit pkgs;
           };
-          prebuiltAgentbox = import ./nix/pkgs/agentbox-prebuilt.nix {
-            inherit pkgs pins;
-          };
           rtkPrebuilt = import ./nix/pkgs/rtk-prebuilt.nix {
             inherit pkgs pins;
           };
@@ -91,7 +88,7 @@
               libkrunfw
               ;
           };
-          rustPackages = import ./nix/pkgs/agentbox-rust.nix {
+          rustPackages = import ./nix/pkgs/loftd-rust.nix {
             inherit
               self
               pkgs
@@ -100,7 +97,7 @@
               libkrunfw
               ;
           };
-          rustPackagesCiSccache = import ./nix/pkgs/agentbox-rust.nix {
+          rustPackagesCiSccache = import ./nix/pkgs/loftd-rust.nix {
             inherit
               self
               pkgs
@@ -116,11 +113,8 @@
           podman = pkgs.podman.override {
             inherit crun;
           };
-          mkImageWith =
-            {
-              imageVariant,
-              agentboxMuslPackage,
-            }:
+          mkImage =
+            loftdMuslPackage:
             import ./nix/image/container.nix {
               inherit
                 pkgs
@@ -140,26 +134,11 @@
                 crun
                 wl-cross-domain-proxy
                 bun
-                imageVariant
                 ;
-              inherit agentboxMuslPackage;
+              inherit loftdMuslPackage;
             };
-          mkImage =
-            imageVariant:
-            mkImageWith {
-              inherit imageVariant;
-              agentboxMuslPackage = rustPackages.agentboxMuslPackage;
-            };
-          mkImageCiSccache =
-            imageVariant:
-            mkImageWith {
-              inherit imageVariant;
-              agentboxMuslPackage = rustPackagesCiSccache.agentboxMuslPackage;
-            };
-          loftdImage = mkImage "loftd";
-          agentboxImage = mkImage "agentbox";
-          loftdImageCiSccache = mkImageCiSccache "loftd";
-          agentboxImageCiSccache = mkImageCiSccache "agentbox";
+          loftdImage = mkImage rustPackages.loftdMuslPackage;
+          loftdImageCiSccache = mkImage rustPackagesCiSccache.loftdMuslPackage;
         in
         {
           default = rustPackages.rustPackage;
@@ -169,16 +148,11 @@
           omp-prebuilt = ompPrebuilt;
           rmux-prebuilt = rmuxPrebuilt;
           symposium = symposium;
-          agentbox = rustPackages.rustPackage;
-          agentbox-ci-sccache = rustPackagesCiSccache.rustPackage;
           loftd = rustPackages.rustPackage;
           loftd-ci-sccache = rustPackagesCiSccache.rustPackage;
-          agentbox-prebuilt = prebuiltAgentbox;
           loftd-prebuilt = prebuiltLoftd;
-          agentbox-musl = rustPackages.agentboxMuslPackage;
-          agentbox-musl-ci-sccache = rustPackagesCiSccache.agentboxMuslPackage;
-          agentbox-container = agentboxImage;
-          agentbox-container-ci-sccache = agentboxImageCiSccache;
+          loftd-musl = rustPackages.loftdMuslPackage;
+          loftd-musl-ci-sccache = rustPackagesCiSccache.loftdMuslPackage;
           libkrunfw = libkrunfw;
           libkrun = libkrun;
           virglrenderer = pkgs.virglrenderer;
@@ -219,10 +193,9 @@
         let
           bun = (import nixpkgs-unstable { inherit system; }).bun;
           packages = self.packages.${system};
-          mkImageChecks =
-            imageVariant:
+          loftdImageChecks =
             import ./nix/image/checks.nix {
-              inherit pkgs imageVariant;
+              inherit pkgs;
               bun = bun;
               piCodingAgent = packages.pi-coding-agent;
               rioBin = packages.rio-bin or null;
@@ -238,10 +211,8 @@
               wl-cross-domain-proxy = packages.wl-cross-domain-proxy;
               podman = packages.podman;
               crun = packages.crun;
-              agentboxMuslPackage = packages.agentbox-musl;
+              loftdMuslPackage = packages.loftd-musl;
             };
-          loftdImageChecks = mkImageChecks "loftd";
-          agentboxImageChecks = mkImageChecks "agentbox";
         in
         {
           container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;
@@ -252,14 +223,6 @@
           container-gh-absent = loftdImageChecks.ghAbsent;
           container-root-cargo-absent = loftdImageChecks.rootCargoAbsent;
           container-wrapper-contracts = loftdImageChecks.wrapperContracts;
-          agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;
-          agentbox-container-codex-absent = agentboxImageChecks.codexAbsent;
-          agentbox-container-omx-absent = agentboxImageChecks.omxAbsent;
-          agentbox-container-omp-absent = agentboxImageChecks.ompAbsent;
-          agentbox-container-dirge-absent = agentboxImageChecks.dirgeAbsent;
-          agentbox-container-gh-absent = agentboxImageChecks.ghAbsent;
-          agentbox-container-root-cargo-absent = agentboxImageChecks.rootCargoAbsent;
-          agentbox-container-wrapper-contracts = agentboxImageChecks.wrapperContracts;
           # The exported `virglrenderer` is the host-side patched build the loftd
           # packages ship (libkrun links libvirglrenderer and the render-server
           # helper is symlinked from it), so downstream consumers cannot pick up

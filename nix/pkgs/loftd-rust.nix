@@ -7,7 +7,7 @@
   enableCiSccache ? false,
 }:
 let
-  agentboxVersion = pins.agentboxVersion;
+  loftdVersion = pins.loftdVersion;
   ciSccacheNativeBuildInputs = pkgs.lib.optionals enableCiSccache [ pkgs.sccache ];
   ciSccacheEnv = pkgs.lib.optionalAttrs enableCiSccache {
     RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
@@ -55,8 +55,8 @@ let
     ];
 
   rustPackage = pkgs.rustPlatform.buildRustPackage ({
-    pname = "agentbox";
-    version = agentboxVersion;
+    pname = "loftd";
+    version = loftdVersion;
     src = self;
 
     nativeBuildInputs = [ pkgs.makeWrapper ] ++ ciSccacheNativeBuildInputs;
@@ -87,7 +87,7 @@ let
           ln -s "$library" "$out/lib/loftd/$(basename "$library")"
         done
       ''}
-      wrapProgram "$out/bin/agentbox" ${pkgs.lib.escapeShellArgs (runtimeWrapperArgs ++ renderServerWrapperArgs)}
+      wrapProgram "$out/bin/loftd" ${pkgs.lib.escapeShellArgs (runtimeWrapperArgs ++ renderServerWrapperArgs)}
     '';
   } // ciSccacheEnv);
 
@@ -97,11 +97,11 @@ let
     else if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
       "aarch64-unknown-linux-musl"
     else
-      throw "agentbox-musl is only supported on Linux";
+      throw "loftd-musl is only supported on Linux";
 
-  agentboxMuslPackage = pkgs.pkgsStatic.rustPlatform.buildRustPackage ({
-    pname = "agentbox";
-    version = agentboxVersion;
+  loftdMuslPackage = pkgs.pkgsStatic.rustPlatform.buildRustPackage ({
+    pname = "loftd";
+    version = loftdVersion;
     src = self;
 
     nativeBuildInputs = ciSccacheNativeBuildInputs;
@@ -113,22 +113,14 @@ let
     CARGO_BUILD_TARGET = muslTarget;
     cargoBuildFlags = [
       "--package"
-      "agentbox-host"
-      "--package"
-      "agentbox-guest-init"
-      "--package"
       "loftd-guest-init"
     ];
     cargoTestFlags = [
-      "--package"
-      "agentbox-host"
-      "--package"
-      "agentbox-guest-init"
       "--package"
       "loftd-guest-init"
     ];
   } // ciSccacheEnv);
 in
 {
-  inherit rustPackage agentboxMuslPackage;
+  inherit rustPackage loftdMuslPackage;
 }

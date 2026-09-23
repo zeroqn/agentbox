@@ -2,7 +2,7 @@ let
   cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
 in
 {
-  agentboxVersion = cargoToml.workspace.package.version;
+  loftdVersion = cargoToml.workspace.package.version;
 
   piCodingAgent = {
     version = "0.85.1";
@@ -172,20 +172,6 @@ in
       riscv64-linux = {
         asset = "libkrunfw-riscv64.tgz";
         hash = "sha256-J0RR5AoBXfdWWsNBxkXdctUECLty5vvWVD6WWJuSCj4=";
-      };
-    };
-  };
-
-  agentboxPrebuiltRelease = {
-    owner = "zeroqn";
-    repo = "agentbox";
-    # Bootstrap value; run scripts/update-agentbox-prebuilt.sh after the
-    # first immutable sha-* release is published to pin this to that tag.
-    tag = "sha-3cf19afed03c";
-    systems = {
-      x86_64-linux = {
-        asset = "agentbox-x86_64-unknown-linux-musl";
-        hash = "sha256-YFgSbZxI1xpTCi1W+ATHaFKGSXtiIDU6EHJhCLKBfXQ=";
       };
     };
   };

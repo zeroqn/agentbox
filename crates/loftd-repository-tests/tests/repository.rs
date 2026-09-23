@@ -10,7 +10,8 @@ const PINS_NIX: &str = include_str!("../../../nix/pins.nix");
 const NIX_DEV_FLAKE_NIX: &str = include_str!("../../../nix/dev/flake.nix");
 const SECCOMP_JSON_NIX: &str =
     include_str!("../../../nix/pkgs/container-lib-policy-seccomp-json.nix");
-const AGENTBOX_RUST_NIX: &str = include_str!("../../../nix/pkgs/agentbox-rust.nix");
+const CARGO_TOML: &str = include_str!("../../../Cargo.toml");
+const LOFTD_RUST_NIX: &str = include_str!("../../../nix/pkgs/loftd-rust.nix");
 const LOFTD_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/loftd-prebuilt.nix");
 const UPDATE_LOFTD_PREBUILT_SH: &str = include_str!("../../../scripts/update-loftd-prebuilt.sh");
 const PUBLISH_RELEASE_YML: &str = include_str!("../../../.github/workflows/publish_release.yml");
@@ -72,10 +73,12 @@ fn flake_exposes_container_lib_seccomp_policy_package() {
 #[test]
 fn flake_exposes_loftd_outputs() {
     for required in [
-        r#"loftdImage = mkImage "loftd";"#,
+        "loftdImage = mkImage rustPackages.loftdMuslPackage;",
         "loftd = rustPackages.rustPackage;",
         "prebuiltLoftd = import ./nix/pkgs/loftd-prebuilt.nix",
         "loftd-prebuilt = prebuiltLoftd;",
+        "loftd-musl = rustPackages.loftdMuslPackage;",
+        "loftd-musl-ci-sccache = rustPackagesCiSccache.loftdMuslPackage;",
         "container = loftdImage;",
         "dirge-ci-sccache = dirgeCiSccache;",
         "loftd-ci-sccache = rustPackagesCiSccache.rustPackage;",
@@ -84,8 +87,46 @@ fn flake_exposes_loftd_outputs() {
     ] {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
-    assert!(!FLAKE_NIX.contains("loftd-musl"));
+    for forbidden in [
+        "agentbox-musl",
+        "agentbox-container",
+        "agentbox-prebuilt",
+        "agentbox = rustPackages",
+    ] {
+        assert!(!FLAKE_NIX.contains(forbidden), "unexpected {forbidden}");
+    }
     assert!(!FLAKE_NIX.contains("loftd-dev ="));
+}
+
+#[test]
+fn agentbox_runtime_crates_and_outputs_are_removed() {
+    for removed in ["crates/agentbox-host", "crates/agentbox-guest-init"] {
+        assert!(
+            !CARGO_TOML.contains(removed),
+            "Cargo.toml still contains {removed}"
+        );
+    }
+
+    for removed in [
+        "agentbox-guest-init",
+        "agentbox-musl",
+        "agentbox-container",
+        "agentbox-prebuilt",
+        "localhost/agentbox",
+    ] {
+        for (label, source) in [
+            ("flake.nix", FLAKE_NIX),
+            ("nix/image/layers.nix", LAYERS),
+            ("nix/image/container.nix", CONTAINER_NIX),
+            ("nix/image/config.nix", IMAGE_CONFIG_NIX),
+            ("nix/image/checks.nix", IMAGE_CHECKS_NIX),
+        ] {
+            assert!(
+                !source.contains(removed),
+                "{label} still contains {removed}"
+            );
+        }
+    }
     assert!(
         NIX_DEV_FLAKE_NIX.contains("loftd-dev = rustPackages.rustPackage;"),
         "dev sub-flake should expose loftd-dev"
@@ -254,20 +295,28 @@ fn loftd_package_exposes_stable_raw_elf_payload_for_release_workflow() {
         r#"ln -s ${pkgs.passt}/bin/passt "$out/libexec/loftd-helpers/passt""#,
         "${pkgs.lib.getLib libkrun}/lib/libkrun.so*",
         "${pkgs.lib.getLib libkrunfw}/lib/libkrunfw.so*",
-        r#"wrapProgram "$out/bin/agentbox""#,
+        r#"wrapProgram "$out/bin/loftd""#,
     ] {
-        assert!(AGENTBOX_RUST_NIX.contains(required), "missing {required}");
+        assert!(LOFTD_RUST_NIX.contains(required), "missing {required}");
     }
 
     for removed in [
         r#"install -Dm755 "$out/bin/loftd" "$out/libexec/loftd""#,
-        r#"wrapProgram "$out/bin/loftd""#,
+        "agentbox-host",
+        "agentbox-guest-init",
     ] {
         assert!(
-            !AGENTBOX_RUST_NIX.contains(removed),
+            !LOFTD_RUST_NIX.contains(removed),
             "still contains {removed}"
         );
     }
+
+    let musl_build_flags = nix_list_body(LOFTD_RUST_NIX, "cargoBuildFlags");
+    assert!(musl_build_flags.contains("loftd-guest-init"));
+    assert!(!musl_build_flags.contains("agentbox"));
+    let musl_test_flags = nix_list_body(LOFTD_RUST_NIX, "cargoTestFlags");
+    assert!(musl_test_flags.contains("loftd-guest-init"));
+    assert!(!musl_test_flags.contains("agentbox"));
 }
 
 #[test]
@@ -315,26 +364,27 @@ fn image_includes_seccomp_policy_data_without_adding_it_to_path() {
 
     let image_path_start = LAYERS.find("imagePath =").expect("imagePath should exist");
     let image_path_end = LAYERS[image_path_start..]
-        .find("agentboxImageMaxLayers")
+        .find("loftdImageMaxLayers")
         .map(|offset| image_path_start + offset)
         .expect("imagePath section should end before maxLayers");
     assert!(!LAYERS[image_path_start..image_path_end].contains("containerLibPolicySeccompJson"));
 }
 
 #[test]
-fn image_config_defines_loftd_entrypoint_variant() {
+fn image_config_defines_loftd_entrypoint() {
     for required in [
-        r#"loftd = {"#,
-        r#""${agentboxMuslPackage}/bin/loftd-guest-init""#,
-        r#""default""#,
-        r#"Entrypoint = variant.entrypoint;"#,
-        r#"name = "localhost/${imageVariant}";"#,
+        r#""${loftdMuslPackage}/bin/loftd-guest-init""#,
+        r#""enter""#,
+        r#"Entrypoint = ["#,
+        r#"name = "localhost/loftd";"#,
     ] {
         assert!(
             IMAGE_CONFIG_NIX.contains(required) || CONTAINER_NIX.contains(required),
             "missing {required}"
         );
     }
+    assert!(!IMAGE_CONFIG_NIX.contains("agentbox-guest-init"));
+    assert!(!IMAGE_CONFIG_NIX.contains("variants = {"));
     assert!(CONTAINER_NIX.contains("builtins.toJSON imageConfig"));
 }
 
@@ -342,10 +392,9 @@ fn image_config_defines_loftd_entrypoint_variant() {
 fn image_env_exposes_guest_init_runtime_payloads() {
     for required in [
         r#"SHELL=${pkgs.fish}/bin/fish"#,
-        r#"AGENTBOX_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/agentbox/fish/conf.d/agentbox-starship.fish"#,
-        r#"AGENTBOX_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/agentbox/starship.toml"#,
-        r#"AGENTBOX_NSS_WRAPPER_LIB=${pkgs.nss_wrapper}/lib/libnss_wrapper.so"#,
-        r#"AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"#,
+        r#"LOFTD_FISH_CONFIG_SOURCE=${configPayloads.fishConfig}/share/loftd/fish/conf.d/loftd-starship.fish"#,
+        r#"LOFTD_STARSHIP_CONFIG_SOURCE=${configPayloads.starshipConfig}/share/loftd/starship.toml"#,
+        r#"LOFTD_REAL_PODMAN=${layers.realPodmanBin}"#,
     ] {
         assert!(IMAGE_CONFIG_NIX.contains(required), "missing {required}");
     }
@@ -355,7 +404,7 @@ fn image_env_exposes_guest_init_runtime_payloads() {
 fn image_exports_real_podman_path_for_guest_init_service_start() {
     assert!(LAYERS.contains(r#"realPodmanBin = "${podman}/bin/podman";"#));
     assert!(LAYERS.contains("realPodmanBin"));
-    assert!(IMAGE_CONFIG_NIX.contains(r#"AGENTBOX_REAL_PODMAN=${layers.realPodmanBin}"#));
+    assert!(IMAGE_CONFIG_NIX.contains(r#"LOFTD_REAL_PODMAN=${layers.realPodmanBin}"#));
 }
 
 #[test]
@@ -445,73 +494,7 @@ fn loftd_prebuilt_adr_records_neutral_asset_decision() {
 fn image_layers_include_guest_init_config_payloads() {
     assert!(LAYERS.contains("fishConfig"));
     assert!(LAYERS.contains("starshipConfig"));
-    assert!(LAYERS.contains("agentboxMuslPackage"));
-}
-
-#[test]
-fn podman_wrapper_waits_only_for_libkrun_container_storage() {
-    let start = LAYERS
-        .find("agentboxPodmanCommandCompat =")
-        .expect("agentbox podman wrapper should exist");
-    let end = LAYERS[start..]
-        .find("loftdPodmanCommandCompat =")
-        .map(|offset| start + offset)
-        .expect("agentbox podman wrapper should end before loftd podman wrapper");
-    let wrapper = &LAYERS[start..end];
-
-    assert!(wrapper.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
-    let gate = wrapper
-        .find("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE")
-        .expect("libkrun container storage gate should exist");
-    let wait = wrapper
-        .find("agentbox-guest-init libkrun podman wait")
-        .expect("podman prep wait should exist");
-    let exec = wrapper
-        .find(r#"exec ${podman}/bin/podman "$@""#)
-        .expect("real podman exec should exist");
-    assert!(gate < wait);
-    assert!(wait < exec);
-    assert!(!wrapper.contains("agentbox-guest-init libkrun podman service-wait"));
-    assert!(!wrapper.contains("podman system service"));
-}
-
-#[test]
-fn docker_wrapper_waits_for_podman_and_execs_podman_compat() {
-    let start = LAYERS
-        .find("agentboxDockerCommandCompat =")
-        .expect("agentbox docker wrapper should exist");
-    let end = LAYERS[start..]
-        .find("loftdDockerCommandCompat =")
-        .map(|offset| start + offset)
-        .expect("agentbox docker wrapper should end before loftd docker wrapper");
-    let wrapper = &LAYERS[start..end];
-
-    assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker""#));
-    assert!(wrapper.contains(r#"if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then"#));
-    assert!(wrapper.contains("agentbox-guest-init libkrun podman service-wait"));
-    assert!(wrapper.contains(r#"exec ${podman}/bin/podman "$@""#));
-    assert!(!wrapper.contains("agentbox-guest-init libkrun podman wait"));
-    assert!(!wrapper.contains("agentbox-guest-init libkrun docker"));
-    assert!(!wrapper.contains("podman system service"));
-    assert!(!wrapper.contains(r#"exec ${docker}/bin/docker "$@""#));
-}
-
-#[test]
-fn docker_compose_wrapper_waits_for_podman_and_uses_docker_compose() {
-    let start = LAYERS
-        .find("agentboxDockerComposeCommandCompat =")
-        .expect("agentbox docker-compose wrapper should exist");
-    let end = LAYERS[start..]
-        .find("loftdDockerComposeCommandCompat =")
-        .map(|offset| start + offset)
-        .expect("agentbox docker-compose wrapper should end before loftd compose wrapper");
-    let wrapper = &LAYERS[start..end];
-
-    assert!(wrapper.contains(r#"pkgs.writeShellScriptBin "docker-compose""#));
-    assert!(wrapper.contains("agentbox-guest-init libkrun podman service-wait"));
-    assert!(wrapper.contains(r#"exec ${pkgs.docker-compose}/bin/docker-compose "$@""#));
-    assert!(!wrapper.contains("agentbox-guest-init libkrun podman wait"));
-    assert!(!wrapper.contains("agentbox-guest-init libkrun docker"));
+    assert!(LAYERS.contains("loftdMuslPackage"));
 }
 
 #[test]
@@ -537,8 +520,7 @@ fn loftd_image_includes_root_only_as_dev_helper() {
     for required in [
         r#"loftdAsDevCommandCompat = pkgs.writeShellScriptBin "loftd-as-dev""#,
         "loftd-guest-init as-dev",
-        "asDev = loftdAsDevCommandCompat",
-        "loftdOnlyCommandCompat = pkgs.lib.optional (commandCompat.asDev != null) commandCompat.asDev",
+        "loftdOnlyCommandCompat = [ loftdAsDevCommandCompat ]",
         "++ imagePathPackages",
         "++ loftdOnlyCommandCompat",
     ] {
@@ -557,8 +539,6 @@ fn image_materializes_mimalloc_default_and_hardened_allocator_metadata() {
         "hardened=${layers.hardenedMallocLib}",
         "chmod 0644 ./etc/ld-nix.so.preload",
         "chmod 0644 ./etc/nix-allocator-libs",
-        r#"AGENTBOX_MIMALLOC_LIB=${layers.mimallocLib}"#,
-        r#"AGENTBOX_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"#,
         r#"LOFTD_MIMALLOC_LIB=${layers.mimallocLib}"#,
         r#"LOFTD_GRAPHENE_HARDENED_MALLOC_LIB=${layers.hardenedMallocLib}"#,
     ] {
@@ -612,7 +592,6 @@ fn image_includes_real_tmux_and_keeps_rmux() {
         r#"owner = "Helvesec";"#,
         r#"repo = "rmux";"#,
         "./etc/rmux.conf",
-        r#"if imageVariant == "loftd" then"#,
         "set -g mouse off",
         r##"bind T if-shell -F '#{mouse}' 'set -g mouse off ; display-message "mouse OFF: native terminal selection enabled"' 'set -g mouse on ; display-message "mouse ON: pane mouse mode enabled"'"##,
         "set -g history-limit 100000",
@@ -663,7 +642,7 @@ fn rust_tool_wrappers_mask_nix_loader_preload() {
     for required in [
         "rustcCommandCompat",
         r#"pkgs.writeShellScriptBin "rustc""#,
-        "agentbox-empty-ld-nix-so-preload",
+        "loftd-empty-ld-nix-so-preload",
         "--ro-bind ${emptyLdNixSoPreload} /etc/ld-nix.so.preload",
         "--unsetenv LD_PRELOAD",
         "--unsetenv NSS_WRAPPER_PASSWD",
@@ -671,7 +650,7 @@ fn rust_tool_wrappers_mask_nix_loader_preload() {
         r#"${pkgs.rustc}/bin/rustc "$@""#,
         "rustAnalyzerCommandCompat",
         r#"pkgs.writeShellScriptBin "rust-analyzer""#,
-        "agentbox-empty-ld-nix-so-preload",
+        "loftd-empty-ld-nix-so-preload",
         "--ro-bind ${emptyLdNixSoPreload} /etc/ld-nix.so.preload",
         "--unsetenv LD_PRELOAD",
         "--unsetenv NSS_WRAPPER_PASSWD",
@@ -683,20 +662,20 @@ fn rust_tool_wrappers_mask_nix_loader_preload() {
 }
 
 #[test]
-fn nix_wrapper_waits_and_probes_only_for_libkrun_nix_overlay() {
-    assert!(LAYERS.contains(r#"if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then"#));
+fn nix_wrapper_waits_and_probes_only_for_loftd_nix_overlay() {
+    assert!(LAYERS.contains(r#"if [ "''${LOFTD_NIX_OVERLAY:-}" = "1" ]; then"#));
     assert!(LAYERS.contains(
         r#"export NIX_REMOTE="''${NIX_REMOTE:-unix:///nix/var/nix/daemon-socket/socket}""#
     ));
-    assert!(LAYERS.contains("agentbox-guest-init libkrun nix wait"));
+    assert!(LAYERS.contains("loftd-guest-init internal nix wait"));
     assert!(LAYERS.contains(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json"#));
-    assert!(LAYERS.contains("agentbox_nix_ready_marker"));
+    assert!(LAYERS.contains("loftd_nix_ready_marker"));
 
     let gate = LAYERS
-        .find("AGENTBOX_LIBKRUN_NIX_OVERLAY")
+        .find("LOFTD_NIX_OVERLAY")
         .expect("libkrun nix overlay gate should exist");
     let wait = LAYERS
-        .find("agentbox-guest-init libkrun nix wait")
+        .find("loftd-guest-init internal nix wait")
         .expect("nix wait should exist");
     let probe = LAYERS
         .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json"#)
@@ -727,13 +706,13 @@ fn nix_wrapper_uses_real_nix_path_for_probe_and_exec() {
 #[test]
 fn nix_wrapper_uses_marker_to_probe_connectivity_once_per_guest() {
     let marker = LAYERS
-        .find("agentbox_nix_ready_marker")
+        .find("loftd_nix_ready_marker")
         .expect("nix ready marker should exist");
     let probe = LAYERS
         .find(r#"${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json"#)
         .expect("real nix connectivity probe should exist");
     let marker_write = LAYERS
-        .find(r#": > "$agentbox_nix_ready_marker""#)
+        .find(r#": > "$loftd_nix_ready_marker""#)
         .expect("marker write should exist");
 
     assert!(marker < probe);
@@ -746,7 +725,6 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
         "checks = systems.forAllSystems",
         "import ./nix/image/checks.nix",
         "container-nix-db-metadata = loftdImageChecks.imageConfigNixDbRefs;",
-        "agentbox-container-nix-db-metadata = agentboxImageChecks.imageConfigNixDbRefs;",
     ] {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
@@ -776,7 +754,7 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
         "if imageChecks.missingImageConfigNixDbRefs != [ ] then",
         "builtins.throw imageChecks.missingRefsMessage",
         "image.overrideAttrs",
-        "checking ${imageVariant} image config Nix DB metadata coverage",
+        "checking loftd image config Nix DB metadata coverage",
         "test -e ${imageChecks.imageConfigNixDbRefs}/passed",
         "(old.buildCommand or \"\");",
     ] {
@@ -787,12 +765,12 @@ fn image_static_nix_db_metadata_check_is_flake_exposed() {
 #[test]
 fn image_includes_manual_nix_store_db_checker() {
     for required in [
-        r#"toolName = if imageVariant == "loftd" then "loftd-nix-store-db-check" else "agentbox-nix-store-db-check""#,
+        r#"toolName = "loftd-nix-store-db-check";"#,
         "nix path-info --all",
         "nix-store --verify-path",
         "! -name .links",
         "! -name '*.lock'",
-        r#"runDir = if imageVariant == "loftd" then "/run/loftd" else "/run/agentbox""#,
+        r#"runDir = "/run/loftd";"#,
         r#"libkrun_upper_dir="${runDir}/nix-disk/upper""#,
         "/store/",
         "/var/nix",
@@ -818,7 +796,7 @@ fn image_includes_manual_nix_store_db_checker() {
     }
 
     for required in [
-        "nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs imageVariant; };",
+        "nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs; };",
         "nixStoreDbCheck",
     ] {
         assert!(LAYERS.contains(required), "missing {required}");

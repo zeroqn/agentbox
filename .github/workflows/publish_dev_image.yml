@@ -30,29 +30,29 @@ jobs:
       - name: Restore ${{ matrix.image_name }} sccache
         uses: actions/cache@v4
         with:
-          path: /tmp/agentbox-ci-sccache-${{ matrix.image_name }}
+          path: /tmp/loftd-ci-sccache-${{ matrix.image_name }}
           key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-${{ matrix.image_name }}-${{ hashFiles('Cargo.lock', 'flake.lock', 'nix/pins.nix') }}
           restore-keys: |
             sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-${{ matrix.image_name }}-
             sccache-${{ runner.os }}-${{ runner.arch }}-${{ github.workflow }}-
       - name: Prepare ${{ matrix.image_name }} sccache directory
         run: |
-          mkdir -p "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
-          sudo chown -R "$(id -u):$(id -g)" "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
-          chmod -R a+rwX "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
+          mkdir -p "/tmp/loftd-ci-sccache-${{ matrix.image_name }}"
+          sudo chown -R "$(id -u):$(id -g)" "/tmp/loftd-ci-sccache-${{ matrix.image_name }}"
+          chmod -R a+rwX "/tmp/loftd-ci-sccache-${{ matrix.image_name }}"
       - name: Build ${{ matrix.image_name }} container archive
         run: |
           nix build \
-            --option extra-sandbox-paths "/nix/var/cache/sccache=/tmp/agentbox-ci-sccache-${{ matrix.image_name }}" \
+            --option extra-sandbox-paths "/nix/var/cache/sccache=/tmp/loftd-ci-sccache-${{ matrix.image_name }}" \
             ".#${{ matrix.flake_attr }}" \
             -o "result-${{ matrix.image_name }}-container" \
             --print-out-paths > "${{ matrix.image_name }}-container-path.txt"
       - name: Normalize ${{ matrix.image_name }} sccache permissions
         if: always()
         run: |
-          if [ -d "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}" ]; then
-            sudo chown -R "$(id -u):$(id -g)" "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
-            chmod -R a+rwX "/tmp/agentbox-ci-sccache-${{ matrix.image_name }}"
+          if [ -d "/tmp/loftd-ci-sccache-${{ matrix.image_name }}" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "/tmp/loftd-ci-sccache-${{ matrix.image_name }}"
+            chmod -R a+rwX "/tmp/loftd-ci-sccache-${{ matrix.image_name }}"
           fi
       - name: Free runner disk before loading ${{ matrix.image_name }} image
         run: |

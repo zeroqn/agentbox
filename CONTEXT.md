@@ -1,29 +1,21 @@
-# Agentbox Context
+# Loftd Context
 
-Agentbox names runtime and storage concepts for launching clean task environments from OCI images.
+Loftd names runtime and storage concepts for launching clean task environments from OCI images.
 
 ## Language
 
 
-**milestone delivery**:
-The implementation approach for microvm that proves the runtime through small vertical slices rather than attempting every developer-environment contract at once.
-_Avoid_: all-at-once implementation
-
-**experimental runtime mode**:
-A user-invoked runtime mode that is available for validation without becoming the default agentbox behavior. Microvm starts as an experimental runtime mode until its developer-environment contracts are proven.
-_Avoid_: immediate default runtime
-
 **microvm**:
-The canonical user-facing runtime mode for launching an OCI-image-derived agentbox environment through direct libkrun VM APIs, distinct from Podman-backed container/runtime modes.
+The canonical user-facing runtime mode for launching an OCI-image-derived task environment through direct libkrun VM APIs.
 _Avoid_: akvm, avm, krunvm
 
 **loftd**:
-The future canonical CLI/runtime owner for direct-libkrun microvm task environments extracted from agentbox. During extraction, agentbox retains its existing microvm code until loftd is complete.
-_Avoid_: agentbox microvm as the long-term owner
+The canonical CLI/runtime owner for direct-libkrun microvm task environments.
+_Avoid_: agentbox microvm, krunvm
 
 **single-runtime loftd CLI**:
 The loftd command shape where `loftd` launches a microvm task directly because loftd owns only the direct-libkrun microvm runtime family. Runtime selection subcommands such as `loftd microvm` are unnecessary.
-_Avoid_: preserving agentbox runtime selection in loftd
+_Avoid_: runtime-selection subcommands
 
 **host Podman exclusion**:
 The loftd boundary that prevents the host CLI/runtime from depending directly on Podman for launch behavior. This exclusion does not ban rootless Podman preparation inside the guest environment.
@@ -42,31 +34,23 @@ The packaging boundary where `loftd-guest-init` is a static/musl guest bootstrap
 _Avoid_: dynamically linked loftd-guest-init image artifact
 
 **loftd-guest-init**:
-The future canonical guest init binary for loftd microvm task environments, extracted from agentbox guest init while preserving the same guest bootstrap role.
-_Avoid_: agentbox-guest-init as the long-term loftd init name
+The guest init binary for loftd microvm task environments, responsible for preparing the task environment before the task shell starts.
+_Avoid_: agentbox-guest-init
 
 **loftd contract naming**:
 The runtime contract naming convention where loftd and loftd-guest-init use `LOFTD_*` environment variables, status names, and log identity. Loftd-guest-init does not accept legacy `AGENTBOX_*` aliases.
 _Avoid_: compatibility aliases in loftd-guest-init
 
-**compatibility handoff**:
-The transition boundary where existing agentbox microvm behavior remains available until loftd and loftd-guest-init are complete, after which agentbox may delegate to loftd or remove the microvm command.
-_Avoid_: early removal of agentbox microvm
-
-**structure-preserving extraction**:
-The extraction style where loftd mirrors agentbox-host's crate and module layout, and loftd-guest-init mirrors agentbox-guest-init's crate and module layout, while changing ownership and binary identity. It preserves reviewability rather than redesigning the architecture during extraction.
-_Avoid_: opportunistic rearchitecture during extraction
-
 **loftd state root**:
-The loftd-owned runtime state location for task state, persistent cache disks, and related runtime state. By default it uses the loftd app namespace and can be redirected through loftd config without sharing agentbox state.
-_Avoid_: reusing agentbox state for loftd
+The loftd-owned runtime state location for task state, persistent cache disks, and related runtime state. By default it uses the loftd app namespace and can be redirected through loftd config.
+_Avoid_: sharing runtime state across runtimes
 
 **loftd state config**:
-The user config file that can override the base location for loftd runtime state, mirroring agentbox's `[state].location` shape under a loftd config namespace. It changes where loftd keeps runtime state without changing Buildah's normal containers configuration.
+The user config file that can override the base location for loftd runtime state under a loftd config namespace. It changes where loftd keeps runtime state without changing Buildah's normal containers configuration.
 _Avoid_: Buildah config isolation knob
 
 **workspace cache scope**:
-The ownership boundary for microvm persistent cache disks. Persistent cache disks are scoped to the current workspace by default, with loftd using a separate `.loftd/` state root rather than sharing agentbox's `.agentbox/` state.
+The ownership boundary for microvm persistent cache disks. Persistent cache disks are scoped to the current workspace by default, with loftd using the XDG `loftd/` state namespace rather than a repo-local `.agentbox/` directory.
 _Avoid_: global cache by default
 
 **persistent cache disk**:
@@ -86,7 +70,7 @@ _Avoid_: isolated project copy
 
 
 **guest-visible runtime name**:
-The runtime name exposed in guest init commands, environment variables, logs, and status. Microvm uses `microvm` as the guest-visible runtime name instead of reusing the existing Podman-backed `libkrun` name.
+The runtime name exposed in guest init commands, environment variables, logs, and status. Loftd uses `loftd` as the guest-visible runtime name.
 _Avoid_: libkrun label for microvm behavior
 
 
@@ -95,7 +79,7 @@ A debugging path that lets a host-built guest init binary replace the image's gu
 _Avoid_: rebuild-only guest init testing
 
 **guest init**:
-The in-guest agentbox bootstrap program responsible for preparing the task environment before the task shell starts. Microvm reuses guest init rather than booting directly into a shell.
+The in-guest bootstrap program responsible for preparing the task environment before the task shell starts. A microvm task reuses guest init rather than booting directly into a shell.
 _Avoid_: direct shell boot
 
 
@@ -108,22 +92,13 @@ The default command experience for a microvm task. A task shell is an interactiv
 _Avoid_: image entrypoint by default
 
 
-**agentbox-compatible image**:
-An OCI image that contains the guest init contract required to boot an agentbox task environment. Microvm v1 requires an agentbox-compatible image rather than adapting arbitrary OCI images at ingestion time.
-_Avoid_: arbitrary image support in v1
-
 **loftd-compatible image**:
-An OCI image that contains the loftd-guest-init guest contract required to boot a loftd microvm task environment. Loftd defaults to loftd image identities rather than agentbox image identities.
-_Avoid_: agentbox image as loftd default
+An OCI image that contains the loftd-guest-init guest contract required to boot a loftd microvm task environment. A microvm task requires a loftd-compatible image rather than adapting arbitrary OCI images at ingestion time.
+_Avoid_: arbitrary image support
 
 **container flake output**:
-The canonical Nix flake image output for the current extracted runtime owner. During loftd extraction, `.#container` names the loftd-compatible image, while `.#agentbox-container` names the legacy agentbox-compatible image variant.
-_Avoid_: using `.#container` for the agentbox image after loftd owns the canonical image identity
-
-
-**separate image publication**:
-The release policy where agentbox-compatible images and loftd-compatible images keep distinct published identities. Agentbox image names are not compatibility aliases for loftd images while loftd is incomplete.
-_Avoid_: shared image publication; publishing loftd-compatible images as agentbox images
+The canonical Nix flake image output for the loftd-compatible image.
+_Avoid_: alternate image output names
 
 
 
@@ -156,7 +131,7 @@ The explicit image-refresh path where loftd may pull the canonical loftd image t
 _Avoid_: Podman pull for loftd
 
 **rootless user contract**:
-The expectation that normal agentbox and loftd commands run without sudo from the user's perspective. Microvm storage setup may have optional preparation paths, but normal task launch should remain rootless or fail with a clear diagnostic.
+The expectation that normal loftd commands run without sudo from the user's perspective. Microvm storage setup may have optional preparation paths, but normal task launch should remain rootless or fail with a clear diagnostic.
 _Avoid_: sudo-only runtime
 
 
@@ -178,7 +153,7 @@ The host-side Rust boundary that calls libkrun directly for microvm task launch.
 _Avoid_: broad generated bindings by default
 
 **libkrun discovery**:
-The host-side mechanism that lets direct microvm boot load `libkrun.so` and its firmware dependency. Packaged agentbox should provide this automatically, while an explicit environment override remains available for source-build and debug workflows.
+The host-side mechanism that lets direct microvm boot load `libkrun.so` and its firmware dependency. The packaged loftd should provide this automatically, while an explicit environment override remains available for source-build and debug workflows.
 _Avoid_: manual linker setup as normal path
 
 **run path**:
@@ -208,7 +183,7 @@ _Avoid_: generic container storage
 
 
 **reflink fast path**:
-An agentbox-era explicit materialization path that requires a copy-on-write clone operation such as `cp -a --reflink=always`. It is not part of loftd's initial task rootfs backend set.
+An explicit materialization path that requires a copy-on-write clone operation such as `cp -a --reflink=always`. It is not part of loftd's task rootfs backend set.
 _Avoid_: loftd reflink backend by default
 
 **btrfs snapshot default**:
@@ -218,7 +193,7 @@ _Avoid_: automatic storage probing, recursive rootfs copy fallback
 
 
 **packaged helper dependency**:
-A host helper that agentbox should provide through its package or development shell when possible. For microvm, `fuse-overlayfs` is a packaged helper dependency for the fuse-overlay explicit fallback.
+A host helper that loftd should provide through its package or development shell when possible. For microvm, `fuse-overlayfs` is a packaged helper dependency for the fuse-overlay explicit fallback.
 _Avoid_: hidden manual install requirement
 
 **fuse-overlay explicit fallback**:
@@ -281,7 +256,7 @@ Domain expert: No. Microvm starts as an experimental runtime mode until its deve
 Dev: Should direct libkrun use generated bindings?
 Domain expert: No, not initially. The libkrun FFI boundary should be narrow and hand-written for v1.
 
-Dev: Should users set `LD_LIBRARY_PATH` manually for `agentbox microvm`?
+Dev: Should users set `LD_LIBRARY_PATH` manually for `loftd`?
 Domain expert: No. Libkrun discovery is a packaging responsibility for normal use, with an explicit environment override kept for source-build and debug workflows.
 
 Dev: Can terminal resizing wait until later?
@@ -302,8 +277,8 @@ Domain expert: No. Use outbound-first networking for v1; general port publishing
 Dev: Does libkrun port publishing also change microvm networking?
 Domain expert: No. Libkrun port publishing belongs to the default Podman-backed libkrun runtime; microvm keeps its outbound-first networking scope until a separate direct-libkrun decision changes it.
 
-Dev: Can microvm boot arbitrary OCI images?
-Domain expert: Not in v1. It requires an agentbox-compatible image with the guest init contract already present.
+Dev: Can a microvm boot arbitrary OCI images?
+Domain expert: No. It requires a loftd-compatible image with the guest init contract already present.
 
 Dev: Must users prepare image caches before running?
 Domain expert: No. Lazy image ingestion ensures the durable image source on first run if needed.

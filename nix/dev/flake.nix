@@ -1,11 +1,11 @@
 {
-  description = "Local submodule-aware development outputs for agentbox";
+  description = "Local submodule-aware development outputs for loftd";
 
   inputs = {
     self.submodules = true;
-    agentbox.url = "../..";
-    nixpkgs.follows = "agentbox/nixpkgs";
-    nixpkgsMaster.follows = "agentbox/nixpkgsMaster";
+    loftd.url = "../..";
+    nixpkgs.follows = "loftd/nixpkgs";
+    nixpkgsMaster.follows = "loftd/nixpkgsMaster";
     headless.url = "github:zeroqn/headless";
   };
 
@@ -48,7 +48,7 @@
               lockFile = libkrunSrc + "/Cargo.lock";
             };
           });
-          rustPackages = import ../../nix/pkgs/agentbox-rust.nix {
+          rustPackages = import ../../nix/pkgs/loftd-rust.nix {
             self = root;
             inherit
               pkgs

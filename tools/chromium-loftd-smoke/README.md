@@ -23,7 +23,7 @@ amdgpu-backed DRM render node (see Prerequisites).
 
 Measured against the pinned `pins.libkrunRelease` (`loftd-3842e7383799`) and the
 packaged `.#loftd-prebuilt` (release asset `sha-f502ab1346a7`, the same asset the
-2026-09-22 baseline used) with `.#agentbox-musl` built from the tree — the repo's
+2026-09-22 baseline used) with `.#loftd-musl` built from the tree — the repo's
 reproducible starting point, **not** the uncommitted `deps/libkrun` GPU
 experiments:
 
@@ -168,10 +168,10 @@ delete the artifacts mid-run):
 ```bash
 nix build .#container      -o roots/container
 nix build .#loftd-prebuilt -o roots/loftd-prebuilt
-nix build .#agentbox-musl  -o roots/agentbox-musl
+nix build .#loftd-musl  -o roots/loftd-musl
 tools/chromium-loftd-smoke/chromium-smoke.sh \
   --loftd      "$PWD/roots/loftd-prebuilt/bin/loftd" \
-  --guest-init "$PWD/roots/agentbox-musl/bin/loftd-guest-init" \
+  --guest-init "$PWD/roots/loftd-musl/bin/loftd-guest-init" \
   --container  "$PWD/roots/container" \
   --out-dir /path/on/btrfs/chromium-smoke --mem 4 --timeout 900
 ```
@@ -201,7 +201,7 @@ nix develop --command tools/chromium-loftd-smoke/chromium-smoke.sh \
   --weston      /nix/store/...-weston-15.0.1/bin/weston \
   --waypipe-bin /nix/store/...-waypipe-0.11.0/bin/waypipe \
   --loftd "$PWD/roots/loftd-prebuilt/bin/loftd" \
-  --guest-init "$PWD/roots/agentbox-musl/bin/loftd-guest-init" \
+  --guest-init "$PWD/roots/loftd-musl/bin/loftd-guest-init" \
   --container  "$PWD/roots/container" \
   --out-dir /path/on/btrfs/chromium-smoke --mem 4 --timeout 900
 ```
@@ -216,7 +216,7 @@ nix develop --command tools/chromium-loftd-smoke/chromium-smoke.sh \
    `vfs`: loftd snapshots the Buildah-mounted rootfs, and a `vfs` graphroot is
    plain directories that `btrfs subvolume snapshot` rejects.
 2. **Resolves** loftd (`.#loftd`) and the guest-init override
-   (`.#agentbox-musl` → `bin/loftd-guest-init`) as packaged artifacts.
+   (`.#loftd-musl` → `bin/loftd-guest-init`) as packaged artifacts.
 3. **Isolates** config+state: `XDG_CONFIG_HOME=<out>/config`,
    `XDG_STATE_HOME=<out>/state`; a private `loftd.toml` sets
    `[state].location` and `[task-rootfs].backend = "btrfs-snapshot"`. The

@@ -56,7 +56,7 @@ for freshness (mtime >= run start) so stale artifacts can never pass.
 
 Options:
       --loftd <path>         loftd binary (default: $LOFTD_BIN or nix build .#loftd)
-      --guest-init <path>    guest-init override (default: $LOFTD_GUEST_INIT, else nix build .#agentbox-musl if its bin/loftd-guest-init exists)
+      --guest-init <path>    guest-init override (default: $LOFTD_GUEST_INIT, else nix build .#loftd-musl if its bin/loftd-guest-init exists)
       --container <ref|path> image for this run (default: nix build .#container; a
                              store path is loaded product-style into the local store)
       --state-home <path>    XDG_STATE_HOME (default: <out>/state)
@@ -128,7 +128,7 @@ if [ -n "$guest_init" ]; then
 elif [ -x "$repo_root/result/bin/loftd-guest-init" ]; then
   guest_init="$repo_root/result/bin/loftd-guest-init"
 else
-  musl="$(nix build "$repo_root#agentbox-musl" --print-out-paths 2>/dev/null || true)"
+  musl="$(nix build "$repo_root#loftd-musl" --print-out-paths 2>/dev/null || true)"
   if [ -n "$musl" ] && [ -x "$musl/bin/loftd-guest-init" ]; then
     guest_init="$musl/bin/loftd-guest-init"
   fi

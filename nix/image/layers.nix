@@ -15,10 +15,9 @@
   bun,
   podman ? pkgs.podman,
   crun ? pkgs.crun,
-  agentboxMuslPackage,
+  loftdMuslPackage,
   fishConfig,
   starshipConfig,
-  imageVariant ? "agentbox",
 }:
 let
   nixBuilderGroupId = 30000;
@@ -51,7 +50,7 @@ let
       hash = "sha256-QUGDJyTnD5MuBUMlc4PZOZSAfevVUB6QbncVyXIAgb8=";
     };
   });
-  emptyLdNixSoPreload = pkgs.writeText "agentbox-empty-ld-nix-so-preload" "";
+  emptyLdNixSoPreload = pkgs.writeText "loftd-empty-ld-nix-so-preload" "";
   mimallocLib = "${pkgs.mimalloc}/lib/libmimalloc.so";
   hardenedMallocLib = "${grapheneHardenedMalloc}/lib/libhardened_malloc.so";
   hardeningRun = pkgs.writeShellScriptBin "hardening-run" ''
@@ -91,21 +90,6 @@ let
       -- \
       ${pkgs.rust-analyzer}/bin/rust-analyzer "$@"
   '';
-  agentboxNixCommandCompat = pkgs.writeShellScriptBin "nix" ''
-    unset LD_PRELOAD
-    unset NSS_WRAPPER_PASSWD
-    unset NSS_WRAPPER_GROUP
-    if [ "''${AGENTBOX_LIBKRUN_NIX_OVERLAY:-}" = "1" ]; then
-      export NIX_REMOTE="''${NIX_REMOTE:-unix:///nix/var/nix/daemon-socket/socket}"
-      agentbox_nix_ready_marker="/tmp/agentbox-nix-daemon-ready-$(${pkgs.coreutils}/bin/id -u)"
-      if [ ! -e "$agentbox_nix_ready_marker" ]; then
-        ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun nix wait
-        ${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json >/dev/null
-        : > "$agentbox_nix_ready_marker"
-      fi
-    fi
-    exec ${pkgs.nix}/bin/nix "$@"
-  '';
   loftdNixCommandCompat = pkgs.writeShellScriptBin "nix" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
@@ -114,38 +98,19 @@ let
       export NIX_REMOTE="''${NIX_REMOTE:-unix:///nix/var/nix/daemon-socket/socket}"
       loftd_nix_ready_marker="/tmp/loftd-nix-daemon-ready-$(${pkgs.coreutils}/bin/id -u)"
       if [ ! -e "$loftd_nix_ready_marker" ]; then
-        ${agentboxMuslPackage}/bin/loftd-guest-init internal nix wait
+        ${loftdMuslPackage}/bin/loftd-guest-init internal nix wait
         ${pkgs.nix}/bin/nix store info --store "$NIX_REMOTE" --json >/dev/null
         : > "$loftd_nix_ready_marker"
       fi
     fi
     exec ${pkgs.nix}/bin/nix "$@"
   '';
-  agentboxPodmanCommandCompat = pkgs.writeShellScriptBin "podman" ''
-    unset LD_PRELOAD
-    unset NSS_WRAPPER_PASSWD
-    unset NSS_WRAPPER_GROUP
-    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman wait
-    fi
-    exec ${podman}/bin/podman "$@"
-  '';
   loftdPodmanCommandCompat = pkgs.writeShellScriptBin "podman" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
     if [ "''${LOFTD_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/loftd-guest-init internal podman wait
-    fi
-    exec ${podman}/bin/podman "$@"
-  '';
-
-  agentboxDockerCommandCompat = pkgs.writeShellScriptBin "docker" ''
-    unset LD_PRELOAD
-    unset NSS_WRAPPER_PASSWD
-    unset NSS_WRAPPER_GROUP
-    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman service-wait
+      ${loftdMuslPackage}/bin/loftd-guest-init internal podman wait
     fi
     exec ${podman}/bin/podman "$@"
   '';
@@ -154,26 +119,16 @@ let
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
     if [ "''${LOFTD_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/loftd-guest-init internal podman service-wait
+      ${loftdMuslPackage}/bin/loftd-guest-init internal podman service-wait
     fi
     exec ${podman}/bin/podman "$@"
-  '';
-
-  agentboxDockerComposeCommandCompat = pkgs.writeShellScriptBin "docker-compose" ''
-    unset LD_PRELOAD
-    unset NSS_WRAPPER_PASSWD
-    unset NSS_WRAPPER_GROUP
-    if [ "''${AGENTBOX_LIBKRUN_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/agentbox-guest-init libkrun podman service-wait
-    fi
-    exec ${pkgs.docker-compose}/bin/docker-compose "$@"
   '';
   loftdDockerComposeCommandCompat = pkgs.writeShellScriptBin "docker-compose" ''
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
     if [ "''${LOFTD_CONTAINERS_STORAGE:-}" = "1" ]; then
-      ${agentboxMuslPackage}/bin/loftd-guest-init internal podman service-wait
+      ${loftdMuslPackage}/bin/loftd-guest-init internal podman service-wait
     fi
     exec ${pkgs.docker-compose}/bin/docker-compose "$@"
   '';
@@ -181,45 +136,28 @@ let
     unset LD_PRELOAD
     unset NSS_WRAPPER_PASSWD
     unset NSS_WRAPPER_GROUP
-    exec ${agentboxMuslPackage}/bin/loftd-guest-init as-dev "$@"
+    exec ${loftdMuslPackage}/bin/loftd-guest-init as-dev "$@"
   '';
 
-  commandCompat =
-    if imageVariant == "loftd" then
-      {
-        nix = loftdNixCommandCompat;
-        podman = loftdPodmanCommandCompat;
-        docker = loftdDockerCommandCompat;
-        dockerCompose = loftdDockerComposeCommandCompat;
-        asDev = loftdAsDevCommandCompat;
-      }
-    else
-      {
-        nix = agentboxNixCommandCompat;
-        podman = agentboxPodmanCommandCompat;
-        docker = agentboxDockerCommandCompat;
-        dockerCompose = agentboxDockerComposeCommandCompat;
-        asDev = null;
-      };
-  loftdOnlyCommandCompat = pkgs.lib.optional (commandCompat.asDev != null) commandCompat.asDev;
-  nixCommandCompat = commandCompat.nix;
-  podmanCommandCompat = commandCompat.podman;
-  dockerCommandCompat = commandCompat.docker;
-  dockerComposeCommandCompat = commandCompat.dockerCompose;
-  nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs imageVariant; };
+  nixCommandCompat = loftdNixCommandCompat;
+  podmanCommandCompat = loftdPodmanCommandCompat;
+  dockerCommandCompat = loftdDockerCommandCompat;
+  dockerComposeCommandCompat = loftdDockerComposeCommandCompat;
+  loftdOnlyCommandCompat = [ loftdAsDevCommandCompat ];
+  nixStoreDbCheck = import ./nix-store-db-check.nix { inherit pkgs; };
 
-  sidecarProxyWrapper = pkgs.writeShellScriptBin "agentbox-sidecar-proxy" ''
+  sidecarProxyWrapper = pkgs.writeShellScriptBin "loftd-sidecar-proxy" ''
     LISTEN_PORT="$1"
     SOCKET_PATH="$2"
 
     unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
 
     if ! command -v socat >/dev/null 2>&1; then
-      echo "agentbox-sidecar-proxy: socat not found on PATH" >&2
+      echo "loftd-sidecar-proxy: socat not found on PATH" >&2
       exit 127
     fi
 
-    echo "agentbox-sidecar-proxy: starting socat on port $LISTEN_PORT -> $SOCKET_PATH" >&2
+    echo "loftd-sidecar-proxy: starting socat on port $LISTEN_PORT -> $SOCKET_PATH" >&2
 
     while true; do
       socat "TCP-LISTEN:$LISTEN_PORT,fork,reuseaddr" "UNIX-CONNECT:$SOCKET_PATH" &
@@ -234,71 +172,71 @@ let
       done
 
       if ! kill -0 "$SOCAT_PID" 2>/dev/null; then
-        echo "agentbox-sidecar-proxy: socat failed to start, retrying..." >&2
+        echo "loftd-sidecar-proxy: socat failed to start, retrying..." >&2
         sleep 0.5
         continue
       fi
 
-      echo "agentbox-sidecar-proxy: socat listening on port $LISTEN_PORT" >&2
+      echo "loftd-sidecar-proxy: socat listening on port $LISTEN_PORT" >&2
       wait "$SOCAT_PID"
-      echo "agentbox-sidecar-proxy: socat exited, restarting..." >&2
+      echo "loftd-sidecar-proxy: socat exited, restarting..." >&2
       sleep 0.5
     done
   '';
 
-  sidecarEntrypoint = pkgs.writeShellScriptBin "agentbox-nix-sidecar-entrypoint" ''
+  sidecarEntrypoint = pkgs.writeShellScriptBin "loftd-nix-sidecar-entrypoint" ''
     set -euo pipefail
 
     mkdir -p /nix/var/nix/daemon-socket
     mkdir -p /nix/var/log/nix
     chmod 0755 /nix/var/nix/daemon-socket
 
-    echo "agentbox-sidecar: starting nix-daemon"
+    echo "loftd-sidecar: starting nix-daemon"
     if ! command -v nix-daemon >/dev/null 2>&1; then
-      echo "agentbox-sidecar: nix-daemon not found on PATH"
+      echo "loftd-sidecar: nix-daemon not found on PATH"
       exit 127
     fi
 
     unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
 
-    echo "agentbox-sidecar: /nix/store has $(ls /nix/store 2>/dev/null | wc -l) entries"
-    echo "agentbox-sidecar: /nix/var/nix/db $(if [ -d /nix/var/nix/db ]; then echo exists; else echo missing; fi)"
+    echo "loftd-sidecar: /nix/store has $(ls /nix/store 2>/dev/null | wc -l) entries"
+    echo "loftd-sidecar: /nix/var/nix/db $(if [ -d /nix/var/nix/db ]; then echo exists; else echo missing; fi)"
 
     nix-daemon --daemon 2>/tmp/nix-daemon-stderr.log &
-    echo "agentbox-sidecar: nix-daemon spawned"
+    echo "loftd-sidecar: nix-daemon spawned"
     sleep 0.5
 
     if [ -s /tmp/nix-daemon-stderr.log ]; then
-      echo "agentbox-sidecar: nix-daemon stderr:"
+      echo "loftd-sidecar: nix-daemon stderr:"
       cat /tmp/nix-daemon-stderr.log >&2
     fi
 
     if pgrep -x nix-daemon >/dev/null 2>&1; then
-      echo "agentbox-sidecar: nix-daemon process is running"
+      echo "loftd-sidecar: nix-daemon process is running"
     else
-      echo "agentbox-sidecar: nix-daemon process is NOT running after startup"
+      echo "loftd-sidecar: nix-daemon process is NOT running after startup"
     fi
 
     attempt=0
     while [ ! -S /nix/var/nix/daemon-socket/socket ]; do
       attempt=$((attempt + 1))
       if [ "$attempt" -ge 300 ]; then
-        echo "agentbox-sidecar: daemon socket not created after 30s"
+        echo "loftd-sidecar: daemon socket not created after 30s"
         ls -ald /nix/var/nix /nix/var/nix/daemon-socket || true
         ls -al /nix/var/nix/daemon-socket || true
-        ps -ef | grep -E 'nix-daemon' | grep -v grep | grep -v agentbox || true
+        ps -ef | grep -E 'nix-daemon' | grep -v grep | grep -v loftd || true
         exit 1
       fi
       sleep 0.1
     done
 
-    echo "agentbox-sidecar: daemon socket ready"
-    echo "agentbox-sidecar: starting nix-proxy socat"
-    agentbox-sidecar-proxy 19876 /nix/var/nix/daemon-socket/socket &
+    echo "loftd-sidecar: daemon socket ready"
+    echo "loftd-sidecar: starting nix-proxy socat"
+    loftd-sidecar-proxy 19876 /nix/var/nix/daemon-socket/socket &
     exec tail -f /dev/null
   '';
 
-  rustSourceImage = pkgs.runCommand "agentbox-rust-source-image" { } ''
+  rustSourceImage = pkgs.runCommand "loftd-rust-source-image" { } ''
     mkdir -p "$out/share"
     ln -s ${pkgs.rustPlatform.rustLibSrc} "$out/share/rust-src"
   '';
@@ -328,7 +266,7 @@ let
   ];
 
   rustToolchainImageLayer = pkgs.buildEnv {
-    name = "agentbox-rust-toolchain-layer";
+    name = "loftd-rust-toolchain-layer";
     paths = stableRustToolchainPackages;
     pathsToLink = [ "/" ];
   };
@@ -346,7 +284,7 @@ let
     pkgs.uv
   ];
   dynamicToolchainImageLayer = pkgs.buildEnv {
-    name = "agentbox-dynamic-toolchain-layer";
+    name = "loftd-dynamic-toolchain-layer";
     paths = dynamicToolchainImagePackages;
     pathsToLink = [ "/" ];
   };
@@ -364,7 +302,7 @@ let
     pkgs.starship
   ];
 toolingImageLayer = pkgs.buildEnv {
-    name = "agentbox-tooling-layer";
+    name = "loftd-tooling-layer";
     paths = toolingImagePackages;
     pathsToLink = ["/"];
   };
@@ -393,7 +331,7 @@ toolingImageLayer = pkgs.buildEnv {
   ++ pkgs.lib.optional (herdrPrebuilt != null) herdrPrebuilt
   ++ pkgs.lib.optional (montyPrebuilt != null) montyPrebuilt;
   agentImageLayer = pkgs.buildEnv {
-    name = "agentbox-agent-layer";
+    name = "loftd-agent-layer";
     paths = agentImagePackages;
     pathsToLink = [ "/" ];
   };
@@ -449,11 +387,11 @@ toolingImageLayer = pkgs.buildEnv {
     pkgs.which
   ];
 
-  usrBinEnvCompat = pkgs.runCommand "agentbox-usr-bin-env-compat" { } ''
+  usrBinEnvCompat = pkgs.runCommand "loftd-usr-bin-env-compat" { } ''
     mkdir -p "$out/usr/bin"
     ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
   '';
-  binInterpreterCompat = pkgs.runCommand "agentbox-bin-interpreter-compat" { } ''
+  binInterpreterCompat = pkgs.runCommand "loftd-bin-interpreter-compat" { } ''
     mkdir -p "$out/bin"
     ln -s ${pkgs.bashInteractive}/bin/sh "$out/bin/sh"
     ln -s ${pkgs.bashInteractive}/bin/bash "$out/bin/bash"
@@ -471,18 +409,16 @@ toolingImageLayer = pkgs.buildEnv {
       toolingImageLayer
       agentImageLayer
     ]
-    ++ pkgs.lib.optionals (imageVariant == "loftd") (
-      pkgs.lib.optional (rioBin != null) rioBin
-      ++ [
-        browserImageLayer
-        pkgs.mesa
-        pkgs.fontconfig.out
-        pkgs.perf
-        pkgs.strace
-        pkgs.waypipe
-        wl-cross-domain-proxy
-      ]
-    );
+    ++ pkgs.lib.optional (rioBin != null) rioBin
+    ++ [
+      browserImageLayer
+      pkgs.mesa
+      pkgs.fontconfig.out
+      pkgs.perf
+      pkgs.strace
+      pkgs.waypipe
+      wl-cross-domain-proxy
+    ];
   imagePathPackages =
     baseImagePackages
     ++ rootlessPodmanImagePackages
@@ -493,16 +429,14 @@ toolingImageLayer = pkgs.buildEnv {
       toolingImageLayer
       agentImageLayer
     ]
-    ++ pkgs.lib.optionals (imageVariant == "loftd") (
-      pkgs.lib.optional (rioBin != null) rioBin
-      ++ [
-        browserImageLayer
-        pkgs.perf
-        pkgs.strace
-        pkgs.waypipe
-        wl-cross-domain-proxy
-      ]
-    );
+    ++ pkgs.lib.optional (rioBin != null) rioBin
+    ++ [
+      browserImageLayer
+      pkgs.perf
+      pkgs.strace
+      pkgs.waypipe
+      wl-cross-domain-proxy
+    ];
   imagePath = pkgs.lib.makeBinPath (
     [
       rustcCommandCompat
@@ -516,8 +450,8 @@ toolingImageLayer = pkgs.buildEnv {
     ++ imagePathPackages
   );
   realPodmanBin = "${podman}/bin/podman";
-  agentboxImageMaxLayers = 10;
-  agentboxImageStoreLayers = agentboxImageMaxLayers - 1;
+  loftdImageMaxLayers = 10;
+  loftdImageStoreLayers = loftdImageMaxLayers - 1;
   imageContents =
     imagePackages
     ++ [
@@ -527,7 +461,7 @@ toolingImageLayer = pkgs.buildEnv {
       fishConfig
       starshipConfig
       containerLibPolicySeccompJson
-      agentboxMuslPackage
+      loftdMuslPackage
       nixCommandCompat
       podmanCommandCompat
       dockerCommandCompat
@@ -539,7 +473,7 @@ toolingImageLayer = pkgs.buildEnv {
       rustAnalyzerCommandCompat
     ];
 browserLayerPaths = [ (toString browserImageLayer) ];
-  agentboxLayerPaths = [ (toString agentboxMuslPackage) ];
+  loftdInitLayerPaths = [ (toString loftdMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
   toolingLayerPaths = [ (toString toolingImageLayer) ];
   cToolchainLayerPaths = builtins.map toString cToolchainImagePackages;
@@ -580,40 +514,32 @@ browserLayerPaths = [ (toString browserImageLayer) ];
     [ "flatten" ]
   ];
 
-  # agentbox-layer first, then tooling-and-below as its "rest". The loftd
-  # variant nests the dedicated browser layer at the same depth as tooling so
-  # it stays its own unflattened layer (cache-stable on Chromium updates).
-  agentAndBelow =
-    if imageVariant == "loftd" then
-[
-        [ "split_paths" browserLayerPaths ]
-        [
-          "over"
-          "rest"
-          [
-            "pipe"
-            [
-              [ "split_paths" agentLayerPaths ]
-              [ "over" "rest" [ "pipe" toolingAndBelow ] ]
-              ["flatten"]
-            ]
-          ]
-        ]
-        ["flatten"]
-      ]
-    else
+  # agent-layer first, then tooling-and-below as its "rest". The dedicated
+  # browser layer nests at the same depth as tooling so it stays its own
+  # unflattened layer (cache-stable on Chromium updates).
+  agentAndBelow = [
+    [ "split_paths" browserLayerPaths ]
+    [
+      "over"
+      "rest"
       [
-        [ "split_paths" agentLayerPaths ]
-        [ "over" "rest" [ "pipe" toolingAndBelow ] ]
-        ["flatten"]
-      ];
+        "pipe"
+        [
+          [ "split_paths" agentLayerPaths ]
+          [ "over" "rest" [ "pipe" toolingAndBelow ] ]
+          [ "flatten" ]
+        ]
+      ]
+    ]
+    [ "flatten" ]
+  ];
 
-  agentboxImageLayeringPipeline = [
+  loftdImageLayeringPipeline = [
     [
       "split_paths"
-      agentboxLayerPaths
+      loftdInitLayerPaths
     ]
-[
+    [
       "over"
       "rest"
       [ "pipe" agentAndBelow ]
@@ -623,7 +549,7 @@ browserLayerPaths = [ (toString browserImageLayer) ];
     ]
     [
       "limit_layers"
-      agentboxImageStoreLayers
+      loftdImageStoreLayers
     ]
     [
       "reverse"
@@ -633,8 +559,8 @@ in
 {
   inherit
     agentImageLayer
-    agentboxImageLayeringPipeline
-    agentboxImageMaxLayers
+    loftdImageLayeringPipeline
+    loftdImageMaxLayers
     browserImageLayer
     imageContents
     imagePath
