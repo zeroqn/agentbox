@@ -55,7 +55,7 @@
   client: client and worker reject each other over a protocol-version mismatch.
 - `.#libkrunfw`: install the pinned `zeroqn/libkrunfw` release asset for the
   current system.
-- `.#libkrun`: install the pinned `zeroqn/libkrun` `loftd-*` prebuilt release
+- `.#libkrun`: install the pinned `zeroqn/libkrun` `cang-*` prebuilt release
   asset for the current system, matching `.#libkrunfw`'s release-asset model.
   Root consumers (`.#cang`, images, and `.#cang-prebuilt`) all use this pinned
   prebuilt package. The package normalizes upstream Linux `lib64` payloads into

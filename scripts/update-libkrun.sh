@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pins_file="$repo_root/nix/pins.nix"
 owner="zeroqn"
 repo="libkrun"
-release_prefix="loftd-"
+release_prefix="cang-"
 required_release_systems=("x86_64-linux" "aarch64-linux")
 
 release_tag=""
@@ -25,11 +25,11 @@ Refresh the pinned zeroqn/libkrun prebuilt release metadata in nix/pins.nix by
 querying GitHub Releases and recomputing the selected release-asset SRI hashes.
 
 Default:
-  Select the newest loftd-* release that contains every required Linux asset and
+  Select the newest cang-* release that contains every required Linux asset and
   update libkrunRelease.tag plus all asset hashes from that single release.
 
 Options:
-  --tag <tag>          Pin a specific loftd-* release tag instead of auto-selecting
+  --tag <tag>          Pin a specific cang-* release tag instead of auto-selecting
                        the newest complete release.
 
 Required release assets:
@@ -115,9 +115,9 @@ if [ -z "$release_tag" ]; then
 fi
 
 case "$release_tag" in
-  loftd-*) ;;
+  cang-*) ;;
   *)
-    echo "unsupported libkrun release tag: $release_tag (expected loftd-*)" >&2
+    echo "unsupported libkrun release tag: $release_tag (expected cang-*)" >&2
     exit 1
     ;;
 esac

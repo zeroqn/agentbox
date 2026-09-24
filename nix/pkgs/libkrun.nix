@@ -43,7 +43,7 @@ pkgs.stdenvNoCC.mkDerivation {
     # $ORIGIN covers the firmware: libkrun loads libkrunfw.so.5 with a plain
     # soname dlopen, so the loader searches the directory of the caller
     # (libkrun) rather than the executable's. Packages that expose libkrun and
-    # libkrunfw as siblings under "$out/lib/cang" (agentbox-rust.nix,
+    # libkrunfw as siblings under "$out/lib/cang" (cang-rust.nix,
     # cang-prebuilt.nix) then resolve the firmware from that directory and the
     # bare cang ELF needs no wrapper LD_LIBRARY_PATH; consumers that load
     # libkrun from a directory without libkrunfw are unaffected because the

@@ -63,15 +63,15 @@ case "$system" in
     ;;
 esac
 
-# GitHub's /releases/latest endpoint ignores prereleases. The agentbox
-# libkrunfw builds are prereleases, so choose the newest matching asset from
-# the releases list instead.
+# GitHub's /releases/latest endpoint ignores prereleases. The cang libkrunfw
+# builds are prereleases, so choose the newest matching asset from the
+# releases list instead.
 release_tag="$(
   curl -fsSL "https://api.github.com/repos/$owner/$repo/releases?per_page=100" |
     jq -r --arg asset_name "$asset_name" '
       [
         .[]
-        | select(.tag_name | startswith("agentbox-"))
+        | select(.tag_name | startswith("cang-"))
         | select(any(.assets[]?; .name == $asset_name))
       ]
       | sort_by(.published_at // .created_at)
