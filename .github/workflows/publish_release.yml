@@ -66,8 +66,7 @@ jobs:
           sha_tag="sha-${short_sha}"
 
           # `cang-*` is the current asset name. Releases published before the
-          # rename keep resolving under the historical `loftd-*` name that
-          # nix/pins.nix still pins.
+          # rename are still resolvable under their historical `loftd-*` name.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             release_version="${GITHUB_REF_NAME}"
             cang_asset_name="cang-${release_version}-${arch}-unknown-linux-gnu"

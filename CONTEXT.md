@@ -26,7 +26,7 @@ The packaging boundary where the host `cang` binary is dynamically linked becaus
 _Avoid_: static cang host artifact
 
 **cang prebuilt**:
-The Nix package for a pinned neutral dynamic Linux `loftd-<arch>-unknown-linux-gnu` release asset; Nix patches ordinary ELF runtime dependencies and provides package-relative helper plus `libkrun`/`libkrunfw` paths without wrapping `bin/cang`.
+The Nix package for a pinned neutral dynamic Linux `cang-<arch>-unknown-linux-gnu` release asset; Nix patches ordinary ELF runtime dependencies and provides package-relative helper plus `libkrun`/`libkrunfw` paths without wrapping `bin/cang`.
 _Avoid_: flake-locked release asset; static/standalone host cang; pinned wrapper script
 
 **static cang guest init build**:

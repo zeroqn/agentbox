@@ -156,7 +156,7 @@ Supported launch-planning keys are:
 
 ```toml
 [state]
-location = "/home/dev/loftd-state"
+location = "/home/dev/cang-state"
 
 [task-rootfs]
 backend = "btrfs-snapshot" # or "fuse-overlay"
