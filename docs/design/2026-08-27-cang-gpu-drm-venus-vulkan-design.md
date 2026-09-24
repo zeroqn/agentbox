@@ -36,7 +36,7 @@ cang supervisor
 ```
 
 Key enablers already present in the vendored `deps/libkrun` (cang fork at
-`github.com/zeroqn/libkrun.git`, heads/loftd):
+`github.com/zeroqn/libkrun.git`, heads/cang):
 
 - `src/rutabaga_gfx/src/virgl_renderer.rs:230-248` — the `get_server_fd`
   callback is compiled (feature `virgl_renderer_next`, enabled in

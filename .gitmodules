@@ -1,8 +1,8 @@
 [submodule "deps/libkrun"]
 	path = deps/libkrun
 	url = https://github.com/zeroqn/libkrun.git
-	branch = loftd
+	branch = cang
 [submodule "deps/libkrunfw"]
 	path = deps/libkrunfw
 	url = https://github.com/zeroqn/libkrunfw.git
-	branch = agentbox
+	branch = cang
