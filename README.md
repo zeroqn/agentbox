@@ -486,8 +486,8 @@ downstream consumers should use root non-dev outputs.
 ## Maintenance helpers
 
 The pinned-asset refresh scripts for `nix/pins.nix` (cang, RTK, rmux, dolt,
-beads, monty, libkrun, libkrunfw, Pi, dirge, omp, herdr, and zvec-grep) are
-documented in [docs/maintenance.md](docs/maintenance.md).
+beads, monty, libkrun, libkrunfw, Pi, herdr, and zvec-grep) are documented in
+[docs/maintenance.md](docs/maintenance.md).
 
 ---
 

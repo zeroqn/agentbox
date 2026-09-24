@@ -32,24 +32,10 @@
           piCodingAgent = import ./nix/pkgs/pi-coding-agent.nix {
             inherit pkgs pins;
           };
-          dirgeSource = import ./nix/pkgs/dirge.nix {
-            inherit pkgs pins;
-          };
-          dirgeCiSccache = import ./nix/pkgs/dirge.nix {
-            inherit pkgs pins;
-            enableCiSccache = true;
-          };
-          dirgePrebuilt = import ./nix/pkgs/dirge-prebuilt.nix {
-            inherit pkgs pins libkrun;
-          };
-          dirge = if dirgePrebuilt != null then dirgePrebuilt else dirgeSource;
           herdrPrebuilt = import ./nix/pkgs/herdr-prebuilt.nix {
             inherit pkgs pins;
           };
           montyPrebuilt = import ./nix/pkgs/monty-prebuilt.nix {
-            inherit pkgs pins;
-          };
-          ompPrebuilt = import ./nix/pkgs/omp-prebuilt.nix {
             inherit pkgs pins;
           };
           rmuxPrebuilt = import ./nix/pkgs/rmux-prebuilt.nix {
@@ -135,9 +121,6 @@
         {
           default = rustPackages.rustPackage;
           pi-coding-agent = piCodingAgent;
-          dirge = dirge;
-          dirge-ci-sccache = dirgeCiSccache;
-          omp-prebuilt = ompPrebuilt;
           rmux-prebuilt = rmuxPrebuilt;
           symposium = symposium;
           cang = rustPackages.rustPackage;
@@ -168,9 +151,6 @@
         }
         // pkgs.lib.optionalAttrs (rtkPrebuilt != null) {
           rtk-prebuilt = rtkPrebuilt;
-        }
-        // pkgs.lib.optionalAttrs (dirgePrebuilt != null) {
-          dirge-prebuilt = dirgePrebuilt;
         }
       );
 

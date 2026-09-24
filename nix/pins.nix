@@ -14,26 +14,6 @@ in
     aiNpmTarballHash = "sha256-r30RmGF5RFzm/oizfVfeIvgjwP/TplyuMcVVt/XpklM=";
   };
 
-  dirge = {
-    version = "0.24.0";
-    owner = "dirge-code";
-    repo = "dirge";
-    rev = "v0.24.0";
-    srcHash = "sha256-bBVvelpQ3Iv0VayBgWk6Fz8azasTg6mylXQSouB26lk=";
-  };
-
-  dirgeSandboxPrebuiltRelease = {
-    owner = "zeroqn";
-    repo = "dirge";
-    tag = "ds-sandbox";
-    systems = {
-      x86_64-linux = {
-        asset = "dirge-x86_64-unknown-linux-gnu-sandbox.tar.gz";
-        hash = "sha256-Bo72wotCZ4g1te3/VTQ1w1gYBpd9cmxwhfV699r3/6w=";
-      };
-    };
-  };
-
   # Pinned by scripts/update-herdr.sh (tag + per-system asset hashes).
   herdrPrebuiltRelease = {
     owner = "herdrdev";
@@ -47,22 +27,6 @@ in
       aarch64-linux = {
         asset = "herdr-linux-aarch64";
         hash = "sha256-9Mz03nRfLLmjmpg+m6NwPa1Q7CpY3qgwJs6rchu9jZ4=";
-      };
-    };
-  };
-
-  ompPrebuiltRelease = {
-    owner = "can1357";
-    repo = "oh-my-pi";
-    tag = "v16.2.4";
-    systems = {
-      x86_64-linux = {
-        asset = "omp-linux-x64";
-        hash = "sha256-iwDDrVmv156UpuyNKzAFmLJl10LmovjeHQhcD36K1xc=";
-      };
-      aarch64-linux = {
-        asset = "omp-linux-arm64";
-        hash = "sha256-jr7Jv/zC4jSOCvW+zqg6WVWhgxWXhoVnpazWpPIFEME=";
       };
     };
   };

@@ -80,7 +80,6 @@ fn flake_exposes_cang_outputs() {
         "cang-musl = rustPackages.cangMuslPackage;",
         "cang-musl-ci-sccache = rustPackagesCiSccache.cangMuslPackage;",
         "container = cangImage;",
-        "dirge-ci-sccache = dirgeCiSccache;",
         "cang-ci-sccache = rustPackagesCiSccache.rustPackage;",
         "container-ci-sccache = cangImageCiSccache;",
         "container-nix-db-metadata = cangImageChecks.imageConfigNixDbRefs;",
@@ -166,44 +165,23 @@ fn crun_fork_is_removed_from_the_flake_and_image_modules() {
 }
 
 #[test]
-fn flake_uses_prebuilt_dirge_with_source_fallback() {
-    for required in [
-        "dirgeSource = import ./nix/pkgs/dirge.nix {",
-        "dirgePrebuilt = import ./nix/pkgs/dirge-prebuilt.nix {",
-        "dirge = if dirgePrebuilt != null then dirgePrebuilt else dirgeSource;",
-        "dirge-prebuilt = dirgePrebuilt;",
+fn dirge_and_omp_surface_is_removed() {
+    for removed in [
+        "dirgeSandboxPrebuiltRelease",
+        "ompPrebuiltRelease",
+        "dirgePrebuilt",
+        "ompPrebuilt",
+        "dirge-prebuilt",
+        "omp-prebuilt",
+        "nix/pkgs/dirge.nix",
+        "nix/pkgs/omp-prebuilt.nix",
     ] {
-        assert!(FLAKE_NIX.contains(required), "missing {required}");
-    }
-}
-
-#[test]
-fn dirge_sandbox_prebuilt_pin_points_at_zeroqn_fork_release() {
-    for required in [
-        "dirgeSandboxPrebuiltRelease = {",
-        "owner = \"zeroqn\";",
-        "repo = \"dirge\";",
-        "tag = \"ds-sandbox\";",
-        "asset = \"dirge-x86_64-unknown-linux-gnu-sandbox.tar.gz\";",
-    ] {
-        assert!(PINS_NIX.contains(required), "missing {required}");
-    }
-}
-
-#[test]
-fn dirge_prebuilt_package_installs_sandbox_binaries() {
-    let package = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../nix/pkgs/dirge-prebuilt.nix"
-    ))
-    .expect("failed to read nix/pkgs/dirge-prebuilt.nix");
-    for required in [
-        "pkgs.fetchurl",
-        "autoPatchelfHook",
-        "$out/bin/dirge",
-        "$out/bin/dirge-microvm-runner",
-    ] {
-        assert!(package.contains(required), "missing {required}");
+        for (label, source) in [("flake.nix", FLAKE_NIX), ("nix/pins.nix", PINS_NIX)] {
+            assert!(
+                !source.contains(removed),
+                "{label} still contains {removed}"
+            );
+        }
     }
 }
 
