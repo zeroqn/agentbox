@@ -51,14 +51,14 @@ for cmd in curl jq python3; do
   fi
 done
 
-# Published zeroqn/cang asset names; the historical `loftd-*` prefix is
-# kept so already-published releases keep resolving.
+# Published zeroqn/cang asset names; pre-rename releases still carry the
+# historical `loftd-*` prefix and stay resolvable through that name.
 case "$system" in
   x86_64-linux)
-    asset_name="loftd-x86_64-unknown-linux-gnu"
+    asset_name="cang-x86_64-unknown-linux-gnu"
     ;;
   aarch64-linux)
-    asset_name="loftd-aarch64-unknown-linux-gnu"
+    asset_name="cang-aarch64-unknown-linux-gnu"
     ;;
   *)
     echo "unsupported system: $system" >&2

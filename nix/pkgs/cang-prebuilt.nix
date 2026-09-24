@@ -14,7 +14,7 @@ if builtins.hasAttr prebuiltSystem cangPrebuiltRelease.systems then
     throw ''
       cang-prebuilt is pinned to legacy asset ${assetInfo.asset} from ${cangPrebuiltRelease.tag}.
       Legacy loftd-<arch>-linux-flake-locked assets embed release-builder /nix/store references and are intentionally unsupported.
-      Publish a neutral loftd-<arch>-unknown-linux-gnu sha-* release asset, then rerun scripts/update-cang-prebuilt.sh.
+      Publish a neutral cang-<arch>-unknown-linux-gnu sha-* release asset, then rerun scripts/update-cang-prebuilt.sh.
     ''
   else
     let
@@ -120,6 +120,6 @@ if builtins.hasAttr prebuiltSystem cangPrebuiltRelease.systems then
 else
   throw ''
     cang-prebuilt is not pinned for ${prebuiltSystem}.
-    Publish a neutral loftd-<arch>-unknown-linux-gnu sha-* release asset and run scripts/update-cang-prebuilt.sh.
+    Publish a neutral cang-<arch>-unknown-linux-gnu sha-* release asset and run scripts/update-cang-prebuilt.sh.
     Supported systems: ${pkgs.lib.concatStringsSep ", " supportedSystems}
   ''

@@ -167,11 +167,11 @@ nix build .#container
 CI publishes cang release artifacts on every push to `main` and on every git
 tag (`v*`):
 
-- **Rolling** (branch push to `main`): `loftd-<arch>-unknown-linux-gnu` is
+- **Rolling** (branch push to `main`): `cang-<arch>-unknown-linux-gnu` is
   uploaded to the `alpha` prerelease and to a `sha-<12chars>` immutable
   prerelease.
 - **Versioned** (tag push, e.g. `v0.1.0`):
-  `loftd-<version>-<arch>-unknown-linux-gnu` is uploaded to a full
+  `cang-<version>-<arch>-unknown-linux-gnu` is uploaded to a full
   (non-prerelease) release named after the tag, and to the matching
   `sha-<12chars>` immutable prerelease.
 - **Images** (`ghcr.io/<owner>/cang:<tag>`) are published by the image workflow
@@ -467,7 +467,7 @@ Main-branch CI also publishes prerelease binary assets:
 
 Older `sha-*` prereleases are pruned (retains newest 20).
 
-The `loftd-<arch>-unknown-linux-gnu` asset is a neutral dynamic Linux ELF
+The `cang-<arch>-unknown-linux-gnu` asset is a neutral dynamic Linux ELF
 packaging input and intentionally non-standalone: it must not contain
 release-builder `/nix/store/<hash>-...` references, and Nix packaging patches
 its ordinary ELF runtime dependencies before wiring the libkrun/runtime-tool

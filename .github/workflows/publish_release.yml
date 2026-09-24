@@ -65,14 +65,15 @@ jobs:
           short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
           sha_tag="sha-${short_sha}"
 
-          # The published asset keeps the historical `loftd-*` name so the
-          # pinned cangPrebuiltRelease in nix/pins.nix keeps resolving.
+          # `cang-*` is the current asset name. Releases published before the
+          # rename keep resolving under the historical `loftd-*` name that
+          # nix/pins.nix still pins.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             release_version="${GITHUB_REF_NAME}"
-            cang_asset_name="loftd-${release_version}-${arch}-unknown-linux-gnu"
+            cang_asset_name="cang-${release_version}-${arch}-unknown-linux-gnu"
           else
             release_version=""
-            cang_asset_name="loftd-${arch}-unknown-linux-gnu"
+            cang_asset_name="cang-${arch}-unknown-linux-gnu"
           fi
 
           if [[ "${cang_asset_name}" == *-linux-flake-locked ]]; then

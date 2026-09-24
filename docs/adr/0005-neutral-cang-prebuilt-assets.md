@@ -3,7 +3,7 @@
 Status: accepted
 
 Cang release assets consumed by `.#cang-prebuilt` are neutral dynamic Linux
-ELF payloads named `loftd-<arch>-unknown-linux-gnu`. They are packaging inputs,
+ELF payloads named `cang-<arch>-unknown-linux-gnu`. They are packaging inputs,
 not standalone portable executables and not flake-locked Nix outputs.
 
 The GitHub release workflow strips release-builder `/nix/store/<hash>-...`
@@ -25,7 +25,9 @@ neutral upstream asset plus Nix-side patching in the package that consumes it.
 
 ## Decision
 
-- Publish `loftd-<arch>-unknown-linux-gnu` assets for cang prebuilts.
+- Publish `cang-<arch>-unknown-linux-gnu` assets for cang prebuilts. Assets
+  published before the 2026-09 cang rename carry the historical
+  `loftd-<arch>-unknown-linux-gnu` name and stay resolvable under it.
 - Reject legacy `loftd-<arch>-linux-flake-locked` pins before fetching them.
 - Fail release and updater flows when a cang asset contains concrete
   `/nix/store/<hash>-...` references.

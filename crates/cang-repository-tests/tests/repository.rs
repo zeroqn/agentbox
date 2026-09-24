@@ -235,7 +235,7 @@ fn publish_release_uploads_only_neutral_cang_assets() {
         "uses: actions/cache@v4",
         "path: /tmp/cang-ci-sccache-release",
         "nix build --option extra-sandbox-paths \"${sccache_sandbox_path}\" .#cang-ci-sccache -o result-cang",
-        "cang_asset_name=\"loftd-${arch}-unknown-linux-gnu\"",
+        "cang_asset_name=\"cang-${arch}-unknown-linux-gnu\"",
         "raw_cang_path=\"result-cang/bin/cang\"",
         "readelf -h \"${raw_cang_path}\" > /dev/null",
         "refusing to publish cang wrapper script",
@@ -436,6 +436,9 @@ fn image_exports_real_podman_path_for_guest_init_service_start() {
 fn cang_prebuilt_package_pins_and_patches_neutral_elf() {
     let cang_pin = nix_top_level_attr_body(PINS_NIX, "cangPrebuiltRelease");
 
+    // The pin still resolves through a pre-rename release asset; the next
+    // scripts/update-cang-prebuilt.sh run moves it to a `cang-*` asset.
+
     for required in [
         "owner = \"zeroqn\";",
         "repo = \"cang\";",
@@ -456,7 +459,7 @@ fn cang_prebuilt_package_pins_and_patches_neutral_elf() {
         "{ pkgs, pins, libkrun ? null, libkrunfw ? null }:",
         "cangPrebuiltRelease = pins.cangPrebuiltRelease;",
         "throw ''",
-        "loftd-<arch>-unknown-linux-gnu",
+        "cang-<arch>-unknown-linux-gnu",
         "pkgs.autoPatchelfHook",
         "pkgs.stdenv.cc.cc.lib",
         "pkgs.stdenv.cc.libc",
@@ -501,7 +504,7 @@ fn cang_prebuilt_adr_records_neutral_asset_decision() {
     for required in [
         "# Neutral cang prebuilt release assets",
         "Status: accepted",
-        "loftd-<arch>-unknown-linux-gnu",
+        "cang-<arch>-unknown-linux-gnu",
         "not standalone portable executables",
         "autoPatchelfHook",
         "concrete

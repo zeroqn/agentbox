@@ -152,8 +152,10 @@ in
     tag = "sha-4e138d5e6239";
     systems = {
       x86_64-linux = {
-        # Published zeroqn/cang asset name. The historical `loftd-*` name
-        # is kept so this already-published release keeps resolving.
+        # This pinned release predates the `cang-*` asset rename, so its
+        # asset keeps the historical `loftd-*` name. The next
+        # scripts/update-cang-prebuilt.sh run moves the pin to a `cang-*`
+        # asset.
         asset = "loftd-x86_64-unknown-linux-gnu";
         hash = "sha256-zM+rpgzy/gpYSvwbEtLvn3SuJP0+MRAtU2DZ1MQYC2E=";
       };
