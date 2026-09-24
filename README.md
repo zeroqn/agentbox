@@ -496,7 +496,7 @@ documented in [docs/maintenance.md](docs/maintenance.md).
 
 ```nix
 {
-  inputs.cang.url = "github:zeroqn/agentbox";
+  inputs.cang.url = "github:zeroqn/cang";
 
   outputs = { self, nixpkgs, cang, ... }: {
     nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {

@@ -181,14 +181,14 @@ in
 
   cangPrebuiltRelease = {
     owner = "zeroqn";
-    repo = "agentbox";
+    repo = "cang";
     # Pinned by scripts/update-cang-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing cang
     # release payloads.
     tag = "sha-4e138d5e6239";
     systems = {
       x86_64-linux = {
-        # Published zeroqn/agentbox asset name. The historical `loftd-*` name
+        # Published zeroqn/cang asset name. The historical `loftd-*` name
         # is kept so this already-published release keeps resolving.
         asset = "loftd-x86_64-unknown-linux-gnu";
         hash = "sha256-zM+rpgzy/gpYSvwbEtLvn3SuJP0+MRAtU2DZ1MQYC2E=";

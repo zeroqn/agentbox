@@ -412,7 +412,7 @@ fn cang_prebuilt_package_pins_and_patches_neutral_elf() {
 
     for required in [
         "owner = \"zeroqn\";",
-        "repo = \"agentbox\";",
+        "repo = \"cang\";",
         "tag = \"sha-",
         "systems = {",
         "x86_64-linux = {",

@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pins_file="$repo_root/nix/pins.nix"
 owner="zeroqn"
-repo="agentbox"
+repo="cang"
 system="x86_64-linux"
 release_tag=""
 
@@ -51,7 +51,7 @@ for cmd in curl jq python3; do
   fi
 done
 
-# Published zeroqn/agentbox asset names; the historical `loftd-*` prefix is
+# Published zeroqn/cang asset names; the historical `loftd-*` prefix is
 # kept so already-published releases keep resolving.
 case "$system" in
   x86_64-linux)
