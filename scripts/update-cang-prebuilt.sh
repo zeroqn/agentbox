@@ -182,11 +182,24 @@ system_entry = (
     f'      }};'
 )
 
+# Match the whole per-system entry so comments inside it (which the
+# asset/hash regexes below must not trip over) are preserved.
 system_pattern = re.compile(
-    rf'(      {re.escape(system)} = \{{\n\s+asset = ")[^"]+(";\n\s+hash = ")[^"]+(";\n\s+\}};)',
+    rf'(      {re.escape(system)} = \{{\n)(?P<entry>.*?)(\n      \}};)',
     re.S,
 )
-body, system_count = system_pattern.subn(rf'\1{asset_name}\2{asset_hash}\3', body, count=1)
+system_match = system_pattern.search(body)
+system_count = 0
+if system_match is not None:
+    entry = system_match.group("entry")
+    entry, asset_count = re.subn(r'asset = "[^"]+";', f'asset = "{asset_name}";', entry, count=1)
+    entry, hash_count = re.subn(r'hash = "[^"]+";', f'hash = "{asset_hash}";', entry, count=1)
+    if (asset_count, hash_count) != (1, 1):
+        raise SystemExit(
+            f"failed to update the {system} asset/hash in nix/pins.nix"
+        )
+    body = body[: system_match.start("entry")] + entry + body[system_match.end("entry") :]
+    system_count = 1
 
 if system_count == 0:
     empty_systems = 'systems = { };'

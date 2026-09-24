@@ -149,15 +149,11 @@ in
     # Pinned by scripts/update-cang-prebuilt.sh, which rejects wrapper-script,
     # legacy flake-locked, and concrete /nix/store/<hash>-referencing cang
     # release payloads.
-    tag = "sha-4e138d5e6239";
+    tag = "sha-98933ee84614";
     systems = {
       x86_64-linux = {
-        # This pinned release predates the `cang-*` asset rename, so its
-        # asset keeps the historical `loftd-*` name. The next
-        # scripts/update-cang-prebuilt.sh run moves the pin to a `cang-*`
-        # asset.
-        asset = "loftd-x86_64-unknown-linux-gnu";
-        hash = "sha256-zM+rpgzy/gpYSvwbEtLvn3SuJP0+MRAtU2DZ1MQYC2E=";
+        asset = "cang-x86_64-unknown-linux-gnu";
+        hash = "sha256-9HBQ7tSZ+l3Cm5pSnpqiT5l0Xxnl1Lr8I+AHKogNqpM=";
       };
     };
   };

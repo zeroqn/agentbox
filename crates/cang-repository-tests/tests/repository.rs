@@ -451,16 +451,13 @@ fn image_exports_real_podman_path_for_guest_init_service_start() {
 fn cang_prebuilt_package_pins_and_patches_neutral_elf() {
     let cang_pin = nix_top_level_attr_body(PINS_NIX, "cangPrebuiltRelease");
 
-    // The pin still resolves through a pre-rename release asset; the next
-    // scripts/update-cang-prebuilt.sh run moves it to a `cang-*` asset.
-
     for required in [
         "owner = \"zeroqn\";",
         "repo = \"cang\";",
         "tag = \"sha-",
         "systems = {",
         "x86_64-linux = {",
-        "asset = \"loftd-x86_64-unknown-linux-gnu\";",
+        "asset = \"cang-x86_64-unknown-linux-gnu\";",
         "hash = \"sha256-",
     ] {
         assert!(cang_pin.contains(required), "missing {required}");
