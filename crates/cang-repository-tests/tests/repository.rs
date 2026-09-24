@@ -14,6 +14,7 @@ const CARGO_TOML: &str = include_str!("../../../Cargo.toml");
 const CANG_RUST_NIX: &str = include_str!("../../../nix/pkgs/cang-rust.nix");
 const CANG_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/cang-prebuilt.nix");
 const UPDATE_CANG_PREBUILT_SH: &str = include_str!("../../../scripts/update-cang-prebuilt.sh");
+const TEST_YML: &str = include_str!("../../../.github/workflows/test.yml");
 const PUBLISH_RELEASE_YML: &str = include_str!("../../../.github/workflows/publish_release.yml");
 const PUBLISH_IMAGE_YML: &str = include_str!("../../../.github/workflows/publish_image.yml");
 const PUBLISH_DEV_IMAGE_YML: &str =
@@ -261,6 +262,20 @@ fn publish_release_uploads_only_neutral_cang_assets() {
             !PUBLISH_RELEASE_YML.contains(forbidden),
             "unexpected {forbidden}"
         );
+    }
+}
+
+#[test]
+fn test_workflow_runs_the_documented_gates() {
+    for required in [
+        "cargo test \\",
+        "--package cang-repository-tests",
+        "cargo fmt --check",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo deny check",
+        "nix flake check -L",
+    ] {
+        assert!(TEST_YML.contains(required), "missing {required}");
     }
 }
 

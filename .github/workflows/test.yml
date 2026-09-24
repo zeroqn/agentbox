@@ -11,6 +11,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -26,3 +27,35 @@ jobs:
             --package cang-attach-protocol \
             --package cang-exec-protocol \
             --package cang-repository-tests
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Check formatting
+        run: nix develop --command cargo fmt --check
+
+      - name: Lint
+        run: nix develop --command cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Check dependency policy
+        run: nix develop --command cargo deny check
+
+  flake-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run flake checks
+        run: nix flake check -L
