@@ -21,7 +21,7 @@ amdgpu-backed DRM render node (see Prerequisites).
 
 ## Baseline status (2026-09-23)
 
-Measured against the pinned `pins.libkrunRelease` (`loftd-3842e7383799`) and the
+Measured against the pinned `pins.libkrunRelease` (`cang-3307a15f940a`) and the
 packaged `.#cang-prebuilt` (release asset `sha-f502ab1346a7`, the same asset the
 2026-09-22 baseline used) with `.#cang-musl` built from the tree — the repo's
 reproducible starting point, **not** the uncommitted `deps/libkrun` GPU

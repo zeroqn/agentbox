@@ -107,18 +107,15 @@ in
   libkrunRelease = {
     owner = "zeroqn";
     repo = "libkrun";
-    # Published zeroqn/libkrun release tag. The historical `loftd-*` name is
-    # kept because it identifies an already-published release and
-    # scripts/update-libkrun.sh selects releases by that prefix.
-    tag = "loftd-3842e7383799";
+    tag = "cang-3307a15f940a";
     systems = {
       x86_64-linux = {
         asset = "libkrun-x86_64-linux-full.tgz";
-        hash = "sha256-BpmztMASl/H8jqtYWR3f5I9tOsup3odc2SvOxHDhjuY=";
+        hash = "sha256-2PsBOipbSwCFLhGe+yumvHezGoS5zxoCXRSApf8A0LI=";
       };
       aarch64-linux = {
         asset = "libkrun-aarch64-linux-full.tgz";
-        hash = "sha256-eAmWOjaZiW/brzk+e+OP07OFk17Fv/oVeLG5l8u7Aws=";
+        hash = "sha256-oO0wkjmBEuL72htKQ5pidi5efN3aUAbd18qr/ju5rDE=";
       };
     };
   };

@@ -20,7 +20,7 @@ FLAGS="${1:-0x2c0}"
 # user environment.
 find_libkrun_vgl() {
     local lib
-    for lib in /nix/store/*-libkrun-loftd-*/lib/libkrun.so; do
+    for lib in /nix/store/*-libkrun-cang-*/lib/libkrun.so; do
         local rp
         rp="$(ldd "$lib" 2>/dev/null | grep -oE '/nix/store/[A-Za-z0-9.+-]+-virglrenderer-1\.3\.0/lib' | head -1)"
         if [[ -n "$rp" ]]; then
