@@ -134,6 +134,38 @@ fn agentbox_runtime_crates_and_outputs_are_removed() {
 }
 
 #[test]
+fn crun_fork_is_removed_from_the_flake_and_image_modules() {
+    for (label, source) in [
+        ("flake.nix", FLAKE_NIX),
+        ("nix/image/layers.nix", LAYERS),
+        ("nix/image/container.nix", CONTAINER_NIX),
+        ("nix/image/checks.nix", IMAGE_CHECKS_NIX),
+    ] {
+        for removed in [
+            "nix/pkgs/crun.nix",
+            "crun = import",
+            "crun = crun;",
+            "crun ? pkgs.crun",
+            "podman.override",
+            "podman ? pkgs.podman",
+        ] {
+            assert!(
+                !source.contains(removed),
+                "{label} still contains {removed}"
+            );
+        }
+    }
+    assert!(
+        LAYERS.contains("pkgs.crun"),
+        "the image should still ship the nixpkgs crun for guest podman"
+    );
+    assert!(
+        FLAKE_NIX.contains("podman = pkgs.podman;"),
+        "the flake should expose the plain nixpkgs podman"
+    );
+}
+
+#[test]
 fn flake_uses_prebuilt_dirge_with_source_fallback() {
     for required in [
         "dirgeSource = import ./nix/pkgs/dirge.nix {",
@@ -401,7 +433,7 @@ fn image_env_exposes_guest_init_runtime_payloads() {
 
 #[test]
 fn image_exports_real_podman_path_for_guest_init_service_start() {
-    assert!(LAYERS.contains(r#"realPodmanBin = "${podman}/bin/podman";"#));
+    assert!(LAYERS.contains(r#"realPodmanBin = "${pkgs.podman}/bin/podman";"#));
     assert!(LAYERS.contains("realPodmanBin"));
     assert!(IMAGE_CONFIG_NIX.contains(r#"CANG_REAL_PODMAN=${layers.realPodmanBin}"#));
 }
@@ -810,7 +842,7 @@ fn podman_wrapper_unsets_compat_env_before_execing_real_podman() {
         "unset LD_PRELOAD",
         "unset NSS_WRAPPER_PASSWD",
         "unset NSS_WRAPPER_GROUP",
-        r#"exec ${podman}/bin/podman "$@""#,
+        r#"exec ${pkgs.podman}/bin/podman "$@""#,
     ] {
         assert!(LAYERS.contains(required), "missing {required}");
     }
@@ -824,7 +856,7 @@ fn docker_wrapper_unsets_compat_env_before_execing_podman() {
         "unset LD_PRELOAD",
         "unset NSS_WRAPPER_PASSWD",
         "unset NSS_WRAPPER_GROUP",
-        r#"exec ${podman}/bin/podman "$@""#,
+        r#"exec ${pkgs.podman}/bin/podman "$@""#,
     ] {
         assert!(LAYERS.contains(required), "missing {required}");
     }

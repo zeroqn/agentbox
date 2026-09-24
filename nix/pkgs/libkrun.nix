@@ -36,9 +36,9 @@ pkgs.stdenvNoCC.mkDerivation {
   postFixup = ''
     # The cang prebuilt libkrun has DT_NEEDED on libvirglrenderer.so.1 but
     # ships no DT_RUNPATH to locate it (the previous ad8a40428d15 release did).
-    # Restore that edge so crun/cang can load libkrun without an ambient
-    # LD_LIBRARY_PATH; crun's own RUNPATH cannot cover it because DT_RUNPATH is
-    # not transitive across DT_NEEDED children.
+    # Restore that edge so cang can load libkrun without an ambient
+    # LD_LIBRARY_PATH; a consumer's own RUNPATH cannot cover it because
+    # DT_RUNPATH is not transitive across DT_NEEDED children.
     #
     # $ORIGIN covers the firmware: libkrun loads libkrunfw.so.5 with a plain
     # soname dlopen, so the loader searches the directory of the caller

@@ -107,12 +107,6 @@
               ;
             enableCiSccache = true;
           };
-          crun = import ./nix/pkgs/crun.nix {
-            inherit pkgs libkrun libkrunfw;
-          };
-          podman = pkgs.podman.override {
-            inherit crun;
-          };
           mkImage =
             cangMuslPackage:
             import ./nix/image/container.nix {
@@ -130,8 +124,6 @@
                 beadsPrebuilt
                 containerLibPolicySeccompJson
                 libkrun
-                podman
-                crun
                 wl-cross-domain-proxy
                 bun
                 ;
@@ -157,8 +149,7 @@
           libkrun = libkrun;
           virglrenderer = pkgs.virglrenderer;
           wl-cross-domain-proxy = wl-cross-domain-proxy;
-          crun = crun;
-          podman = podman;
+          podman = pkgs.podman;
           container = cangImage;
           container-ci-sccache = cangImageCiSccache;
           container-lib-policy-seccomp-json = containerLibPolicySeccompJson;
@@ -209,8 +200,6 @@
               containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
               libkrun = packages.libkrun;
               wl-cross-domain-proxy = packages.wl-cross-domain-proxy;
-              podman = packages.podman;
-              crun = packages.crun;
               cangMuslPackage = packages.cang-musl;
             };
         in

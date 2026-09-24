@@ -48,10 +48,10 @@ nix develop --command ./scripts/update-monty-prebuilt.sh
 
 Refresh pinned `zeroqn/libkrun` prebuilt release metadata in `nix/pins.nix`
 from the newest matching `loftd-*` tag that contains both required Linux assets.
-Root `.#libkrun` and every shared consumer (`.#crun`, `.#podman`, `.#cang`, images, and
-`.#cang-prebuilt`) use the same pinned prebuilt libkrun
-package. Local source builds stay in the submodule-aware dev flake and use the
-checked-out `deps/libkrun` submodule:
+Root `.#libkrun` and every shared consumer (`.#cang`, images, and
+`.#cang-prebuilt`) use the same pinned prebuilt libkrun package. Local source
+builds stay in the submodule-aware dev flake and use the checked-out
+`deps/libkrun` submodule:
 
 ```bash
 nix develop --command ./scripts/update-libkrun.sh

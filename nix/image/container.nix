@@ -13,8 +13,6 @@
   libkrun,
   wl-cross-domain-proxy,
   bun,
-  podman ? pkgs.podman,
-  crun ? pkgs.crun,
   cangMuslPackage,
 }:
 let
@@ -36,8 +34,6 @@ let
       libkrun
       wl-cross-domain-proxy
       bun
-      podman
-      crun
       cangMuslPackage
       ;
     fishConfig = configPayloads.fishConfig;
@@ -67,8 +63,6 @@ let
       libkrun
       wl-cross-domain-proxy
       bun
-      podman
-      crun
       cangMuslPackage
       ;
   };

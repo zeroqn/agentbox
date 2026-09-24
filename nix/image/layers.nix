@@ -13,8 +13,6 @@
   libkrun,
   wl-cross-domain-proxy,
   bun,
-  podman ? pkgs.podman,
-  crun ? pkgs.crun,
   cangMuslPackage,
   fishConfig,
   starshipConfig,
@@ -112,7 +110,7 @@ let
     if [ "''${CANG_CONTAINERS_STORAGE:-}" = "1" ]; then
       ${cangMuslPackage}/bin/cang-guest-init internal podman wait
     fi
-    exec ${podman}/bin/podman "$@"
+    exec ${pkgs.podman}/bin/podman "$@"
   '';
   cangDockerCommandCompat = pkgs.writeShellScriptBin "docker" ''
     unset LD_PRELOAD
@@ -121,7 +119,7 @@ let
     if [ "''${CANG_CONTAINERS_STORAGE:-}" = "1" ]; then
       ${cangMuslPackage}/bin/cang-guest-init internal podman service-wait
     fi
-    exec ${podman}/bin/podman "$@"
+    exec ${pkgs.podman}/bin/podman "$@"
   '';
   cangDockerComposeCommandCompat = pkgs.writeShellScriptBin "docker-compose" ''
     unset LD_PRELOAD
@@ -337,9 +335,9 @@ toolingImageLayer = pkgs.buildEnv {
   };
 
   rootlessPodmanImagePackages = [
-    podman
+    pkgs.podman
     pkgs.buildah
-    crun
+    pkgs.crun
     pkgs.conmon
     pkgs.netavark
     pkgs.aardvark-dns
@@ -449,7 +447,7 @@ toolingImageLayer = pkgs.buildEnv {
     ++ cangOnlyCommandCompat
     ++ imagePathPackages
   );
-  realPodmanBin = "${podman}/bin/podman";
+  realPodmanBin = "${pkgs.podman}/bin/podman";
   cangImageMaxLayers = 10;
   cangImageStoreLayers = cangImageMaxLayers - 1;
   imageContents =

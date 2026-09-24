@@ -159,7 +159,6 @@ nix build .#beads-prebuilt
 nix build .#monty-prebuilt
 nix build .#libkrunfw
 nix build .#libkrun
-nix build .#crun
 nix build .#podman
 nix build .#container-lib-policy-seccomp-json
 nix build .#container

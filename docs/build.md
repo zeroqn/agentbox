@@ -57,11 +57,11 @@
   current system.
 - `.#libkrun`: install the pinned `zeroqn/libkrun` `loftd-*` prebuilt release
   asset for the current system, matching `.#libkrunfw`'s release-asset model.
-  Root consumers (`.#crun`, `.#podman`, `.#cang`, images, and
-  `.#cang-prebuilt`) all use this pinned prebuilt package. The package
-  normalizes upstream Linux `lib64` payloads into `$out/lib` and regenerates
-  `libkrun.pc` for the Nix store path. Local source development for libkrun is
-  intentionally limited to the submodule-aware dev flake (`./nix/dev#cang-dev`).
+  Root consumers (`.#cang`, images, and `.#cang-prebuilt`) all use this pinned
+  prebuilt package. The package normalizes upstream Linux `lib64` payloads into
+  `$out/lib` and regenerates `libkrun.pc` for the Nix store path. Local source
+  development for libkrun is intentionally limited to the submodule-aware dev
+  flake (`./nix/dev#cang-dev`).
 - `.#virglrenderer`: the nixpkgs `virglrenderer` with this repo's host-side
   patches (`virglrenderer-enum-26.patch` and
   `virglrenderer-gbm-layout-linear-modifier.patch`, applied by the overlay in
@@ -70,11 +70,8 @@
   cang packages already ship it; downstream flakes that build their own host
   vrend/libkrun stack should consume this output instead of nixpkgs'
   `virglrenderer`.
-- `.#crun`: build `zeroqn/crun` branch `agentbox` with this repo's libkrun
-  override, krun handler support, raw data disk annotation support,
-  `krun.nested_virt` support, and `pkgs.passt` on crun's runtime `PATH`.
-- `.#podman`: build Podman against the custom crun for libkrun/raw-image
-  development.
+- `.#podman`: the nixpkgs Podman package, re-exported for downstream flakes and
+  for the image, which ships it with the nixpkgs `crun` runtime.
 - `.#container-lib-policy-seccomp-json`: install the pinned
   `containers/container-libs` `common/pkg/seccomp/seccomp.json` policy at
   `share/containers/seccomp.json` for downstream flakes or image reuse.
