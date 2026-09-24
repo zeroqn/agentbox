@@ -287,6 +287,22 @@ fn publish_release_uploads_only_neutral_cang_assets() {
 }
 
 #[test]
+fn publish_release_prunes_only_dev_releases() {
+    for required in [
+        r#"map(select(.tag_name | startswith("sha-")))"#,
+        "refusing to prune non-dev release",
+        r#"case "${tag}" in"#,
+    ] {
+        assert!(PUBLISH_RELEASE_YML.contains(required), "missing {required}");
+    }
+    assert_eq!(
+        PUBLISH_RELEASE_YML.matches("gh release delete").count(),
+        1,
+        "the prune step should delete through one guarded call site"
+    );
+}
+
+#[test]
 fn publish_release_notes_escape_markdown_backticks_for_shell_heredoc() {
     let bodies = all_heredoc_bodies(PUBLISH_RELEASE_YML);
     assert_eq!(

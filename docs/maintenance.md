@@ -6,7 +6,9 @@ Pinned-asset refresh scripts for `nix/pins.nix`, run from the dev shell
 Refresh pinned cang prebuilt release metadata in `nix/pins.nix` from a neutral
 raw-ELF `sha-*` release. The updater rejects wrapper-script assets, legacy
 flake-locked names, and payloads containing concrete
-`/nix/store/<hash>-...` references:
+`/nix/store/<hash>-...` references. `sha-*` releases are rolling dev
+artifacts: the release workflow keeps the 20 newest and never deletes versioned
+releases, so re-run this updater before a pinned `sha-*` release ages out:
 
 ```bash
 nix develop --command ./scripts/update-cang-prebuilt.sh

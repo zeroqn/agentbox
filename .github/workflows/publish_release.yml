@@ -270,6 +270,17 @@ jobs:
           )
 
           for tag in "${stale_tags[@]}"; do
+            # Only rolling dev releases are prunable. Tagged releases such as
+            # v0.6.7 are permanent, so fail closed if the selection above ever
+            # yields anything that is not a sha-<revision> dev tag.
+            case "${tag}" in
+              sha-*) ;;
+              *)
+                echo "refusing to prune non-dev release: ${tag}" >&2
+                exit 1
+                ;;
+            esac
+
             if [ -n "${tag}" ] && [ "${tag}" != "${SHA_TAG}" ]; then
               gh release delete "${tag}" --cleanup-tag -y
             fi
