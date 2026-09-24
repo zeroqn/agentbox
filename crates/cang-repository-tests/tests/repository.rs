@@ -193,7 +193,7 @@ fn publish_image_workflows_publish_only_cang() {
             "flake_attr: container-ci-sccache",
             "local_image: localhost/cang:latest",
             "init_binary: /bin/cang-guest-init",
-            "uses: actions/cache@v4",
+            "uses: actions/cache@v6",
             r#"docker load --input "$(cat "${{ matrix.image_name }}-container-path.txt")""#,
             r#"docker run --rm --entrypoint "${{ matrix.init_binary }}" "${{ matrix.local_image }}" --help > /dev/null"#,
             r#"docker tag "${{ matrix.local_image }}" "${{ steps.image_meta.outputs.target_image }}:${{ steps.image_meta.outputs.tag1 }}""#,
@@ -232,7 +232,7 @@ fn publish_image_workflows_publish_only_cang() {
 #[test]
 fn publish_release_uploads_only_neutral_cang_assets() {
     for required in [
-        "uses: actions/cache@v4",
+        "uses: actions/cache@v6",
         "path: /tmp/cang-ci-sccache-release",
         "nix build --option extra-sandbox-paths \"${sccache_sandbox_path}\" .#cang-ci-sccache -o result-cang",
         "cang_asset_name=\"cang-${arch}-unknown-linux-gnu\"",
