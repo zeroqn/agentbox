@@ -1313,6 +1313,7 @@ fn set_nonblocking(fd: RawFd, enabled: bool) -> Result<()> {
 mod tests {
     use super::*;
     use crate::guest_init::runtime::attach_profile;
+    use std::ffi::{CStr, CString};
     use std::os::fd::IntoRawFd;
     use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -1487,11 +1488,16 @@ mod tests {
     #[test]
     fn attached_client_receives_initial_pty_output() {
         let pty = Pty::open().unwrap();
+        let slave = pty_slave_cstring(&pty);
         let child = unsafe { libc::fork() };
-        assert!(child >= 0);
+        assert!(child >= 0, "fork failed");
         if child == 0 {
-            let result = write_then_sleep_on_pty_slave(&pty.slave_path, b"primary-da-visible\n");
-            std::process::exit(if result.is_ok() { 0 } else { 1 });
+            close_inherited_fds();
+            let code = write_then_sleep_on_pty_slave(&slave, b"primary-da-visible\n");
+            // SAFETY: a forked child of this multi-threaded harness must leave
+            // through `_exit`; `std::process::exit` runs the stdio flush that can
+            // deadlock on a lock another harness thread held at fork time.
+            unsafe { libc::_exit(code) }
         }
 
         let temp = tempfile::tempdir().unwrap();
@@ -1982,11 +1988,14 @@ mod tests {
     fn post_start_attach_sends_detached_restore_before_live_proxy() {
         let pty = Pty::open().unwrap();
         set_winsize(pty.master.as_raw_fd(), 24, 80).unwrap();
+        let slave = pty_slave_cstring(&pty);
         let child = unsafe { libc::fork() };
-        assert!(child >= 0);
+        assert!(child >= 0, "fork failed");
         if child == 0 {
-            let result = run_sigwinch_redraw_pty_child(&pty.slave_path);
-            std::process::exit(if result.is_ok() { 0 } else { 1 });
+            close_inherited_fds();
+            let code = run_sigwinch_redraw_pty_child(&slave);
+            // SAFETY: see `attached_client_receives_initial_pty_output`.
+            unsafe { libc::_exit(code) }
         }
         thread::sleep(Duration::from_millis(50));
 
@@ -2205,15 +2214,75 @@ mod tests {
         restored
     }
 
-    fn write_then_sleep_on_pty_slave(slave_path: &str, data: &[u8]) -> Result<()> {
-        let mut slave = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(slave_path)?;
-        slave.write_all(data)?;
-        slave.flush()?;
-        thread::sleep(Duration::from_millis(200));
-        Ok(())
+    /// Drop every inherited descriptor above stdio in a forked test child.
+    ///
+    /// A forked child keeps the harness's own descriptors alive: a copy of another
+    /// test's pipe write end delays that test's EOF, and a copy of a file another
+    /// test is about to `exec` makes that `exec` fail with `ETXTBSY`. Run this
+    /// first thing in the child, before it opens anything of its own.
+    fn close_inherited_fds() {
+        // SAFETY: `close_range` is a plain syscall on fd numbers 3.., which keeps
+        // stdio and cannot race with the parent's own descriptor table.
+        unsafe {
+            libc::syscall(libc::SYS_close_range, 3_u32, u32::MAX, 0_u32);
+        }
+    }
+
+    /// The PTY slave path as a C string.
+    ///
+    /// Built before the `fork()`: the forked child only calls raw syscalls, so it
+    /// must not allocate a `CString` of its own.
+    fn pty_slave_cstring(pty: &Pty) -> CString {
+        CString::new(pty.slave_path.as_str()).expect("PTY slave path has no NUL byte")
+    }
+
+    /// `write(2)` until every byte of `data` is out, for use inside a forked test
+    /// child where `std::io::Write` helpers are not safe to call.
+    fn write_all_fd(fd: libc::c_int, data: &[u8]) -> bool {
+        let mut written = 0;
+        while written < data.len() {
+            // SAFETY: writing an initialized byte slice to an open fd.
+            let n =
+                unsafe { libc::write(fd, data[written..].as_ptr().cast(), data.len() - written) };
+            if n <= 0 {
+                return false;
+            }
+            written += n as usize;
+        }
+        true
+    }
+
+    /// `nanosleep(2)` for the requested duration.
+    fn sleep_millis(millis: u64) {
+        let request = libc::timespec {
+            tv_sec: (millis / 1000) as libc::time_t,
+            tv_nsec: ((millis % 1000) * 1_000_000) as libc::c_long,
+        };
+        // SAFETY: a null remaining-time pointer is allowed by nanosleep.
+        unsafe { libc::nanosleep(&request, std::ptr::null_mut()) };
+    }
+
+    /// Write `data` to the PTY slave, hold it open for 200ms, then return 0.
+    ///
+    /// This runs in a forked child of the multi-threaded test harness, so it stays
+    /// syscall-only. `fork()` copies every lock the other harness threads held at
+    /// that instant - including glibc's malloc arenas - so an allocation here can
+    /// block forever and hang the parent's `waitpid`.
+    fn write_then_sleep_on_pty_slave(slave: &CStr, data: &[u8]) -> i32 {
+        // SAFETY: opening the PTY slave path read-write for this child only.
+        let fd = unsafe { libc::open(slave.as_ptr(), libc::O_RDWR) };
+        if fd < 0 {
+            return 1;
+        }
+        if !write_all_fd(fd, data) {
+            return 1;
+        }
+        // Hold the slave open for the whole window, exactly as the attach client
+        // sees it before the child exits (and closing it) on its own.
+        sleep_millis(200);
+        // SAFETY: closing the slave fd opened above.
+        unsafe { libc::close(fd) };
+        0
     }
 
     extern "C" fn write_redraw_marker(_signal: libc::c_int) {
@@ -2223,25 +2292,29 @@ mod tests {
         }
     }
 
-    fn run_sigwinch_redraw_pty_child(slave_path: &str) -> Result<()> {
+    /// Make the PTY this child's controlling terminal, report every window resize
+    /// on it, and then idle until the parent kills the child.
+    ///
+    /// Syscall-only for the same reason as `write_then_sleep_on_pty_slave`; success
+    /// never returns, and a non-zero return is a setup failure.
+    fn run_sigwinch_redraw_pty_child(slave: &CStr) -> i32 {
         if unsafe { libc::setsid() } < 0 {
-            return Err(std::io::Error::last_os_error()).context("failed to create test session");
+            return 1;
         }
-        let mut slave = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(slave_path)?;
-        if unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY, 0) } != 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to set test controlling PTY");
+        // SAFETY: opening the PTY slave path read-write for this child only.
+        let fd = unsafe { libc::open(slave.as_ptr(), libc::O_RDWR) };
+        if fd < 0 {
+            return 1;
+        }
+        if unsafe { libc::ioctl(fd, libc::TIOCSCTTY, 0) } != 0 {
+            return 1;
         }
         let pgid = unsafe { libc::getpgrp() };
-        if unsafe { libc::tcsetpgrp(slave.as_raw_fd(), pgid) } != 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to set test foreground process group");
+        if unsafe { libc::tcsetpgrp(fd, pgid) } != 0 {
+            return 1;
         }
-        if unsafe { libc::dup2(slave.as_raw_fd(), libc::STDOUT_FILENO) } < 0 {
-            return Err(std::io::Error::last_os_error()).context("failed to wire test PTY output");
+        if unsafe { libc::dup2(fd, libc::STDOUT_FILENO) } < 0 {
+            return 1;
         }
 
         let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
@@ -2249,12 +2322,15 @@ mod tests {
         if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0
             || unsafe { libc::sigaction(libc::SIGWINCH, &action, std::ptr::null_mut()) } != 0
         {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to install test SIGWINCH handler");
+            return 1;
         }
 
-        slave.write_all(b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006hdetached-visible\n")?;
-        slave.flush()?;
+        if !write_all_fd(
+            fd,
+            b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006hdetached-visible\n",
+        ) {
+            return 1;
+        }
         loop {
             unsafe { libc::pause() };
         }
