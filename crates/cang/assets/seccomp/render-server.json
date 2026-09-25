@@ -28,6 +28,7 @@
       {"syscall": "exit"},
       {"syscall": "exit_group"},
       {"syscall": "faccessat2"},
+      {"syscall": "fallocate"},
       {"syscall": "fchmodat"},
       {"syscall": "fchownat"},
       {"syscall": "fcntl"},

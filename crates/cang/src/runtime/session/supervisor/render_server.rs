@@ -398,12 +398,21 @@ mod tests {
         // context create (shader-cache setup + worker thread tuning). With the
         // default mismatch_action "trap", a missing allowlist entry SIGSYS-kills
         // the server ~5s after proxy init, before the first CtxCreate completes.
+        // `fallocate` is what the on-disk shader cache uses to grow its cache
+        // file: the runner sets MESA_SHADER_CACHE_DIR, so the driver always
+        // enables that cache and always reaches this call.
         // Regression guard for the chromium --gpu=drm venus smoke baseline.
         let policy_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/seccomp/render-server.json");
         let allowed =
             allowed_syscalls_from_policy(&policy_path).expect("parse render server policy");
-        for syscall in ["flock", "mkdir", "sched_setscheduler", "setpriority"] {
+        for syscall in [
+            "fallocate",
+            "flock",
+            "mkdir",
+            "sched_setscheduler",
+            "setpriority",
+        ] {
             assert!(
                 allowed.contains(syscall),
                 "render server seccomp policy must allow {syscall} (venus RADV driver)"
