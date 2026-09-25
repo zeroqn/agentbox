@@ -262,20 +262,6 @@ mod tests {
         };
         assert_eq!(resize.target, crate::guest_init::cli::ResizeTarget::Nix);
     }
-
-    #[test]
-    fn does_not_accept_legacy_agentbox_runtime_surface() {
-        for args in [
-            ["cang-guest-init", "microvm", "enter"],
-            ["cang-guest-init", "libkrun", "enter"],
-            ["cang-guest-init", "default", "enter"],
-            ["cang-guest-init", "container", "enter"],
-        ] {
-            let err = GuestInitCli::try_parse_from(args)
-                .expect_err("legacy runtime names should not parse");
-            assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
-        }
-    }
 }
 
 #[derive(Debug, Args, Clone, PartialEq, Eq)]

@@ -65,7 +65,7 @@ let
     '';
 
     meta = {
-      description = "Pinned prebuilt libkrunfw guest payload shared library for agentbox";
+      description = "Pinned prebuilt libkrunfw guest payload shared library for cang";
       homepage = "https://github.com/${release.owner}/${release.repo}";
       license = with lib.licenses; [ lgpl2Only lgpl21Only ];
       platforms = lib.attrNames release.systems;
@@ -163,7 +163,7 @@ EOF
     '';
 
     meta = {
-      description = "Local libkrunfw guest payload shared library for agentbox";
+      description = "Local libkrunfw guest payload shared library for cang";
       homepage = "https://github.com/${release.owner}/${release.repo}";
       license = with lib.licenses; [ lgpl2Only lgpl21Only ];
       platforms = [ "x86_64-linux" ];

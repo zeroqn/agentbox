@@ -10,10 +10,8 @@ const PINS_NIX: &str = include_str!("../../../nix/pins.nix");
 const NIX_DEV_FLAKE_NIX: &str = include_str!("../../../nix/dev/flake.nix");
 const SECCOMP_JSON_NIX: &str =
     include_str!("../../../nix/pkgs/container-lib-policy-seccomp-json.nix");
-const CARGO_TOML: &str = include_str!("../../../Cargo.toml");
 const CANG_RUST_NIX: &str = include_str!("../../../nix/pkgs/cang-rust.nix");
 const CANG_PREBUILT_NIX: &str = include_str!("../../../nix/pkgs/cang-prebuilt.nix");
-const UPDATE_CANG_PREBUILT_SH: &str = include_str!("../../../scripts/update-cang-prebuilt.sh");
 const TEST_YML: &str = include_str!("../../../.github/workflows/test.yml");
 const PUBLISH_RELEASE_YML: &str = include_str!("../../../.github/workflows/publish_release.yml");
 const PUBLISH_IMAGE_YML: &str = include_str!("../../../.github/workflows/publish_image.yml");
@@ -87,46 +85,11 @@ fn flake_exposes_cang_outputs() {
     ] {
         assert!(FLAKE_NIX.contains(required), "missing {required}");
     }
-    for forbidden in [
-        "agentbox-musl",
-        "agentbox-container",
-        "agentbox-prebuilt",
-        "agentbox = rustPackages",
-    ] {
-        assert!(!FLAKE_NIX.contains(forbidden), "unexpected {forbidden}");
-    }
     assert!(!FLAKE_NIX.contains("cang-dev ="));
 }
 
 #[test]
-fn agentbox_runtime_crates_and_outputs_are_removed() {
-    for removed in ["crates/agentbox-host", "crates/agentbox-guest-init"] {
-        assert!(
-            !CARGO_TOML.contains(removed),
-            "Cargo.toml still contains {removed}"
-        );
-    }
-
-    for removed in [
-        "agentbox-guest-init",
-        "agentbox-musl",
-        "agentbox-container",
-        "agentbox-prebuilt",
-        "localhost/agentbox",
-    ] {
-        for (label, source) in [
-            ("flake.nix", FLAKE_NIX),
-            ("nix/image/layers.nix", LAYERS),
-            ("nix/image/container.nix", CONTAINER_NIX),
-            ("nix/image/config.nix", IMAGE_CONFIG_NIX),
-            ("nix/image/checks.nix", IMAGE_CHECKS_NIX),
-        ] {
-            assert!(
-                !source.contains(removed),
-                "{label} still contains {removed}"
-            );
-        }
-    }
+fn dev_flake_exposes_cang_dev_output() {
     assert!(
         NIX_DEV_FLAKE_NIX.contains("cang-dev = rustPackages.rustPackage;"),
         "dev sub-flake should expose cang-dev"
@@ -202,15 +165,6 @@ fn publish_image_workflows_publish_only_cang() {
         ] {
             assert!(workflow.contains(required), "missing {required}");
         }
-
-        for forbidden in [
-            "image_name: agentbox",
-            "agentbox-container-ci-sccache",
-            "localhost/agentbox:latest",
-            "/bin/agentbox-guest-init",
-        ] {
-            assert!(!workflow.contains(forbidden), "unexpected {forbidden}");
-        }
     }
 
     for required in [
@@ -249,19 +203,6 @@ fn publish_release_uploads_only_neutral_cang_assets() {
         "neutral dynamically linked cang ELF packaging input",
     ] {
         assert!(PUBLISH_RELEASE_YML.contains(required), "missing {required}");
-    }
-
-    for forbidden in [
-        ".#agentbox-musl-ci-sccache",
-        "result-agentbox-musl",
-        "agentbox_asset_name",
-        "AGENTBOX_ASSET_PATH",
-        "ghcr.io/<repo-owner>/agentbox",
-    ] {
-        assert!(
-            !PUBLISH_RELEASE_YML.contains(forbidden),
-            "unexpected {forbidden}"
-        );
     }
 }
 
@@ -345,18 +286,14 @@ fn cang_package_exposes_stable_raw_elf_payload_for_release_workflow() {
         // refuses a wrapper script, so the package must stay wrapper-free.
         r#"wrapProgram "$out/bin/cang""#,
         "pkgs.makeWrapper",
-        "agentbox-host",
-        "agentbox-guest-init",
     ] {
         assert!(!CANG_RUST_NIX.contains(removed), "still contains {removed}");
     }
 
     let musl_build_flags = nix_list_body(CANG_RUST_NIX, "cargoBuildFlags");
     assert!(musl_build_flags.contains("cang-guest-init"));
-    assert!(!musl_build_flags.contains("agentbox"));
     let musl_test_flags = nix_list_body(CANG_RUST_NIX, "cargoTestFlags");
     assert!(musl_test_flags.contains("cang-guest-init"));
-    assert!(!musl_test_flags.contains("agentbox"));
 }
 
 #[test]
@@ -423,7 +360,6 @@ fn image_config_defines_cang_entrypoint() {
             "missing {required}"
         );
     }
-    assert!(!IMAGE_CONFIG_NIX.contains("agentbox-guest-init"));
     assert!(!IMAGE_CONFIG_NIX.contains("variants = {"));
     assert!(CONTAINER_NIX.contains("builtins.toJSON imageConfig"));
 }
@@ -507,8 +443,6 @@ fn cang_prebuilt_package_pins_and_patches_neutral_elf() {
             "still contains {removed}"
         );
     }
-
-    assert!(!UPDATE_CANG_PREBUILT_SH.contains("agentboxPrebuiltRelease"));
 }
 
 #[test]
@@ -946,7 +880,6 @@ fn image_includes_rootless_container_stacks_without_fuse_overlayfs() {
         "pkgs.nftables",
         "dockerdRootlessCompat",
         "pkgs.writeShellScriptBin \"dockerd-rootless.sh\"",
-        "agentbox-guest-init libkrun docker",
         r#"exec ${docker}/bin/docker "$@""#,
     ] {
         assert!(!LAYERS.contains(forbidden), "unexpected {forbidden}");

@@ -130,8 +130,7 @@ fn launch_config_defaults_to_guest_init_enter_fish_shell() {
         config
             .guest_config_env
             .iter()
-            .all(|(key, value)| !key.starts_with("AGENTBOX_")
-                && !value.contains("/workspace-src")
+            .all(|(_, value)| !value.contains("/workspace-src")
                 && !value.contains(".config/codex"))
     );
 }

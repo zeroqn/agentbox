@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_prepares_existing_agentbox_style_bind_mounts_without_codex_config() {
+    fn plan_prepares_host_dotfile_bind_mounts_without_codex_config() {
         let dir = tempfile::tempdir().expect("tempdir should exist");
         let workspace = dir.path().join("project");
         let home = dir.path().join("home");

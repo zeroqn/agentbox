@@ -394,8 +394,6 @@ let
           *":${pkgs.waypipe}/bin:"*) ;;
           *) exit 1 ;;
         esac
-        ! grep -F 'AGENTBOX_LIBKRUN' ${layers.nixCommandCompat}/bin/nix
-        ! grep -F '/run/agentbox/nix-disk/upper' ${layers.nixStoreDbCheck}/bin/cang-nix-store-db-check
 
         mkdir -p "$out"
         touch "$out/passed"

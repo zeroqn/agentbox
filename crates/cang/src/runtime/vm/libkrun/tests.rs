@@ -454,13 +454,11 @@ fn libkrun_loader_tries_package_relative_libraries_before_sonames() {
     assert_eq!(
         planned_libkrun_load_order_for_exe(
             None,
-            Some(std::path::PathBuf::from(
-                "/nix/store/hash-agentbox/bin/cang"
-            ))
+            Some(std::path::PathBuf::from("/nix/store/hash-cang/bin/cang"))
         ),
         vec![
-            "/nix/store/hash-agentbox/lib/cang/libkrun.so.1",
-            "/nix/store/hash-agentbox/lib/cang/libkrun.so",
+            "/nix/store/hash-cang/lib/cang/libkrun.so.1",
+            "/nix/store/hash-cang/lib/cang/libkrun.so",
             "libkrun.so.1",
             "libkrun.so",
         ]

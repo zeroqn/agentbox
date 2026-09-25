@@ -1178,7 +1178,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
-        let task_id = "agentbox-4138-178109091122334455";
+        let task_id = "cang-4138-178109091122334455";
         write_active_task_record(&record(task_id, task_dir)).expect("write task record");
 
         let output = render_ps(
@@ -1188,18 +1188,18 @@ mod tests {
         .expect("render ps");
 
         assert!(output.contains("HANDLE"));
-        assert!(output.contains("agentbox-4138"));
+        assert!(output.contains("cang-4138"));
         assert!(output.contains(task_id));
     }
 
     #[test]
     fn task_handle_extracts_workspace_pid_from_task_id() {
         assert_eq!(
-            task_handle("agentbox-4138-178109091122334455"),
-            Some("agentbox-4138")
+            task_handle("cang-4138-178109091122334455"),
+            Some("cang-4138")
         );
-        assert_eq!(task_handle("agentbox-4138"), None);
-        assert_eq!(task_handle("agentbox-4138-suffix"), None);
+        assert_eq!(task_handle("cang-4138"), None);
+        assert_eq!(task_handle("cang-4138-suffix"), None);
     }
 
     #[test]
@@ -1208,13 +1208,13 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        let task_id = "agentbox-4138-178109091122334455";
+        let task_id = "cang-4138-178109091122334455";
         write_active_task_record(&record(task_id, task_dir)).expect("write task record");
         let inspector =
             StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
         let mut signaler = RecordingSignaler::default();
 
-        let output = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+        let output = kill_task(&app_dir, "cang-4138", &inspector, &mut signaler, |_| {})
             .expect("kill task by handle");
 
         assert!(output.contains(task_id));
@@ -1228,14 +1228,14 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        let task_id = "agentbox-4138-178109091122334455";
+        let task_id = "cang-4138-178109091122334455";
         write_active_task_record(&record(task_id, task_dir)).expect("write task record");
         let inspector =
             StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
         let mut signaler = RecordingSignaler::default();
 
         let output =
-            kill_task(&app_dir, "ag", &inspector, &mut signaler, |_| {}).expect("kill by prefix");
+            kill_task(&app_dir, "ca", &inspector, &mut signaler, |_| {}).expect("kill by prefix");
 
         assert!(output.contains(task_id));
         assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
@@ -1247,28 +1247,28 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_dir = dir.path().join("cang");
         let target_dir = app_dir.join("workspace-a/tasks/target");
-        let other_agentbox_dir = app_dir.join("workspace-b/tasks/other-agentbox");
+        let other_cang_dir = app_dir.join("workspace-b/tasks/other-cang");
         let muvm_dir = app_dir.join("workspace-c/tasks/muvm");
         let target_path = active_record_path(&target_dir);
-        let other_agentbox_path = active_record_path(&other_agentbox_dir);
+        let other_cang_path = active_record_path(&other_cang_dir);
         let muvm_path = active_record_path(&muvm_dir);
-        write_active_task_record(&record("agentbox-1845-111", target_dir))
+        write_active_task_record(&record("cang-1845-111", target_dir))
             .expect("write target task record");
-        write_active_task_record(&record("agentbox-8874-222", other_agentbox_dir))
-            .expect("write other agentbox task record");
+        write_active_task_record(&record("cang-8874-222", other_cang_dir))
+            .expect("write other cang task record");
         write_active_task_record(&record("muvm-3871-333", muvm_dir))
             .expect("write muvm task record");
         let inspector =
             StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
         let mut signaler = RecordingSignaler::default();
 
-        let output = kill_task(&app_dir, "ag-18", &inspector, &mut signaler, |_| {})
+        let output = kill_task(&app_dir, "ca-18", &inspector, &mut signaler, |_| {})
             .expect("kill by abbreviated handle selector");
 
-        assert!(output.contains("agentbox-1845-111"));
+        assert!(output.contains("cang-1845-111"));
         assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
         assert!(!target_path.exists());
-        assert!(other_agentbox_path.exists());
+        assert!(other_cang_path.exists());
         assert!(muvm_path.exists());
     }
 
@@ -1276,12 +1276,12 @@ mod tests {
     fn kill_accepts_numeric_prefix_in_abbreviated_handle() {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_dir = dir.path().join("cang");
-        let agentbox_dir = app_dir.join("workspace-a/tasks/agentbox");
+        let cang_dir = app_dir.join("workspace-a/tasks/cang");
         let target_dir = app_dir.join("workspace-b/tasks/muvm");
-        let agentbox_path = active_record_path(&agentbox_dir);
+        let cang_path = active_record_path(&cang_dir);
         let target_path = active_record_path(&target_dir);
-        write_active_task_record(&record("agentbox-1845-111", agentbox_dir))
-            .expect("write agentbox task record");
+        write_active_task_record(&record("cang-1845-111", cang_dir))
+            .expect("write cang task record");
         write_active_task_record(&record("muvm-3871-222", target_dir))
             .expect("write target task record");
         let inspector =
@@ -1293,7 +1293,7 @@ mod tests {
 
         assert!(output.contains("muvm-3871-222"));
         assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
-        assert!(agentbox_path.exists());
+        assert!(cang_path.exists());
         assert!(!target_path.exists());
     }
 
@@ -1305,18 +1305,18 @@ mod tests {
         let abbreviated_match_dir = app_dir.join("workspace-b/tasks/abbreviated-match");
         let literal_prefix_path = active_record_path(&literal_prefix_dir);
         let abbreviated_match_path = active_record_path(&abbreviated_match_dir);
-        write_active_task_record(&record("ag-18-test-111", literal_prefix_dir))
+        write_active_task_record(&record("ca-18-test-111", literal_prefix_dir))
             .expect("write literal-prefix task record");
-        write_active_task_record(&record("agentbox-1845-222", abbreviated_match_dir))
+        write_active_task_record(&record("cang-1845-222", abbreviated_match_dir))
             .expect("write abbreviated-match task record");
         let inspector =
             StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
         let mut signaler = RecordingSignaler::default();
 
-        let output = kill_task(&app_dir, "ag-18", &inspector, &mut signaler, |_| {})
+        let output = kill_task(&app_dir, "ca-18", &inspector, &mut signaler, |_| {})
             .expect("literal prefix should win");
 
-        assert!(output.contains("ag-18-test-111"));
+        assert!(output.contains("ca-18-test-111"));
         assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
         assert!(!literal_prefix_path.exists());
         assert!(abbreviated_match_path.exists());
@@ -1328,12 +1328,12 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        write_active_task_record(&record("agentbox-4138-178109091122334455", task_dir))
+        write_active_task_record(&record("cang-4138-178109091122334455", task_dir))
             .expect("write task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "a", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "c", &inspector, &mut signaler, |_| {})
             .expect_err("one-character prefix should not resolve");
 
         assert!(format!("{err:#}").contains("too short"));
@@ -1347,12 +1347,11 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        write_active_task_record(&record("agentbox-1845-111", task_dir))
-            .expect("write task record");
+        write_active_task_record(&record("cang-1845-111", task_dir)).expect("write task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "a-18", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "c-18", &inspector, &mut signaler, |_| {})
             .expect_err("too-short abbreviated name prefix should not resolve");
 
         assert!(format!("{err:#}").contains("name prefix that is too short"));
@@ -1368,20 +1367,20 @@ mod tests {
         let second_dir = app_dir.join("workspace-b/tasks/task-b");
         let first_path = active_record_path(&first_dir);
         let second_path = active_record_path(&second_dir);
-        write_active_task_record(&record("agentbox-4138-111", first_dir))
+        write_active_task_record(&record("cang-4138-111", first_dir))
             .expect("write first task record");
-        write_active_task_record(&record("agentbox-4138-222", second_dir))
+        write_active_task_record(&record("cang-4138-222", second_dir))
             .expect("write second task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "cang-4138", &inspector, &mut signaler, |_| {})
             .expect_err("ambiguous handle should refuse kill");
         let message = format!("{err:#}");
 
-        assert!(message.contains("matched handle 'agentbox-4138'"));
-        assert!(message.contains("agentbox-4138-111"));
-        assert!(message.contains("agentbox-4138-222"));
+        assert!(message.contains("matched handle 'cang-4138'"));
+        assert!(message.contains("cang-4138-111"));
+        assert!(message.contains("cang-4138-222"));
         assert!(signaler.signals.is_empty());
         assert!(first_path.exists());
         assert!(second_path.exists());
@@ -1395,20 +1394,20 @@ mod tests {
         let second_dir = app_dir.join("workspace-b/tasks/task-b");
         let first_path = active_record_path(&first_dir);
         let second_path = active_record_path(&second_dir);
-        write_active_task_record(&record("agentbox-3415-111", first_dir))
+        write_active_task_record(&record("cang-3415-111", first_dir))
             .expect("write first task record");
-        write_active_task_record(&record("agentic-2222-333", second_dir))
+        write_active_task_record(&record("cargo-2222-333", second_dir))
             .expect("write second task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "ag", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "ca", &inspector, &mut signaler, |_| {})
             .expect_err("ambiguous prefix should refuse kill");
         let message = format!("{err:#}");
 
-        assert!(message.contains("matched handle prefix 'ag'"));
-        assert!(message.contains("agentbox-3415-111"));
-        assert!(message.contains("agentic-2222-333"));
+        assert!(message.contains("matched handle prefix 'ca'"));
+        assert!(message.contains("cang-3415-111"));
+        assert!(message.contains("cargo-2222-333"));
         assert!(signaler.signals.is_empty());
         assert!(first_path.exists());
         assert!(second_path.exists());
@@ -1422,20 +1421,20 @@ mod tests {
         let second_dir = app_dir.join("workspace-b/tasks/task-b");
         let first_path = active_record_path(&first_dir);
         let second_path = active_record_path(&second_dir);
-        write_active_task_record(&record("agentbox-1845-111", first_dir))
+        write_active_task_record(&record("cang-1845-111", first_dir))
             .expect("write first task record");
-        write_active_task_record(&record("agentic-1800-222", second_dir))
+        write_active_task_record(&record("cargo-1800-222", second_dir))
             .expect("write second task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "ag-18", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "ca-18", &inspector, &mut signaler, |_| {})
             .expect_err("ambiguous abbreviated selector should refuse kill");
         let message = format!("{err:#}");
 
-        assert!(message.contains("matched abbreviated handle selector 'ag-18'"));
-        assert!(message.contains("agentbox-1845-111"));
-        assert!(message.contains("agentic-1800-222"));
+        assert!(message.contains("matched abbreviated handle selector 'ca-18'"));
+        assert!(message.contains("cang-1845-111"));
+        assert!(message.contains("cargo-1800-222"));
         assert!(signaler.signals.is_empty());
         assert!(first_path.exists());
         assert!(second_path.exists());
@@ -1449,14 +1448,14 @@ mod tests {
         let second_dir = app_dir.join("workspace-b/tasks/task-b");
         let first_path = active_record_path(&first_dir);
         let second_path = active_record_path(&second_dir);
-        write_active_task_record(&record("agentbox-1845-111", first_dir))
+        write_active_task_record(&record("cang-1845-111", first_dir))
             .expect("write first task record");
         write_active_task_record(&record("muvm-3871-222", second_dir))
             .expect("write second task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "ag-x", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "ca-x", &inspector, &mut signaler, |_| {})
             .expect_err("non-numeric abbreviated selector should not resolve");
 
         assert!(format!("{err:#}").contains("non-empty numeric displayed-handle segment prefix"));
@@ -1471,12 +1470,11 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        write_active_task_record(&record("agentbox-1845-111", task_dir))
-            .expect("write task record");
+        write_active_task_record(&record("cang-1845-111", task_dir)).expect("write task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "ag-", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "ca-", &inspector, &mut signaler, |_| {})
             .expect_err("empty numeric abbreviated selector should not resolve");
 
         assert!(format!("{err:#}").contains("non-empty numeric displayed-handle segment prefix"));
@@ -1490,15 +1488,14 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        write_active_task_record(&record("agentbox-1845-111", task_dir))
-            .expect("write task record");
+        write_active_task_record(&record("cang-1845-111", task_dir)).expect("write task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "ag-99", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "ca-99", &inspector, &mut signaler, |_| {})
             .expect_err("unmatched abbreviated selector should not resolve");
 
-        assert!(format!("{err:#}").contains("no abbreviated handle selector matched 'ag-99'"));
+        assert!(format!("{err:#}").contains("no abbreviated handle selector matched 'ca-99'"));
         assert!(signaler.signals.is_empty());
         assert!(record_path.exists());
     }
@@ -1509,12 +1506,11 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        write_active_task_record(&record("agentbox-1845-111", task_dir))
-            .expect("write task record");
+        write_active_task_record(&record("cang-1845-111", task_dir)).expect("write task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(&app_dir, "ag18", &inspector, &mut signaler, |_| {})
+        let err = kill_task(&app_dir, "ca18", &inspector, &mut signaler, |_| {})
             .expect_err("compressed selector should not resolve");
 
         assert!(format!("{err:#}").contains("id, handle, or handle prefix"));
@@ -1528,19 +1524,12 @@ mod tests {
         let app_dir = dir.path().join("cang");
         let task_dir = app_dir.join("workspace-a/tasks/task-a");
         let record_path = active_record_path(&task_dir);
-        write_active_task_record(&record("agentbox-3415-111", task_dir))
-            .expect("write task record");
+        write_active_task_record(&record("cang-3415-111", task_dir)).expect("write task record");
         let inspector = StaticInspector::new(vec![]);
         let mut signaler = RecordingSignaler::default();
 
-        let err = kill_task(
-            &app_dir,
-            "agentbox-3415-1",
-            &inspector,
-            &mut signaler,
-            |_| {},
-        )
-        .expect_err("full id prefix should not resolve through handle prefix matching");
+        let err = kill_task(&app_dir, "cang-3415-1", &inspector, &mut signaler, |_| {})
+            .expect_err("full id prefix should not resolve through handle prefix matching");
 
         assert!(format!("{err:#}").contains("id, handle, or handle prefix"));
         assert!(signaler.signals.is_empty());
@@ -1555,18 +1544,18 @@ mod tests {
         let prefix_dir = app_dir.join("workspace-b/tasks/prefix");
         let exact_handle_path = active_record_path(&exact_handle_dir);
         let prefix_path = active_record_path(&prefix_dir);
-        write_active_task_record(&record("agentbox-4138-111", exact_handle_dir))
+        write_active_task_record(&record("cang-4138-111", exact_handle_dir))
             .expect("write exact-handle task record");
-        write_active_task_record(&record("agentbox-4138-extra-222", prefix_dir))
+        write_active_task_record(&record("cang-4138-extra-222", prefix_dir))
             .expect("write prefix task record");
         let inspector =
             StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
         let mut signaler = RecordingSignaler::default();
 
-        let output = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+        let output = kill_task(&app_dir, "cang-4138", &inspector, &mut signaler, |_| {})
             .expect("exact handle should win");
 
-        assert!(output.contains("agentbox-4138-111"));
+        assert!(output.contains("cang-4138-111"));
         assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
         assert!(!exact_handle_path.exists());
         assert!(prefix_path.exists());
@@ -1580,18 +1569,17 @@ mod tests {
         let handle_dir = app_dir.join("workspace-b/tasks/handle");
         let exact_path = active_record_path(&exact_dir);
         let handle_path = active_record_path(&handle_dir);
-        write_active_task_record(&record("agentbox-4138", exact_dir))
-            .expect("write exact task record");
-        write_active_task_record(&record("agentbox-4138-111", handle_dir))
+        write_active_task_record(&record("cang-4138", exact_dir)).expect("write exact task record");
+        write_active_task_record(&record("cang-4138-111", handle_dir))
             .expect("write handle task record");
         let inspector =
             StaticInspector::new(vec![ActiveTaskStatus::Running, ActiveTaskStatus::Stale]);
         let mut signaler = RecordingSignaler::default();
 
-        let output = kill_task(&app_dir, "agentbox-4138", &inspector, &mut signaler, |_| {})
+        let output = kill_task(&app_dir, "cang-4138", &inspector, &mut signaler, |_| {})
             .expect("exact task id should win");
 
-        assert!(output.contains("agentbox-4138"));
+        assert!(output.contains("cang-4138"));
         assert_eq!(signaler.signals, vec![(123, libc::SIGTERM)]);
         assert!(!exact_path.exists());
         assert!(handle_path.exists());

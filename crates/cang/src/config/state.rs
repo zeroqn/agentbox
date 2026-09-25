@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn parser_ignores_unknown_sections_and_keys() {
         let config = crate::config::state::parse_config(
-            "[agentbox]\nlocation = \"/tmp/wrong\"\n[task-rootfs]\nunknown = \"auto\"\n",
+            "[unknown-section]\nlocation = \"/tmp/wrong\"\n[task-rootfs]\nunknown = \"auto\"\n",
         )
         .expect("unknown config should be ignored");
 

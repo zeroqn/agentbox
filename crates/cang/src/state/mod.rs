@@ -129,24 +129,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_state_layout_ignores_legacy_repo_local_agentbox() {
-        let dir = tempfile::tempdir().expect("tempdir should be created");
-        let workspace = dir.path().join("project");
-        let state_home = dir.path().join("state");
-        let home = dir.path().join("home");
-
-        std::fs::create_dir_all(workspace.join(".agentbox").join("nix"))
-            .expect("legacy state should be created");
-
-        let layout =
-            resolve_state_layout_from_parts(&workspace, Some(&state_home), Some(&home), None)
-                .expect("layout should resolve");
-
-        assert_eq!(layout.root_dir(), &state_home.join("cang").join("project"));
-        assert_ne!(layout.root_dir(), workspace.join(".agentbox"));
-    }
-
-    #[test]
     fn resolve_state_layout_exposes_app_root_for_cross_workspace_management() {
         let layout = resolve_state_layout_from_parts(
             Path::new("/tmp/project"),

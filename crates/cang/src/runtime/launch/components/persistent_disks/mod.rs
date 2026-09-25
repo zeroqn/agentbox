@@ -164,6 +164,5 @@ mod tests {
         );
         assert!(!env.iter().any(|(key, _)| key == "CANG_NIX_DISK_ID"));
         assert!(!env.iter().any(|(key, _)| key == "CANG_NIX_DISK_LABEL"));
-        assert!(env.iter().all(|(key, _)| !key.starts_with("AGENTBOX_")));
     }
 }

@@ -127,16 +127,16 @@ mod tests {
     #[test]
     fn package_helper_paths_are_derived_from_bin_cang_without_store_hashes() {
         assert_eq!(
-            package_root_from_exe(Path::new("/nix/store/hash-agentbox/bin/cang")),
-            Some(PathBuf::from("/nix/store/hash-agentbox"))
+            package_root_from_exe(Path::new("/nix/store/hash-cang/bin/cang")),
+            Some(PathBuf::from("/nix/store/hash-cang"))
         );
         assert_eq!(
             package_helper_path_for_exe(
-                Path::new("/nix/store/hash-agentbox/bin/cang"),
+                Path::new("/nix/store/hash-cang/bin/cang"),
                 RuntimeTool::Buildah
             ),
             Some(PathBuf::from(
-                "/nix/store/hash-agentbox/libexec/cang-helpers/buildah"
+                "/nix/store/hash-cang/libexec/cang-helpers/buildah"
             ))
         );
     }
@@ -145,11 +145,11 @@ mod tests {
     fn legacy_libexec_executable_shape_still_resolves_package_root() {
         assert_eq!(
             package_helper_path_for_exe(
-                Path::new("/nix/store/hash-agentbox/libexec/cang"),
+                Path::new("/nix/store/hash-cang/libexec/cang"),
                 RuntimeTool::Passt
             ),
             Some(PathBuf::from(
-                "/nix/store/hash-agentbox/libexec/cang-helpers/passt"
+                "/nix/store/hash-cang/libexec/cang-helpers/passt"
             ))
         );
     }
@@ -157,19 +157,17 @@ mod tests {
     #[test]
     fn default_seccomp_policy_path_is_package_relative() {
         assert_eq!(
-            package_default_seccomp_policy_path_for_exe(Path::new(
-                "/nix/store/hash-agentbox/bin/cang"
-            )),
+            package_default_seccomp_policy_path_for_exe(Path::new("/nix/store/hash-cang/bin/cang")),
             Some(PathBuf::from(
-                "/nix/store/hash-agentbox/share/cang/seccomp/default.json"
+                "/nix/store/hash-cang/share/cang/seccomp/default.json"
             ))
         );
         assert_eq!(
             package_default_seccomp_policy_path_for_exe(Path::new(
-                "/nix/store/hash-agentbox/libexec/cang"
+                "/nix/store/hash-cang/libexec/cang"
             )),
             Some(PathBuf::from(
-                "/nix/store/hash-agentbox/share/cang/seccomp/default.json"
+                "/nix/store/hash-cang/share/cang/seccomp/default.json"
             ))
         );
     }
@@ -181,7 +179,7 @@ mod tests {
                 RuntimeTool::Btrfs,
                 Some(OsString::from("/custom/btrfs")),
                 Some(OsString::from("/helpers")),
-                Some(PathBuf::from("/nix/store/hash-agentbox/bin/cang")),
+                Some(PathBuf::from("/nix/store/hash-cang/bin/cang")),
             ),
             OsString::from("/custom/btrfs")
         );
@@ -194,7 +192,7 @@ mod tests {
                 RuntimeTool::MkfsBtrfs,
                 None,
                 Some(OsString::from("/helpers")),
-                Some(PathBuf::from("/nix/store/hash-agentbox/bin/cang")),
+                Some(PathBuf::from("/nix/store/hash-cang/bin/cang")),
             ),
             OsString::from("/helpers/mkfs.btrfs")
         );
@@ -207,7 +205,7 @@ mod tests {
                 RuntimeTool::Blkid,
                 None,
                 None,
-                Some(PathBuf::from("/nix/store/hash-agentbox/bin/cang")),
+                Some(PathBuf::from("/nix/store/hash-cang/bin/cang")),
             ),
             OsString::from("blkid")
         );

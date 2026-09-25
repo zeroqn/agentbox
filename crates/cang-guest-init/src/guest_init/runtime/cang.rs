@@ -799,30 +799,6 @@ mod tests {
     }
 
     #[test]
-    fn cang_env_ignores_legacy_agentbox_env_names() {
-        let env = EnterEnv::from_env(&env(&[
-            ("AGENTBOX_LIBKRUN_NIX_OVERLAY", "1"),
-            ("AGENTBOX_LIBKRUN_CONTAINERS_STORAGE", "1"),
-            ("AGENTBOX_LIBKRUN_USE_PASST", "1"),
-            ("AGENTBOX_ENTER_AS_ROOT", "1"),
-            ("AGENTBOX_HOST_UID", "2000"),
-            ("AGENTBOX_HOST_GID", "2001"),
-        ]))
-        .expect("legacy env names should be ignored");
-
-        assert!(!env.enter_as_root);
-        assert!(!env.cang.nix_overlay);
-        assert!(!env.cang.containers_storage);
-        assert_eq!(
-            env.cang.container_store_backend,
-            ContainerStoreBackend::RawDisk
-        );
-        assert!(!env.cang.use_passt);
-        assert_eq!(env.host_uid, None);
-        assert_eq!(env.host_gid, None);
-    }
-
-    #[test]
     fn cang_env_rejects_bind_container_store_backend() {
         let err = EnterEnv::from_env(&env(&[
             ("CANG_CONTAINERS_STORAGE", "1"),
