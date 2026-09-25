@@ -11,6 +11,16 @@ use crate::guest_init::process;
 
 pub(in crate::guest_init) const WAYLAND_DISPLAY: &str = "wayland-0";
 pub(in crate::guest_init) const PROXY_BIN: &str = "wl-cross-domain-proxy";
+// The venus ICD is pinned through VK_ICD_FILENAMES rather than
+// VK_DRIVER_FILES on purpose. ANGLE's SwiftShader display selects its own
+// software ICD by setting VK_ICD_FILENAMES, and the Vulkan loader gives
+// VK_DRIVER_FILES precedence over it, so pinning VK_DRIVER_FILES replaces that
+// choice instead of leaving it open: a guest chromium asked for
+// --use-angle=swiftshader then finds no software device, aborts its GPU
+// process and reports no WebGL renderer, while the hardware venus path is
+// unaffected either way. Verified in a --gpu=drm guest: with VK_ICD_FILENAMES
+// the venus renderer stays the default and --use-angle=swiftshader reaches
+// SwiftShader with zero GPU-process crashes.
 const MESA_ENV: &[(&str, &str)] = &[
     ("LIBGL_DRIVERS_PATH", "/usr/lib/cang-mesa-runtime/lib/dri"),
     (
@@ -18,7 +28,7 @@ const MESA_ENV: &[(&str, &str)] = &[
         "/usr/lib/cang-mesa-runtime/share/glvnd/egl_vendor.d/50_mesa.json",
     ),
     (
-        "VK_DRIVER_FILES",
+        "VK_ICD_FILENAMES",
         "/usr/lib/cang-mesa-runtime/share/vulkan/icd.d/virtio_icd.x86_64.json",
     ),
 ];
@@ -198,6 +208,13 @@ mod tests {
             assert_eq!(std::env::var(name).as_deref(), Ok(*value));
             assert!(value.starts_with("/usr/lib/cang-mesa-runtime"));
         }
+        // The ICD pin must use VK_ICD_FILENAMES and never VK_DRIVER_FILES: the
+        // loader gives VK_DRIVER_FILES precedence over the VK_ICD_FILENAMES that
+        // ANGLE's SwiftShader display sets for itself, so pinning VK_DRIVER_FILES
+        // would strip a guest chromium asked for --use-angle=swiftshader of its
+        // software device (GPU process abort, no WebGL renderer).
+        assert!(MESA_ENV.iter().any(|(name, _)| *name == "VK_ICD_FILENAMES"));
+        assert!(!MESA_ENV.iter().any(|(name, _)| *name == "VK_DRIVER_FILES"));
         assert!(std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none());
 
         for (name, _) in MESA_ENV {

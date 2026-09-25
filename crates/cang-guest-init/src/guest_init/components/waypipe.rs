@@ -11,6 +11,10 @@ use crate::guest_init::components::rootless::runtime_dir::ensure_user_runtime_di
 use crate::guest_init::process;
 
 pub(in crate::guest_init) const WAYLAND_DISPLAY: &str = "cang-waypipe-0";
+// Same rationale as `MESA_ENV` in components/wayland.rs: the software ICD is
+// pinned through VK_ICD_FILENAMES, never VK_DRIVER_FILES, because the Vulkan
+// loader gives VK_DRIVER_FILES precedence over the VK_ICD_FILENAMES a client
+// (such as ANGLE's SwiftShader display) sets for itself.
 const SOFTWARE_RENDERER_ENV: &[(&str, &str)] = &[
     ("LIBGL_ALWAYS_SOFTWARE", "1"),
     (
@@ -22,7 +26,7 @@ const SOFTWARE_RENDERER_ENV: &[(&str, &str)] = &[
         "/usr/lib/cang-software-renderer/share/glvnd/egl_vendor.d/50_mesa.json",
     ),
     (
-        "VK_DRIVER_FILES",
+        "VK_ICD_FILENAMES",
         "/usr/lib/cang-software-renderer/share/vulkan/icd.d/lvp_icd.x86_64.json",
     ),
 ];
@@ -262,6 +266,16 @@ mod tests {
                 actual_name == OsStr::new(name) && actual_value == Some(OsStr::new(value))
             }));
         }
+        assert!(
+            SOFTWARE_RENDERER_ENV
+                .iter()
+                .any(|(name, _)| *name == "VK_ICD_FILENAMES")
+        );
+        assert!(
+            !SOFTWARE_RENDERER_ENV
+                .iter()
+                .any(|(name, _)| *name == "VK_DRIVER_FILES")
+        );
     }
 
     #[test]

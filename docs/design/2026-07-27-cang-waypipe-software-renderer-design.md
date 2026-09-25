@@ -88,7 +88,7 @@ When `CANG_WAYPIPE_PORT` is present, guest-init constructs the Waypipe launch wi
 LIBGL_ALWAYS_SOFTWARE=1
 LIBGL_DRIVERS_PATH=/usr/lib/cang-software-renderer/lib/dri
 __EGL_VENDOR_LIBRARY_FILENAMES=/usr/lib/cang-software-renderer/share/glvnd/egl_vendor.d/50_mesa.json
-VK_DRIVER_FILES=/usr/lib/cang-software-renderer/share/vulkan/icd.d/lvp_icd.x86_64.json
+VK_ICD_FILENAMES=/usr/lib/cang-software-renderer/share/vulkan/icd.d/lvp_icd.x86_64.json
 ```
 
 The existing Waypipe invocation remains semantically unchanged:

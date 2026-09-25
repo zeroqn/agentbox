@@ -106,7 +106,7 @@ the part that is easy to get wrong:
   Vulkan->venus while the compositor stays off Vulkan.
 - `GBM_BACKENDS_PATH=/usr/lib/cang-mesa-runtime/lib/gbm` must be set in the
   guest. guest-init's `MESA_ENV` points `LIBGL_DRIVERS_PATH`, the EGL vendor file
-  and `VK_DRIVER_FILES` at the image's mesa but never sets the GBM backend path,
+  and `VK_ICD_FILENAMES` at the image's mesa but never sets the GBM backend path,
   so ozone searched the NixOS default `/run/opengl-driver/lib/gbm`, missed the
   guest's `dri_gbm.so` and could not init a DRM render node.
 - dmabuf must still be blocked on the waypipe side (`-n`/`--no-gpu`), though the
