@@ -1,11 +1,13 @@
 # Chromium Cang Live Smoke
 
-Two modes. The default proves Chromium's GPU path inside a cang microVM
+Three modes. The default proves Chromium's GPU path inside a cang microVM
 (headless Chromium on venus). `--waypipe` additionally proves cang's waypipe
 transport: a host Wayland compositor and waypipe client, `cang
 --waypipe=<socket>`, and a guest Chromium that renders on venus *and* presents
-through waypipe, with a no-`--waypipe` control run for attribution. The frozen
-design of that mode is specified below.
+through waypipe, with a no-`--waypipe` control run for attribution. `--waypipe
+--software-renderer` runs the same transport on the image's *software* renderer
+instead of venus, without `--gpu=drm`, and scores the ICD pin that selects it.
+The frozen design of the waypipe mode is specified below.
 
 A single-command, artifact-correct live smoke for the cang GPU path using a
 real Chromium inside a real cang microVM.
@@ -58,6 +60,28 @@ VERDICT: PASS — evidence: <out>/workspace/evidence (fresh, 21 files)
 `renderer-on-frame` and the `weston-screenshot.png` copies are new here; the
 earlier `frame-presented ... 210047 pattern pixels` line came from the pattern
 page of the first baseline, which the renderer overlay replaced.
+
+And with `--waypipe --software-renderer` (2026-09-25, no `--gpu=drm`):
+
+```text
+PASS  version             Chromium 153.0.8010.52
+PASS  chromium-rc         gpu-dom=0 webgl=0 dom=0
+INFO  webgl probe in the software run: renderer=no-webgl (unscored; see software-presenting)
+PASS  webgl-png           non-empty screenshot
+PASS  waypipe-transport   guest waypipe server connected to the host client
+PASS  software-presenting waypipe-software:ANGLE (Mesa, Vulkan 1.4.354 (llvmpipe (LLVM 21.1.8 256 bits) (0x00000000)), llvmpipe)
+PASS  software-env        waypipe server pins the lavapipe ICD via VK_ICD_FILENAMES, no VK_DRIVER_FILES
+PASS  frame-presented     host-frame-early.png holds 117344 pattern pixels
+PASS  renderer-on-frame   host-frame-early.png holds 3995 pixels of the page's renderer overlay
+PASS  control-no-frame    without --waypipe the compositor screenshot holds 0 pattern pixels
+INFO  presenting          mode=waypipe wayland_display=cang-waypipe-0 gbm_backends_path=<unset> alive_after_dwell_secs=90 alive=yes
+VERDICT: PASS
+```
+
+So the image's software renderer is pinned and reaches the guest's Vulkan stack:
+`waypipe-server-pid=813` with `VK_ICD_FILENAMES=/usr/lib/cang-software-renderer/…/lvp_icd.x86_64.json`,
+`VK_DRIVER_FILES` unset, and the presenting page's WebGL renderer reads back as
+`llvmpipe`.
 
 So hardware-accelerated Chromium presents through cang's waypipe transport: the
 guest's GPU process renders on venus while its window reaches a host-side
@@ -206,6 +230,20 @@ nix develop --command tools/chromium-cang-smoke/chromium-smoke.sh \
   --out-dir /path/on/btrfs/chromium-smoke --mem 4 --timeout 900
 ```
 
+Software-renderer mode is the same invocation plus `--software-renderer` (it
+needs `--waypipe`, and it drops `--gpu=drm` itself):
+
+```bash
+nix develop --command tools/chromium-cang-smoke/chromium-smoke.sh \
+  --waypipe --software-renderer \
+  --weston      /nix/store/...-weston-15.0.1/bin/weston \
+  --waypipe-bin /nix/store/...-waypipe-0.11.0/bin/waypipe \
+  --cang "$PWD/roots/cang-prebuilt/bin/cang" \
+  --guest-init "$PWD/roots/cang-musl/bin/cang-guest-init" \
+  --container  "$PWD/roots/container" \
+  --out-dir /path/on/btrfs/chromium-smoke --mem 4 --timeout 900
+```
+
 ## What it does
 
 1. **Builds/loads** `.#container` (the flake build runs the image wrapper
@@ -271,6 +309,7 @@ it, so the screenshot names the hardware renderer by itself; and the same work
 | flag | default | meaning |
 | --- | --- | --- |
 | `--waypipe` | off | run the presenting run and its control, and score them |
+| `--software-renderer` | off | with `--waypipe`: run without `--gpu=drm` and score the software-renderer pin (see `--software-renderer` mode) |
 | `--weston <path>` | `$WESTON_BIN`, else PATH | compositor binary (`nix build nixpkgs#weston`) |
 | `--waypipe-bin <path>` | `$WAYPIPE_BIN`, else PATH | waypipe binary (`nix build nixpkgs#waypipe`) |
 | `--weston-renderer <gl\|pixman>` | `gl` | compositor renderer; `pixman` is an explicit opt-in (software compositing, so transport evidence only) |
@@ -337,6 +376,57 @@ to be fresh (non-empty and mtime >= run start):
 
 **What it deliberately does not do.** dmabuf zero-copy (blocked, see above);
 input events; weston on real DRM/KMS; transports other than vsock.
+
+## `--software-renderer` mode
+
+`--waypipe --software-renderer` scores the other renderer the image carries: the
+software stack (mesa's lavapipe, `llvmpipe`) that guest-init pins for the waypipe
+transport, rather than the venus GPU path.
+
+It must run **without `--gpu=drm`**: that is the only configuration in which cang
+exports the software-renderer environment, because
+`guest_init::components::waypipe.rs::export_env` applies it only when the DRM GPU
+mode is off, and only along the waypipe path. So the mode drops `--gpu=drm` and
+keeps `--mem <n> --alloc hardened --seccomp=off --landlock=off` (the allocator
+matters: Chromium's `partition_alloc` crashes with the default mimalloc), plus
+everything else the waypipe mode does - the compositor, the client, the frame
+capture and the no-`--waypipe` control run.
+
+The pin under test is `VK_ICD_FILENAMES=<software renderer>/…/lvp_icd.x86_64.json`
+with `VK_DRIVER_FILES` unset. The loader gives `VK_DRIVER_FILES` precedence over
+the `VK_ICD_FILENAMES` a client sets for itself, so a guest that pinned the ICD
+that way would lose this software renderer *and* ANGLE's SwiftShader display in an
+ordinary run.
+
+| check | evidence | predicate |
+| --- | --- | --- |
+| `software-env` | `renderer-env-waypipe.txt` | the *waypipe server's* environment (read from its `/proc/<pid>/environ`) holds `LIBGL_ALWAYS_SOFTWARE=1`, `VK_ICD_FILENAMES=<software renderer lvp icd>` and no `VK_DRIVER_FILES`; the pid must be present |
+| `software-presenting` | `host-waypipe-client.log` | a `set_title("waypipe-software:...")` line naming `Vulkan` and `llvmpipe`, never `SwiftShader` |
+| `waypipe-transport`, `frame-presented`, `renderer-on-frame`, `control-no-frame`, `version`, `chromium-rc`, `webgl-png` | as in `--waypipe` mode | unchanged |
+
+Why the pin is read off the waypipe server and not off the guest entrypoint: the
+software-renderer environment is exported to the waypipe server and its command
+child (that is the design contract), and the *presenting* run is the process in
+that tree. The guest entrypoint environment is deliberately its own curated set,
+so a headless run started from it has no ICD to reach and reports `no-webgl`;
+that probe is reported as `INFO` here and the renderer claim is scored by
+`software-presenting`, whose title *is* the presenting page's WebGL renderer
+string (ANGLE/Vulkan on `llvmpipe`).
+
+Two wrinkles shape the guest flags:
+
+- A software Vulkan device is on Chromium's GPU blocklist, so WebGL refuses it
+  (`ContextResult::kFatalFailure: WebGL1/2 blocklisted`) and the page reports
+  `no-webgl` until the guest passes `--ignore-gpu-blocklist`. That flag is part of
+  this mode's `ANGLE_FLAGS`. Without it the only WebGL a software guest gets is
+  Chromium's own bundled SwiftShader, which is *not* the image's software renderer
+  and would let a weaker check pass for the wrong reason.
+- The presenting page's title label comes from the mode
+  (`?label=waypipe-software`), so a software run cannot be scored against a venus
+  title.
+
+Because it never asks for a DRM render node, this is also the one mode that does
+not need the amdgpu-backed `/dev/dri/renderD*` prerequisite.
 
 ## Output layout
 

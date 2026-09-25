@@ -39,6 +39,7 @@ keep_evidence=0
 out_dir=""
 no_default_flag_set=0
 waypipe_mode=0
+software_renderer=0
 weston_bin="${WESTON_BIN:-}"
 weston_renderer="gl"
 present_wait=30
@@ -69,6 +70,11 @@ Options:
       --waypipe              also run and score the waypipe presenting run (host
                              weston + waypipe client; needs --weston/--waypipe-bin
                              and python3 - see the --waypipe mode section below)
+      --software-renderer    with --waypipe, drop --gpu=drm so guest-init pins the
+                             image's software renderer (lavapipe) instead of venus,
+                             and score the software pin, its lavapipe WebGL
+                             renderer, and the same waypipe frame evidence
+                             (see the --software-renderer mode section below)
       --weston <path>        weston binary (default: $WESTON_BIN, else PATH)
       --waypipe-bin <path>   waypipe binary (default: $WAYPIPE_BIN, else PATH)
       --weston-renderer <r>  compositor renderer: gl (default) or pixman
@@ -100,6 +106,7 @@ while [ "$#" -gt 0 ]; do
     --out-dir) out_dir="${2:?missing value for --out-dir}"; shift 2 ;;
     --no-default-flags) no_default_flag_set=1; shift ;;
     --waypipe) waypipe_mode=1; shift ;;
+    --software-renderer) software_renderer=1; shift ;;
     --weston) weston_bin="${2:?missing value for --weston}"; shift 2 ;;
     --weston-renderer) weston_renderer="${2:?missing value for --weston-renderer}"; shift 2 ;;
     --present-wait) present_wait="${2:?missing value for --present-wait}"; shift 2 ;;
@@ -116,6 +123,13 @@ case "$timeout_seconds" in ''|*[!0-9]*) echo "--timeout must be a positive integ
 case "$present_wait" in ''|*[!0-9]*) echo "--present-wait must be a positive integer" >&2; exit 1 ;; esac
 case "$weston_renderer" in gl|pixman) : ;; *) echo "--weston-renderer must be gl or pixman" >&2; exit 1 ;; esac
 [ -n "$weston_bin" ] || weston_bin="$(command -v weston || true)"
+if [ "$software_renderer" -eq 1 ] && [ "$waypipe_mode" -eq 0 ]; then
+  echo "--software-renderer needs --waypipe: guest-init exports the software-renderer environment only through its waypipe path" >&2
+  exit 2
+fi
+renderer_mode=venus
+[ "$software_renderer" -eq 1 ] && renderer_mode=software
+
 [ -n "$waypipe_bin" ] || waypipe_bin="$(command -v waypipe || true)"
 [ -n "$python_bin" ] || python_bin="$(command -v python3 || true)"
 
@@ -320,6 +334,13 @@ launch_s="$(date +%s)"
 cang_args=(--mem "$mem_gib" --gpu=drm --alloc hardened --seccomp=off --landlock=off)
 if [ "$no_default_flag_set" -eq 1 ]; then
   cang_args=(--mem "$mem_gib")
+elif [ "$renderer_mode" = software ]; then
+  # No --gpu=drm: guest-init only exports the software-renderer environment
+  # (LIBGL_ALWAYS_SOFTWARE, the software renderer bundle's GL/Vulkan paths and the
+  # lavapipe ICD) through its waypipe path, and that path takes the software
+  # branch only when the DRM GPU mode is off. --alloc hardened stays: Chromium's
+  # partition_alloc crashes with the default mimalloc.
+  cang_args=(--mem "$mem_gib" --alloc hardened --seccomp=off --landlock=off)
 fi
 if [ -n "$guest_init" ]; then
   cang_args+=(--guest-init "$guest_init")
@@ -328,6 +349,7 @@ fi
 run_vm() { # run_vm <guest-mode> <console-name>   uses the global vm_args
   local mode="$1" console="$2"
   printf '%s' "$mode" > "$workspace/smoke/run-mode"
+  printf '%s' "$renderer_mode" > "$workspace/smoke/renderer-mode"
   ( cd "$workspace" && env XDG_CONFIG_HOME="$out_dir/config" XDG_STATE_HOME="$state_home" \
       CANG_IMAGE="$container_ref" \
       timeout "$timeout_seconds" \
@@ -393,7 +415,13 @@ check chromium-rc "$E/chromium-rc" "the WebGL and probe-DOM runs exit 0" \
 # vulkan/venus evidence. chrome://gpu cannot serve this role: its feature-status
 # table is rendered into a custom element's shadow DOM, which --dump-dom does
 # not serialize, so gpu-dom.html is captured for humans but not scored.
-if fresh "$E/webgl-renderer.txt" \
+if [ "$renderer_mode" = software ]; then
+  # The renderer pin applies to the waypipe process tree, not to this entrypoint
+  # environment, so the headless probe here has no ICD to reach and reports
+  # no-webgl. The renderer claim for this mode is scored by `software-presenting`
+  # below, off the presenting run that actually lives in the pinned tree.
+  echo "INFO  webgl probe in the software run: $(head -1 "$E/webgl-renderer.txt" 2>/dev/null) (unscored; see software-presenting)"
+elif fresh "$E/webgl-renderer.txt" \
    && grep -q 'renderer=' "$E/webgl-renderer.txt" \
    && grep -q 'Vulkan' "$E/webgl-renderer.txt" \
    && ! grep -q 'SwiftShader' "$E/webgl-renderer.txt"; then
@@ -435,16 +463,47 @@ if [ "$waypipe_mode" -eq 1 ]; then
   # The pattern page publishes the WebGL renderer as the window title, and
   # waypipe logs titles verbatim, so the renderer crosses the transport into a
   # host-side log. No strace (which distorted the run) and no debug port needed.
-  grep -aoE 'set_title\("waypipe-venus:[^"]*"' "$E/host-waypipe-client.log" 2>/dev/null \
+  # The title's label is set by the page from the mode the host asked for, so a
+  # software run cannot be scored against the venus renderer by accident.
+  if [ "$renderer_mode" = software ]; then
+    presenting_check=software-presenting
+    title_label=waypipe-software
+    renderer_pattern=llvmpipe
+    renderer_desc="lavapipe Vulkan renderer"
+  else
+    presenting_check=venus-presenting
+    title_label=waypipe-venus
+    renderer_pattern=venus
+    renderer_desc="venus Vulkan renderer"
+  fi
+  title_pattern="set_title\\(\"$title_label:[^\"]*\""
+  grep -aoE "$title_pattern" "$E/host-waypipe-client.log" 2>/dev/null \
     | sed -e 's/^set_title("//' -e 's/"$//' | tail -1 > "$E/presenting-renderer.txt" 2>/dev/null || true
   if [ -s "$E/presenting-renderer.txt" ] \
      && grep -q 'Vulkan' "$E/presenting-renderer.txt" \
-     && grep -q 'venus' "$E/presenting-renderer.txt" \
+     && grep -q "$renderer_pattern" "$E/presenting-renderer.txt" \
      && ! grep -q 'SwiftShader' "$E/presenting-renderer.txt"; then
-    echo "PASS  venus-presenting ($(cut -c1-70 "$E/presenting-renderer.txt"))"
+    echo "PASS  $presenting_check ($(cut -c1-70 "$E/presenting-renderer.txt"))"
   else
-    echo "FAIL  venus-presenting (need the presenting run's title to name a venus Vulkan renderer; got: $(head -1 "$E/presenting-renderer.txt" 2>/dev/null))"
+    echo "FAIL  $presenting_check (need the presenting run's title to name a $renderer_desc; got: $(head -1 "$E/presenting-renderer.txt" 2>/dev/null))"
     fail=1
+  fi
+
+  # The pin itself, straight off the guest environment: the software run must
+  # carry the lavapipe ICD in VK_ICD_FILENAMES and must NOT carry
+  # VK_DRIVER_FILES, which the loader would prefer over the VK_ICD_FILENAMES a
+  # client sets for itself.
+  if [ "$renderer_mode" = software ]; then
+    if fresh "$E/renderer-env-waypipe.txt" \
+       && grep -qx 'LIBGL_ALWAYS_SOFTWARE=1' "$E/renderer-env-waypipe.txt" \
+       && grep -q '^VK_ICD_FILENAMES=/usr/lib/cang-software-renderer/share/vulkan/icd.d/lvp_icd\.' "$E/renderer-env-waypipe.txt" \
+       && grep -qx 'VK_DRIVER_FILES=<unset>' "$E/renderer-env-waypipe.txt" \
+       && grep -qE '^waypipe-server-pid=[0-9]+$' "$E/renderer-env-waypipe.txt"; then
+      echo "PASS  software-env (waypipe server pins the lavapipe ICD via VK_ICD_FILENAMES, no VK_DRIVER_FILES)"
+    else
+      echo "FAIL  software-env (need a waypipe server pid plus LIBGL_ALWAYS_SOFTWARE=1, VK_ICD_FILENAMES=<software renderer lvp icd> and VK_DRIVER_FILES=<unset> in its environment) -> $E/renderer-env-waypipe.txt"
+      fail=1
+    fi
   fi
 
   # Two colours, two claims, one screenshot. #ff00ff is the page's background:

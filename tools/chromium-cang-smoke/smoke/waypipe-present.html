@@ -53,7 +53,15 @@
     'renderer=' + renderer + '\n' +
     'vendor=' + vendor + '\n' +
     'gl_version=' + glVersion;
-  document.title = 'waypipe-venus:' + renderer;
+
+  // The label is what the host attributes the title to: 'waypipe-venus' for the
+  // DRM/venus presenting run, 'waypipe-software' for the --software-renderer one.
+  var label = 'waypipe-venus';
+  try {
+    var requested = new URLSearchParams(location.search).get('label');
+    if (requested) label = requested;
+  } catch (e) {}
+  document.title = label + ':' + renderer;
 </script>
 </body>
 </html>

@@ -14,6 +14,19 @@ mkdir -p "$E"
 # not survive into the guest (cang passes only PATH plus its allowlist), so a
 # file is the only reliable channel for it.
 MODE="$(cat /workspace/smoke/run-mode 2>/dev/null || echo single)"
+# venus = cang --gpu=drm (guest Vulkan is the venus ICD); software = no --gpu=drm,
+# where guest-init's waypipe path pins the lavapipe ICD instead. The host writes
+# this file; the guest has no other channel for it.
+RENDERER_MODE="$(cat /workspace/smoke/renderer-mode 2>/dev/null || echo venus)"
+if [ "$RENDERER_MODE" = software ]; then
+  # A software Vulkan device is on Chromium's GPU blocklist, so WebGL is refused
+  # until it is ignored; without that the page only ever reports no-webgl.
+  ANGLE_FLAGS="--use-angle=vulkan --ignore-gpu-blocklist"
+  PRESENT_LABEL=waypipe-software
+else
+  ANGLE_FLAGS="--use-angle=vulkan --disable-vulkan-surface"
+  PRESENT_LABEL=waypipe-venus
+fi
 PRESENT_TIMEOUT=180
 # How long the presenting Chromium has the guest to itself before the headless
 # checks start. The host screenshots the compositor during this window; running
@@ -32,16 +45,19 @@ if [ "$MODE" != "single" ]; then
   # ozone searches the NixOS default /run/opengl-driver/lib/gbm, misses the
   # guest's dri_gbm.so and cannot init a DRM render node - the GPU process then
   # degrades to software and every buffer arrives as wl_shm.
-  export GBM_BACKENDS_PATH=/usr/lib/cang-mesa-runtime/lib/gbm
+  # Only the DRM/venus run has a GBM/DRM render node to find. The software run
+  # composites on llvmpipe and must not be pointed at a venus GBM backend.
+  [ "$RENDERER_MODE" = software ] || export GBM_BACKENDS_PATH=/usr/lib/cang-mesa-runtime/lib/gbm
   rm -rf /tmp/chromium-smoke-present
-  # --use-angle=vulkan sends ANGLE (WebGL/raster) to Vulkan->venus. Never add
-  # --enable-features=Vulkan: that moves the display compositor onto Vulkan,
-  # which needs a VkSurfaceKHR ozone-wayland does not implement, and the GPU
-  # process then crash-loops and never paints.
+  # --use-angle=vulkan sends ANGLE (WebGL/raster) to Vulkan (venus, or lavapipe
+  # in the software run). Never add --enable-features=Vulkan: that moves the
+  # display compositor onto Vulkan, which needs a VkSurfaceKHR ozone-wayland
+  # does not implement, and the GPU process then crash-loops and never paints.
   timeout "$PRESENT_TIMEOUT" chromium --ozone-platform=wayland --no-sandbox \
-    --disable-gpu-sandbox --use-angle=vulkan \
+    --disable-gpu-sandbox $ANGLE_FLAGS \
     --user-data-dir=/tmp/chromium-smoke-present --window-size=640,480 \
-    --window-position=0,0 --app=file:///workspace/smoke/waypipe-present.html \
+    --window-position=0,0 \
+    --app="file:///workspace/smoke/waypipe-present.html?label=$PRESENT_LABEL" \
     --enable-logging=stderr > "$PRESENT_LOG" 2>&1 &
   PRESENT_PID=$!
 fi
@@ -79,6 +95,34 @@ fi
   fi
 } > "$E/gpu-diag.txt" 2>&1
 
+# The pin under test in the software run lives in the waypipe process tree:
+# guest-init exports the software-renderer environment to the waypipe server and
+# its command child (see the waypipe design doc), and that tree is what the
+# presenting run is spawned from. Read it off that process instead of this
+# script's own environment. It must name the lavapipe ICD through
+# VK_ICD_FILENAMES and never VK_DRIVER_FILES -- the Vulkan loader gives
+# VK_DRIVER_FILES precedence over the VK_ICD_FILENAMES a client (ANGLE's
+# SwiftShader display, for one) sets for itself. Unscored in the venus run,
+# scored in the software run.
+WP_PID=""
+for p in /proc/[0-9]*; do
+  cl="$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)"
+  case "$cl" in
+    *waypipe*server*) WP_PID="${p#/proc/}" ;;
+  esac
+done
+{
+  printf 'renderer-mode=%s\n' "$RENDERER_MODE"
+  printf 'waypipe-server-pid=%s\n' "${WP_PID:-<none>}"
+  for v in LIBGL_ALWAYS_SOFTWARE LIBGL_DRIVERS_PATH __EGL_VENDOR_LIBRARY_FILENAMES VK_ICD_FILENAMES VK_DRIVER_FILES; do
+    value=""
+    [ -n "$WP_PID" ] && value="$(tr '\0' '\n' < "/proc/$WP_PID/environ" 2>/dev/null | sed -n "s/^$v=//p")"
+    printf '%s=%s\n' "$v" "${value:-<unset>}"
+  done
+} > "$E/renderer-env-$MODE.txt" 2>&1
+# Unscored diagnostics: this script's own environment, for comparison.
+env | sort > "$E/guest-env-$MODE.txt" 2>&1
+
 # Every Chromium invocation is bounded: the venus/render-server path being
 # exercised is known to stall, and a stall must be attributed to one run
 # instead of hanging until the host-side VM timeout kills everything.
@@ -94,9 +138,11 @@ chromium --version > "$E/version.txt" 2>&1 || true
 # "GPU process exited unexpectedly: exit_code=6") with renderer= empty. With the
 # Vulkan surface disabled ANGLE takes a non-WSI path and the guest reports the
 # hardware venus renderer.
+#
+# The software run passes --ignore-gpu-blocklist instead: a software Vulkan
+# device is on Chromium's blocklist, and lavapipe needs no WSI workaround.
 FLAGS="--headless=new --no-sandbox --disable-gpu-sandbox \
-  --use-angle=vulkan --enable-features=Vulkan,UseSkiaRenderer \
-  --disable-vulkan-surface \
+  $ANGLE_FLAGS --enable-features=Vulkan,UseSkiaRenderer \
   --enable-logging=stderr --allow-chrome-scheme-url \
   --virtual-time-budget=30000"
 
