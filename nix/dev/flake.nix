@@ -5,14 +5,12 @@
     self.submodules = true;
     cang.url = "../..";
     nixpkgs.follows = "cang/nixpkgs";
-    nixpkgsMaster.follows = "cang/nixpkgsMaster";
     headless.url = "github:zeroqn/headless";
   };
 
   outputs =
     {
       nixpkgs,
-      nixpkgsMaster,
       headless,
       ...
     }:
