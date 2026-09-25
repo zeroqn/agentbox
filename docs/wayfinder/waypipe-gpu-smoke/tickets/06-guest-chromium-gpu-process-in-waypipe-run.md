@@ -62,7 +62,7 @@ The guest does ship the backend: `/usr/lib/cang-mesa-runtime/lib/gbm/dri_gbm.so`
 | `GBM_BACKENDS_PATH` + same Vulkan flags | **0** | 3 | **5** | no (only weston greys) |
 | `GBM_BACKENDS_PATH`, no Vulkan flags (GL/EGL) | 0 | 0 | 0 | no - connection died (below) |
 
-Evidence: `/home/dev/loftd/disk/chromium-smoke/t06-evidence/{control,gbm,glgbm}/`.
+Evidence: `<host-btrfs-disk>/chromium-smoke/t06-evidence/{control,gbm,glgbm}/`.
 
 ### 3. What actually blocks venus-backed presentation
 

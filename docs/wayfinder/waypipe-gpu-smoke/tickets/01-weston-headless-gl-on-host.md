@@ -37,7 +37,7 @@ per numbered item.
 
 **Yes — weston 15.0.1 serves a headless compositor on the host GPU, and it can
 screenshot itself.** Verified with the exact commands below; evidence kept in
-`/home/dev/loftd/disk/chromium-smoke/weston-test2/`.
+`<host-btrfs-disk>/chromium-smoke/weston-test2/`.
 
 Working invocation:
 

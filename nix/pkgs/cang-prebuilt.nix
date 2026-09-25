@@ -13,7 +13,7 @@ if builtins.hasAttr prebuiltSystem cangPrebuiltRelease.systems then
   if legacyFlakeLockedAsset then
     throw ''
       cang-prebuilt is pinned to legacy asset ${assetInfo.asset} from ${cangPrebuiltRelease.tag}.
-      Legacy loftd-<arch>-linux-flake-locked assets embed release-builder /nix/store references and are intentionally unsupported.
+      Legacy pre-rename `*-linux-flake-locked` assets embed release-builder /nix/store references and are intentionally unsupported.
       Publish a neutral cang-<arch>-unknown-linux-gnu sha-* release asset, then rerun scripts/update-cang-prebuilt.sh.
     ''
   else

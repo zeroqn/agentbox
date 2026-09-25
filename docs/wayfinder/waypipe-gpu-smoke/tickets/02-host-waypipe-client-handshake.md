@@ -40,7 +40,7 @@ checks the smoke should perform.
 
 **The host runs `waypipe client` on the socket path cang is given, and the transport
 dials lazily - only when a guest app connects.** Verified with `cang --waypipe=<path>`
-plus weston from ticket 01; evidence in `/home/dev/loftd/disk/chromium-smoke/t02/ev/`.
+plus weston from ticket 01; evidence in `<host-btrfs-disk>/chromium-smoke/t02/ev/`.
 
 1. **Host command** (the listener the vsock connector needs):
 

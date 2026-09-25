@@ -35,8 +35,8 @@ A prototype transcript plus the flag set, screenshot evidence, and any defect fo
 ## Prototype (in progress - awaiting your reaction, ticket not yet resolved)
 
 **It works, with the plain flag set.** Evidence in
-`/home/dev/loftd/disk/chromium-smoke/t03-plain/` (host) and
-`/home/dev/loftd/disk/chromium-smoke/baseline/workspace/evidence/t03-*.txt` (guest).
+`<host-btrfs-disk>/chromium-smoke/t03-plain/` (host) and
+`<host-btrfs-disk>/chromium-smoke/baseline/workspace/evidence/t03-*.txt` (guest).
 
 Setup: weston headless+GL+`--debug` (ticket 01) -> `waypipe -d --socket <D>/waypipe.sock
 client` (ticket 02) -> `cang --mem 4 --gpu=drm --waypipe=<D>/waypipe.sock` -> guest runs
@@ -105,7 +105,7 @@ Flags that must **not** be used: `--enable-features=Vulkan` (switches the displa
 to Vulkan, needs a `VkSurfaceKHR` ozone-wayland does not implement; the guest GPU process then
 crash-loops 5x and never paints).
 
-Evidence: `/home/dev/loftd/disk/chromium-smoke/{t03-plain,t06-evidence/anglevk,t06-evidence/anglevk-nogpu}/`.
+Evidence: `<host-btrfs-disk>/chromium-smoke/{t03-plain,t06-evidence/anglevk,t06-evidence/anglevk-nogpu}/`.
 
 Consequences carried into the design freeze:
 

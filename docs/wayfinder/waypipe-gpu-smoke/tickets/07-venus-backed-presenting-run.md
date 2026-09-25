@@ -14,7 +14,7 @@ i.e. hardware acceleration, not just a working transport?
 ## Resolution
 
 **Yes.** Working recipe (evidence:
-`/home/dev/loftd/disk/chromium-smoke/t06-evidence/anglevk-nogpu/` and `anglevk/`):
+`<host-btrfs-disk>/chromium-smoke/t06-evidence/anglevk-nogpu/` and `anglevk/`):
 
 Guest Chromium:
 
