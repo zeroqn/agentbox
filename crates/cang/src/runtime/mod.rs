@@ -14,6 +14,7 @@ use crate::runtime::seccomp::SeccompCommand;
 use crate::runtime::session::rootfs::image_source::ImageCacheCommand;
 use crate::runtime::session::task_control::TaskControlCommand;
 
+pub(crate) mod fork_child;
 pub(crate) mod host_tools;
 pub(crate) mod landlock;
 pub(crate) mod launch;

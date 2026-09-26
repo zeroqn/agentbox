@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use std::ffi::{CString, OsStr, OsString};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -9,6 +9,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::runtime::fork_child;
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::launch::config::NetworkMode;
 use crate::runtime::publish::tsi_pasta_tcp_forwards;
@@ -258,21 +259,26 @@ fn spawn_netns_holder() -> Result<HolderGuard> {
     }
     if pid == 0 {
         drop(read_fd);
+        // This child keeps running inside the forked process for the whole VM run,
+        // so it uses the `fork_child` helpers instead of `std`: the helper process
+        // it forks from has already spawned threads by the time the VM worker
+        // starts, and `std` I/O or an exit through the Rust runtime can block on a
+        // lock those threads held at fork time.
         // SAFETY: child is isolated; unshare creates the target netns held by pause().
         let rc = unsafe { libc::unshare(libc::CLONE_NEWNET) };
         if rc < 0 {
-            eprintln!(
-                "cang internal: failed to unshare target network namespace: {}",
-                std::io::Error::last_os_error()
+            fork_child::report_child_errno(
+                b"cang internal: failed to unshare target network namespace, errno ",
             );
-            std::process::exit(1);
+            fork_child::exit_child(1);
         }
-        if let Err(err) = write_ready_byte(write_fd) {
-            eprintln!(
-                "cang internal: failed to report target network namespace readiness: {err:#}"
+        if !fork_child::write_all(write_fd.as_raw_fd(), b"1") {
+            fork_child::report_child_errno(
+                b"cang internal: failed to report target network namespace readiness, errno ",
             );
-            std::process::exit(1);
+            fork_child::exit_child(1);
         }
+        drop(write_fd);
         loop {
             // SAFETY: pause waits until the manager terminates this holder.
             unsafe { libc::pause() };
@@ -281,12 +287,6 @@ fn spawn_netns_holder() -> Result<HolderGuard> {
     drop(write_fd);
     wait_for_holder_ready(read_fd, pid)?;
     Ok(HolderGuard { pid })
-}
-
-fn write_ready_byte(fd: OwnedFd) -> Result<()> {
-    let mut file = fs::File::from(fd);
-    file.write_all(b"1")
-        .context("failed to write holder readiness byte")
 }
 
 fn wait_for_holder_ready(fd: OwnedFd, pid: libc::pid_t) -> Result<()> {

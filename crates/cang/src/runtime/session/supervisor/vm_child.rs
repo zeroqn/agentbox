@@ -4,12 +4,13 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::OsString;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::logging::{self, LogSettings};
+use crate::runtime::fork_child;
 use crate::runtime::host_tools::{RuntimeTool, runtime_tool_program};
 use crate::runtime::landlock;
 use crate::runtime::launch::config::{LaunchConfig, NetworkMode};
@@ -92,29 +93,35 @@ pub(crate) fn start_vm_worker(
             spawn_traced_vm_worker(config_path, holder_pid, passt_fd, audit_mode)
         }
         SeccompMode::Off | SeccompMode::Enforce { .. } => {
-            fork_vm_worker(config_path, holder_pid, passt_fd).map(VmWorkerGuard::new)
+            spawn_vm_worker(config_path, holder_pid, passt_fd).map(VmWorkerGuard::new)
         }
     }
 }
 
-pub(crate) fn fork_vm_worker(
+/// Start the VM worker as a fresh `cang internal ...` process.
+///
+/// The host helper is multi-threaded by the time it gets here (the Pulse bridge
+/// runs in that process), so `fork()`ing a worker would hand the child every lock
+/// another helper thread held at that instant, glibc's malloc arenas included,
+/// and a worker that blocks on one of them never enters the target netns or
+/// reports readiness. Re-execing this binary instead leaves the worker with a
+/// single thread and no inherited lock. The seccomp audit path already starts its
+/// worker this way, with strace in front.
+pub(crate) fn spawn_vm_worker(
     config_path: &Path,
     holder_pid: libc::pid_t,
     passt_fd: Option<i32>,
 ) -> Result<libc::pid_t> {
-    // SAFETY: fork creates an isolated worker process that enters the target netns and exits.
-    let pid = unsafe { libc::fork() };
-    if pid < 0 {
-        bail!(
-            "failed to fork cang VM worker: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    if pid == 0 {
-        HelperReadyWriter::close_in_vm_worker_child_from_env();
-        std::process::exit(run_vm_worker_child(config_path, holder_pid, passt_fd));
-    }
-    Ok(pid)
+    let executable =
+        std::env::current_exe().context("failed to resolve cang executable for the VM worker")?;
+    let spec = build_vm_worker_command(&executable, config_path, holder_pid, passt_fd);
+    let child = spec.into_command().spawn().with_context(|| {
+        format!(
+            "failed to start cang VM worker for '{}'",
+            config_path.display()
+        )
+    })?;
+    libc::pid_t::try_from(child.id()).context("cang VM worker pid overflowed pid_t")
 }
 
 fn spawn_traced_vm_worker(
@@ -171,6 +178,27 @@ impl VmWorkerCommandSpec {
     }
 }
 
+pub(crate) fn build_vm_worker_command(
+    executable: &Path,
+    config_path: &Path,
+    holder_pid: libc::pid_t,
+    passt_fd: Option<i32>,
+) -> VmWorkerCommandSpec {
+    let mut args = vec![
+        OsString::from("internal"),
+        OsString::from(LIBKRUN_VM_WORKER_ARG),
+        config_path.as_os_str().to_owned(),
+        OsString::from(holder_pid.to_string()),
+    ];
+    if let Some(fd) = passt_fd {
+        args.push(OsString::from(fd.to_string()));
+    }
+    VmWorkerCommandSpec {
+        program: executable.as_os_str().to_owned(),
+        args,
+    }
+}
+
 pub(crate) fn build_traced_vm_worker_command(
     executable: &Path,
     trace_path: &Path,
@@ -190,14 +218,8 @@ pub(crate) fn build_traced_vm_worker_command(
         raw_path.into_os_string(),
         OsString::from("--"),
         executable.as_os_str().to_owned(),
-        OsString::from("internal"),
-        OsString::from(LIBKRUN_VM_WORKER_ARG),
-        config_path.as_os_str().to_owned(),
-        OsString::from(holder_pid.to_string()),
     ]);
-    if let Some(fd) = passt_fd {
-        args.push(OsString::from(fd.to_string()));
-    }
+    args.extend(build_vm_worker_command(executable, config_path, holder_pid, passt_fd).args);
     VmWorkerCommandSpec {
         program: runtime_tool_program(RuntimeTool::Strace),
         args,
@@ -369,7 +391,11 @@ fn fork_sandboxed_libkrun_child(
         );
     }
     if pid == 0 {
-        process::exit(run_sandboxed_libkrun_child(
+        // SAFETY: the child leaves through `_exit` instead of the Rust runtime's
+        // exit path. The fork is taken by the VM worker, which `spawn_vm_worker`
+        // leaves as a freshly exec'd single-threaded process, so this child cannot
+        // inherit a lock from another thread of its parent.
+        fork_child::exit_child(run_sandboxed_libkrun_child(
             config,
             task_state_dir,
             profiler,
@@ -388,14 +414,23 @@ fn run_sandboxed_libkrun_child(
     cleanup_parent_pid: libc::pid_t,
 ) -> i32 {
     if let Err(err) = prepare_sandboxed_child_signal_lifecycle(cleanup_parent_pid) {
-        eprintln!("cang sandboxed VM worker: {err:#}");
+        report_sandboxed_child_error(&err);
         return 1;
     }
     let result = run_libkrun_with_prepared_root(config, task_state_dir, profiler, prepared_root);
     if let Err(err) = &result {
-        eprintln!("cang sandboxed VM worker: {err:#}");
+        report_sandboxed_child_error(err);
     }
     if result.is_ok() { 0 } else { 1 }
+}
+
+/// Report a sandboxed-child failure on stderr without taking the stdio lock.
+///
+/// Rendering the message allocates, which is fine for this child: the VM worker
+/// it is forked from is a freshly exec'd single-threaded process, so no other
+/// thread can hold the allocator.
+fn report_sandboxed_child_error(err: &anyhow::Error) {
+    fork_child::report_child_error(format!("cang sandboxed VM worker: {err:#}\n").as_bytes());
 }
 
 fn prepare_sandboxed_child_signal_lifecycle(cleanup_parent_pid: libc::pid_t) -> Result<()> {

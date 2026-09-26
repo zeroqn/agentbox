@@ -116,8 +116,9 @@ impl HelperReadyWriter {
             return;
         };
         if fd >= 0 {
-            // SAFETY: best-effort close in the forked VM worker child so it
-            // cannot keep the helper readiness pipe alive.
+            // SAFETY: best-effort close in the VM worker child so it cannot
+            // keep the helper readiness pipe alive even if the descriptor is not
+            // close-on-exec.
             let _ = unsafe { libc::close(fd) };
         }
     }
