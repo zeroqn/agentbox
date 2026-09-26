@@ -1,6 +1,5 @@
 target/
 result
-.omx/
 .smoke/
 
 .dolt/
@@ -9,4 +8,4 @@ result
 .codex/
 .opencode/
 .pi/
-.dirge/
+.zvec-grep/
