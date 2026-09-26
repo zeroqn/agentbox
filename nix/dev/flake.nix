@@ -40,7 +40,7 @@
             withSound = true;
             withInput = true;
           }).overrideAttrs (_oldAttrs: {
-            version = "1.18.1-cang-profile";
+            version = "1.19.5-cang-profile";
             src = libkrunSrc;
             cargoDeps = pkgs.rustPlatform.importCargoLock {
               lockFile = libkrunSrc + "/Cargo.lock";
