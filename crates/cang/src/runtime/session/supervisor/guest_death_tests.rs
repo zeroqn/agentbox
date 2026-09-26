@@ -3,7 +3,7 @@ use super::*;
 /// Console text as the guest kernel prints it for a global OOM kill
 /// (`mm/oom_kill.c` `dump_header` + `oom_kill_process`).
 const GLOBAL_OOM_CONSOLE: &str = "\
-[    0.000000] Linux version 6.12.91-hardened1
+[    0.000000] Linux version 6.12.109-hardened1
 python3 invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
 oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,task=python3,pid=1234,uid=1000
 Out of memory: Killed process 1234 (python3) total-vm:5242880kB, anon-rss:4194304kB, file-rss:1024kB, shmem-rss:0kB, UID:1000 pgtables:8192kB oom_score_adj:0
@@ -108,7 +108,7 @@ fn diagnose_tolerates_a_kill_line_without_the_anon_rss_field() {
 
 #[test]
 fn diagnose_reports_nothing_for_an_ordinary_console() {
-    let console = "[    0.000000] Linux version 6.12.91-hardened1\ncang-guest-init: prep complete\nfs.file-max=524288\n";
+    let console = "[    0.000000] Linux version 6.12.109-hardened1\ncang-guest-init: prep complete\nfs.file-max=524288\n";
 
     let cause = GuestDeathCause::diagnose(console);
 
