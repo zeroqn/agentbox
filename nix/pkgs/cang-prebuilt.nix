@@ -3,6 +3,7 @@
   pins,
   libkrun ? null,
   libkrunfw ? null,
+  renderServerEnv,
 }:
 let
   cangVersion = pins.cangVersion;
@@ -31,18 +32,14 @@ if builtins.hasAttr prebuiltSystem cangPrebuiltRelease.systems then
         pkgs.passt
         pkgs.util-linux
       ];
-      renderServerIcdPath = "${pkgs.mesa}/share/vulkan/icd.d/radeon_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json";
-      renderServerWrapperArgs = [
+      # The values live once in nix/lib/render-server-env.nix (also published as
+      # packages.cang-render-server-env) so the released wrapper and the
+      # sourceable file the chromium GPU smoke uses cannot drift apart.
+      renderServerWrapperArgs = pkgs.lib.concatMap (name: [
         "--set"
-        "CANG_MESA_LIBDIR"
-        "${pkgs.mesa}/lib"
-        "--set"
-        "CANG_MESA_ICD"
-        renderServerIcdPath
-        "--set"
-        "CANG_VULKAN_LOADER_LIBDIR"
-        "${pkgs.vulkan-loader}/lib"
-      ];
+        name
+        renderServerEnv.${name}
+      ]) (pkgs.lib.attrNames renderServerEnv);
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "cang";

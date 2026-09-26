@@ -165,14 +165,27 @@ if [ -n "$guest_init" ]; then
   [ -x "$guest_init" ] || { echo "guest-init not executable: $guest_init" >&2; exit 2; }
 fi
 
-# The tree-built .#cang is deliberately a raw ELF (nix/pkgs/cang-rust.nix), so
-# it needs the render-server environment that .#cang-prebuilt's wrapper exports;
-# without it every --gpu=drm launch aborts with "mesa library directory is not
-# set". A wrapper script sets those variables itself, so only a raw ELF is
-# checked, and only for the runs that start the render server.
-if [ "$no_default_flag_set" -eq 0 ] && [ -z "${CANG_MESA_LIBDIR:-}" ] && ! head -c2 "$cang_bin" | grep -q '#!'; then
-  echo "FATAL: $cang_bin is a raw ELF and CANG_MESA_LIBDIR is unset; --gpu=drm needs the render-server environment" >&2
-  echo "       pass a wrapper (.#cang-prebuilt/bin/cang, or one exporting CANG_MESA_LIBDIR, CANG_MESA_ICD, CANG_VULKAN_LOADER_LIBDIR)" >&2
+# The tree-built .#cang is deliberately a raw ELF (nix/pkgs/cang-rust.nix), so it
+# finds the host mesa/Vulkan loader for virgl_render_server only through the
+# render-server environment. The repo defines those values once
+# (nix/lib/render-server-env.nix, published as packages.cang-render-server-env):
+# source the file form for a raw ELF so the no-argument invocation works, with
+# values the caller already exported winning. A wrapper script (such as
+# .#cang-prebuilt/bin/cang) sets them itself, and only --gpu=drm runs start a
+# render server at all.
+cang_is_wrapper=0
+if head -c2 "$cang_bin" | grep -q '#!'; then cang_is_wrapper=1; fi
+if [ "$cang_is_wrapper" -eq 0 ]; then
+  render_server_env="$(nix build "$repo_root#cang-render-server-env" --no-link --print-out-paths 2>/dev/null || true)"
+  if [ -n "$render_server_env" ] && [ -r "$render_server_env/render-server-env.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$render_server_env/render-server-env.sh"
+  fi
+fi
+if [ "$no_default_flag_set" -eq 0 ] && [ "$cang_is_wrapper" -eq 0 ] && [ -z "${CANG_MESA_LIBDIR:-}" ]; then
+  echo "FATAL: $cang_bin is a raw ELF and the render-server environment is unset" >&2
+  echo "       nix build $repo_root#cang-render-server-env produced no render-server-env.sh;" >&2
+  echo "       pass a wrapper such as .#cang-prebuilt/bin/cang, or export CANG_MESA_LIBDIR/CANG_MESA_ICD/CANG_VULKAN_LOADER_LIBDIR" >&2
   exit 2
 fi
 

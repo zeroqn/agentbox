@@ -66,6 +66,9 @@
             inherit pkgs pins libkrunfw;
           };
           wl-cross-domain-proxy = pkgs.callPackage ./nix/wl-cross-domain-proxy.nix { };
+          renderServerEnv = import ./nix/lib/render-server-env.nix {
+            inherit pkgs;
+          };
           prebuiltCang = import ./nix/pkgs/cang-prebuilt.nix {
             inherit
               pkgs
@@ -73,6 +76,7 @@
               libkrun
               libkrunfw
               ;
+            renderServerEnv = renderServerEnv.env;
           };
           rustPackages = import ./nix/pkgs/cang-rust.nix {
             inherit
@@ -126,6 +130,7 @@
           cang = rustPackages.rustPackage;
           cang-ci-sccache = rustPackagesCiSccache.rustPackage;
           cang-prebuilt = prebuiltCang;
+          cang-render-server-env = renderServerEnv.file;
           cang-musl = rustPackages.cangMuslPackage;
           cang-musl-ci-sccache = rustPackagesCiSccache.cangMuslPackage;
           libkrunfw = libkrunfw;
@@ -191,6 +196,35 @@
           container-gh-absent = cangImageChecks.ghAbsent;
           container-root-cargo-absent = cangImageChecks.rootCargoAbsent;
           container-wrapper-contracts = cangImageChecks.wrapperContracts;
+          # The render-server environment is defined once
+          # (nix/lib/render-server-env.nix) and consumed from two directions:
+          # .#cang-prebuilt's released wrapper bakes the values in, and the
+          # chromium GPU smoke sources the file form to launch a raw-ELF .#cang.
+          # Assert that file still sources with all three variables and still
+          # lets a caller's exported value win, so a no-argument smoke run keeps
+          # working.
+          cang-render-server-env-sources =
+            pkgs.runCommand "cang-render-server-env-sources"
+              {
+                envFile = packages.cang-render-server-env;
+              }
+              ''
+                set -eu
+                . "$envFile/render-server-env.sh"
+                [ -n "''${CANG_MESA_LIBDIR:-}" ] || { echo "CANG_MESA_LIBDIR is unset after sourcing" >&2; exit 1; }
+                # The consumer is a child process (cang), so sourcing has to
+                # *export* the variables: a shell variable set with VAR:= would
+                # still leave cang aborting with "mesa library directory is not
+                # set".
+                child="$(bash -c 'printf "%s:%s:%s" "$CANG_MESA_LIBDIR" "$CANG_MESA_ICD" "$CANG_VULKAN_LOADER_LIBDIR"')"
+                [ "$child" = "$CANG_MESA_LIBDIR:$CANG_MESA_ICD:$CANG_VULKAN_LOADER_LIBDIR" ] || { echo "the render-server variables are not exported to child processes (child saw: $child)" >&2; exit 1; }
+                [ -d "$CANG_MESA_LIBDIR" ] || { echo "CANG_MESA_LIBDIR is not a directory: $CANG_MESA_LIBDIR" >&2; exit 1; }
+                [ -r "$CANG_MESA_ICD" ] || { echo "CANG_MESA_ICD is not readable: $CANG_MESA_ICD" >&2; exit 1; }
+                [ -d "$CANG_VULKAN_LOADER_LIBDIR" ] || { echo "CANG_VULKAN_LOADER_LIBDIR is not a directory: $CANG_VULKAN_LOADER_LIBDIR" >&2; exit 1; }
+                exported="$(export CANG_MESA_LIBDIR=/custom; . "$envFile/render-server-env.sh"; printf '%s' "$CANG_MESA_LIBDIR")"
+                [ "$exported" = /custom ] || { echo "sourcing overrode an exported CANG_MESA_LIBDIR (got $exported)" >&2; exit 1; }
+                touch "$out"
+              '';
           # The exported `virglrenderer` is the host-side patched build the cang
           # packages ship (libkrun links libvirglrenderer and the render-server
           # helper is symlinked from it), so downstream consumers cannot pick up

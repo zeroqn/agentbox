@@ -16,6 +16,14 @@
   asset as raw `$out/bin/cang`, patch ordinary ELF runtime dependencies with
   Nix, and provide the same package-relative helper and `$out/lib/cang`
   library layout as source-built `.#cang`.
+- `.#cang-render-server-env`: the host render-server environment
+  (`CANG_MESA_LIBDIR`, `CANG_MESA_ICD`, `CANG_VULKAN_LOADER_LIBDIR`) a
+  tree-built raw-ELF `.#cang` needs to find mesa and the Vulkan loader for
+  `virgl_render_server`, as a sourceable `$out/render-server-env.sh`. The values
+  are defined once in `nix/lib/render-server-env.nix`, which `.#cang-prebuilt`'s
+  wrapper also bakes in; the file's assignments only fill unset variables, so a
+  value the caller exported wins. `tools/chromium-cang-smoke` sources it, which
+  is what lets its no-argument invocation run the default `.#cang`.
 - `.#cang-musl`: static/musl `cang-guest-init` (and `cang-granted`) binaries
   for image/guest use. It intentionally does not build or expose `bin/cang`;
   the host `cang` binary is always dynamically linked so it can load

@@ -257,8 +257,10 @@ shared, and a path resolved through it can be repointed at the container archive
 mid-run). `--cang` accepts a package prefix, a `.../bin/cang` binary, or a
 wrapper script. `.#cang` is deliberately a raw ELF, so a `--gpu=drm` run needs
 the render-server environment (`CANG_MESA_LIBDIR`, `CANG_MESA_ICD`,
-`CANG_VULKAN_LOADER_LIBDIR`) that `.#cang-prebuilt`'s wrapper exports; the smoke
-refuses to start a raw ELF without it rather than aborting inside the VM.
+`CANG_VULKAN_LOADER_LIBDIR`): for a raw ELF the smoke sources the repo's own
+`.#cang-render-server-env` file (a value the caller already exported wins, and a
+wrapper sets its own), so the bare `tools/chromium-cang-smoke/chromium-smoke.sh`
+works; it fails up front only if that resolution produces no file.
 
 Waypipe mode (needs weston + waypipe + python3; see *--waypipe mode* below):
 
