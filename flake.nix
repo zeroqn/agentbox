@@ -211,6 +211,36 @@
                 fi
                 touch "$out"
               '';
+
+          # The pinned prebuilt libkrun is consumed by dlopen, so a DT_NEEDED
+          # edge with no matching RUNPATH entry only fails at VM launch: the
+          # rebased v1.19.5 libkrun links libpipewire into libkrun.so and the
+          # package restored a RUNPATH for libvirglrenderer alone, which made
+          # every boot die with "failed to load libkrun.so".  `ldd` resolves
+          # each DT_NEEDED through the library's own RUNPATH in a clean
+          # environment, so it reproduces that launch-time lookup here.
+          libkrun-loadable =
+            pkgs.runCommand "libkrun-loadable"
+              {
+                # ldd traces DT_NEEDED lookups with the dynamic loader; it is
+                # what turns a missing RUNPATH entry into a failing build.
+                nativeBuildInputs = [ pkgs.glibc.bin ];
+              }
+              ''
+                for so in ${packages.libkrun}/lib/libkrun.so.*; do
+                  if [ -L "$so" ]; then
+                    continue
+                  fi
+                  echo "== $so" >> report
+                  ldd "$so" >> report || true
+                done
+                cat report
+                if grep -F "not found" report; then
+                  echo "the pinned libkrun has a DT_NEEDED edge that no RUNPATH entry resolves; add the missing directory to the add-rpath list in nix/pkgs/libkrun.nix" >&2
+                  exit 1
+                fi
+                cp report "$out"
+              '';
         }
       );
 
