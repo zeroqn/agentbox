@@ -40,6 +40,12 @@ pkgs.stdenvNoCC.mkDerivation {
     # LD_LIBRARY_PATH; a consumer's own RUNPATH cannot cover it because
     # DT_RUNPATH is not transitive across DT_NEEDED children.
     #
+    # libpipewire-0.3.so.0 is the second such edge: libkrun built from upstream
+    # v1.19.5 links the audio backend into the shared library (the 1.18-based
+    # release did not), so a dlopen of libkrun fails with
+    # "libpipewire-0.3.so.0: cannot open shared object file" unless the search
+    # path covers it.
+    #
     # $ORIGIN covers the firmware: libkrun loads libkrunfw.so.5 with a plain
     # soname dlopen, so the loader searches the directory of the caller
     # (libkrun) rather than the executable's. Packages that expose libkrun and
@@ -53,7 +59,7 @@ pkgs.stdenvNoCC.mkDerivation {
         continue
       fi
       ${pkgs.patchelf}/bin/patchelf \
-        --add-rpath '$ORIGIN:${pkgs.virglrenderer}/lib' \
+        --add-rpath '$ORIGIN:${pkgs.virglrenderer}/lib:${pkgs.lib.getLib pkgs.pipewire}/lib' \
         "$so"
     done
   '';
