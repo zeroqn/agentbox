@@ -111,9 +111,7 @@ let
   '';
 
   imageConfigFile = pkgs.writeText "cang-image-config.json" imageConfigText;
-  imageConfigRefsFile = pkgs.writeText "cang-image-config-refs.txt" (
-    refsText imageConfigRefs
-  );
+  imageConfigRefsFile = pkgs.writeText "cang-image-config-refs.txt" (refsText imageConfigRefs);
   imageNixDbStorePathsFile = pkgs.writeText "cang-image-nix-db-store-paths.txt" (
     builtins.unsafeDiscardStringContext imageNixDbStorePathsText
   );
@@ -126,12 +124,8 @@ let
   containerSourceFile = pkgs.writeText "cang-container-nix-source.txt" (
     builtins.readFile ./container.nix
   );
-  configSourceFile = pkgs.writeText "cang-config-nix-source.txt" (
-    builtins.readFile ./config.nix
-  );
-  layersSourceFile = pkgs.writeText "cang-layers-nix-source.txt" (
-    builtins.readFile ./layers.nix
-  );
+  configSourceFile = pkgs.writeText "cang-config-nix-source.txt" (builtins.readFile ./config.nix);
+  layersSourceFile = pkgs.writeText "cang-layers-nix-source.txt" (builtins.readFile ./layers.nix);
   allocatorContracts = ''
     grep -F 'mimallocLib = ' ${layersSourceFile}
     grep -F 'pkgs.mimalloc' ${layersSourceFile}
@@ -202,12 +196,10 @@ let
 
   herdrContracts = ''
     grep -F 'herdrPrebuilt' ${layersSourceFile}
-    ${
-      pkgs.lib.optionalString (herdrPrebuilt != null) ''
-        test -x ${layers.agentImageLayer}/bin/herdr
-        ${herdrPrebuilt}/bin/herdr --version >/dev/null
-      ''
-    }
+    ${pkgs.lib.optionalString (herdrPrebuilt != null) ''
+      test -x ${layers.agentImageLayer}/bin/herdr
+      ${herdrPrebuilt}/bin/herdr --version >/dev/null
+    ''}
   '';
 
   doltContracts = ''
@@ -237,17 +229,15 @@ let
   montyContracts = ''
     grep -F 'montyPrebuilt' ${layersSourceFile}
     grep -F 'MONTY_BIN=' ${configSourceFile}
-    ${
-      pkgs.lib.optionalString (montyPrebuilt != null) ''
-        test -x ${layers.agentImageLayer}/bin/monty
-        HOME="$TMPDIR" ${layers.agentImageLayer}/bin/monty --version | grep -F 'monty-runtime ${montyPrebuilt.releaseVersion}'
-        case ":${layers.imagePath}:" in
-          *":${layers.agentImageLayer}/bin:"*) ;;
-          *) exit 1 ;;
-        esac
-        grep -F 'MONTY_BIN=${layers.montyPackage}/bin/monty' ${imageConfigFile}
-      ''
-    }
+    ${pkgs.lib.optionalString (montyPrebuilt != null) ''
+      test -x ${layers.agentImageLayer}/bin/monty
+      HOME="$TMPDIR" ${layers.agentImageLayer}/bin/monty --version | grep -F 'monty-runtime ${montyPrebuilt.releaseVersion}'
+      case ":${layers.imagePath}:" in
+        *":${layers.agentImageLayer}/bin:"*) ;;
+        *) exit 1 ;;
+      esac
+      grep -F 'MONTY_BIN=${layers.montyPackage}/bin/monty' ${imageConfigFile}
+    ''}
   '';
 
   rootCargoAbsent = pkgs.runCommand "cang-image-root-cargo-absent-check" { } ''

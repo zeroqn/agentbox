@@ -7,7 +7,10 @@ let
   # /init uses before the probe runs.
   runtime = pkgs.buildEnv {
     name = "virgl-guest-runtime";
-    paths = [ pkgs.busybox guestProbe ];
+    paths = [
+      pkgs.busybox
+      guestProbe
+    ];
     ignoreCollisions = true;
   };
 
@@ -15,7 +18,12 @@ let
   # /nix/store/<hash> path referenced by libs, the ICD json, and the probe's
   # dynamic loader exists inside the rootfs at the identical store path.
   closure = pkgs.closureInfo {
-    rootPaths = [ runtime pkgs.glibc pkgs.mesa pkgs.vulkan-loader ];
+    rootPaths = [
+      runtime
+      pkgs.glibc
+      pkgs.mesa
+      pkgs.vulkan-loader
+    ];
   };
 in
 pkgs.stdenv.mkDerivation {

@@ -164,24 +164,23 @@
         let
           bun = (import nixpkgs-unstable { inherit system; }).bun;
           packages = self.packages.${system};
-          cangImageChecks =
-            import ./nix/image/checks.nix {
-              inherit pkgs;
-              bun = bun;
-              piCodingAgent = packages.pi-coding-agent;
-              rioBin = packages.rio-bin or null;
-              herdrPrebuilt = packages.herdr-prebuilt or null;
-              montyPrebuilt = packages.monty-prebuilt or null;
-              rmuxPrebuilt = packages.rmux-prebuilt;
-              rtkPrebuilt = packages.rtk-prebuilt or null;
-              zvecGrep = packages.zvec-grep;
-              doltPrebuilt = packages.dolt-prebuilt;
-              beadsPrebuilt = packages.beads-prebuilt;
-              containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
-              libkrun = packages.libkrun;
-              wl-cross-domain-proxy = packages.wl-cross-domain-proxy;
-              cangMuslPackage = packages.cang-musl;
-            };
+          cangImageChecks = import ./nix/image/checks.nix {
+            inherit pkgs;
+            bun = bun;
+            piCodingAgent = packages.pi-coding-agent;
+            rioBin = packages.rio-bin or null;
+            herdrPrebuilt = packages.herdr-prebuilt or null;
+            montyPrebuilt = packages.monty-prebuilt or null;
+            rmuxPrebuilt = packages.rmux-prebuilt;
+            rtkPrebuilt = packages.rtk-prebuilt or null;
+            zvecGrep = packages.zvec-grep;
+            doltPrebuilt = packages.dolt-prebuilt;
+            beadsPrebuilt = packages.beads-prebuilt;
+            containerLibPolicySeccompJson = packages.container-lib-policy-seccomp-json;
+            libkrun = packages.libkrun;
+            wl-cross-domain-proxy = packages.wl-cross-domain-proxy;
+            cangMuslPackage = packages.cang-musl;
+          };
         in
         {
           container-nix-db-metadata = cangImageChecks.imageConfigNixDbRefs;
@@ -202,7 +201,9 @@
                 # Plain strings: comparing the two derivations must not pull
                 # either virglrenderer build into this check's closure.
                 patched = builtins.unsafeDiscardStringContext packages.virglrenderer.drvPath;
-                plain = builtins.unsafeDiscardStringContext (import nixpkgs { inherit system; }).virglrenderer.drvPath;
+                plain =
+                  builtins.unsafeDiscardStringContext
+                    (import nixpkgs { inherit system; }).virglrenderer.drvPath;
               }
               ''
                 if [ "$patched" = "$plain" ]; then

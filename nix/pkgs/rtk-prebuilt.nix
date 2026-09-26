@@ -6,8 +6,7 @@ in
 if builtins.hasAttr prebuiltSystem rtkPrebuiltRelease.systems then
   let
     assetInfo = builtins.getAttr prebuiltSystem rtkPrebuiltRelease.systems;
-    releaseUrl =
-      "https://github.com/${rtkPrebuiltRelease.owner}/${rtkPrebuiltRelease.repo}/releases/download/${rtkPrebuiltRelease.tag}/${assetInfo.asset}";
+    releaseUrl = "https://github.com/${rtkPrebuiltRelease.owner}/${rtkPrebuiltRelease.repo}/releases/download/${rtkPrebuiltRelease.tag}/${assetInfo.asset}";
   in
   pkgs.stdenvNoCC.mkDerivation {
     pname = "rtk";

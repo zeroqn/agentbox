@@ -1,4 +1,9 @@
-{ pkgs, pins, libkrun ? null, libkrunfw ? null }:
+{
+  pkgs,
+  pins,
+  libkrun ? null,
+  libkrunfw ? null,
+}:
 let
   cangVersion = pins.cangVersion;
   cangPrebuiltRelease = pins.cangPrebuiltRelease;
@@ -18,8 +23,7 @@ if builtins.hasAttr prebuiltSystem cangPrebuiltRelease.systems then
     ''
   else
     let
-      releaseUrl =
-        "https://github.com/${cangPrebuiltRelease.owner}/${cangPrebuiltRelease.repo}/releases/download/${cangPrebuiltRelease.tag}/${assetInfo.asset}";
+      releaseUrl = "https://github.com/${cangPrebuiltRelease.owner}/${cangPrebuiltRelease.repo}/releases/download/${cangPrebuiltRelease.tag}/${assetInfo.asset}";
       runtimeTools = [
         pkgs.buildah
         pkgs.btrfs-progs
@@ -27,20 +31,18 @@ if builtins.hasAttr prebuiltSystem cangPrebuiltRelease.systems then
         pkgs.passt
         pkgs.util-linux
       ];
-      renderServerIcdPath =
-        "${pkgs.mesa}/share/vulkan/icd.d/radeon_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json";
-      renderServerWrapperArgs =
-        [
-          "--set"
-          "CANG_MESA_LIBDIR"
-          "${pkgs.mesa}/lib"
-          "--set"
-          "CANG_MESA_ICD"
-          renderServerIcdPath
-          "--set"
-          "CANG_VULKAN_LOADER_LIBDIR"
-          "${pkgs.vulkan-loader}/lib"
-        ];
+      renderServerIcdPath = "${pkgs.mesa}/share/vulkan/icd.d/radeon_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json";
+      renderServerWrapperArgs = [
+        "--set"
+        "CANG_MESA_LIBDIR"
+        "${pkgs.mesa}/lib"
+        "--set"
+        "CANG_MESA_ICD"
+        renderServerIcdPath
+        "--set"
+        "CANG_VULKAN_LOADER_LIBDIR"
+        "${pkgs.vulkan-loader}/lib"
+      ];
     in
     pkgs.stdenvNoCC.mkDerivation {
       pname = "cang";

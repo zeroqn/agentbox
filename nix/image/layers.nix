@@ -299,10 +299,10 @@ let
     libkrun
     pkgs.starship
   ];
-toolingImageLayer = pkgs.buildEnv {
+  toolingImageLayer = pkgs.buildEnv {
     name = "cang-tooling-layer";
     paths = toolingImagePackages;
-    pathsToLink = ["/"];
+    pathsToLink = [ "/" ];
   };
 
   # Development browser for the cang guest GPU smoke. Wrapped
@@ -313,7 +313,7 @@ toolingImageLayer = pkgs.buildEnv {
   browserImageLayer = pkgs.buildEnv {
     name = "cang-browser-layer";
     paths = [ pkgs.ungoogled-chromium ];
-    pathsToLink = ["/"];
+    pathsToLink = [ "/" ];
   };
 
   agentImagePackages = [
@@ -470,7 +470,7 @@ toolingImageLayer = pkgs.buildEnv {
       rustcCommandCompat
       rustAnalyzerCommandCompat
     ];
-browserLayerPaths = [ (toString browserImageLayer) ];
+  browserLayerPaths = [ (toString browserImageLayer) ];
   cangInitLayerPaths = [ (toString cangMuslPackage) ];
   agentLayerPaths = [ (toString agentImageLayer) ];
   toolingLayerPaths = [ (toString toolingImageLayer) ];
@@ -482,22 +482,44 @@ browserLayerPaths = [ (toString browserImageLayer) ];
   # the remaining text is piped into the following stages. Keep each named
   # group as its own unflattened layer; only the trailing "rest" is flattened.
   toolingAndBelow = [
-    [ "split_paths" toolingLayerPaths ]
+    [
+      "split_paths"
+      toolingLayerPaths
+    ]
     [
       "over"
       "rest"
       [
         "pipe"
         [
-          [ "split_paths" dynamicToolchainLayerPaths ]
+          [
+            "split_paths"
+            dynamicToolchainLayerPaths
+          ]
           [
             "over"
             "rest"
             [
               "pipe"
               [
-                [ "split_paths" rustLayerPaths ]
-                [ "over" "rest" [ "pipe" [ [ "split_paths" cToolchainLayerPaths ] [ "flatten" ] ] ] ]
+                [
+                  "split_paths"
+                  rustLayerPaths
+                ]
+                [
+                  "over"
+                  "rest"
+                  [
+                    "pipe"
+                    [
+                      [
+                        "split_paths"
+                        cToolchainLayerPaths
+                      ]
+                      [ "flatten" ]
+                    ]
+                  ]
+                ]
                 [ "flatten" ]
               ]
             ]
@@ -516,15 +538,28 @@ browserLayerPaths = [ (toString browserImageLayer) ];
   # browser layer nests at the same depth as tooling so it stays its own
   # unflattened layer (cache-stable on Chromium updates).
   agentAndBelow = [
-    [ "split_paths" browserLayerPaths ]
+    [
+      "split_paths"
+      browserLayerPaths
+    ]
     [
       "over"
       "rest"
       [
         "pipe"
         [
-          [ "split_paths" agentLayerPaths ]
-          [ "over" "rest" [ "pipe" toolingAndBelow ] ]
+          [
+            "split_paths"
+            agentLayerPaths
+          ]
+          [
+            "over"
+            "rest"
+            [
+              "pipe"
+              toolingAndBelow
+            ]
+          ]
           [ "flatten" ]
         ]
       ]
@@ -540,7 +575,10 @@ browserLayerPaths = [ (toString browserImageLayer) ];
     [
       "over"
       "rest"
-      [ "pipe" agentAndBelow ]
+      [
+        "pipe"
+        agentAndBelow
+      ]
     ]
     [
       "flatten"

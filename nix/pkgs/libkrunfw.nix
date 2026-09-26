@@ -67,7 +67,10 @@ let
     meta = {
       description = "Pinned prebuilt libkrunfw guest payload shared library for cang";
       homepage = "https://github.com/${release.owner}/${release.repo}";
-      license = with lib.licenses; [ lgpl2Only lgpl21Only ];
+      license = with lib.licenses; [
+        lgpl2Only
+        lgpl21Only
+      ];
       platforms = lib.attrNames release.systems;
     };
   };
@@ -123,31 +126,31 @@ let
     ];
 
     preBuild = ''
-      mkdir -p tarballs
-      ln -sf ${kernelTarball} tarballs/${kernelVersion}.tar.xz
-      ln -sf ${kernelHardenedPatch} tarballs/linux-hardened-${kernelHardenedVersion}.patch
-      cp config-libkrunfw_x86_64-kvm config-libkrunfw_x86_64
+            mkdir -p tarballs
+            ln -sf ${kernelTarball} tarballs/${kernelVersion}.tar.xz
+            ln -sf ${kernelHardenedPatch} tarballs/linux-hardened-${kernelHardenedVersion}.patch
+            cp config-libkrunfw_x86_64-kvm config-libkrunfw_x86_64
 
-      export SCCACHE_DIR="''${SCCACHE_DIR:-$NIX_BUILD_TOP/sccache}"
-      mkdir -p "$SCCACHE_DIR"
+            export SCCACHE_DIR="''${SCCACHE_DIR:-$NIX_BUILD_TOP/sccache}"
+            mkdir -p "$SCCACHE_DIR"
 
-      mkdir -p .nix-sccache-wrappers
-      cat > .nix-sccache-wrappers/cc <<EOF
-#!${stdenv.shell}
-exec ${sccache}/bin/sccache ${stdenv.cc}/bin/cc "\$@"
-EOF
-      cat > .nix-sccache-wrappers/cxx <<EOF
-#!${stdenv.shell}
-exec ${sccache}/bin/sccache ${stdenv.cc}/bin/c++ "\$@"
-EOF
-      chmod +x .nix-sccache-wrappers/cc .nix-sccache-wrappers/cxx
+            mkdir -p .nix-sccache-wrappers
+            cat > .nix-sccache-wrappers/cc <<EOF
+      #!${stdenv.shell}
+      exec ${sccache}/bin/sccache ${stdenv.cc}/bin/cc "\$@"
+      EOF
+            cat > .nix-sccache-wrappers/cxx <<EOF
+      #!${stdenv.shell}
+      exec ${sccache}/bin/sccache ${stdenv.cc}/bin/c++ "\$@"
+      EOF
+            chmod +x .nix-sccache-wrappers/cc .nix-sccache-wrappers/cxx
 
-      makeFlagsArray+=(
-        "CC=$PWD/.nix-sccache-wrappers/cc"
-        "HOSTCC=$PWD/.nix-sccache-wrappers/cc"
-        "CXX=$PWD/.nix-sccache-wrappers/cxx"
-        "HOSTCXX=$PWD/.nix-sccache-wrappers/cxx"
-      )
+            makeFlagsArray+=(
+              "CC=$PWD/.nix-sccache-wrappers/cc"
+              "HOSTCC=$PWD/.nix-sccache-wrappers/cc"
+              "CXX=$PWD/.nix-sccache-wrappers/cxx"
+              "HOSTCXX=$PWD/.nix-sccache-wrappers/cxx"
+            )
     '';
 
     makeFlags = [
@@ -165,7 +168,10 @@ EOF
     meta = {
       description = "Local libkrunfw guest payload shared library for cang";
       homepage = "https://github.com/${release.owner}/${release.repo}";
-      license = with lib.licenses; [ lgpl2Only lgpl21Only ];
+      license = with lib.licenses; [
+        lgpl2Only
+        lgpl21Only
+      ];
       platforms = [ "x86_64-linux" ];
     };
   };

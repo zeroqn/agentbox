@@ -404,7 +404,8 @@ fn cang_prebuilt_package_pins_and_patches_neutral_elf() {
     );
 
     for required in [
-        "{ pkgs, pins, libkrun ? null, libkrunfw ? null }:",
+        "libkrun ? null,",
+        "libkrunfw ? null,",
         "cangPrebuiltRelease = pins.cangPrebuiltRelease;",
         "throw ''",
         "cang-<arch>-unknown-linux-gnu",

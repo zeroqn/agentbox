@@ -1,4 +1,9 @@
-{ pkgs, cangMuslPackage, configPayloads, layers }:
+{
+  pkgs,
+  cangMuslPackage,
+  configPayloads,
+  layers,
+}:
 
 let
   nixConfig = import ./nix-config.nix;

@@ -31,21 +31,23 @@
             useLocalSource = true;
           };
           libkrunSrc = root + "/deps/libkrun";
-          libkrun = (pkgs.libkrun.override {
-            inherit libkrunfw;
+          libkrun =
+            (pkgs.libkrun.override {
+              inherit libkrunfw;
 
-            withBlk = true;
-            withNet = true;
-            withGpu = true;
-            withSound = true;
-            withInput = true;
-          }).overrideAttrs (_oldAttrs: {
-            version = "1.19.5-cang-profile";
-            src = libkrunSrc;
-            cargoDeps = pkgs.rustPlatform.importCargoLock {
-              lockFile = libkrunSrc + "/Cargo.lock";
-            };
-          });
+              withBlk = true;
+              withNet = true;
+              withGpu = true;
+              withSound = true;
+              withInput = true;
+            }).overrideAttrs
+              (_oldAttrs: {
+                version = "1.19.5-cang-profile";
+                src = libkrunSrc;
+                cargoDeps = pkgs.rustPlatform.importCargoLock {
+                  lockFile = libkrunSrc + "/Cargo.lock";
+                };
+              });
           rustPackages = import ../../nix/pkgs/cang-rust.nix {
             self = root;
             inherit

@@ -19,7 +19,12 @@ pkgs.stdenvNoCC.mkDerivation {
 
   passthru = {
     inherit sourceUrl;
-    inherit (pin) owner repo rev path;
+    inherit (pin)
+      owner
+      repo
+      rev
+      path
+      ;
   };
 
   meta = {
