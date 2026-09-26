@@ -56,8 +56,10 @@ from the host. Evidence is written to a guest-visible host bind and checked
 for freshness (mtime >= run start) so stale artifacts can never pass.
 
 Options:
-      --cang <path>         cang binary (default: $CANG_BIN or nix build .#cang)
-      --guest-init <path>    guest-init override (default: $CANG_GUEST_INIT, else nix build .#cang-musl if its bin/cang-guest-init exists)
+      --cang <path>         cang binary, wrapper script, or package prefix
+                             (default: $CANG_BIN or nix build .#cang)
+      --guest-init <path>    guest-init override (default: $CANG_GUEST_INIT, else
+                             nix build .#cang-musl)
       --container <ref|path> image for this run (default: nix build .#container; a
                              store path is loaded product-style into the local store)
       --state-home <path>    XDG_STATE_HOME (default: <out>/state)
@@ -133,22 +135,45 @@ renderer_mode=venus
 [ -n "$waypipe_bin" ] || waypipe_bin="$(command -v waypipe || true)"
 [ -n "$python_bin" ] || python_bin="$(command -v python3 || true)"
 
-[ -x "$cang_bin" ] || cang_bin="$(nix build "$repo_root#cang" --print-out-paths 2>/dev/null || true)"
-cang_bin="${cang_bin%/bin/cang}/bin/cang"
-[ -x "$cang_bin" ] || { echo "cang binary not resolved or not executable: $cang_bin" >&2; exit 2; }
+# Resolve every input from the store with --no-link. The repo's ./result
+# symlink is mutable and shared: a later image build repoints it at the
+# container archive, so a path resolved through it ("$repo_root/result/bin/...")
+# can turn into "Not a directory" between resolution and launch. Reading it is
+# also order-dependent (whichever build ran last owns it), and linking would
+# dirty the worktree.
+if [ -z "$cang_bin" ]; then
+  cang_bin="$(nix build "$repo_root#cang" --no-link --print-out-paths 2>/dev/null || true)"
+  [ -n "$cang_bin" ] && cang_bin="$cang_bin/bin/cang"
+elif [ -d "$cang_bin" ]; then
+  # --cang/$CANG_BIN may name the package prefix; a wrapper or binary path is
+  # taken exactly as given, so a tree-built wrapper under any name works.
+  cang_bin="$cang_bin/bin/cang"
+fi
+if [ -z "$cang_bin" ] || [ ! -x "$cang_bin" ]; then
+  echo "cang binary not resolved or not executable: ${cang_bin:-<none>}" >&2
+  echo "       pass --cang <package prefix | .../bin/cang | wrapper script>" >&2
+  exit 2
+fi
 
-if [ -n "$guest_init" ]; then
-  :
-elif [ -x "$repo_root/result/bin/cang-guest-init" ]; then
-  guest_init="$repo_root/result/bin/cang-guest-init"
-else
-  musl="$(nix build "$repo_root#cang-musl" --print-out-paths 2>/dev/null || true)"
+if [ -z "$guest_init" ]; then
+  musl="$(nix build "$repo_root#cang-musl" --no-link --print-out-paths 2>/dev/null || true)"
   if [ -n "$musl" ] && [ -x "$musl/bin/cang-guest-init" ]; then
     guest_init="$musl/bin/cang-guest-init"
   fi
 fi
 if [ -n "$guest_init" ]; then
   [ -x "$guest_init" ] || { echo "guest-init not executable: $guest_init" >&2; exit 2; }
+fi
+
+# The tree-built .#cang is deliberately a raw ELF (nix/pkgs/cang-rust.nix), so
+# it needs the render-server environment that .#cang-prebuilt's wrapper exports;
+# without it every --gpu=drm launch aborts with "mesa library directory is not
+# set". A wrapper script sets those variables itself, so only a raw ELF is
+# checked, and only for the runs that start the render server.
+if [ "$no_default_flag_set" -eq 0 ] && [ -z "${CANG_MESA_LIBDIR:-}" ] && ! head -c2 "$cang_bin" | grep -q '#!'; then
+  echo "FATAL: $cang_bin is a raw ELF and CANG_MESA_LIBDIR is unset; --gpu=drm needs the render-server environment" >&2
+  echo "       pass a wrapper (.#cang-prebuilt/bin/cang, or one exporting CANG_MESA_LIBDIR, CANG_MESA_ICD, CANG_VULKAN_LOADER_LIBDIR)" >&2
+  exit 2
 fi
 
 if [ -z "$out_dir" ]; then
@@ -181,7 +206,7 @@ backend="btrfs-snapshot"
 # the OCI archive into a hermetic storage, never the host's ambient
 # ~/.config/containers/storage.conf (which may point at a broken btrfs path).
 if [ -z "$container_ref" ]; then
-  container_path="$(nix build "$repo_root#container" --print-out-paths)"
+  container_path="$(nix build "$repo_root#container" --no-link --print-out-paths)"
   container_ref="$container_path"
 fi
 if [[ "$container_ref" == /* ]]; then

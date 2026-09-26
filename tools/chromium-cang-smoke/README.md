@@ -78,6 +78,41 @@ INFO  presenting          mode=waypipe wayland_display=cang-waypipe-0 gbm_backen
 VERDICT: PASS
 ```
 
+### Baseline update (2026-09-26): libkrunfw `cang-362dfe8735d7`, guest kernel 6.12.109-hardened1
+
+Re-measured after rebasing the libkrunfw fork onto upstream `v5.6.2` (guest
+kernel 6.12.91-hardened1 -> 6.12.109-hardened1), with the tree-built `.#cang`
+(raw ELF) under a render-server wrapper, the rebuilt `.#cang-musl` guest-init
+and the same `.#container` archive:
+
+```text
+PASS  version       Chromium 153.0.8010.52
+PASS  chromium-rc   gpu-dom=0 webgl=0 dom=0
+PASS  webgl-vulkan  ANGLE (AMD, Vulkan 1.4.334 (Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33)), venus)
+PASS  webgl-png     non-empty PNG screenshot
+VERDICT: PASS
+```
+
+and with `--waypipe` (weston 15.0.1, waypipe 0.11.0), which reproduces the
+2026-09-23 numbers exactly:
+
+```text
+PASS  waypipe-transport   guest waypipe server connected to the host client
+PASS  venus-presenting    waypipe-venus:ANGLE (AMD, Vulkan 1.4.334 (Virtio-GPU Venus (AMD Radeon RX 7600M XT (RADV NAVI33)), venus)
+PASS  frame-presented     host-frame-early.png holds 100928 pattern pixels
+PASS  renderer-on-frame   host-frame-early.png holds 4616 pixels of the page's renderer overlay
+PASS  control-no-frame    without --waypipe the compositor screenshot holds 0 pattern pixels
+INFO  compositor          GL renderer: AMD Radeon RX 7600M XT (radeonsi, navi33, ACO, DRM 3.64, 7.2.4-cachyos-lto)
+VERDICT: PASS
+```
+
+Attribution for both runs is in the evidence: `gpu-diag.txt` line 1 reads
+`uname: Linux localhost 6.12.109-hardened1 ... x86_64`, and the `libkrun-vm-worker`
+process maps `...-libkrunfw-cang-362dfe8735d7/lib/libkrunfw.so.5.3.0`, so the
+kernel under test is the one that booted. The upstream config additions the
+rebase brought in (ACPI, PCI, virtio-pci, nf_tables, PSI) do not disturb the
+venus/virtio-gpu path.
+
 So the image's software renderer is pinned and reaches the guest's Vulkan stack:
 `waypipe-server-pid=813` with `VK_ICD_FILENAMES=/usr/lib/cang-software-renderer/…/lvp_icd.x86_64.json`,
 `VK_DRIVER_FILES` unset, and the presenting page's WebGL renderer reads back as
@@ -215,6 +250,15 @@ tools/chromium-cang-smoke/chromium-smoke.sh \
   --container /nix/store/...-cang-image.tar.gz \
   --mem 4 --timeout 600
 ```
+
+Resolution note: the three inputs default to `nix build --no-link` store paths,
+so no `./result` symlink is read or written (the repo's `result` is mutable and
+shared, and a path resolved through it can be repointed at the container archive
+mid-run). `--cang` accepts a package prefix, a `.../bin/cang` binary, or a
+wrapper script. `.#cang` is deliberately a raw ELF, so a `--gpu=drm` run needs
+the render-server environment (`CANG_MESA_LIBDIR`, `CANG_MESA_ICD`,
+`CANG_VULKAN_LOADER_LIBDIR`) that `.#cang-prebuilt`'s wrapper exports; the smoke
+refuses to start a raw ELF without it rather than aborting inside the VM.
 
 Waypipe mode (needs weston + waypipe + python3; see *--waypipe mode* below):
 
